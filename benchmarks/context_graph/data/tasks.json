@@ -1,0 +1,33 @@
+[
+  {
+    "id": "T001",
+    "question": "If TokenIssuer changes refresh token fingerprint storage, what components are in the blast radius?",
+    "expected_nodes": ["N004", "N006", "N001", "N011"],
+    "expected_edges": [["N004", "N006"], ["N001", "N004"], ["N011", "N006"]]
+  },
+  {
+    "id": "T002",
+    "question": "What path connects repeated login failure to compliance review?",
+    "expected_nodes": ["N001", "N002", "N009", "N010", "N003"],
+    "expected_edges": [["N001", "N002"], ["N002", "N009"], ["N009", "N010"], ["N009", "N003"]]
+  },
+  {
+    "id": "T003",
+    "question": "Which systems are affected by password reset?",
+    "expected_nodes": ["N011", "N003", "N006", "N010", "N012", "N005"],
+    "expected_edges": [["N011", "N003"], ["N011", "N006"], ["N011", "N010"], ["N011", "N012"], ["N012", "N005"]]
+  },
+  {
+    "id": "T004",
+    "question": "How do role claims get into issued access tokens?",
+    "expected_nodes": ["N004", "N007", "N003", "N001"],
+    "expected_edges": [["N004", "N007"], ["N007", "N003"], ["N001", "N004"]]
+  },
+  {
+    "id": "T005",
+    "question": "Can the AdminPanel unlock users and what should be audited?",
+    "expected_nodes": ["N008", "N007", "N003", "N010", "N009"],
+    "expected_edges": [["N008", "N007"], ["N008", "N003"], ["N009", "N010"]]
+  }
+]
+

@@ -1,0 +1,44 @@
+{
+  "version": "0.1.0",
+  "seed": 1337,
+  "tokenizer": "cl100k_base",
+  "corpora": [
+    {"name": "tiny_sparse", "nodes": 12, "extra_edges_per_node": 0.25, "noise_ratio": 0.0, "enabled": true},
+    {"name": "small_sparse", "nodes": 80, "extra_edges_per_node": 0.35, "noise_ratio": 0.25, "enabled": true},
+    {"name": "small_dense", "nodes": 80, "extra_edges_per_node": 1.25, "noise_ratio": 0.25, "enabled": true},
+    {"name": "medium_sparse", "nodes": 1200, "extra_edges_per_node": 0.45, "noise_ratio": 0.35, "enabled": true},
+    {"name": "large_sparse", "nodes": 10000, "extra_edges_per_node": 0.35, "noise_ratio": 0.4, "enabled": false}
+  ],
+  "query_classes": [
+    "direct_lookup",
+    "reverse_lookup",
+    "multi_hop_path",
+    "blast_radius",
+    "subsystem_summary",
+    "negative_query"
+  ],
+  "strategies": [
+    "full_markdown",
+    "keyword_markdown",
+    "bm25_markdown",
+    "graph_1hop",
+    "graph_1hop_lowlevel",
+    "graph_1hop_sql",
+    "graph_1hop_semantic_arrow",
+    "graph_1hop_gg_max",
+    "graph_1hop_gg_max_hybrid",
+    "graph_2hop",
+    "graph_2hop_lowlevel",
+    "graph_2hop_sql",
+    "graph_2hop_semantic_arrow",
+    "graph_2hop_gg_max",
+    "graph_2hop_gg_max_hybrid",
+    "graph_keyword_hybrid",
+    "hierarchical_summary"
+  ],
+  "thresholds": {
+    "min_node_recall": 0.75,
+    "min_edge_recall": 0.65,
+    "max_irrelevant_context_ratio": 0.85
+  }
+}

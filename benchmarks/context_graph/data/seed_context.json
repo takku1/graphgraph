@@ -1,0 +1,164 @@
+{
+  "nodes": [
+    {
+      "id": "N001",
+      "label": "AuthService",
+      "kind": "service",
+      "path": "services/auth.md",
+      "summary": "Owns login, token issue, token refresh, and account lock decisions.",
+      "facts": [
+        "AuthService validates credentials through CredentialVerifier before issuing tokens.",
+        "AuthService calls TokenIssuer to create access and refresh tokens.",
+        "AuthService records failed attempts through AuditLog."
+      ]
+    },
+    {
+      "id": "N002",
+      "label": "CredentialVerifier",
+      "kind": "component",
+      "path": "services/auth.md",
+      "summary": "Checks password hashes and account state before login succeeds.",
+      "facts": [
+        "CredentialVerifier reads password hashes from UserStore.",
+        "CredentialVerifier refuses login when LockoutPolicy marks the account locked."
+      ]
+    },
+    {
+      "id": "N003",
+      "label": "UserStore",
+      "kind": "data",
+      "path": "data/user_store.md",
+      "summary": "Stores user profiles, password hashes, roles, and lockout counters.",
+      "facts": [
+        "UserStore persists failed_login_count and locked_until.",
+        "UserStore exposes role membership to PermissionService."
+      ]
+    },
+    {
+      "id": "N004",
+      "label": "TokenIssuer",
+      "kind": "component",
+      "path": "services/tokens.md",
+      "summary": "Creates signed JWT access tokens and opaque refresh tokens.",
+      "facts": [
+        "TokenIssuer signs access tokens with SigningKeyRing.",
+        "TokenIssuer stores refresh-token fingerprints in SessionStore.",
+        "TokenIssuer includes role claims supplied by PermissionService."
+      ]
+    },
+    {
+      "id": "N005",
+      "label": "SigningKeyRing",
+      "kind": "security",
+      "path": "services/tokens.md",
+      "summary": "Manages active and retired token signing keys.",
+      "facts": [
+        "SigningKeyRing rotates keys every 30 days.",
+        "SigningKeyRing keeps retired keys for 14 days to validate existing tokens."
+      ]
+    },
+    {
+      "id": "N006",
+      "label": "SessionStore",
+      "kind": "data",
+      "path": "data/session_store.md",
+      "summary": "Stores refresh token fingerprints, device metadata, and revocation state.",
+      "facts": [
+        "SessionStore revokes all sessions for a user after password reset.",
+        "SessionStore stores only token fingerprints, not raw refresh tokens."
+      ]
+    },
+    {
+      "id": "N007",
+      "label": "PermissionService",
+      "kind": "service",
+      "path": "services/permissions.md",
+      "summary": "Maps users and roles to allowed operations.",
+      "facts": [
+        "PermissionService reads role membership from UserStore.",
+        "PermissionService sends role claims to TokenIssuer.",
+        "PermissionService blocks AdminPanel actions unless the user has admin role."
+      ]
+    },
+    {
+      "id": "N008",
+      "label": "AdminPanel",
+      "kind": "ui",
+      "path": "apps/admin_panel.md",
+      "summary": "Internal UI for user management, lockout overrides, and forced password resets.",
+      "facts": [
+        "AdminPanel calls PermissionService before privileged actions.",
+        "AdminPanel can clear locked_until through UserStore.",
+        "AdminPanel can trigger password reset, which revokes sessions."
+      ]
+    },
+    {
+      "id": "N009",
+      "label": "LockoutPolicy",
+      "kind": "policy",
+      "path": "policies/lockout.md",
+      "summary": "Locks accounts after repeated failed login attempts.",
+      "facts": [
+        "LockoutPolicy locks an account after 5 failed attempts in 10 minutes.",
+        "LockoutPolicy stores lock state in UserStore.",
+        "AuditLog receives lockout events for compliance review."
+      ]
+    },
+    {
+      "id": "N010",
+      "label": "AuditLog",
+      "kind": "observability",
+      "path": "ops/audit_log.md",
+      "summary": "Append-only event log for authentication, authorization, and admin actions.",
+      "facts": [
+        "AuditLog records login failures and lockout events.",
+        "AuditLog records AdminPanel privileged actions.",
+        "AuditLog entries are retained for 400 days."
+      ]
+    },
+    {
+      "id": "N011",
+      "label": "PasswordResetFlow",
+      "kind": "workflow",
+      "path": "workflows/password_reset.md",
+      "summary": "Lets users reset passwords through signed email links.",
+      "facts": [
+        "PasswordResetFlow updates password hashes in UserStore.",
+        "PasswordResetFlow revokes sessions in SessionStore after password change.",
+        "PasswordResetFlow emits AuditLog events."
+      ]
+    },
+    {
+      "id": "N012",
+      "label": "EmailLinkSigner",
+      "kind": "security",
+      "path": "workflows/password_reset.md",
+      "summary": "Signs and validates short-lived password reset links.",
+      "facts": [
+        "EmailLinkSigner uses SigningKeyRing for reset-link signatures.",
+        "EmailLinkSigner reset links expire after 20 minutes."
+      ]
+    }
+  ],
+  "edges": [
+    {"source": "N001", "target": "N002", "type": "calls", "weight": 0.98},
+    {"source": "N001", "target": "N004", "type": "calls", "weight": 0.96},
+    {"source": "N001", "target": "N010", "type": "writes", "weight": 0.80},
+    {"source": "N002", "target": "N003", "type": "reads", "weight": 0.92},
+    {"source": "N002", "target": "N009", "type": "checks", "weight": 0.89},
+    {"source": "N004", "target": "N005", "type": "uses", "weight": 0.96},
+    {"source": "N004", "target": "N006", "type": "writes", "weight": 0.94},
+    {"source": "N004", "target": "N007", "type": "reads_claims_from", "weight": 0.77},
+    {"source": "N007", "target": "N003", "type": "reads", "weight": 0.90},
+    {"source": "N008", "target": "N007", "type": "authorizes_with", "weight": 0.95},
+    {"source": "N008", "target": "N003", "type": "updates", "weight": 0.70},
+    {"source": "N008", "target": "N011", "type": "triggers", "weight": 0.66},
+    {"source": "N009", "target": "N003", "type": "stores_state_in", "weight": 0.88},
+    {"source": "N009", "target": "N010", "type": "writes", "weight": 0.86},
+    {"source": "N011", "target": "N003", "type": "updates", "weight": 0.91},
+    {"source": "N011", "target": "N006", "type": "revokes", "weight": 0.93},
+    {"source": "N011", "target": "N010", "type": "writes", "weight": 0.87},
+    {"source": "N011", "target": "N012", "type": "uses", "weight": 0.84},
+    {"source": "N012", "target": "N005", "type": "uses", "weight": 0.81}
+  ]
+}

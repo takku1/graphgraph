@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CodebaseGraph",
+  "description": "Standardized schema for codebase context graphs.",
+  "type": "object",
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "kind": { "type": "string" },
+          "path": { "type": "string" },
+          "summary": { "type": "string" },
+          "facts": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["id", "label"]
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string" },
+          "target": { "type": "string" },
+          "type": { "type": "string" },
+          "weight": { "type": "number" }
+        },
+        "required": ["source", "target", "type"]
+      }
+    }
+  },
+  "required": ["nodes", "edges"]
+}
