@@ -39,7 +39,13 @@ Follow the prompts to enter API keys if you want them securely stored under Wind
 
 Once the setup script finishes, verify the environment and explore:
 
-1. **Verify CLI**:
+1. **Run Doctor Diagnostics**:
+   Verify everything is configured correctly (dependencies, API keys, MCP integration):
+   ```powershell
+   graphgraph doctor
+   ```
+
+2. **Verify CLI**:
    ```powershell
    # If venv is activated:
    graphgraph --help
@@ -48,10 +54,10 @@ Once the setup script finishes, verify the environment and explore:
    .venv\Scripts\graphgraph --help
    ```
 
-2. **Run Tests**:
+3. **Run Tests**:
    ```powershell
    python -m unittest discover -s tests
    ```
 
-3. **Read Integration Contract**:
+4. **Read Integration Contract**:
    Read [.agents/skills/graphgraph/SKILL.md](file:///.agents/skills/graphgraph/SKILL.md) for full documentation on how to perform codebase scans, query classes, and final LLM packet generation.

@@ -27,6 +27,119 @@ def cmd_plan(args: argparse.Namespace) -> None:
     print(f"{choice.hops}hop {choice.packet}: {choice.reason}")
 
 
+def cmd_doctor(args: argparse.Namespace) -> None:
+    import platform
+    import sys
+    import os
+    from pathlib import Path
+    
+    print("GraphGraph Doctor - System Diagnostic Utility")
+    print("=============================================")
+    
+    # 1. Environment and Python Checks
+    print("\n[Environment]")
+    print(f"  Python Version: {sys.version.split()[0]} ({'OK' if sys.version_info >= (3, 10) else 'FAIL (>=3.10 required)'})")
+    print(f"  Platform: {platform.system()} {platform.release()}")
+    in_venv = sys.prefix != sys.base_prefix or 'VIRTUAL_ENV' in os.environ
+    print(f"  Virtual Environment Active: {in_venv}")
+    
+    # 2. Package Dependency Checks
+    print("\n[Dependencies]")
+    try:
+        import tree_sitter
+        import tree_sitter_language_pack
+        print("  tree-sitter: Installed (OK)")
+    except ImportError:
+        print("  tree-sitter: Missing (WARN - AST symbols scanning disabled)")
+
+    try:
+        import keyring
+        print("  keyring: Installed (OK)")
+    except ImportError:
+        print("  keyring: Missing (WARN - Windows Credential Manager integration disabled)")
+
+    try:
+        import tiktoken
+        print("  tiktoken: Installed (OK)")
+    except ImportError:
+        print("  tiktoken: Missing (WARN - using approximate token count)")
+        
+    # 3. Secure Credential Checks
+    print("\n[Secure Credentials]")
+    try:
+        import keyring
+        openai_key = keyring.get_password("OpenAI", "API_KEY")
+        if openai_key:
+            masked = openai_key[:7] + "..." + openai_key[-4:] if len(openai_key) > 10 else "..."
+            print(f"  OpenAI API Key: Found in Credential Manager ({masked})")
+        else:
+            env_key = os.environ.get("OPENAI_API_KEY")
+            if env_key:
+                masked = env_key[:7] + "..." + env_key[-4:] if len(env_key) > 10 else "..."
+                print(f"  OpenAI API Key: Found in environment ({masked})")
+            else:
+                print("  OpenAI API Key: Not found in Credential Manager or environment")
+                
+        gemini_key = keyring.get_password("Gemini", "API_KEY")
+        if gemini_key:
+            masked = gemini_key[:7] + "..." + gemini_key[-4:] if len(gemini_key) > 10 else "..."
+            print(f"  Gemini API Key: Found in Credential Manager ({masked})")
+        else:
+            env_key = os.environ.get("GEMINI_API_KEY")
+            if env_key:
+                masked = env_key[:7] + "..." + env_key[-4:] if len(env_key) > 10 else "..."
+                print(f"  Gemini API Key: Found in environment ({masked})")
+            else:
+                print("  Gemini API Key: Not found in Credential Manager or environment")
+    except Exception as e:
+        print(f"  Credential lookup error: {e}")
+        
+    # 4. Local Graph File Checks
+    print("\n[Graph Files]")
+    graph_path = find_graph_path()
+    if graph_path and graph_path.exists():
+        print(f"  Active Graph: Found at {graph_path}")
+        try:
+            graph = load_any(graph_path)
+            nodes = list(graph.nodes.values())
+            edges = graph.edges
+            print(f"    - Nodes: {len(nodes)}")
+            print(f"    - Edges: {len(edges)}")
+            has_symbols = any(n.kind in ("function", "class", "struct", "method") for n in nodes)
+            print(f"    - Symbol-level scanner info: {'Yes (OK)' if has_symbols else 'No (Files only)'}")
+        except Exception as e:
+            print(f"    - Error loading graph: {e}")
+    else:
+        print("  Active Graph: No graph.json found in .graphgraph/ or graphify-out/")
+
+    # 5. MCP Settings Verification
+    print("\n[MCP Server Integration]")
+    if platform.system() == "Windows":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            claude_config = Path(appdata) / "Claude" / "claude_desktop_config.json"
+            if claude_config.exists():
+                try:
+                    with open(claude_config, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    servers = data.get("mcpServers", {})
+                    if "graphgraph" in servers:
+                        info = servers["graphgraph"]
+                        print(f"  Claude Desktop: Configured (OK)")
+                        print(f"    - Command: {info.get('command')}")
+                    else:
+                        print("  Claude Desktop: Found, but 'graphgraph' server is not configured")
+                except Exception as e:
+                    print(f"  Claude Desktop: Found config but failed to parse: {e}")
+            else:
+                print("  Claude Desktop: Claude config directory exists, but claude_desktop_config.json is missing")
+        else:
+            print("  Claude Desktop: APPDATA path not found")
+    else:
+        print("  Claude Desktop config check is only supported on Windows in this doctor version")
+
+
+
 def cmd_render(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     graph = load_any(graph_path)
@@ -290,6 +403,9 @@ def build_parser() -> argparse.ArgumentParser:
     traversal = sub.add_parser("traversal", help="List query-class traversal policies.")
     traversal.add_argument("--query-class")
     traversal.set_defaults(func=cmd_traversal)
+
+    doctor = sub.add_parser("doctor", help="Run system diagnostics and verify environment, tools, credentials, and MCP configs.")
+    doctor.set_defaults(func=cmd_doctor)
 
     return parser
 

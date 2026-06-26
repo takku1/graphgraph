@@ -192,6 +192,16 @@ Get-Content packet.txt | graphgraph validate
 
 ---
 
+## Diagnostics
+
+Verify that your system toolchain, Python environment, optional dependencies, API key credentials, compiled graph data, and MCP integrations are fully operational:
+
+```powershell
+graphgraph doctor
+```
+
+---
+
 ## Benchmarks & Testing
 
 `graphgraph` has an extensive benchmark suite to measure context quality, token efficiency, and reasoning accuracy.
