@@ -58,67 +58,57 @@ class Graph:
         return inc
 
     def expand(self, starts: list[str], hops: int, max_nodes: int | None = None) -> tuple[set[str], list[Edge]]:
+        # Weak edge types contribute less to candidate scores so they don't crowd out structural edges.
+        _TYPE_MULT: dict[str, float] = {"references": 0.5, "links": 0.6, "includes": 0.7}
+
         outgoing = self.outgoing()
         incoming = self.incoming()
-        node_ids = set(starts)
-        edge_list: list[Edge] = []
-        frontier = set(starts)
-        seen_edges: set[tuple[str, str, str]] = set()
 
-        if max_nodes is not None and len(node_ids) > max_nodes:
-            node_ids = set(starts[:max_nodes])
-            return node_ids, []
+        included: set[str] = {s for s in starts if s in self.nodes}
+        seen_edges: set[tuple[str, str, str]] = set()
+        edge_list: list[Edge] = []
+        frontier = set(included)
 
         for _ in range(hops):
-            next_candidates: set[str] = set()
-            layer_edges: list[Edge] = []
-            for node_id in frontier:
-                for edge in outgoing.get(node_id, []) + incoming.get(node_id, []):
-                    key = (edge.source, edge.target, edge.type)
-                    if key not in seen_edges:
-                        layer_edges.append(edge)
-                    if edge.source not in node_ids:
-                        next_candidates.add(edge.source)
-                    if edge.target not in node_ids:
-                        next_candidates.add(edge.target)
+            new_edges: list[Edge] = []
+            scores: dict[str, float] = {}
 
-            if not next_candidates:
-                # Still add remaining layer edges where both source and target are inside node_ids
-                for edge in layer_edges:
-                    key = (edge.source, edge.target, edge.type)
-                    if key not in seen_edges and edge.source in node_ids and edge.target in node_ids:
-                        seen_edges.add(key)
+            for nid in frontier:
+                for edge in outgoing.get(nid, []) + incoming.get(nid, []):
+                    ekey = (edge.source, edge.target, edge.type)
+                    if ekey not in seen_edges:
+                        new_edges.append(edge)
+                        seen_edges.add(ekey)
+                    neighbor = edge.target if edge.source == nid else edge.source
+                    if neighbor not in included and neighbor in self.nodes:
+                        mult = _TYPE_MULT.get(edge.type, 1.0)
+                        scores[neighbor] = scores.get(neighbor, 0.0) + edge.weight * mult
+
+            if not scores:
+                for edge in new_edges:
+                    if edge.source in included and edge.target in included:
                         edge_list.append(edge)
                 break
 
-            if max_nodes is not None and len(node_ids) + len(next_candidates) > max_nodes:
-                allowed_count = max_nodes - len(node_ids)
-                if allowed_count <= 0:
+            # Rank candidates by cumulative weighted score (sum, not max), apply budget.
+            ranked = sorted(scores, key=scores.__getitem__, reverse=True)
+            if max_nodes is not None:
+                available = max_nodes - len(included)
+                if available <= 0:
                     break
-                candidate_scores = {}
-                for edge in layer_edges:
-                    if edge.source in node_ids and edge.target in next_candidates:
-                        candidate_scores[edge.target] = max(candidate_scores.get(edge.target, 0.0), edge.weight)
-                    elif edge.target in node_ids and edge.source in next_candidates:
-                        candidate_scores[edge.source] = max(candidate_scores.get(edge.source, 0.0), edge.weight)
-                
-                sorted_candidates = sorted(next_candidates, key=lambda n: candidate_scores.get(n, 0.0), reverse=True)
-                next_frontier = set(sorted_candidates[:allowed_count])
-            else:
-                next_frontier = next_candidates
+                ranked = ranked[:available]
 
-            for edge in layer_edges:
-                key = (edge.source, edge.target, edge.type)
-                if key not in seen_edges:
-                    is_src_ok = edge.source in node_ids or edge.source in next_frontier
-                    is_tgt_ok = edge.target in node_ids or edge.target in next_frontier
-                    if is_src_ok and is_tgt_ok:
-                        seen_edges.add(key)
-                        edge_list.append(edge)
+            next_set = set(ranked)
+            all_included = included | next_set
 
-            node_ids |= next_frontier
-            frontier = next_frontier
-            if max_nodes is not None and len(node_ids) >= max_nodes:
+            for edge in new_edges:
+                if edge.source in all_included and edge.target in all_included:
+                    edge_list.append(edge)
+
+            included = all_included
+            frontier = next_set
+
+            if max_nodes is not None and len(included) >= max_nodes:
                 break
 
-        return node_ids, edge_list
+        return included, edge_list

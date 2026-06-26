@@ -80,9 +80,18 @@ def render_gg_max(
     for node_id, idx in node_to_idx.items():
         node = graph.nodes[node_id]
         if hybrid:
-            lines.append(f"{idx} {node.label} [{node.kind}] {node.path} summary: {node.summary}")
-            for fact in node.facts[:2]:
-                lines.append(f"  - {fact}")
+            # Only emit metadata tokens that actually exist — fall back to plain label if none.
+            meta_parts = []
+            if node.kind and node.kind != "unknown":
+                meta_parts.append(f"[{node.kind}]")
+            if node.summary:
+                meta_parts.append(node.summary)
+            if meta_parts:
+                lines.append(f"{idx} {node.label} {' '.join(meta_parts)}")
+            else:
+                lines.append(f"{idx} {node.label}")
+            for fact in node.facts[:3]:
+                lines.append(f" {fact}")
         else:
             lines.append(f"{idx} {node.label}")
     lines.append("[e]")

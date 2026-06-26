@@ -7,7 +7,7 @@ from typing import Any
 
 from .cli import cmd_final
 from .core import Query
-from .io import load_graph, load_policies, save_graph, find_graph_path, find_policies_path
+from .io import load_graph, load_policies, save_graph, find_graph_path, find_policies_path, find_graphify_path, merge_graphify
 from .packets import render_packet
 from .planner import choose_packet
 from .policies import render_policy_packet, select_policies
@@ -225,6 +225,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
     depth = str(args.get("depth") or "files")
     graph = scan_directory(directory, max_nodes=max_nodes, generic_mentions=generic_mentions, skip_dirs=skip_dirs, depth=depth)
+
     save_graph(graph, output_path)
     return json.dumps({
         "action": "scanned",
@@ -243,18 +244,26 @@ def handle_search_nodes(args: dict[str, Any]) -> str:
     q = str(args["query"]).lower()
     limit = int(args.get("limit") or 20)
 
+    # Precompute degree so hub nodes float to the top of results.
+    degree: dict[str, int] = {}
+    for edge in graph.edges:
+        degree[edge.source] = degree.get(edge.source, 0) + 1
+        degree[edge.target] = degree.get(edge.target, 0) + 1
+
     matches = []
     for node in graph.nodes.values():
-        if (q in node.label.lower() or q in node.path.lower() or q in node.kind.lower()):
+        if q in node.label.lower() or q in node.path.lower() or q in node.kind.lower():
             matches.append({
                 "id": node.id,
                 "label": node.label,
                 "kind": node.kind,
                 "path": node.path,
+                "degree": degree.get(node.id, 0),
+                "summary": node.summary,
             })
-        if len(matches) >= limit:
-            break
 
+    matches.sort(key=lambda m: m["degree"], reverse=True)
+    matches = matches[:limit]
     return json.dumps({"matches": matches, "total": len(matches)})
 
 

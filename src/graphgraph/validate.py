@@ -53,8 +53,8 @@ def validate_gg_max(packet: str) -> ValidationResult:
         relations[rel_id.strip()] = rel.strip()
 
     for line in nonempty_lines(nodes_part):
-        # Allow indents for facts in gg_max_hybrid
-        if line.startswith("-") or line.startswith("  -"):
+        # Fact/summary continuation lines (indented) — skip for node counting.
+        if line.startswith(" ") or line.startswith("-"):
             continue
         parts = [p.strip() for p in line.split(None, 1)]
         if len(parts) < 2:
@@ -81,7 +81,11 @@ def validate_gg_max(packet: str) -> ValidationResult:
             errors.append(f"bad edge weight: {weight}")
         edges.append((source, target, rel_id, weight))
 
-    fmt = "gg_max_hybrid" if "summary:" in packet else "gg_max"
+    # Detect hybrid: node lines carry metadata beyond just index+label ([kind] annotation or legacy summary: prefix)
+    is_hybrid = "summary:" in packet or bool(
+        re.search(r"^\d+\s+\S+\s+\[", nodes_part, re.MULTILINE)
+    )
+    fmt = "gg_max_hybrid" if is_hybrid else "gg_max"
     return ValidationResult(not errors, fmt, len(nodes), len(edges), tuple(errors))
 
 

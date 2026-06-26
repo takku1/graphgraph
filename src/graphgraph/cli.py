@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .core import Query
-from .io import load_graph, load_policies, save_graph, find_graph_path, find_policies_path
+from .io import load_graph, load_policies, save_graph, find_graph_path, find_policies_path, find_graphify_path, merge_graphify
 from .packets import render_packet
 from .planner import choose_packet
 from .policies import render_policy_packet, select_policies
