@@ -160,6 +160,43 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     return "\n".join(lines)
 
 
+def render_tensor_array(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    node_to_idx = {node_id: i for i, node_id in enumerate(sorted(nodes))}
+    kinds = ["file", "module", "class", "function", "struct", "method", "concept", "section", "policy", "decision_trace"]
+    kind_to_id = {k: i for i, k in enumerate(kinds)}
+    
+    relations = list(DEFAULT_RELATION_ORDER)
+    for edge in edges:
+        if edge.type not in relations:
+            relations.append(edge.type)
+    rel_to_id = {r: i for i, r in enumerate(relations)}
+    
+    lines = []
+    lines.append("@types")
+    lines.append("[" + ", ".join(f"{idx}: {k}" for k, idx in kind_to_id.items()) + "]")
+    lines.append("@relations")
+    lines.append("[" + ", ".join(f"{idx}: {r}" for r, idx in rel_to_id.items()) + "]")
+    lines.append("")
+    
+    lines.append("@v")
+    for node_id, idx in node_to_idx.items():
+        node = graph.nodes[node_id]
+        kind_id = kind_to_id.get(node.kind, len(kinds))
+        size = len(node.facts) * 10 + len(node.summary or "")
+        lines.append(f"[{idx}, {node.label}, {kind_id}, {size}]")
+    lines.append("")
+    
+    lines.append("@a")
+    for edge in edges:
+        src_idx = node_to_idx.get(edge.source)
+        tgt_idx = node_to_idx.get(edge.target)
+        if src_idx is not None and tgt_idx is not None:
+            rel_id = rel_to_id.get(edge.type)
+            lines.append(f"[{src_idx}, {tgt_idx}, {rel_id}, {edge.weight:g}]")
+            
+    return "\n".join(lines)
+
+
 def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str) -> str:
     if packet == "lowlevel":
         return render_lowlevel(graph, nodes, edges)
@@ -177,4 +214,6 @@ def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str)
         return render_svo(graph, nodes, edges)
     if packet == "doc_summary":
         return render_doc_summary(graph, nodes, edges)
+    if packet in {"tensor", "csr_arrays"}:
+        return render_tensor_array(graph, nodes, edges)
     raise ValueError(f"unknown packet format: {packet}")

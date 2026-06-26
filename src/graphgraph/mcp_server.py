@@ -276,6 +276,26 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
 def build_final_packet(args: dict[str, Any]) -> str:
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    
+    # Try KV Cache first
+    from .cache import TopologicalKVCache, compute_cache_key
+    cache = TopologicalKVCache()
+    
+    query_text = str(args.get("query", ""))
+    query_class = str(args["query_class"])
+    choice = choose_packet(query_class, query_text)
+    starts = [str(item) for item in args["starts"]]
+    
+    cache_key = compute_cache_key(
+        starts,
+        query_class,
+        choice.hops,
+        choice.packet + f"|mcp_final|{query_text}|{args.get('paths')}|{args.get('tags')}|{args.get('max_nodes')}"
+    )
+    cached_packet = cache.get(graph_path, cache_key)
+    if cached_packet:
+        return cached_packet
+
     graph = load_any(graph_path)
     if args.get("as_of"):
         graph = graph_at(graph, str(args["as_of"]))
@@ -285,13 +305,11 @@ def build_final_packet(args: dict[str, Any]) -> str:
     policies = load_policies(policies_path) if policies_path else []
 
     query = Query(
-        text=str(args.get("query", "")),
-        query_class=str(args["query_class"]),
+        text=query_text,
+        query_class=query_class,
         paths=tuple(str(item) for item in args.get("paths", [])),
         tags=tuple(str(item) for item in args.get("tags", [])),
     )
-    choice = choose_packet(query.query_class, query.text)
-    starts = [str(item) for item in args["starts"]]
     max_nodes = args.get("max_nodes")
     nodes, edges = graph.expand(starts, hops=choice.hops, max_nodes=int(max_nodes) if max_nodes else None)
 
@@ -303,18 +321,31 @@ def build_final_packet(args: dict[str, Any]) -> str:
     if not validation.ok:
         raise ValueError("generated graph packet failed validation: " + "; ".join(validation.errors))
 
-    if not policy_packet:
-        return graph_packet
-    return f"CONSTRAINTS:\n{policy_packet}\n\nGRAPH:\n{graph_packet}"
+    final_packet = f"CONSTRAINTS:\n{policy_packet}\n\nGRAPH:\n{graph_packet}" if policy_packet else graph_packet
+    cache.set(graph_path, cache_key, final_packet)
+    return final_packet
 
 
 def build_query_context(args: dict[str, Any]) -> str:
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
-    graph = load_any(graph_path)
     query = str(args["query"])
     query_class = str(args.get("query_class") or "blast_radius")
     choice = choose_packet(query_class, query)
+
+    from .cache import TopologicalKVCache, compute_cache_key
+    cache = TopologicalKVCache()
+    cache_key = compute_cache_key(
+        [query],
+        query_class,
+        choice.hops,
+        f"mcp_query|{args.get('anchor_limit')}|{args.get('max_nodes')}|{args.get('scopes')}|{args.get('packet')}"
+    )
+    cached_packet = cache.get(graph_path, cache_key)
+    if cached_packet:
+        return cached_packet
+
+    graph = load_any(graph_path)
     result = retrieve_context(
         graph,
         query,
@@ -328,21 +359,25 @@ def build_query_context(args: dict[str, Any]) -> str:
         return json.dumps({"anchors": [], "packet": "", "message": "No matching graph anchors found for query."})
 
     packet = render_packet(graph, result.nodes, result.edges, str(args.get("packet") or choice.packet))
+    
     if not args.get("show_anchors"):
-        return packet
+        response = packet
+    else:
+        anchors = [
+            {
+                "id": match.node.id,
+                "label": match.node.label,
+                "kind": match.node.kind,
+                "path": match.node.path,
+                "score": match.score,
+                "reasons": list(match.reasons),
+            }
+            for match in result.matches[: int(args["anchor_limit"]) if args.get("anchor_limit") is not None else len(result.starts)]
+        ]
+        response = json.dumps({"anchors": anchors, "packet": packet}, indent=2)
 
-    anchors = [
-        {
-            "id": match.node.id,
-            "label": match.node.label,
-            "kind": match.node.kind,
-            "path": match.node.path,
-            "score": match.score,
-            "reasons": list(match.reasons),
-        }
-        for match in result.matches[: int(args["anchor_limit"]) if args.get("anchor_limit") is not None else len(result.starts)]
-    ]
-    return json.dumps({"anchors": anchors, "packet": packet}, indent=2)
+    cache.set(graph_path, cache_key, response)
+    return response
 
 
 def handle_build_graph(args: dict[str, Any]) -> str:

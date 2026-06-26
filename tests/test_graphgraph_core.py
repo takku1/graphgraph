@@ -130,6 +130,18 @@ class GraphGraphCoreTest(unittest.TestCase):
         self.assertEqual(result.node_count, 3)
         self.assertEqual(result.edge_count, 2)
 
+    def test_render_tensor_array(self) -> None:
+        graph = sample_graph()
+        nodes, edges = graph.expand(["N1"], hops=2)
+        from graphgraph.packets import render_packet
+        packet = render_packet(graph, nodes, edges, "tensor")
+        self.assertIn("@types", packet)
+        self.assertIn("@relations", packet)
+        self.assertIn("@v", packet)
+        self.assertIn("@a", packet)
+        self.assertIn("AuthService", packet)
+        self.assertIn("TokenStore", packet)
+
     def test_render_and_validate_gg_max_hybrid(self) -> None:
         graph = sample_graph()
         nodes, edges = graph.expand(["N1"], hops=2)
@@ -1229,6 +1241,37 @@ N1,N2,1,0.9
             self.assertIn("a.py", node_labels)
             self.assertIn("b.py", node_labels)
             self.assertIn("c.py", node_labels)
+
+    def test_kv_cache(self) -> None:
+        import time
+        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            graph_path = tmp / "graph.json"
+            cache_path = tmp / "kv_cache.json"
+            
+            # Create a mock graph file
+            graph_path.write_text("{}", encoding="utf-8")
+            
+            cache = TopologicalKVCache(cache_path)
+            key = compute_cache_key(["N1", "N2"], "blast_radius", 2, "gg_max")
+            
+            # Verify cache get returns None initially
+            self.assertIsNone(cache.get(graph_path, key))
+            
+            # Set cache
+            cache.set(graph_path, key, "rendered_packet_data")
+            
+            # Verify cache get returns value
+            self.assertEqual(cache.get(graph_path, key), "rendered_packet_data")
+            
+            # Modify the graph file to simulate invalidation
+            time.sleep(0.01)
+            graph_path.write_text("{\"nodes\": {}}", encoding="utf-8")
+            
+            # Verify cache get returns None (invalidated by modification time check)
+            self.assertIsNone(cache.get(graph_path, key))
 
 
 if __name__ == "__main__":

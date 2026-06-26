@@ -142,25 +142,36 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
 def cmd_render(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
+    choice = choose_packet(args.query_class)
+    
+    from .cache import TopologicalKVCache, compute_cache_key
+    cache = TopologicalKVCache()
+    cache_key = compute_cache_key(args.starts, args.query_class, choice.hops, choice.packet)
+    cached_packet = cache.get(graph_path, cache_key)
+    if cached_packet:
+        print(cached_packet)
+        return
+
     graph = load_any(graph_path)
     as_of = getattr(args, "as_of", None)
     if as_of:
         graph = graph_at(graph, as_of)
-    choice = choose_packet(args.query_class)
     starts = args.starts
     nodes, edges = graph.expand(starts, hops=choice.hops)
-    print(render_packet(graph, nodes, edges, choice.packet))
+    packet = render_packet(graph, nodes, edges, choice.packet)
+    cache.set(graph_path, cache_key, packet)
+    print(packet)
 
 
 def cmd_final(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     policies_path = Path(args.policies) if args.policies else find_policies_path()
-    graph = load_any(graph_path)
-    as_of = getattr(args, "as_of", None)
-    if as_of:
-        graph = graph_at(graph, as_of)
 
     if getattr(args, "stable_skeleton", False):
+        graph = load_any(graph_path)
+        as_of = getattr(args, "as_of", None)
+        if as_of:
+            graph = graph_at(graph, as_of)
         max_nodes = getattr(args, "max_nodes", 100) or 100
         pr = graph.pagerank()
         top_nodes = sorted(pr, key=pr.get, reverse=True)[:max_nodes]
@@ -178,6 +189,24 @@ def cmd_final(args: argparse.Namespace) -> None:
         print("Error: --query-class is required unless --stable-skeleton is specified.", file=sys.stderr)
         sys.exit(1)
 
+    choice = choose_packet(args.query_class, args.query)
+    from .cache import TopologicalKVCache, compute_cache_key
+    cache = TopologicalKVCache()
+    cache_key = compute_cache_key(
+        args.starts,
+        args.query_class,
+        choice.hops,
+        choice.packet + f"|cli_final|{args.query}|{args.path}|{args.tag}"
+    )
+    cached_packet = cache.get(graph_path, cache_key)
+    if cached_packet:
+        print(cached_packet)
+        return
+
+    graph = load_any(graph_path)
+    as_of = getattr(args, "as_of", None)
+    if as_of:
+        graph = graph_at(graph, as_of)
     policies = load_policies(policies_path) if policies_path else []
     query = Query(
         text=args.query,
@@ -185,22 +214,41 @@ def cmd_final(args: argparse.Namespace) -> None:
         paths=tuple(args.path),
         tags=tuple(args.tag),
     )
-    choice = choose_packet(args.query_class, args.query)
     nodes, edges = graph.expand(args.starts, hops=choice.hops)
     selected = select_policies(policies, query)
     policy_packet = render_policy_packet(selected, compact=True)
     graph_packet = render_packet(graph, nodes, edges, choice.packet)
+    
+    out_lines = []
     if policy_packet:
-        print("CONSTRAINTS:")
-        print(policy_packet)
-        print("\nGRAPH:")
-    print(graph_packet)
+        out_lines.append("CONSTRAINTS:")
+        out_lines.append(policy_packet)
+        out_lines.append("\nGRAPH:")
+    out_lines.append(graph_packet)
+    final_output = "\n".join(out_lines)
+    
+    cache.set(graph_path, cache_key, final_output)
+    print(final_output)
 
 
 def cmd_query(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
-    graph = load_any(graph_path)
     choice = choose_packet(args.query_class, args.query)
+    
+    from .cache import TopologicalKVCache, compute_cache_key
+    cache = TopologicalKVCache()
+    cache_key = compute_cache_key(
+        [args.query],
+        args.query_class,
+        args.hops if args.hops is not None else choice.hops,
+        f"cli_query|{args.anchor_limit}|{args.max_nodes}|{args.scope}|{args.packet}|{args.show_anchors}"
+    )
+    cached_packet = cache.get(graph_path, cache_key)
+    if cached_packet:
+        print(cached_packet)
+        return
+
+    graph = load_any(graph_path)
     result = retrieve_context(
         graph,
         args.query,
@@ -213,14 +261,20 @@ def cmd_query(args: argparse.Namespace) -> None:
     if not result.starts:
         print("No matching graph anchors found for query.")
         return
+        
+    out_lines = []
     if args.show_anchors:
-        print("ANCHORS:")
+        out_lines.append("ANCHORS:")
         shown = args.anchor_limit if args.anchor_limit is not None else len(result.starts)
         for match in result.matches[:shown]:
             node = match.node
-            print(f"- {node.id} {node.label} [{node.kind}] {node.path} score={match.score:g}")
-        print("\nGRAPH:")
-    print(render_packet(graph, result.nodes, result.edges, args.packet or choice.packet))
+            out_lines.append(f"- {node.id} {node.label} [{node.kind}] {node.path} score={match.score:g}")
+        out_lines.append("\nGRAPH:")
+        
+    out_lines.append(render_packet(graph, result.nodes, result.edges, args.packet or choice.packet))
+    output_str = "\n".join(out_lines)
+    cache.set(graph_path, cache_key, output_str)
+    print(output_str)
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
