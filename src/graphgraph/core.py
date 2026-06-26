@@ -85,6 +85,60 @@ class Graph:
             deg[edge.target] = deg.get(edge.target, 0) + 1
         return deg
 
+    def pagerank(
+        self,
+        damping: float = 0.85,
+        max_iter: int = 20,
+        tol: float = 1e-4,
+    ) -> dict[str, float]:
+        active_nodes = [nid for nid, node in self.nodes.items() if node.active]
+        N = len(active_nodes)
+        if N == 0:
+            return {}
+
+        # Initialize PageRank equally
+        pr = {nid: 1.0 / N for nid in active_nodes}
+        
+        # Pre-calculate active outgoing sum of weights for each node
+        outgoing = self.outgoing()
+        sum_out = {}
+        for nid in active_nodes:
+            s = 0.0
+            for edge in outgoing.get(nid, []):
+                if edge.target in pr:
+                    s += edge.weight * traversal_strength(edge.type)
+            sum_out[nid] = s
+
+        dangling_nodes = [nid for nid in active_nodes if sum_out[nid] == 0.0]
+
+        # Power iteration
+        for _ in range(max_iter):
+            next_pr = {nid: (1.0 - damping) / N for nid in active_nodes}
+            
+            # Distribute dangling PageRank evenly among all active nodes
+            dangling_sum = sum(pr[nid] for nid in dangling_nodes)
+            dangling_share = (damping * dangling_sum) / N
+            for nid in active_nodes:
+                next_pr[nid] += dangling_share
+
+            # Distribute PR along active edges
+            incoming = self.incoming()
+            for target_id in active_nodes:
+                incoming_edges = incoming.get(target_id, [])
+                for edge in incoming_edges:
+                    source_id = edge.source
+                    if source_id in pr and sum_out[source_id] > 0.0:
+                        weight = edge.weight * traversal_strength(edge.type)
+                        next_pr[target_id] += damping * pr[source_id] * (weight / sum_out[source_id])
+
+            # Check convergence
+            err = sum(abs(next_pr[nid] - pr[nid]) for nid in active_nodes)
+            pr = next_pr
+            if err < tol:
+                break
+
+        return pr
+
     def expand(
         self,
         starts: list[str],

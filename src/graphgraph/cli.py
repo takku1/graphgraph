@@ -159,6 +159,25 @@ def cmd_final(args: argparse.Namespace) -> None:
     as_of = getattr(args, "as_of", None)
     if as_of:
         graph = graph_at(graph, as_of)
+
+    if getattr(args, "stable_skeleton", False):
+        max_nodes = getattr(args, "max_nodes", 100) or 100
+        pr = graph.pagerank()
+        top_nodes = sorted(pr, key=pr.get, reverse=True)[:max_nodes]
+        top_set = set(top_nodes)
+        skeleton_edges = [e for e in graph.edges if e.active and e.source in top_set and e.target in top_set]
+        from .packets import render_gg_max
+        graph_packet = render_gg_max(graph, top_set, skeleton_edges)
+        print(graph_packet)
+        return
+
+    if not args.starts:
+        print("Error: --starts is required unless --stable-skeleton is specified.", file=sys.stderr)
+        sys.exit(1)
+    if not args.query_class:
+        print("Error: --query-class is required unless --stable-skeleton is specified.", file=sys.stderr)
+        sys.exit(1)
+
     policies = load_policies(policies_path) if policies_path else []
     query = Query(
         text=args.query,
@@ -330,11 +349,13 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--graph")
     final.add_argument("--policies")
     final.add_argument("--query", default="")
-    final.add_argument("--query-class", required=True)
-    final.add_argument("--starts", nargs="+", required=True)
+    final.add_argument("--query-class", required=False)
+    final.add_argument("--starts", nargs="+", required=False)
     final.add_argument("--path", action="append", default=[])
     final.add_argument("--tag", action="append", default=[])
     final.add_argument("--as-of", help="Use a point-in-time graph view for ISO timestamp/date.")
+    final.add_argument("--stable-skeleton", action="store_true", help="Compile a stable, PageRank-based skeleton of top architectural nodes to use as a static prompt cache prefix.")
+    final.add_argument("--max-nodes", type=int, default=100, help="Max nodes for the stable skeleton (default: 100).")
     final.set_defaults(func=cmd_final)
 
     query = sub.add_parser("query", help="Retrieve a query-specific graph context packet without preselecting node IDs.")

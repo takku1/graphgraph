@@ -114,6 +114,7 @@ def search_nodes(graph: Graph, query: str, limit: int = 8) -> tuple[Match, ...]:
         return ()
 
     degree = graph.degree()
+    pagerank_scores = graph.pagerank()
     matches: list[Match] = []
     for node in graph.nodes.values():
         haystack = node_search_text(node)
@@ -176,7 +177,15 @@ def search_nodes(graph: Graph, query: str, limit: int = 8) -> tuple[Match, ...]:
             score *= 0.5 + coverage
             if node.kind == "community":
                 score *= 0.65
-            score += min(degree.get(node.id, 0), 25) * 0.05
+            
+            # Boost score based on PageRank centrality (architectural hub priority)
+            N = len(pagerank_scores)
+            pr_val = pagerank_scores.get(node.id, 0.0)
+            if N > 0:
+                score += pr_val * N * 2.0
+            else:
+                score += min(degree.get(node.id, 0), 25) * 0.05
+
             matches.append(Match(node=node, score=score, reasons=tuple(dict.fromkeys(reasons))))
 
     matches.sort(key=lambda m: (-m.score, m.node.path, m.node.label))

@@ -72,6 +72,26 @@ class GraphGraphCoreTest(unittest.TestCase):
         self.assertEqual(nodes, {"N1", "N2"})
         self.assertEqual([(edge.source, edge.target, edge.type) for edge in edges], [("N1", "N2", "reads")])
 
+    def test_pagerank(self) -> None:
+        # N1 -> N2 -> N3. All flows go to N3, so N3 should have the highest PageRank.
+        graph = Graph(
+            nodes={
+                "N1": Node("N1", "Source", "file", active=True),
+                "N2": Node("N2", "Middle", "file", active=True),
+                "N3": Node("N3", "Sink", "file", active=True),
+            },
+            edges=[
+                Edge("N1", "N2", "calls", 1.0),
+                Edge("N2", "N3", "calls", 1.0),
+            ],
+        )
+        scores = graph.pagerank(damping=0.85)
+        self.assertEqual(len(scores), 3)
+        self.assertAlmostEqual(sum(scores.values()), 1.0, places=4)
+        # N3 (Sink) should have higher score than N2, which should be higher than N1 (Source)
+        self.assertTrue(scores["N3"] > scores["N2"])
+        self.assertTrue(scores["N2"] > scores["N1"])
+
     def test_render_and_validate_lowlevel(self) -> None:
         graph = sample_graph()
         nodes, edges = graph.expand(["N1"], hops=1)
