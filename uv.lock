@@ -316,7 +316,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -495,35 +495,31 @@ wheels = [
 name = "graphgraph"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "keyring" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+]
 
 [package.optional-dependencies]
 benchmark = [
     { name = "google-genai" },
     { name = "google-generativeai" },
-    { name = "keyring" },
     { name = "openai" },
     { name = "tiktoken" },
-]
-keyring = [
-    { name = "keyring" },
-]
-tree-sitter = [
-    { name = "tree-sitter" },
-    { name = "tree-sitter-language-pack" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "google-genai", marker = "extra == 'benchmark'", specifier = ">=0.1.0" },
     { name = "google-generativeai", marker = "extra == 'benchmark'", specifier = ">=0.3.0" },
-    { name = "keyring", marker = "extra == 'benchmark'", specifier = ">=24.0.0" },
-    { name = "keyring", marker = "extra == 'keyring'", specifier = ">=24.0.0" },
+    { name = "keyring", specifier = ">=24.0.0" },
     { name = "openai", marker = "extra == 'benchmark'", specifier = ">=1.0.0" },
     { name = "tiktoken", marker = "extra == 'benchmark'", specifier = ">=0.5.0" },
-    { name = "tree-sitter", marker = "extra == 'tree-sitter'", specifier = ">=0.22" },
-    { name = "tree-sitter-language-pack", marker = "extra == 'tree-sitter'", specifier = ">=0.7" },
+    { name = "tree-sitter", specifier = ">=0.22" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.7" },
 ]
-provides-extras = ["tree-sitter", "keyring", "benchmark"]
+provides-extras = ["benchmark"]
 
 [[package]]
 name = "grpcio"

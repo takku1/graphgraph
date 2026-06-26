@@ -45,10 +45,7 @@ You can set up `graphgraph` using `uv` (recommended) or standard `pip`.
 
 ### 1. Developer Installation
 
-Install the package in editable mode along with optional extras:
-- `tree-sitter`: For syntax-aware, symbol-level code parsing.
-- `keyring`: For secure Windows Credentials Manager integration.
-- `benchmark`: For LLM answer verification and performance benchmark suites.
+Install the package in editable mode. By default, this sets up the core engine along with the required parsing dependencies (`tree-sitter` and `tree-sitter-language-pack`) and secure credential storage (`keyring`).
 
 #### Using `uv` (Fastest)
 ```powershell
@@ -56,15 +53,22 @@ Install the package in editable mode along with optional extras:
 git clone https://github.com/takku1/graphgraph.git
 cd graphgraph
 
-# Create a virtual environment and install in editable mode with extras
+# Create a virtual environment and install in editable mode
 uv venv
 .venv\Scripts\activate
-uv pip install -e ".[tree-sitter,keyring,benchmark]"
+uv pip install -e .
+
+# Optional: Install extra dependencies for running the LLM benchmark suite
+uv pip install -e ".[benchmark]"
 ```
 
 #### Using standard `pip`
 ```powershell
-pip install -e ".[tree-sitter,keyring,benchmark]"
+# Standard editable install
+pip install -e .
+
+# Optional: Install extra dependencies for running the LLM benchmark suite
+pip install -e ".[benchmark]"
 ```
 
 ### 2. Zero-Install / Agent Tool Execution (NPX-style)
