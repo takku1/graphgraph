@@ -143,8 +143,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 def cmd_render(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     graph = load_any(graph_path)
-    if args.as_of:
-        graph = graph_at(graph, args.as_of)
+    as_of = getattr(args, "as_of", None)
+    if as_of:
+        graph = graph_at(graph, as_of)
     choice = choose_packet(args.query_class)
     starts = args.starts
     nodes, edges = graph.expand(starts, hops=choice.hops)
@@ -155,6 +156,9 @@ def cmd_final(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     policies_path = Path(args.policies) if args.policies else find_policies_path()
     graph = load_any(graph_path)
+    as_of = getattr(args, "as_of", None)
+    if as_of:
+        graph = graph_at(graph, as_of)
     policies = load_policies(policies_path) if policies_path else []
     query = Query(
         text=args.query,
@@ -319,6 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--graph")
     render.add_argument("--query-class", required=True)
     render.add_argument("--starts", nargs="+", required=True)
+    render.add_argument("--as-of", help="Use a point-in-time graph view for ISO timestamp/date.")
     render.set_defaults(func=cmd_render)
 
     final = sub.add_parser("final")
@@ -329,6 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--starts", nargs="+", required=True)
     final.add_argument("--path", action="append", default=[])
     final.add_argument("--tag", action="append", default=[])
+    final.add_argument("--as-of", help="Use a point-in-time graph view for ISO timestamp/date.")
     final.set_defaults(func=cmd_final)
 
     query = sub.add_parser("query", help="Retrieve a query-specific graph context packet without preselecting node IDs.")
