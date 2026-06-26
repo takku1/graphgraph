@@ -5,9 +5,25 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graphgraph"
 version = "0.1.0"
-description = "Empirical LLM context graph packet optimizer."
+description = "Standalone LLM context graph engine and packet optimizer."
 requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+tree-sitter = [
+    "tree-sitter>=0.22",
+    "tree-sitter-language-pack>=0.7",
+]
+keyring = [
+    "keyring>=24.0.0",
+]
+benchmark = [
+    "openai>=1.0.0",
+    "google-genai>=0.1.0",
+    "google-generativeai>=0.3.0",
+    "tiktoken>=0.5.0",
+    "keyring>=24.0.0",
+]
 
 [project.scripts]
 graphgraph = "graphgraph.cli:main"

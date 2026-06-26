@@ -19,15 +19,24 @@ def extract_ids(text: str) -> set[str]:
     return set(re.findall(r"\bN\d{5}\b", text))
 
 
+def get_api_key(name: str) -> str | None:
+    val = os.environ.get(name)
+    if val:
+        return val
+    try:
+        import keyring
+        service = "OpenAI" if "OPENAI" in name else "Gemini"
+        return keyring.get_password(service, "API_KEY")
+    except Exception:
+        return None
+
+
 def run_openai(prompt: str) -> tuple[str, float, float, str]:
-    if os.environ.get("RUN_OPENAI_ANSWER_EVAL") != "1":
-        raise RuntimeError("Set RUN_OPENAI_ANSWER_EVAL=1 to run live model answers.")
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is required for live model answers.")
     from openai import OpenAI  # type: ignore
 
     model = os.environ.get("OPENAI_ANSWER_MODEL", "gpt-4o-mini")
-    client = OpenAI()
+    api_key = get_api_key("OPENAI_API_KEY")
+    client = OpenAI(api_key=api_key)
     start = time.perf_counter()
     first = None
     chunks = []
@@ -48,6 +57,43 @@ def run_openai(prompt: str) -> tuple[str, float, float, str]:
     return "".join(chunks), ((first or end) - start) * 1000, (end - start) * 1000, model
 
 
+def run_gemini(prompt: str) -> tuple[str, float, float, str]:
+    model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+    api_key = get_api_key("GEMINI_API_KEY")
+    start = time.perf_counter()
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+        )
+        text = response.text
+        end = time.perf_counter()
+        return text, (end - start) * 1000, (end - start) * 1000, model
+    except ImportError:
+        pass
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model_obj = genai.GenerativeModel(model)
+        response = model_obj.generate_content(prompt)
+        text = response.text
+        end = time.perf_counter()
+        return text, (end - start) * 1000, (end - start) * 1000, model
+    except Exception as e:
+        raise RuntimeError(f"Failed to run Gemini: {e}")
+
+
+def run_llm(prompt: str) -> tuple[str, float, float, str]:
+    if get_api_key("OPENAI_API_KEY"):
+        return run_openai(prompt)
+    elif get_api_key("GEMINI_API_KEY"):
+        return run_gemini(prompt)
+    else:
+        raise RuntimeError("No API key found for OpenAI or Gemini in environment or keyring.")
+
+
 def load_expected(corpus: str, task_class: str) -> tuple[set[str], set[tuple[str, str, str]]]:
     path = PROTOCOL_OUT / "corpora" / corpus / "tasks_answer_key.json"
     tasks = json.loads(path.read_text(encoding="utf-8"))
@@ -61,11 +107,25 @@ def main() -> None:
     if not PROMPTS_JSONL.exists():
         raise SystemExit("Run protocol_benchmark.py first; saved_prompts.jsonl is missing.")
 
+    openai_key = get_api_key("OPENAI_API_KEY")
+    gemini_key = get_api_key("GEMINI_API_KEY")
+    run_eval = (
+        os.environ.get("RUN_OPENAI_ANSWER_EVAL") == "1"
+        or os.environ.get("RUN_GEMINI_ANSWER_EVAL") == "1"
+        or bool(openai_key)
+        or bool(gemini_key)
+    )
+
+    if not run_eval:
+        print("Live model execution skipped for llm_answer_benchmark.py.")
+        print("Set OPENAI_API_KEY or GEMINI_API_KEY or store key in Windows Credential Manager to run live answers.")
+        return
+
     rows = []
     with PROMPTS_JSONL.open("r", encoding="utf-8") as f, ANSWERS_JSONL.open("w", encoding="utf-8") as out:
         for line in f:
             record = json.loads(line)
-            answer, ttft_ms, total_ms, model = run_openai(record["prompt"])
+            answer, ttft_ms, total_ms, model = run_llm(record["prompt"])
             packet_ids = extract_ids(record["prompt"])
             answer_ids = extract_ids(answer)
             expected_ids, expected_edges = load_expected(record["corpus"], record["task"])

@@ -1,0 +1,92 @@
+[
+  {
+    "query": "compiler expression rules",
+    "query_class": "blast_radius",
+    "expected_nodes": [
+      "compiler.rs",
+      "compile_rules_slice",
+      "expression.rs"
+    ]
+  },
+  {
+    "query": "rust rule compiler compile rules slice",
+    "query_class": "direct_lookup",
+    "expected_nodes": [
+      "compile_rules_slice"
+    ]
+  },
+  {
+    "query": "what calls compile_rules_slice",
+    "query_class": "reverse_lookup",
+    "expected_nodes": [
+      "compile_all",
+      "compile_for_coordinate",
+      "compile_for_profile",
+      "compile_rules_slice"
+    ]
+  },
+  {
+    "query": "differentiation synthesizer applier derivative rules",
+    "query_class": "blast_radius",
+    "expected_nodes": [
+      "DifferentiationSynthesizer",
+      "DifferentiationApplier",
+      "differentiate_node",
+      "differentiate_eclass"
+    ]
+  },
+  {
+    "query": "symbolic expression visitor condition visitor",
+    "query_class": "subsystem_summary",
+    "expected_nodes": [
+      "ExprVisitor",
+      "ConditionVisitor",
+      "visit_expr",
+      "visit_condition"
+    ]
+  },
+  {
+    "query": "polyhedral synthesizer independent bounds",
+    "query_class": "direct_lookup",
+    "expected_nodes": [
+      "PolyhedralSynthesizer",
+      "IndependentBounds"
+    ]
+  },
+  {
+    "query": "matrix transpose orthogonal symmetric square vector rules",
+    "query_class": "subsystem_summary",
+    "expected_nodes": [
+      "IsMatrixTranspose",
+      "IsOrthogonal",
+      "IsSymmetric",
+      "IsSquare",
+      "IsVector"
+    ]
+  },
+  {
+    "query": "ground rewrite recexpr pattern",
+    "query_class": "multi_hop_path",
+    "expected_nodes": [
+      "ground_rewrite",
+      "recexpr_to_pattern"
+    ]
+  },
+  {
+    "query": "rule registry coordinate profile",
+    "query_class": "blast_radius",
+    "expected_nodes": [
+      "rules_for_coordinate",
+      "rules_for_profile",
+      "compile_for_coordinate",
+      "compile_for_profile"
+    ]
+  },
+  {
+    "query": "locus README installation usage",
+    "query_class": "subsystem_summary",
+    "expected_nodes": [
+      "README.md"
+    ]
+  }
+]

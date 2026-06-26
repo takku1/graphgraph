@@ -13,6 +13,9 @@ from pathlib import Path
 from .core import Edge, Node
 
 
+MAX_REFERENCE_PATTERN_NAMES = 5000
+
+
 # ── definition patterns per language ────────────────────────────────────────
 
 _PY_CLASS = re.compile(r"^class\s+(\w+)", re.MULTILINE)
@@ -80,8 +83,16 @@ def _call_pattern(names: list[str]) -> re.Pattern[str] | None:
     if not names:
         return None
     escaped = sorted(set(names), key=len, reverse=True)
-    pat = "|".join(r"\b" + re.escape(n) + r"\b" for n in escaped[:200])  # cap regex size
+    pat = "|".join(r"\b" + re.escape(n) + r"\b" for n in escaped[:MAX_REFERENCE_PATTERN_NAMES])
     return re.compile(pat)
+
+
+def _callsite_pattern(names: list[str]) -> re.Pattern[str] | None:
+    if not names:
+        return None
+    escaped = sorted(set(names), key=len, reverse=True)
+    pat = "|".join(re.escape(n) for n in escaped[:MAX_REFERENCE_PATTERN_NAMES])
+    return re.compile(r"\b(" + pat + r")\b\s*(?:!|::)?\s*\(")
 
 
 # ── symbol extraction per language ───────────────────────────────────────────
@@ -91,77 +102,78 @@ class SymbolDef:
     name: str
     kind: str
     line: int
+    start: int = 0
 
 
 def _defs_py(text: str) -> list[SymbolDef]:
     defs: list[SymbolDef] = []
     for m in _PY_CLASS.finditer(text):
-        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1, m.start()))
     for m in _PY_DEF.finditer(text):
         indent, name = m.group(1), m.group(2)
         kind = "method" if indent else "function"
-        defs.append(SymbolDef(name, kind, text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(name, kind, text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
 def _defs_rust(text: str) -> list[SymbolDef]:
     defs: list[SymbolDef] = []
     for m in _RUST_STRUCT.finditer(text):
-        defs.append(SymbolDef(m.group(1), "struct", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "struct", text[:m.start()].count("\n") + 1, m.start()))
     for m in _RUST_ENUM.finditer(text):
-        defs.append(SymbolDef(m.group(1), "enum", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "enum", text[:m.start()].count("\n") + 1, m.start()))
     for m in _RUST_TRAIT.finditer(text):
-        defs.append(SymbolDef(m.group(1), "trait", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "trait", text[:m.start()].count("\n") + 1, m.start()))
     for m in _RUST_FN.finditer(text):
-        defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1, m.start()))
     # impl X for Y → add "implements" relationship; we store as a special pseudo-def
     for m in _RUST_IMPL_FOR.finditer(text):
         trait_name, type_name = m.group(1), m.group(2)
         if trait_name:
             # impl Trait for Struct → record as a marker so we can wire an edge
             defs.append(SymbolDef(f"impl_{trait_name}_for_{type_name}", "impl_block",
-                                   text[:m.start()].count("\n") + 1))
+                                   text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
 def _defs_js(text: str) -> list[SymbolDef]:
     defs: list[SymbolDef] = []
     for m in _JS_CLASS.finditer(text):
-        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1, m.start()))
     for m in _JS_FUNC.finditer(text):
-        defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1, m.start()))
     # only capture arrow functions that look like non-trivial declarations
     for m in _JS_ARROW.finditer(text):
         name = m.group(1)
         if not name[0].isupper():  # skip CONSTANT_CASE etc.
-            defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1))
+            defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
 def _defs_go(text: str) -> list[SymbolDef]:
     defs: list[SymbolDef] = []
     for m in _GO_TYPE.finditer(text):
-        defs.append(SymbolDef(m.group(1), "struct", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "struct", text[:m.start()].count("\n") + 1, m.start()))
     for m in _GO_FUNC.finditer(text):
-        defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
 def _defs_java(text: str) -> list[SymbolDef]:
     defs: list[SymbolDef] = []
     for m in _JAVA_CLASS.finditer(text):
-        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1, m.start()))
     for m in _JAVA_METHOD.finditer(text):
-        defs.append(SymbolDef(m.group(1), "method", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "method", text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
 def _defs_cs(text: str) -> list[SymbolDef]:
     defs: list[SymbolDef] = []
     for m in _CS_CLASS.finditer(text):
-        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1, m.start()))
     for m in _CS_METHOD.finditer(text):
-        defs.append(SymbolDef(m.group(1), "method", text[:m.start()].count("\n") + 1))
+        defs.append(SymbolDef(m.group(1), "method", text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
@@ -170,7 +182,7 @@ def _defs_c(text: str) -> list[SymbolDef]:
     for m in _C_FUNC.finditer(text):
         name = m.group(1)
         if len(name) > 2 and not name.startswith("if") and not name.startswith("for"):
-            defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1))
+            defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
@@ -199,6 +211,8 @@ _NOISE_NAMES = frozenset({
     "fmt", "err", "ok", "it", "id", "db",
 })
 
+_CALLABLE_KINDS = frozenset({"function", "method"})
+
 
 # ── public API ───────────────────────────────────────────────────────────────
 
@@ -212,9 +226,11 @@ def extract_symbols(
     The caller is responsible for de-duplicating against existing nodes.
     """
     # Pass 1 — collect all symbol defs and build name→file maps
-    file_defs: list[tuple[str, str, list[SymbolDef]]] = []  # (file_node_id, rel, defs)
+    file_defs: list[tuple[str, str, str, list[SymbolDef]]] = []  # (file_node_id, rel, text, defs)
+    impl_defs: list[tuple[str, SymbolDef]] = []
     # name → list of (node_id, file_node_id) — for cross-ref lookup
     name_to_symbols: dict[str, list[str]] = {}
+    symbol_to_file: dict[str, str] = {}
     symbol_nodes: dict[str, Node] = {}
     symbol_edges: list[Edge] = []
     total = 0
@@ -232,10 +248,14 @@ def extract_symbols(
         seen_names: set[str] = set()
         unique_defs = []
         for d in defs:
-            if d.name not in seen_names and d.kind != "impl_block":
+            if d.kind == "impl_block":
+                impl_defs.append((file_nid, d))
+                continue
+            if d.name not in seen_names:
                 seen_names.add(d.name)
                 unique_defs.append(d)
-        file_defs.append((file_nid, rel, unique_defs))
+        unique_defs.sort(key=lambda d: d.start)
+        file_defs.append((file_nid, rel, text, unique_defs))
         for d in unique_defs:
             if total >= max_total_symbols:
                 break
@@ -247,28 +267,60 @@ def extract_symbols(
                 path=rel,
                 summary=f"L{d.line}",
             )
-            symbol_edges.append(Edge(source=file_nid, target=sym_id, type="contains", weight=1.0))
+            symbol_edges.append(Edge(source=file_nid, target=sym_id, type="contains", weight=1.0, confidence=0.8, provenance="regex_ast"))
+            symbol_to_file[sym_id] = file_nid
             if d.name not in _NOISE_NAMES and len(d.name) > 2:
                 name_to_symbols.setdefault(d.name, []).append(sym_id)
             total += 1
 
-    # Pass 2 — detect cross-file references (name appears in another file's text)
+    # Rust impl Trait for Type edges.
+    for file_nid, d in impl_defs:
+        marker = d.name
+        if not marker.startswith("impl_") or "_for_" not in marker:
+            continue
+        trait_name, type_name = marker[len("impl_"):].split("_for_", 1)
+        trait_ids = name_to_symbols.get(trait_name, [])
+        type_ids = name_to_symbols.get(type_name, [])
+        for type_id in type_ids:
+            for trait_id in trait_ids:
+                if type_id != trait_id:
+                    symbol_edges.append(Edge(source=type_id, target=trait_id, type="implements", weight=1.0, confidence=0.8, provenance="regex_ast"))
+
+    # Pass 2 — detect symbol-level calls from approximate function/method bodies.
+    callable_names = [
+        name
+        for name, ids in name_to_symbols.items()
+        if len(ids) == 1 and symbol_nodes[ids[0]].kind in _CALLABLE_KINDS
+    ]
+    callsite_pat = _callsite_pattern(callable_names)
+    if callsite_pat:
+        for file_nid, _rel, text, defs in file_defs:
+            callable_defs = [d for d in defs if d.kind in _CALLABLE_KINDS]
+            for idx, d in enumerate(callable_defs):
+                src_id = f"{file_nid}__{d.name}"
+                end = callable_defs[idx + 1].start if idx + 1 < len(callable_defs) else len(text)
+                body = text[d.start:end]
+                for m in callsite_pat.finditer(body):
+                    name = m.group(1)
+                    for tgt_id in name_to_symbols.get(name, []):
+                        if tgt_id != src_id:
+                            symbol_edges.append(Edge(source=src_id, target=tgt_id, type="calls", weight=1.0, confidence=0.75, provenance="regex_ast"))
+
+    # Pass 3 — detect cross-file references (name appears in another file's text)
     # Build a set of external-symbol names per file to check against
     all_names = [n for n in name_to_symbols if len(name_to_symbols[n]) == 1]  # unambiguous
     if all_names:
         call_pat = _call_pattern(all_names)
         if call_pat:
             for path, rel, file_nid, text in files:
-                src_syms = {sym_id for sym_id in symbol_nodes
-                            if sym_id.startswith(file_nid + "__")}
                 for m in call_pat.finditer(text):
                     name = m.group(0)
                     tgt_ids = name_to_symbols.get(name, [])
                     for tgt_id in tgt_ids:
                         # only add cross-file references
-                        if not tgt_id.startswith(file_nid + "__"):
+                        if symbol_to_file.get(tgt_id) != file_nid:
                             symbol_edges.append(
-                                Edge(source=file_nid, target=tgt_id, type="references", weight=0.5)
+                                Edge(source=file_nid, target=tgt_id, type="references", weight=0.5, confidence=0.45, provenance="regex_reference")
                             )
 
     # Deduplicate edges

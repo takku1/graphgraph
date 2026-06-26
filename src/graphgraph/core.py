@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .ontology import provenance_confidence, traversal_strength
+
 
 @dataclass(frozen=True)
 class Node:
@@ -11,6 +13,13 @@ class Node:
     path: str = ""
     summary: str = ""
     facts: tuple[str, ...] = ()
+    scope: str = ""
+    parent: str = ""
+    source: str = ""
+    confidence: float = 1.0
+    active: bool = True
+    created_at: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -19,6 +28,13 @@ class Edge:
     target: str
     type: str
     weight: float = 1.0
+    confidence: float = 1.0
+    provenance: str = "extracted"
+    evidence: str = ""
+    source_location: str = ""
+    valid_from: str = ""
+    valid_to: str = ""
+    active: bool = True
 
 
 @dataclass(frozen=True)
@@ -44,27 +60,45 @@ class Query:
 class Graph:
     nodes: dict[str, Node] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
 
     def outgoing(self) -> dict[str, list[Edge]]:
         out: dict[str, list[Edge]] = {}
         for edge in self.edges:
-            out.setdefault(edge.source, []).append(edge)
+            if edge.active:
+                out.setdefault(edge.source, []).append(edge)
         return out
 
     def incoming(self) -> dict[str, list[Edge]]:
         inc: dict[str, list[Edge]] = {}
         for edge in self.edges:
-            inc.setdefault(edge.target, []).append(edge)
+            if edge.active:
+                inc.setdefault(edge.target, []).append(edge)
         return inc
 
-    def expand(self, starts: list[str], hops: int, max_nodes: int | None = None) -> tuple[set[str], list[Edge]]:
-        # Weak edge types contribute less to candidate scores so they don't crowd out structural edges.
-        _TYPE_MULT: dict[str, float] = {"references": 0.5, "links": 0.6, "includes": 0.7}
+    def degree(self) -> dict[str, int]:
+        deg: dict[str, int] = {}
+        for edge in self.edges:
+            if not edge.active:
+                continue
+            deg[edge.source] = deg.get(edge.source, 0) + 1
+            deg[edge.target] = deg.get(edge.target, 0) + 1
+        return deg
 
+    def expand(
+        self,
+        starts: list[str],
+        hops: int,
+        max_nodes: int | None = None,
+        scopes: tuple[str, ...] = (),
+    ) -> tuple[set[str], list[Edge]]:
         outgoing = self.outgoing()
         incoming = self.incoming()
 
-        included: set[str] = {s for s in starts if s in self.nodes}
+        included: set[str] = {
+            s for s in starts
+            if s in self.nodes and self.nodes[s].active and _node_in_scope(self.nodes[s], scopes)
+        }
         seen_edges: set[tuple[str, str, str]] = set()
         edge_list: list[Edge] = []
         frontier = set(included)
@@ -80,9 +114,15 @@ class Graph:
                         new_edges.append(edge)
                         seen_edges.add(ekey)
                     neighbor = edge.target if edge.source == nid else edge.source
-                    if neighbor not in included and neighbor in self.nodes:
-                        mult = _TYPE_MULT.get(edge.type, 1.0)
-                        scores[neighbor] = scores.get(neighbor, 0.0) + edge.weight * mult
+                    if (
+                        neighbor not in included
+                        and neighbor in self.nodes
+                        and self.nodes[neighbor].active
+                        and _node_in_scope(self.nodes[neighbor], scopes)
+                    ):
+                        mult = traversal_strength(edge.type)
+                        confidence = edge.confidence * provenance_confidence(edge.provenance)
+                        scores[neighbor] = scores.get(neighbor, 0.0) + edge.weight * confidence * mult
 
             if not scores:
                 for edge in new_edges:
@@ -112,3 +152,10 @@ class Graph:
                 break
 
         return included, edge_list
+
+
+def _node_in_scope(node: Node, scopes: tuple[str, ...]) -> bool:
+    if not scopes:
+        return True
+    values = (node.scope, node.path, node.source)
+    return any(value == scope or value.startswith(scope.rstrip("/") + "/") for scope in scopes for value in values if value)

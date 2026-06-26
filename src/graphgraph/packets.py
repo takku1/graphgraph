@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from .core import Edge, Graph
+from .ontology import DEFAULT_RELATIONS
 
 
-DEFAULT_RELATIONS = ("calls", "imports", "reads", "writes", "uses", "tests", "configures")
+DEFAULT_RELATION_ORDER = tuple(DEFAULT_RELATIONS)
 
 
-def render_lowlevel(graph: Graph, nodes: set[str], edges: list[Edge], relations: tuple[str, ...] = DEFAULT_RELATIONS) -> str:
-    relation_ids = {rel: i + 1 for i, rel in enumerate(relations)}
+def render_lowlevel(graph: Graph, nodes: set[str], edges: list[Edge], relations: tuple[str, ...] = DEFAULT_RELATION_ORDER) -> str:
+    relation_ids = _relation_ids(edges, relations)
     lines = ["<g>", "<r>"]
     for rel, rel_id in relation_ids.items():
         lines.append(f"{rel_id}:{rel}")
@@ -68,10 +69,10 @@ def render_gg_max(
     graph: Graph,
     nodes: set[str],
     edges: list[Edge],
-    relations: tuple[str, ...] = DEFAULT_RELATIONS,
+    relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
     hybrid: bool = False,
 ) -> str:
-    relation_ids = {rel: i + 1 for i, rel in enumerate(relations)}
+    relation_ids = _relation_ids(edges, relations)
     lines = ["[r]"]
     for rel, rel_id in relation_ids.items():
         lines.append(f"{rel_id}:{rel}")
@@ -103,6 +104,17 @@ def render_gg_max(
     return "\n".join(lines)
 
 
+def _relation_ids(edges: list[Edge], relations: tuple[str, ...]) -> dict[str, int]:
+    edge_types = {edge.type for edge in edges}
+    ordered = [rel for rel in relations if rel in edge_types]
+    seen = set(ordered)
+    for edge in sorted(edges, key=lambda e: e.type):
+        if edge.type not in seen:
+            seen.add(edge.type)
+            ordered.append(edge.type)
+    return {rel: i + 1 for i, rel in enumerate(ordered)}
+
+
 def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     """Subject-verb-object triples — self-describing, zero schema overhead.
 
@@ -123,6 +135,31 @@ def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     return "\n".join(lines)
 
 
+def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    """Compact grounded notes for documentation-style summary questions.
+
+    This intentionally omits topology. For docs questions the useful payload is
+    usually the matched section/file labels plus short grounded facts, not every
+    `section_of` or `discusses` edge around them.
+    """
+    lines = ["[d]"]
+    for node_id in sorted(nodes, key=lambda nid: (graph.nodes[nid].path, graph.nodes[nid].label, nid)):
+        node = graph.nodes[node_id]
+        if node.kind == "concept" and not node.facts:
+            continue
+        parts = [node.label]
+        if node.kind and node.kind != "unknown":
+            parts.append(f"[{node.kind}]")
+        if node.path:
+            parts.append(node.path)
+        if node.summary:
+            parts.append(node.summary)
+        lines.append(" ".join(parts))
+        for fact in node.facts[:2]:
+            lines.append(f" {fact}")
+    return "\n".join(lines)
+
+
 def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str) -> str:
     if packet == "lowlevel":
         return render_lowlevel(graph, nodes, edges)
@@ -138,4 +175,6 @@ def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str)
         return render_gg_max(graph, nodes, edges, hybrid=True)
     if packet == "svo":
         return render_svo(graph, nodes, edges)
+    if packet == "doc_summary":
+        return render_doc_summary(graph, nodes, edges)
     raise ValueError(f"unknown packet format: {packet}")

@@ -1,0 +1,50 @@
+{
+  "projects": {
+    "slotmachine": [
+      {
+        "query": "video slot free games session",
+        "query_class": "subsystem_summary",
+        "expected_nodes": ["VideoSlotWithFreeGamesSession", "VideoSlotWithFreeGamesSessionHandling"]
+      },
+      {
+        "query": "symbols combinations analyzer random number generator",
+        "query_class": "blast_radius",
+        "expected_nodes": ["SymbolsCombinationsAnalyzer", "PseudorandomNumberGenerator"]
+      }
+    ],
+    "chess": [
+      {
+        "query": "alpha beta search mcts trajectory",
+        "query_class": "blast_radius",
+        "expected_nodes": ["alphabeta.py", "Searcher", "search"]
+      },
+      {
+        "query": "static exchange evaluation see",
+        "query_class": "direct_lookup",
+        "expected_nodes": ["Static Exchange Evaluation", "static_exchange_score"]
+      },
+      {
+        "query": "ace neural model features nnue",
+        "query_class": "subsystem_summary",
+        "expected_nodes": ["model.py", "features.py", "nnue.py"]
+      }
+    ],
+    "contextminer": [
+      {
+        "query": "mcp server corpus status",
+        "query_class": "blast_radius",
+        "expected_nodes": ["mcp_server.py", "mcp_server_miner.py", "dynamic_artifact_statuses"]
+      },
+      {
+        "query": "README mining tasks agents",
+        "query_class": "doc_summary",
+        "expected_nodes": ["AGENTS.md", "TASKS.md"]
+      },
+      {
+        "query": "artifact mcp server",
+        "query_class": "direct_lookup",
+        "expected_nodes": ["artifact_mcp_server.py", "artifact_mcp_server"]
+      }
+    ]
+  }
+}

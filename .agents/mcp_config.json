@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "graphgraph": {
+      "command": "graphgraph-mcp"
+    }
+  }
+}

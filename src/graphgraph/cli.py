@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from .core import Query
-from .io import load_graph, load_any, save_graph, save_gg, find_graph_path, find_policies_path
+from .eval import evaluate_graph, load_eval_tasks, results_to_json
+from .frontends import available_frontends
+from .io import load_graph, load_any, save_graph, save_gg, find_graph_path, find_policies_path, load_policies
+from .metrics import compare_graphs
+from .ontology import DEFAULT_RELATIONS
 from .packets import render_packet
 from .planner import choose_packet
 from .policies import render_policy_packet, select_policies
+from .retrieval import retrieve_context
 from .scanner import scan_directory
+from .semantic import load_semantic_triples, merge_semantic_triples
+from .temporal import graph_at
+from .traversal import POLICIES, traversal_policy
 from .validate import validate_packet
 
 
@@ -20,7 +29,9 @@ def cmd_plan(args: argparse.Namespace) -> None:
 
 def cmd_render(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
-    graph = load_graph(graph_path)
+    graph = load_any(graph_path)
+    if args.as_of:
+        graph = graph_at(graph, args.as_of)
     choice = choose_packet(args.query_class)
     starts = args.starts
     nodes, edges = graph.expand(starts, hops=choice.hops)
@@ -30,7 +41,7 @@ def cmd_render(args: argparse.Namespace) -> None:
 def cmd_final(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     policies_path = Path(args.policies) if args.policies else find_policies_path()
-    graph = load_graph(graph_path)
+    graph = load_any(graph_path)
     policies = load_policies(policies_path) if policies_path else []
     query = Query(
         text=args.query,
@@ -38,7 +49,7 @@ def cmd_final(args: argparse.Namespace) -> None:
         paths=tuple(args.path),
         tags=tuple(args.tag),
     )
-    choice = choose_packet(args.query_class)
+    choice = choose_packet(args.query_class, args.query)
     nodes, edges = graph.expand(args.starts, hops=choice.hops)
     selected = select_policies(policies, query)
     policy_packet = render_policy_packet(selected, compact=True)
@@ -48,6 +59,32 @@ def cmd_final(args: argparse.Namespace) -> None:
         print(policy_packet)
         print("\nGRAPH:")
     print(graph_packet)
+
+
+def cmd_query(args: argparse.Namespace) -> None:
+    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    graph = load_any(graph_path)
+    choice = choose_packet(args.query_class, args.query)
+    result = retrieve_context(
+        graph,
+        args.query,
+        args.query_class,
+        hops=args.hops if args.hops is not None else choice.hops,
+        anchor_limit=args.anchor_limit,
+        max_nodes=args.max_nodes,
+        scopes=tuple(args.scope),
+    )
+    if not result.starts:
+        print("No matching graph anchors found for query.")
+        return
+    if args.show_anchors:
+        print("ANCHORS:")
+        shown = args.anchor_limit if args.anchor_limit is not None else len(result.starts)
+        for match in result.matches[:shown]:
+            node = match.node
+            print(f"- {node.id} {node.label} [{node.kind}] {node.path} score={match.score:g}")
+        print("\nGRAPH:")
+    print(render_packet(graph, result.nodes, result.edges, args.packet or choice.packet))
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
@@ -63,12 +100,19 @@ def cmd_scan(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
     output_path = Path(args.output) if args.output else Path(".graphgraph/graph.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_graph_path = output_path if args.incremental else None
+    manifest_path = (output_path.parent / "manifest.json") if args.incremental else None
     graph = scan_directory(
         root,
         max_nodes=args.max_nodes,
         generic_mentions=args.generic_mentions,
         skip_dirs=args.skip_dirs or [],
         depth=args.depth,
+        frontend=args.frontend,
+        docs=args.docs,
+        communities=args.communities,
+        previous_graph_path=previous_graph_path,
+        manifest_path=manifest_path,
     )
     save_graph(graph, output_path)
     print(f"Scanned {len(graph.nodes)} nodes and {len(graph.edges)} edges from {root.resolve()} -> {output_path}")
@@ -98,6 +142,58 @@ def cmd_export(args: argparse.Namespace) -> None:
     print(f"Exported {len(graph.nodes)} nodes, {len(graph.edges)} edges -> {output_path}")
 
 
+def cmd_ontology(args: argparse.Namespace) -> None:
+    for name, spec in DEFAULT_RELATIONS.items():
+        if args.family and spec.family != args.family:
+            continue
+        weak = " weak" if spec.weak else ""
+        print(f"{name}: family={spec.family} strength={spec.strength:g} direction={spec.direction}{weak} - {spec.description}")
+
+
+def cmd_compare(args: argparse.Namespace) -> None:
+    left = load_any(Path(args.left))
+    right = load_any(Path(args.right))
+    comparison = compare_graphs(left, right)
+    data = {
+        "left": comparison.left.__dict__,
+        "right": comparison.right.__dict__,
+        "shared_node_paths": comparison.shared_node_paths,
+        "shared_edge_keys": comparison.shared_edge_keys,
+        "left_only_edge_keys": comparison.left_only_edge_keys,
+        "right_only_edge_keys": comparison.right_only_edge_keys,
+        "shared_normalized_edges": comparison.shared_normalized_edges,
+    }
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def cmd_merge_semantic(args: argparse.Namespace) -> None:
+    graph = load_any(Path(args.graph))
+    triples = load_semantic_triples(Path(args.triples))
+    merged = merge_semantic_triples(graph, triples)
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    save_graph(merged, output)
+    print(f"Merged {len(triples)} semantic triples -> {len(merged.nodes)} nodes, {len(merged.edges)} edges -> {output}")
+
+
+def cmd_eval(args: argparse.Namespace) -> None:
+    tasks = load_eval_tasks(Path(args.tasks))
+    results = evaluate_graph(Path(args.graph), tasks, max_nodes=args.max_nodes)
+    print(results_to_json(results))
+
+
+def cmd_frontends(_args: argparse.Namespace) -> None:
+    data = [cap.__dict__ for cap in available_frontends()]
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def cmd_traversal(args: argparse.Namespace) -> None:
+    if args.query_class:
+        print(json.dumps(traversal_policy(args.query_class).__dict__, indent=2, ensure_ascii=False))
+        return
+    print(json.dumps({name: policy.__dict__ for name, policy in POLICIES.items()}, indent=2, ensure_ascii=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="graphgraph")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -122,6 +218,19 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--tag", action="append", default=[])
     final.set_defaults(func=cmd_final)
 
+    query = sub.add_parser("query", help="Retrieve a query-specific graph context packet without preselecting node IDs.")
+    query.add_argument("query", help="Natural-language query used to find graph anchors.")
+    query.add_argument("--graph")
+    query.add_argument("--query-class", default="blast_radius")
+    query.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "svo", "doc_summary"])
+    query.add_argument("--hops", type=int)
+    query.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
+    query.add_argument("--max-nodes", type=int)
+    query.add_argument("--as-of", help="Use a point-in-time graph view for ISO timestamp/date.")
+    query.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
+    query.add_argument("--show-anchors", action="store_true")
+    query.set_defaults(func=cmd_query)
+
     validate = sub.add_parser("validate")
     validate.add_argument("--packet")
     validate.set_defaults(func=cmd_validate)
@@ -136,6 +245,12 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Additional directory names to skip (e.g. --skip-dirs spikes test-inputs).")
     scan.add_argument("--depth", choices=["files", "symbols"], default="files",
                       help="'files' (default): one node per file. 'symbols': adds function/class/struct nodes.")
+    scan.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto",
+                      help="Symbol extraction frontend for --depth symbols. auto prefers Tree-sitter when available.")
+    scan.add_argument("--docs", action="store_true", help="Extract document sections and concept nodes.")
+    scan.add_argument("--communities", action="store_true", help="Add deterministic path/scope community summary nodes.")
+    scan.add_argument("--incremental", action="store_true", default=True, help="Use hash-based incremental scanner (default: True).")
+    scan.add_argument("--no-incremental", action="store_false", dest="incremental", help="Disable incremental scanning.")
     scan.set_defaults(func=cmd_scan)
 
     ingest = sub.add_parser("ingest", help="Ingest any graph format (.gg, .json, .csv, .tsv) into .graphgraph/graph.json.")
@@ -147,6 +262,34 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--graph", help="Source graph path. Auto-detected if omitted.")
     export.add_argument("--output", "-o", help="Output .gg path (default: same dir as source).")
     export.set_defaults(func=cmd_export)
+
+    ontology = sub.add_parser("ontology", help="List native relation ontology and traversal weights.")
+    ontology.add_argument("--family", help="Filter by relation family.")
+    ontology.set_defaults(func=cmd_ontology)
+
+    compare = sub.add_parser("compare", help="Compare two graph files by size, relation types, and overlap.")
+    compare.add_argument("--left", required=True)
+    compare.add_argument("--right", required=True)
+    compare.set_defaults(func=cmd_compare)
+
+    semantic = sub.add_parser("merge-semantic", help="Merge grounded semantic triples into a graph with provenance.")
+    semantic.add_argument("--graph", required=True)
+    semantic.add_argument("--triples", required=True)
+    semantic.add_argument("--output", required=True)
+    semantic.set_defaults(func=cmd_merge_semantic)
+
+    eval_cmd = sub.add_parser("eval", help="Evaluate retrieval recall and packet token cost against task expectations.")
+    eval_cmd.add_argument("--graph", required=True)
+    eval_cmd.add_argument("--tasks", required=True)
+    eval_cmd.add_argument("--max-nodes", type=int)
+    eval_cmd.set_defaults(func=cmd_eval)
+
+    frontends = sub.add_parser("frontends", help="List extraction frontend capabilities.")
+    frontends.set_defaults(func=cmd_frontends)
+
+    traversal = sub.add_parser("traversal", help="List query-class traversal policies.")
+    traversal.add_argument("--query-class")
+    traversal.set_defaults(func=cmd_traversal)
 
     return parser
 

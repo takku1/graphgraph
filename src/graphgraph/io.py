@@ -18,6 +18,13 @@ def load_graph(path: Path) -> Graph:
             path=item.get("path") or item.get("source_file") or "",
             summary=item.get("summary") or item.get("properties", {}).get("description") or "",
             facts=tuple(item.get("facts") or []),
+            scope=item.get("scope") or item.get("community") or "",
+            parent=item.get("parent") or item.get("parent_id") or "",
+            source=item.get("source") or item.get("source_uri") or "",
+            confidence=_float_or(item.get("confidence"), 1.0),
+            active=bool(item.get("active", True)),
+            created_at=item.get("created_at") or "",
+            updated_at=item.get("updated_at") or "",
         )
         for item in data["nodes"]
     }
@@ -28,10 +35,18 @@ def load_graph(path: Path) -> Graph:
             target=item["target"],
             type=item.get("type") or item.get("relation") or "dependency",
             weight=float(item.get("weight") if item.get("weight") is not None else 1.0),
+            confidence=_float_or(item.get("confidence"), 1.0),
+            provenance=item.get("provenance") or item.get("kind") or item.get("source_type") or "extracted",
+            evidence=item.get("evidence") or item.get("description") or "",
+            source_location=item.get("source_location") or item.get("loc") or "",
+            valid_from=item.get("valid_from") or item.get("created_at") or "",
+            valid_to=item.get("valid_to") or "",
+            active=bool(item.get("active", True)),
         )
         for item in edges_data
     ]
-    return Graph(nodes=nodes, edges=edges)
+    metadata = {str(k): str(v) for k, v in (data.get("metadata") or {}).items()}
+    return Graph(nodes=nodes, edges=edges, metadata=metadata)
 
 
 def load_policies(path: Path) -> list[Policy]:
@@ -50,6 +65,13 @@ def load_policies(path: Path) -> list[Policy]:
     ]
 
 
+def _float_or(value: object, default: float) -> float:
+    try:
+        return float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
 def save_graph(graph: Graph, path: Path) -> None:
     if path.suffix.lower() == ".gg":
         save_gg(graph, path)
@@ -63,6 +85,13 @@ def save_graph(graph: Graph, path: Path) -> None:
                 "path": node.path,
                 "summary": node.summary,
                 "facts": list(node.facts),
+                "scope": node.scope,
+                "parent": node.parent,
+                "source": node.source,
+                "confidence": node.confidence,
+                "active": node.active,
+                "created_at": node.created_at,
+                "updated_at": node.updated_at,
             }
             for node in graph.nodes.values()
         ],
@@ -72,9 +101,17 @@ def save_graph(graph: Graph, path: Path) -> None:
                 "target": edge.target,
                 "type": edge.type,
                 "weight": edge.weight,
+                "confidence": edge.confidence,
+                "provenance": edge.provenance,
+                "evidence": edge.evidence,
+                "source_location": edge.source_location,
+                "valid_from": edge.valid_from,
+                "valid_to": edge.valid_to,
+                "active": edge.active,
             }
             for edge in graph.edges
         ],
+        "metadata": dict(graph.metadata),
     }
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -282,6 +319,13 @@ def merge_graphify(base: Graph, overlay: Graph) -> Graph:
                 path=base_node.path,
                 summary=ov_node.summary or base_node.summary,
                 facts=ov_node.facts if ov_node.facts else base_node.facts,
+                scope=ov_node.scope or base_node.scope,
+                parent=ov_node.parent or base_node.parent,
+                source=ov_node.source or base_node.source,
+                confidence=max(base_node.confidence, ov_node.confidence),
+                active=base_node.active and ov_node.active,
+                created_at=base_node.created_at or ov_node.created_at,
+                updated_at=ov_node.updated_at or base_node.updated_at,
             )
             overlay_id_map[ov_id] = base_id
         else:
@@ -297,9 +341,21 @@ def merge_graphify(base: Graph, overlay: Graph) -> Graph:
             key = (src, tgt, edge.type)
             if key not in seen_edges:
                 seen_edges.add(key)
-                new_edges.append(Edge(source=src, target=tgt, type=edge.type, weight=edge.weight))
+                new_edges.append(Edge(
+                    source=src,
+                    target=tgt,
+                    type=edge.type,
+                    weight=edge.weight,
+                    confidence=edge.confidence,
+                    provenance=edge.provenance,
+                    evidence=edge.evidence,
+                    source_location=edge.source_location,
+                    valid_from=edge.valid_from,
+                    valid_to=edge.valid_to,
+                    active=edge.active,
+                ))
 
-    return Graph(nodes=new_nodes, edges=new_edges)
+    return Graph(nodes=new_nodes, edges=new_edges, metadata=dict(base.metadata))
 
 
 _GRAPHIFY_CANDIDATES = [
@@ -321,7 +377,6 @@ def find_graph_path(workspace_root: Path = Path(".")) -> Path:
     candidates = [
         workspace_root / ".graphgraph" / "graph.gg",    # native format preferred
         workspace_root / ".graphgraph" / "graph.json",
-        workspace_root / "graphify-out" / "graph.json",
         workspace_root / ".code-review-graph" / "graph.json",
     ]
     for c in candidates:
@@ -344,5 +399,3 @@ def find_policies_path(workspace_root: Path = Path(".")) -> Path | None:
         if c.exists():
             return c
     return None
-
-

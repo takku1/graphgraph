@@ -130,11 +130,24 @@ def score_answer(record: dict, answer: str, ttft_ms: float | None, total_ms: flo
     }
 
 
+def get_api_key(name: str) -> str | None:
+    val = os.environ.get(name)
+    if val:
+        return val
+    try:
+        import keyring
+        service = "OpenAI" if "OPENAI" in name else "Gemini"
+        return keyring.get_password(service, "API_KEY")
+    except Exception:
+        return None
+
+
 def run_openai(prompt: str) -> tuple[str, float, float, str]:
     from openai import OpenAI  # type: ignore
 
     model = os.environ.get("OPENAI_REASONING_MODEL", "gpt-4o-mini")
-    client = OpenAI()
+    api_key = get_api_key("OPENAI_API_KEY")
+    client = OpenAI(api_key=api_key)
     start = time.perf_counter()
     first = None
     chunks: list[str] = []
@@ -155,6 +168,43 @@ def run_openai(prompt: str) -> tuple[str, float, float, str]:
     return "".join(chunks), ((first or end) - start) * 1000, (end - start) * 1000, model
 
 
+def run_gemini(prompt: str) -> tuple[str, float, float, str]:
+    model = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+    api_key = get_api_key("GEMINI_API_KEY")
+    start = time.perf_counter()
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+        )
+        text = response.text
+        end = time.perf_counter()
+        return text, (end - start) * 1000, (end - start) * 1000, model
+    except ImportError:
+        pass
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model_obj = genai.GenerativeModel(model)
+        response = model_obj.generate_content(prompt)
+        text = response.text
+        end = time.perf_counter()
+        return text, (end - start) * 1000, (end - start) * 1000, model
+    except Exception as e:
+        raise RuntimeError(f"Failed to run Gemini: {e}")
+
+
+def run_llm(prompt: str) -> tuple[str, float, float, str]:
+    if get_api_key("OPENAI_API_KEY"):
+        return run_openai(prompt)
+    elif get_api_key("GEMINI_API_KEY"):
+        return run_gemini(prompt)
+    else:
+        raise RuntimeError("No API key found for OpenAI or Gemini in environment or keyring.")
+
+
 def write_results(rows: list[dict], skipped: bool) -> None:
     if rows:
         with RESULTS_CSV.open("w", newline="", encoding="utf-8") as f:
@@ -170,7 +220,7 @@ def write_results(rows: list[dict], skipped: bool) -> None:
             "Prompts were generated for later execution:",
             f"- `{PROMPTS_JSONL.relative_to(ROOT)}`",
             "",
-            "Set `RUN_OPENAI_REASONING_EVAL=1` and `OPENAI_API_KEY` to run live scoring.",
+            "Set `OPENAI_API_KEY` or `GEMINI_API_KEY` or store key in Windows Credential Manager to run live scoring.",
         ])
     else:
         lines.extend([
@@ -199,17 +249,24 @@ def main() -> None:
     records = iter_prompt_records()
     write_prompts(records)
 
-    if os.environ.get("RUN_OPENAI_REASONING_EVAL") != "1":
+    openai_key = get_api_key("OPENAI_API_KEY")
+    gemini_key = get_api_key("GEMINI_API_KEY")
+    run_eval = (
+        os.environ.get("RUN_OPENAI_REASONING_EVAL") == "1"
+        or os.environ.get("RUN_GEMINI_REASONING_EVAL") == "1"
+        or bool(openai_key)
+        or bool(gemini_key)
+    )
+
+    if not run_eval:
         write_results([], skipped=True)
         print(RESULTS_MD.read_text(encoding="utf-8"))
         return
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise SystemExit("OPENAI_API_KEY is required when RUN_OPENAI_REASONING_EVAL=1.")
 
     rows = []
     with ANSWERS_JSONL.open("w", encoding="utf-8") as answers_out:
         for record in records:
-            answer, ttft_ms, total_ms, model = run_openai(record["prompt"])
+            answer, ttft_ms, total_ms, model = run_llm(record["prompt"])
             rows.append(score_answer(record, answer, ttft_ms, total_ms, model))
             answers_out.write(json.dumps({**record, "answer": answer}, ensure_ascii=False) + "\n")
     write_results(rows, skipped=False)

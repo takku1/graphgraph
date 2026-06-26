@@ -1,11 +1,13 @@
 # Architecture
 
-`graphgraph` separates storage, retrieval, packet rendering, and constraint
-selection.
+`graphgraph` separates native indexing, storage, retrieval, packet rendering,
+constraint selection, validation, and scoring. External graph tools are import
+routes; they are not the core architecture.
 
 ```text
-source route
+native source scanner / imported graph
   -> shared context IR
+  -> native graph store
   -> retrieval planner
   -> graph packet encoder
   -> scoped policy selector
@@ -22,12 +24,20 @@ Every source route compiles to the same logical shape:
 - **edges**: `source`, `target`, `type`, `weight`
 - **policies**: `id`, `kind`, `priority`, `applies_to`, `task_tags`, `compact`, `content`
 
-To support zero-configuration indexing tools like `graphify`, the internal loader permits loose schema binding with explicit fallback mappings (e.g., fallback from `label` to `name` or `id`, `kind` to `file_type` or `type`, `path` to `source_file`, and `summary` to `properties.description`). This allows code graphs and external databases to be compared and validated out-of-the-box.
+To support compatibility with tools like Graphify, code-review graph stores, and
+CSV edge lists, the internal loader permits loose schema binding with explicit
+fallback mappings (e.g., fallback from `label` to `name` or `id`, `kind` to
+`file_type` or `type`, `path` to `source_file`, and `summary` to
+`properties.description`). This is an ingestion convenience. Native graphgraph
+graphs live under `.graphgraph/`.
 
 ## Source Routes
 
-Supported benchmark routes:
+Supported native and benchmark routes:
 
+- `native_scan_files`
+- `native_scan_symbols`
+- `native_gg`
 - `code_graph_direct`
 - `sqlite_rows`
 - `wiki_with_edges`
@@ -46,6 +56,10 @@ Current official packet targets:
 - `lowlevel`: compact GG-LL adjacency
 - `sql`: SQL-style rows
 - `hybrid`: graph rows plus grounding snippets
+- `svo`: compact subject-verb-object triples
+- `semantic_arrow`: relation words inline with directed arrows
+- `gg_max`: integer node/relation coding for larger topology packets
+- `gg_max_hybrid`: `gg_max` plus compact summaries/facts
 
 Low-level and SQL packets should pass mechanical validation before they are
 returned to an LLM client. Validation checks block structure, node references,
@@ -54,8 +68,9 @@ relation references, and numeric weights.
 The adaptive planner chooses per query class:
 
 - direct/reverse: often `1hop sql`
-- path/blast: usually `2hop lowlevel`
-- summary/negative: usually `1hop lowlevel`
+- path/blast: usually `2hop gg_max`
+- summary: usually `1hop gg_max_hybrid`
+- tiny evidence packets: often `svo` or `semantic_arrow`
 
 ## Constraint Policies
 
@@ -75,7 +90,7 @@ compact policy text.
 
 Recommended first implementation:
 
-- canonical SQLite or JSON records for inspectability,
+- canonical `.gg` plus JSON records for inspectability,
 - derived CSR/CSC/bitmap indexes for hot traversal,
 - text packets only at the LLM boundary.
 

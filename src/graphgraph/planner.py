@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -10,7 +11,10 @@ class PacketChoice:
     reason: str
 
 
-def choose_packet(query_class: str) -> PacketChoice:
+_DOC_TERMS = re.compile(r"\b(readme|docs?|documentation|guide|install(?:ation)?|usage|setup|tutorial|manual)\b", re.IGNORECASE)
+
+
+def choose_packet(query_class: str, query: str = "") -> PacketChoice:
     """Return the empirically measured optimal packet strategy per query class.
 
     Source: benchmarks/context_graph empirical-findings.md — measured at 200 nodes / 265 edges.
@@ -26,6 +30,8 @@ def choose_packet(query_class: str) -> PacketChoice:
         return PacketChoice(2, "gg_max", "path queries need 2-hop topology; gg_max is the token floor")
     if query_class == "blast_radius":
         return PacketChoice(2, "gg_max", "blast-radius needs 2-hop topology; gg_max is the token floor")
+    if query_class == "doc_summary" or (query_class == "subsystem_summary" and _DOC_TERMS.search(query)):
+        return PacketChoice(1, "doc_summary", "documentation summaries need grounded snippets more than topology")
     if query_class == "subsystem_summary":
         return PacketChoice(1, "gg_max_hybrid", "summary queries need inline node facts; hybrid adds minimal tokens")
     if query_class == "negative_query":

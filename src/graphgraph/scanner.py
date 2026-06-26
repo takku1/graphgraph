@@ -3,8 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .ast_scanner import extract_symbols
+from .communities import add_community_nodes
 from .core import Edge, Graph, Node
+from .doc_scanner import DocumentInput, extract_document_context
+from .frontends import SourceFile, select_extractor
 
 
 # ── language-specific import patterns ──────────────────────────────────────
@@ -209,6 +211,11 @@ def scan_directory(
     generic_mentions: bool = False,
     skip_dirs: list[str] | None = None,
     depth: str = "files",
+    frontend: str = "auto",
+    docs: bool = False,
+    communities: bool = False,
+    previous_graph_path: Path | None = None,
+    manifest_path: Path | None = None,
 ) -> Graph:
     """Scan *root* and build a Graph of file-level (and optionally symbol-level) nodes.
 
@@ -223,18 +230,97 @@ def scan_directory(
         skip_dirs: Additional directory names to skip (beyond built-in SKIP_DIRS).
         depth: "files" (default) → one node per file;
                "symbols" → file nodes + function/class/struct nodes with call edges.
+        frontend: "auto" prefers Tree-sitter when available and falls back to
+            regex; "tree_sitter" requires Tree-sitter; "regex" forces baseline.
+        docs: Extract document sections/concepts from Markdown/RST/HTML/text.
+        communities: Add deterministic path/scope community summary nodes.
+        previous_graph_path: Path to the existing graph JSON/GG file.
+        manifest_path: Path to the manifest JSON file.
     """
     root = root.resolve()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
     files = _collect_files(root, max_nodes, extra_skip)
 
     file_map: dict[str, str] = {}   # rel_posix -> node_id
-    nodes: dict[str, Node] = {}
-
     for f in files:
         rel = f.relative_to(root).as_posix()
         nid = _node_id(f, root)
         file_map[rel] = nid
+
+    nodes: dict[str, Node] = {}
+    edges: list[Edge] = []
+    seen: set[tuple[str, str]] = set()
+
+    # Load manifest and previous graph if available and paths are provided
+    from .manifest import Manifest, compute_file_hash
+    from .io import load_any
+
+    manifest = None
+    previous_graph = None
+    if manifest_path and previous_graph_path:
+        manifest = Manifest.load(manifest_path)
+        if previous_graph_path.exists():
+            try:
+                previous_graph = load_any(previous_graph_path)
+            except Exception:
+                previous_graph = None
+
+    skipped_files: list[tuple[Path, str, str]] = []
+    dirty_files: list[tuple[Path, str, str]] = []
+
+    if manifest and previous_graph:
+        for f in files:
+            rel = f.relative_to(root).as_posix()
+            info = manifest.get_file_info(rel)
+            current_hash = compute_file_hash(f)
+            if (info and info.get("hash") == current_hash and
+                info.get("depth") == depth and
+                info.get("frontend") == frontend and
+                info.get("docs") == docs and
+                info.get("communities") == communities):
+                skipped_files.append((f, rel, current_hash))
+            else:
+                dirty_files.append((f, rel, current_hash))
+    else:
+        for f in files:
+            rel = f.relative_to(root).as_posix()
+            current_hash = compute_file_hash(f)
+            dirty_files.append((f, rel, current_hash))
+
+    active_rels = {f.relative_to(root).as_posix() for f in files}
+
+    # Helper to determine owning file path of any node ID (for edge mapping)
+    def find_file_for_node(node_id: str) -> str | None:
+        if node_id in nodes:
+            return nodes[node_id].path
+        # fallback: check file_map
+        for rel, nid in file_map.items():
+            if nid == node_id:
+                return rel
+        return None
+
+    # Load skipped nodes and edges
+    for f, rel, fhash in skipped_files:
+        info = manifest.get_file_info(rel)
+        for nid in info.get("nodes", []):
+            if nid in previous_graph.nodes:
+                nodes[nid] = previous_graph.nodes[nid]
+        for src, tgt, etype in info.get("edges", []):
+            matching_edge = None
+            for pe in previous_graph.edges:
+                if pe.source == src and pe.target == tgt and pe.type == etype:
+                    matching_edge = pe
+                    break
+            if matching_edge:
+                edges.append(matching_edge)
+                seen.add((src, tgt))
+            else:
+                edges.append(Edge(source=src, target=tgt, type=etype))
+                seen.add((src, tgt))
+
+    # Create file nodes for dirty files
+    for f, rel, fhash in dirty_files:
+        nid = file_map[rel]
         nodes[nid] = Node(
             id=nid,
             label=f.name,
@@ -242,19 +328,19 @@ def scan_directory(
             path=rel,
         )
 
-    edges: list[Edge] = []
-    seen: set[tuple[str, str]] = set()
-
+    # Scans dirty files for imports
     def add_edge(src: str, tgt: str | None, etype: str = "imports") -> None:
         if tgt and tgt != src:
             key = (src, tgt)
             if key not in seen:
                 seen.add(key)
-                edges.append(Edge(source=src, target=tgt, type=etype, weight=1.0))
+                provenance = "regex_reference" if etype in {"references", "links", "includes"} else "regex_import"
+                confidence = 0.45 if etype == "references" else 0.85
+                edges.append(Edge(source=src, target=tgt, type=etype, weight=1.0, confidence=confidence, provenance=provenance))
 
-    for f in files:
+    for f, rel, fhash in dirty_files:
         suffix = f.suffix.lower()
-        src_id = file_map[f.relative_to(root).as_posix()]
+        src_id = file_map[rel]
 
         if suffix not in _PARSEABLE:
             if generic_mentions:
@@ -291,7 +377,6 @@ def scan_directory(
             for m in _RUST_MOD.finditer(text):
                 add_edge(src_id, _resolve_rust_mod(m.group(1), f, root, file_map))
             for m in _RUST_USE.finditer(text):
-                # crate-internal `use crate::module::sub` → try to find module/sub.rs
                 parts = m.group(1).replace("::", "/")
                 add_edge(src_id, _resolve_relative("./" + parts, f, root, file_map, extra_exts=(".rs", "/mod.rs")))
 
@@ -325,32 +410,82 @@ def scan_directory(
             for m in _HTML_HREF.finditer(text):
                 add_edge(src_id, _resolve_relative(m.group(1), f, root, file_map), "links")
 
-    # ── symbol-level extraction (depth="symbols") ───────────────────────────
-    if depth == "symbols":
-        # Collect (path, rel, file_node_id, text) for parseable source files
-        source_tuples: list[tuple[Path, str, str, str]] = []
-        for f in files:
+    metadata = {
+        "scan_depth": depth,
+        "frontend": "files",
+        "docs": str(bool(docs)).lower(),
+        "communities": str(bool(communities)).lower(),
+    }
+
+    if depth == "symbols" and dirty_files:
+        source_files: list[SourceFile] = []
+        for f, rel, fhash in dirty_files:
             suffix = f.suffix.lower()
             if suffix not in _PARSEABLE:
                 continue
-            rel = f.relative_to(root).as_posix()
             file_nid = file_map[rel]
             try:
                 text = f.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
-            source_tuples.append((f, rel, file_nid, text))
+            source_files.append(SourceFile(f, rel, file_nid, text))
 
-        # Budget: keep total nodes under max_nodes * 10 (symbols can multiply quickly)
-        max_syms = max(500, max_nodes * 5)
-        sym_nodes, sym_edges = extract_symbols(source_tuples, max_total_symbols=max_syms)
-        nodes.update(sym_nodes)
-        # Add symbol edges, deduplicating against existing
-        existing = {(e.source, e.target, e.type) for e in edges}
-        for e in sym_edges:
-            key = (e.source, e.target, e.type)
-            if key not in existing:
-                existing.add(key)
-                edges.append(e)
+        if source_files:
+            max_syms = max(500, max_nodes * 5)
+            extraction = select_extractor(frontend).extract_symbols(source_files, max_total_symbols=max_syms)
+            metadata["frontend"] = extraction.frontend
+            nodes.update(extraction.nodes)
+            existing = {(e.source, e.target, e.type) for e in edges}
+            for e in extraction.edges:
+                key = (e.source, e.target, e.type)
+                if key not in existing:
+                    existing.add(key)
+                    edges.append(e)
 
-    return Graph(nodes=nodes, edges=edges)
+    if docs and dirty_files:
+        doc_inputs: list[DocumentInput] = []
+        for f, rel, fhash in dirty_files:
+            if f.suffix.lower() not in {".md", ".mdx", ".rst", ".html", ".htm", ".txt"}:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            doc_inputs.append(DocumentInput(f, rel, file_map[rel], text))
+        if doc_inputs:
+            doc_nodes, doc_edges = extract_document_context(doc_inputs, file_map)
+            nodes.update(doc_nodes)
+            existing = {(e.source, e.target, e.type) for e in edges}
+            for e in doc_edges:
+                key = (e.source, e.target, e.type)
+                if key not in existing:
+                    existing.add(key)
+                    edges.append(e)
+
+    # Update manifest for the scanned (dirty) files
+    if manifest:
+        # Clean up deleted files from manifest
+        keys_to_delete = [k for k in manifest.files if k not in active_rels]
+        for k in keys_to_delete:
+            del manifest.files[k]
+
+        for f, rel, fhash in dirty_files:
+            file_nodes = [nid for nid, node in nodes.items() if find_file_for_node(nid) == rel]
+            file_edges = [(e.source, e.target, e.type) for e in edges if find_file_for_node(e.source) == rel]
+            manifest.update_file(
+                rel_path=rel,
+                file_hash=fhash,
+                depth=depth,
+                frontend=frontend,
+                docs=docs,
+                communities=communities,
+                nodes=file_nodes,
+                edges=file_edges,
+            )
+        manifest.save(manifest_path)
+
+    graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
+    if communities:
+        graph = add_community_nodes(graph)
+        graph.metadata["communities"] = "path"
+    return graph

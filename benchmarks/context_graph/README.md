@@ -328,6 +328,70 @@ Suggested fixture tiers:
 - large TypeScript monorepos last, to stress retrieval selectivity and token
   pressure
 
+## Local Locus Fixture
+
+For this workstation, `locus` is the main real-world fixture. It compares native
+graphgraph against Graphify import on the same task file:
+
+```powershell
+$env:PYTHONPATH="src"
+python benchmarks\context_graph\locus_benchmark.py
+```
+
+Optional controls:
+
+```powershell
+$env:LOCUS_REPO="C:\Users\dcarn\aiprojects\locus"
+$env:LOCUS_REBUILD="1"
+$env:LOCUS_FRONTEND="tree_sitter"
+$env:LOCUS_MAX_NODES="1200"
+```
+
+Outputs:
+
+- `benchmarks/context_graph/out/locus/locus_eval.csv`
+- `benchmarks/context_graph/out/locus/locus_summary.md`
+- `benchmarks/context_graph/out/locus/native_vs_graphify.json`
+
+The Locus runner enforces native graphgraph recall/token thresholds by default.
+Set `LOCUS_ENFORCE_THRESHOLDS=0` to generate reports without failing the
+process.
+
+## Local Project Smoke Fixture
+
+Use this to catch scanner regressions across non-Locus project shapes: Python,
+TypeScript, docs-heavy repos, and mixed web/Python repos.
+
+```powershell
+$env:LOCAL_PROJECT_FRONTEND="tree_sitter"
+$env:LOCAL_PROJECT_MAX_NODES="800"
+uv run --with tree-sitter --with tree-sitter-language-pack python benchmarks\context_graph\local_project_smoke.py
+```
+
+Optional controls:
+
+```powershell
+$env:AIPROJECTS_ROOT="C:\Users\dcarn\aiprojects"
+$env:LOCAL_PROJECTS="activation,chess,contextminer,ebaypostingautomation,slotmachine,tuya-ble-scanner"
+```
+
+Outputs:
+
+- `benchmarks/context_graph/out/local_projects/local_project_smoke.csv`
+- `benchmarks/context_graph/out/local_projects/local_project_smoke.md`
+- `benchmarks/context_graph/out/local_projects/<project>.json`
+
+Then run the retrieval regression tasks over those saved graphs:
+
+```powershell
+uv run --with tree-sitter --with tree-sitter-language-pack python benchmarks\context_graph\local_project_eval.py
+```
+
+Outputs:
+
+- `benchmarks/context_graph/out/local_projects/local_project_eval.csv`
+- `benchmarks/context_graph/out/local_projects/local_project_eval.md`
+
 ## Interpretation
 
 High recall with low token pressure is the useful region.

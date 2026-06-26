@@ -7,11 +7,16 @@ from typing import Any
 
 from .cli import cmd_final
 from .core import Query
-from .io import load_graph, load_any, save_graph, save_gg, find_graph_path, find_policies_path
+from .frontends import available_frontends
+from .io import load_graph, load_any, save_graph, save_gg, find_graph_path, find_policies_path, load_policies
+from .ontology import DEFAULT_RELATIONS
 from .packets import render_packet
 from .planner import choose_packet
 from .policies import render_policy_packet, select_policies
+from .retrieval import retrieve_context, search_nodes
 from .scanner import scan_directory
+from .temporal import graph_at
+from .traversal import POLICIES, traversal_policy
 from .validate import validate_packet
 
 
@@ -57,6 +62,29 @@ TOOLS = [
         },
     },
     {
+        "name": "query_context",
+        "description": (
+            "Native graphgraph retrieval: find graph anchors from a natural-language query, "
+            "expand the graph, and render the chosen compact packet. Use this when the caller "
+            "does not already know node IDs."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {"type": "string", "description": "Path to native graphgraph graph; auto-detected if omitted."},
+                "query": {"type": "string"},
+                "query_class": {"type": "string", "description": "direct_lookup, reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query."},
+                "packet": {"type": "string", "description": "Optional packet override."},
+                "anchor_limit": {"type": "integer", "description": "Max anchor nodes before expansion. Default: adaptive by query class."},
+                "max_nodes": {"type": "integer", "description": "Expanded node budget."},
+                "as_of": {"type": "string", "description": "Optional ISO timestamp/date for point-in-time graph view."},
+                "scopes": {"type": "array", "items": {"type": "string"}, "description": "Optional scope/path prefixes to constrain retrieval."},
+                "show_anchors": {"type": "boolean", "description": "Include ranked anchors before packet."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "validate_packet",
         "description": "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, or gg_max).",
         "inputSchema": {
@@ -85,7 +113,11 @@ TOOLS = [
                 "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 500."},
                 "generic_mentions": {"type": "boolean", "description": "Also add weak 'references' edges for any file that mentions another file's name. Useful for docs-heavy repos. Default: false."},
                 "skip_dirs": {"type": "array", "items": {"type": "string"}, "description": "Extra directory names to exclude (beyond built-ins). E.g. ['spikes', 'test-inputs']."},
-                "depth": {"type": "string", "enum": ["files", "symbols"], "description": "'files' (default): one node per file. 'symbols': adds function/class/struct nodes with call edges (graphify-level depth)."},
+                "depth": {"type": "string", "enum": ["files", "symbols"], "description": "'files' (default): one node per file. 'symbols': adds native function/class/struct nodes with call/reference edges."},
+                "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"], "description": "Symbol extraction frontend for depth=symbols. auto prefers Tree-sitter when available."},
+                "docs": {"type": "boolean", "description": "Extract document sections and concept nodes from Markdown/RST/HTML/text."},
+                "communities": {"type": "boolean", "description": "Add deterministic path/scope community summary nodes."},
+                "incremental": {"type": "boolean", "description": "Enable hash-based incremental scanning. Defaults to true."},
             },
         },
     },
@@ -128,6 +160,34 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "describe_ontology",
+        "description": "List native relation semantics, traversal weights, and weak/strong relation families.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "family": {"type": "string", "description": "Optional relation family filter."},
+            },
+        },
+    },
+    {
+        "name": "describe_frontends",
+        "description": "List available extraction frontend layers and whether optional parsers are installed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "describe_traversal",
+        "description": "List query-class traversal policies used for graph retrieval.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query_class": {"type": "string"},
+            },
+        },
+    },
 ]
 
 
@@ -138,6 +198,7 @@ FORMAT_TABLE = [
     {"format": "sql", "schema_tokens": 10, "relative_tokens": "1.38x", "description": "Table row layout. Best for 1-hop direct/reverse lookups (no relation-map overhead)."},
     {"format": "semantic_arrow", "schema_tokens": 15, "relative_tokens": "1.49x", "description": "Subject-verb-object arrows with @nodes/@edges preamble."},
     {"format": "gg_max_hybrid", "schema_tokens": 20, "relative_tokens": "~1.6x", "description": "gg_max + inline node kind/summary. Best for subsystem summaries."},
+    {"format": "doc_summary", "schema_tokens": 2, "relative_tokens": "~0.6x", "description": "Grounded section/file notes with no topology. Best for README/docs/install/usage questions."},
     {"format": "hybrid", "schema_tokens": 5, "relative_tokens": "~2.3x", "description": "Markdown bullet lists. Readable but high token overhead."},
     {"format": "json", "schema_tokens": 0, "relative_tokens": "3.9-6.7x", "description": "Raw JSON. Never use as LLM wire format."},
     {"format": ".gg file", "schema_tokens": 0, "relative_tokens": "~0.9x", "description": "Native adjacency-list storage format. Nodes then their edges co-located. LLMs can generate this directly."},
@@ -164,10 +225,12 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
     name = params.get("name")
     args = params.get("arguments") or {}
     if name == "plan_context":
-        choice = choose_packet(str(args["query_class"]))
+        choice = choose_packet(str(args["query_class"]), str(args.get("query", "")))
         return content(json.dumps({"hops": choice.hops, "packet": choice.packet, "reason": choice.reason}))
     if name == "final_packet":
         return content(build_final_packet(args))
+    if name == "query_context":
+        return content(build_query_context(args))
     if name == "validate_packet":
         result = validate_packet(str(args["packet"]))
         return content(json.dumps({
@@ -185,13 +248,37 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(handle_export_graph(args))
     if name == "describe_formats":
         return content(json.dumps(FORMAT_TABLE, indent=2))
+    if name == "describe_ontology":
+        family = args.get("family")
+        rows = [
+            {
+                "name": name,
+                "family": spec.family,
+                "direction": spec.direction,
+                "strength": spec.strength,
+                "traversable": spec.traversable,
+                "weak": spec.weak,
+                "description": spec.description,
+            }
+            for name, spec in DEFAULT_RELATIONS.items()
+            if not family or spec.family == family
+        ]
+        return content(json.dumps(rows, indent=2))
+    if name == "describe_frontends":
+        return content(json.dumps([cap.__dict__ for cap in available_frontends()], indent=2))
+    if name == "describe_traversal":
+        if args.get("query_class"):
+            return content(json.dumps(traversal_policy(str(args["query_class"])).__dict__, indent=2))
+        return content(json.dumps({name: policy.__dict__ for name, policy in POLICIES.items()}, indent=2))
     raise ValueError(f"unknown tool: {name}")
 
 
 def build_final_packet(args: dict[str, Any]) -> str:
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
-    graph = load_graph(graph_path)
+    graph = load_any(graph_path)
+    if args.get("as_of"):
+        graph = graph_at(graph, str(args["as_of"]))
 
     policies_path_str = args.get("policies_path")
     policies_path = Path(policies_path_str) if policies_path_str else find_policies_path()
@@ -203,7 +290,7 @@ def build_final_packet(args: dict[str, Any]) -> str:
         paths=tuple(str(item) for item in args.get("paths", [])),
         tags=tuple(str(item) for item in args.get("tags", [])),
     )
-    choice = choose_packet(query.query_class)
+    choice = choose_packet(query.query_class, query.text)
     starts = [str(item) for item in args["starts"]]
     max_nodes = args.get("max_nodes")
     nodes, edges = graph.expand(starts, hops=choice.hops, max_nodes=int(max_nodes) if max_nodes else None)
@@ -219,6 +306,43 @@ def build_final_packet(args: dict[str, Any]) -> str:
     if not policy_packet:
         return graph_packet
     return f"CONSTRAINTS:\n{policy_packet}\n\nGRAPH:\n{graph_packet}"
+
+
+def build_query_context(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    graph = load_any(graph_path)
+    query = str(args["query"])
+    query_class = str(args.get("query_class") or "blast_radius")
+    choice = choose_packet(query_class, query)
+    result = retrieve_context(
+        graph,
+        query,
+        query_class,
+        hops=choice.hops,
+        anchor_limit=int(args["anchor_limit"]) if args.get("anchor_limit") is not None else None,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") else None,
+        scopes=tuple(str(scope) for scope in args.get("scopes") or []),
+    )
+    if not result.starts:
+        return json.dumps({"anchors": [], "packet": "", "message": "No matching graph anchors found for query."})
+
+    packet = render_packet(graph, result.nodes, result.edges, str(args.get("packet") or choice.packet))
+    if not args.get("show_anchors"):
+        return packet
+
+    anchors = [
+        {
+            "id": match.node.id,
+            "label": match.node.label,
+            "kind": match.node.kind,
+            "path": match.node.path,
+            "score": match.score,
+            "reasons": list(match.reasons),
+        }
+        for match in result.matches[: int(args["anchor_limit"]) if args.get("anchor_limit") is not None else len(result.starts)]
+    ]
+    return json.dumps({"anchors": anchors, "packet": packet}, indent=2)
 
 
 def handle_build_graph(args: dict[str, Any]) -> str:
@@ -243,7 +367,25 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     generic_mentions = bool(args.get("generic_mentions", False))
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
     depth = str(args.get("depth") or "files")
-    graph = scan_directory(directory, max_nodes=max_nodes, generic_mentions=generic_mentions, skip_dirs=skip_dirs, depth=depth)
+    frontend = str(args.get("frontend") or "auto")
+    docs = bool(args.get("docs", False))
+    communities = bool(args.get("communities", False))
+    incremental = bool(args.get("incremental", True))
+    previous_graph_path = output_path if incremental else None
+    manifest_path = (output_path.parent / "manifest.json") if incremental else None
+
+    graph = scan_directory(
+        directory,
+        max_nodes=max_nodes,
+        generic_mentions=generic_mentions,
+        skip_dirs=skip_dirs,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        communities=communities,
+        previous_graph_path=previous_graph_path,
+        manifest_path=manifest_path,
+    )
 
     save_graph(graph, output_path)
     return json.dumps({
@@ -274,32 +416,27 @@ def handle_export_graph(args: dict[str, Any]) -> str:
 def handle_search_nodes(args: dict[str, Any]) -> str:
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
-    graph = load_graph(graph_path)
+    graph = load_any(graph_path)
 
     q = str(args["query"]).lower()
     limit = int(args.get("limit") or 20)
 
-    # Precompute degree so hub nodes float to the top of results.
-    degree: dict[str, int] = {}
-    for edge in graph.edges:
-        degree[edge.source] = degree.get(edge.source, 0) + 1
-        degree[edge.target] = degree.get(edge.target, 0) + 1
-
-    matches = []
-    for node in graph.nodes.values():
-        if q in node.label.lower() or q in node.path.lower() or q in node.kind.lower():
-            matches.append({
-                "id": node.id,
-                "label": node.label,
-                "kind": node.kind,
-                "path": node.path,
-                "degree": degree.get(node.id, 0),
-                "summary": node.summary,
-            })
-
-    matches.sort(key=lambda m: m["degree"], reverse=True)
-    matches = matches[:limit]
-    return json.dumps({"matches": matches, "total": len(matches)})
+    matches = search_nodes(graph, q, limit=limit)
+    return json.dumps({
+        "matches": [
+            {
+                "id": match.node.id,
+                "label": match.node.label,
+                "kind": match.node.kind,
+                "path": match.node.path,
+                "score": match.score,
+                "reasons": list(match.reasons),
+                "summary": match.node.summary,
+            }
+            for match in matches
+        ],
+        "total": len(matches),
+    })
 
 
 def dispatch(request: dict[str, Any]) -> dict[str, Any] | None:

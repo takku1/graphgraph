@@ -17,7 +17,14 @@
           "facts": {
             "type": "array",
             "items": { "type": "string" }
-          }
+          },
+          "scope": { "type": "string" },
+          "parent": { "type": "string" },
+          "source": { "type": "string" },
+          "confidence": { "type": "number" },
+          "active": { "type": "boolean" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" }
         },
         "required": ["id", "label"]
       }
@@ -30,10 +37,24 @@
           "source": { "type": "string" },
           "target": { "type": "string" },
           "type": { "type": "string" },
-          "weight": { "type": "number" }
+          "weight": { "type": "number" },
+          "confidence": { "type": "number" },
+          "provenance": {
+            "type": "string",
+            "description": "How this edge was produced, e.g. extracted, inferred, imported, user, ambiguous."
+          },
+          "evidence": { "type": "string" },
+          "source_location": { "type": "string" },
+          "valid_from": { "type": "string" },
+          "valid_to": { "type": "string" },
+          "active": { "type": "boolean" }
         },
         "required": ["source", "target", "type"]
       }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
     }
   },
   "required": ["nodes", "edges"]
