@@ -86,12 +86,23 @@ def run_gemini(prompt: str) -> tuple[str, float, float, str]:
 
 
 def run_llm(prompt: str) -> tuple[str, float, float, str]:
-    if get_api_key("OPENAI_API_KEY"):
-        return run_openai(prompt)
-    elif get_api_key("GEMINI_API_KEY"):
-        return run_gemini(prompt)
+    preferred = os.environ.get("PREFERRED_PROVIDER", "").lower()
+    if preferred == "gemini":
+        if get_api_key("GEMINI_API_KEY"):
+            return run_gemini(prompt)
+        elif get_api_key("OPENAI_API_KEY"):
+            return run_openai(prompt)
+    elif preferred == "openai":
+        if get_api_key("OPENAI_API_KEY"):
+            return run_openai(prompt)
+        elif get_api_key("GEMINI_API_KEY"):
+            return run_gemini(prompt)
     else:
-        raise RuntimeError("No API key found for OpenAI or Gemini in environment or keyring.")
+        if get_api_key("OPENAI_API_KEY"):
+            return run_openai(prompt)
+        elif get_api_key("GEMINI_API_KEY"):
+            return run_gemini(prompt)
+    raise RuntimeError("No API key found for OpenAI or Gemini in environment or keyring.")
 
 
 def load_expected(corpus: str, task_class: str) -> tuple[set[str], set[tuple[str, str, str]]]:
