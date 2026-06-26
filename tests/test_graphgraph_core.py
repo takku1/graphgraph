@@ -7,9 +7,9 @@ from pathlib import Path
 
 from graphgraph import Edge, Graph, Node, Policy, Query, choose_packet, select_policies, validate_packet, scan_directory
 from graphgraph.ast_scanner import extract_symbols
-from graphgraph.io import load_graph, load_policies, save_graph
+from graphgraph.io import load_graph, load_policies, save_graph, load_gg, save_gg, load_csv_edges, load_any
 from graphgraph.mcp_server import dispatch
-from graphgraph.packets import render_lowlevel, render_semantic_arrow, render_gg_max, render_sql
+from graphgraph.packets import render_lowlevel, render_semantic_arrow, render_gg_max, render_sql, render_svo
 from graphgraph.policies import render_policy_packet
 
 
@@ -499,6 +499,119 @@ N1,N2,1,0.9
             labels = {n.label for n in nodes.values()}
             self.assertIn("Point", labels)
             self.assertIn("distance", labels)
+
+
+    # --- .gg roundtrip tests ---
+
+    def test_save_load_gg_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            g = sample_graph()
+            path = Path(tmp) / "graph.gg"
+            save_gg(g, path)
+            g2 = load_gg(path)
+            self.assertEqual(set(n.label for n in g.nodes.values()),
+                             set(n.label for n in g2.nodes.values()))
+            self.assertEqual(len(g.edges), len(g2.edges))
+            edge_types = {e.type for e in g2.edges}
+            self.assertIn("reads", edge_types)
+            self.assertIn("writes", edge_types)
+
+    def test_save_gg_omits_weight_when_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            g = Graph(
+                nodes={"A": Node("A", "Alpha", "file", "a.py"), "B": Node("B", "Beta", "file", "b.py")},
+                edges=[Edge("A", "B", "imports", 1.0)],
+            )
+            path = Path(tmp) / "g.gg"
+            save_gg(g, path)
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("1.0", content)
+            self.assertIn("imports Beta", content)
+
+    def test_load_gg_preserves_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "g.gg"
+            path.write_text("gg/1\nMyService [service] server/svc.py\n", encoding="utf-8")
+            g = load_gg(path)
+            self.assertEqual(len(g.nodes), 1)
+            node = list(g.nodes.values())[0]
+            self.assertEqual(node.kind, "service")
+            self.assertEqual(node.path, "server/svc.py")
+
+    def test_load_any_routes_gg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            g = sample_graph()
+            path = Path(tmp) / "graph.gg"
+            save_gg(g, path)
+            g2 = load_any(path)
+            self.assertEqual(len(g.nodes), len(g2.nodes))
+
+    # --- CSV ingest tests ---
+
+    def test_load_csv_edges_basic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "edges.csv"
+            path.write_text("source,target,type,weight\nA,B,calls,0.9\nB,C,imports,1.0\n", encoding="utf-8")
+            g = load_csv_edges(path)
+            self.assertEqual(len(g.nodes), 3)
+            self.assertEqual(len(g.edges), 2)
+            self.assertEqual(g.edges[0].weight, 0.9)
+
+    def test_load_csv_edges_no_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "edges.csv"
+            path.write_text("Foo,Bar\nBaz,Qux\n", encoding="utf-8")
+            g = load_csv_edges(path)
+            self.assertEqual(len(g.nodes), 4)
+            self.assertEqual(len(g.edges), 2)
+            self.assertEqual(g.edges[0].type, "relates")
+
+    def test_load_tsv_edges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "edges.tsv"
+            path.write_text("X\tY\tcalls\nY\tZ\treads\n", encoding="utf-8")
+            g = load_csv_edges(path)
+            self.assertEqual(len(g.nodes), 3)
+            self.assertEqual(len(g.edges), 2)
+
+    def test_load_any_routes_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "edges.csv"
+            path.write_text("A,B\nC,D\n", encoding="utf-8")
+            g = load_any(path)
+            self.assertEqual(len(g.nodes), 4)
+
+    # --- render_svo tests ---
+
+    def test_render_svo_basic(self) -> None:
+        g = sample_graph()
+        nodes = set(g.nodes.keys())
+        packet = render_svo(g, nodes, g.edges)
+        self.assertIn("AuthService", packet)
+        self.assertIn("-reads->", packet)
+        self.assertIn("TokenStore", packet)
+
+    def test_render_svo_omits_weight_when_one(self) -> None:
+        g = Graph(
+            nodes={"A": Node("A", "Alpha", "file", ""), "B": Node("B", "Beta", "file", "")},
+            edges=[Edge("A", "B", "imports", 1.0)],
+        )
+        packet = render_svo(g, set(g.nodes.keys()), g.edges)
+        self.assertNotIn("(1", packet)
+        self.assertIn("Alpha -imports-> Beta", packet)
+
+    def test_render_svo_includes_weight_when_not_one(self) -> None:
+        g = Graph(
+            nodes={"A": Node("A", "Alpha", "file", ""), "B": Node("B", "Beta", "file", "")},
+            edges=[Edge("A", "B", "calls", 0.75)],
+        )
+        packet = render_svo(g, set(g.nodes.keys()), g.edges)
+        self.assertIn("(0.75)", packet)
+
+    def test_render_svo_empty_edges(self) -> None:
+        g = sample_graph()
+        packet = render_svo(g, set(g.nodes.keys()), [])
+        self.assertEqual(packet, "")
 
 
 if __name__ == "__main__":

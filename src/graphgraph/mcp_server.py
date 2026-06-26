@@ -7,7 +7,7 @@ from typing import Any
 
 from .cli import cmd_final
 from .core import Query
-from .io import load_graph, load_policies, save_graph, find_graph_path, find_policies_path, find_graphify_path, merge_graphify
+from .io import load_graph, load_any, save_graph, save_gg, find_graph_path, find_policies_path
 from .packets import render_packet
 from .planner import choose_packet
 from .policies import render_policy_packet, select_policies
@@ -106,6 +106,21 @@ TOOLS = [
         },
     },
     {
+        "name": "export_graph",
+        "description": (
+            "Export the current graph to the native .gg adjacency-list format — "
+            "the token-optimal, self-describing format LLMs can read cold with zero schema overhead. "
+            "Also the recommended format for LLM-generated context graphs."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {"type": "string", "description": "Source graph path. Auto-detected if omitted."},
+                "output_path": {"type": "string", "description": "Output .gg path. Defaults to same dir as source."},
+            },
+        },
+    },
+    {
         "name": "describe_formats",
         "description": "List available packet formats with token-cost benchmarks to help choose the right one.",
         "inputSchema": {
@@ -117,13 +132,15 @@ TOOLS = [
 
 
 FORMAT_TABLE = [
-    {"format": "gg_max", "relative_tokens": "1.00x", "description": "Token floor: integer node indices + bracket delimiters. Best for topology queries."},
-    {"format": "lowlevel", "relative_tokens": "1.03x", "description": "XML-tagged adjacency. Slightly more tokens than gg_max."},
-    {"format": "sql", "relative_tokens": "1.38x", "description": "Table row layout. Best for 1-hop direct/reverse lookups (no relation-map overhead)."},
-    {"format": "semantic_arrow", "relative_tokens": "1.49x", "description": "Subject-verb-object arrows. Matches LLM attention priors; relation name is inline."},
-    {"format": "gg_max_hybrid", "relative_tokens": "~1.6x", "description": "gg_max + inline node summaries/facts. Best for subsystem summaries."},
-    {"format": "hybrid", "relative_tokens": "~2.3x", "description": "Markdown bullet lists. Readable but high overhead."},
-    {"format": "json", "relative_tokens": "3.9-6.7x", "description": "Raw JSON. Never use as LLM wire format for graphs."},
+    {"format": "gg_max", "schema_tokens": 20, "relative_tokens": "1.00x", "description": "Token floor for large graphs: integer indices + relation map. Best for 2-hop topology queries."},
+    {"format": "svo", "schema_tokens": 0, "relative_tokens": "~1.1x", "description": "Self-describing SVO triples. Zero schema overhead — LLMs read cold. Best for small 1-hop queries."},
+    {"format": "lowlevel", "schema_tokens": 20, "relative_tokens": "1.03x", "description": "XML-tagged adjacency. Slightly more tokens than gg_max."},
+    {"format": "sql", "schema_tokens": 10, "relative_tokens": "1.38x", "description": "Table row layout. Best for 1-hop direct/reverse lookups (no relation-map overhead)."},
+    {"format": "semantic_arrow", "schema_tokens": 15, "relative_tokens": "1.49x", "description": "Subject-verb-object arrows with @nodes/@edges preamble."},
+    {"format": "gg_max_hybrid", "schema_tokens": 20, "relative_tokens": "~1.6x", "description": "gg_max + inline node kind/summary. Best for subsystem summaries."},
+    {"format": "hybrid", "schema_tokens": 5, "relative_tokens": "~2.3x", "description": "Markdown bullet lists. Readable but high token overhead."},
+    {"format": "json", "schema_tokens": 0, "relative_tokens": "3.9-6.7x", "description": "Raw JSON. Never use as LLM wire format."},
+    {"format": ".gg file", "schema_tokens": 0, "relative_tokens": "~0.9x", "description": "Native adjacency-list storage format. Nodes then their edges co-located. LLMs can generate this directly."},
 ]
 
 
@@ -164,6 +181,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(handle_build_graph(args))
     if name == "search_nodes":
         return content(handle_search_nodes(args))
+    if name == "export_graph":
+        return content(handle_export_graph(args))
     if name == "describe_formats":
         return content(json.dumps(FORMAT_TABLE, indent=2))
     raise ValueError(f"unknown tool: {name}")
@@ -209,7 +228,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if input_graph_str:
-        graph = load_graph(Path(input_graph_str))
+        graph = load_any(Path(input_graph_str))
         save_graph(graph, output_path)
         return json.dumps({
             "action": "ingested",
@@ -233,6 +252,22 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         "output": str(output_path),
         "nodes": len(graph.nodes),
         "edges": len(graph.edges),
+    })
+
+
+def handle_export_graph(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    graph = load_any(graph_path)
+    out_str = args.get("output_path")
+    output_path = Path(out_str) if out_str else graph_path.with_suffix(".gg")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    save_gg(graph, output_path)
+    return json.dumps({
+        "output": str(output_path),
+        "nodes": len(graph.nodes),
+        "edges": len(graph.edges),
+        "format": "gg",
     })
 
 

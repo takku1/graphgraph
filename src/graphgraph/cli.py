@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .core import Query
-from .io import load_graph, load_policies, save_graph, find_graph_path, find_policies_path, find_graphify_path, merge_graphify
+from .io import load_graph, load_any, save_graph, save_gg, find_graph_path, find_policies_path
 from .packets import render_packet
 from .planner import choose_packet
 from .policies import render_policy_packet, select_policies
@@ -81,14 +81,21 @@ def cmd_ingest(args: argparse.Namespace) -> None:
         try:
             input_path = find_graph_path()
         except FileNotFoundError:
-            input_path = Path("graphify-out/graph.json")
-            if not input_path.exists():
-                raise FileNotFoundError("Could not find input graph. Specify --input explicitly.")
+            raise FileNotFoundError("Could not find input graph. Specify --input explicitly.")
     output_path = Path(args.output) if args.output else Path(".graphgraph/graph.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    graph = load_graph(input_path)
+    graph = load_any(input_path)
     save_graph(graph, output_path)
-    print(f"Ingested and normalized {len(graph.nodes)} nodes and {len(graph.edges)} edges to {output_path}")
+    print(f"Ingested {len(graph.nodes)} nodes, {len(graph.edges)} edges from {input_path} -> {output_path}")
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    output_path = Path(args.output) if args.output else Path(str(graph_path).replace(".json", ".gg"))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    graph = load_any(graph_path)
+    save_gg(graph, output_path)
+    print(f"Exported {len(graph.nodes)} nodes, {len(graph.edges)} edges -> {output_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -131,10 +138,16 @@ def build_parser() -> argparse.ArgumentParser:
                       help="'files' (default): one node per file. 'symbols': adds function/class/struct nodes.")
     scan.set_defaults(func=cmd_scan)
 
-    ingest = sub.add_parser("ingest")
-    ingest.add_argument("--input")
-    ingest.add_argument("--output")
+    ingest = sub.add_parser("ingest", help="Ingest any graph format (.gg, .json, .csv, .tsv) into .graphgraph/graph.json.")
+    ingest.add_argument("--input", "-i", help="Input file (.gg, .json, .csv, .tsv). Auto-detected if omitted.")
+    ingest.add_argument("--output", "-o", help="Output path (default: .graphgraph/graph.json).")
     ingest.set_defaults(func=cmd_ingest)
+
+    export = sub.add_parser("export", help="Export current graph to native .gg adjacency-list format.")
+    export.add_argument("--graph", help="Source graph path. Auto-detected if omitted.")
+    export.add_argument("--output", "-o", help="Output .gg path (default: same dir as source).")
+    export.set_defaults(func=cmd_export)
+
     return parser
 
 

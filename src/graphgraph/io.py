@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
+import re
 from pathlib import Path
 
 from .core import Edge, Graph, Node, Policy
@@ -49,6 +51,9 @@ def load_policies(path: Path) -> list[Policy]:
 
 
 def save_graph(graph: Graph, path: Path) -> None:
+    if path.suffix.lower() == ".gg":
+        save_gg(graph, path)
+        return
     data = {
         "nodes": [
             {
@@ -72,6 +77,181 @@ def save_graph(graph: Graph, path: Path) -> None:
         ],
     }
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def load_gg(path: Path) -> Graph:
+    """Load a native .gg adjacency-list file.
+
+    Format (self-describing, zero LLM schema overhead):
+        gg/1
+        NodeLabel [kind] path/to/file
+          edge_type TargetLabel weight?
+          edge_type TargetLabel
+
+        NodeLabel [kind]
+          ...
+    Lines starting with # are comments. Blank lines are ignored.
+    """
+    text = path.read_text(encoding="utf-8")
+    nodes: dict[str, Node] = {}
+    pending_edges: list[tuple[str, str, str, float]] = []  # (src_label, tgt_label, type, weight)
+    current_label: str | None = None
+
+    def _to_id(lbl: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_]", "_", lbl)
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped in ("gg/1", "gg/2"):
+            continue
+
+        is_indented = raw_line[0] in (" ", "\t")
+
+        if is_indented:
+            if current_label is None:
+                continue
+            tokens = stripped.split()
+            if len(tokens) < 2:
+                continue
+            edge_type, target_label = tokens[0], tokens[1]
+            try:
+                weight = float(tokens[2]) if len(tokens) > 2 else 1.0
+            except ValueError:
+                weight = 1.0
+            pending_edges.append((current_label, target_label, edge_type, weight))
+        else:
+            tokens = stripped.split()
+            label = tokens[0]
+            kind = "unknown"
+            node_path = ""
+            rest = tokens[1:]
+            if rest and rest[0].startswith("[") and rest[0].endswith("]"):
+                kind = rest[0][1:-1]
+                rest = rest[1:]
+            if rest:
+                node_path = rest[0]
+            nid = _to_id(label)
+            if nid in nodes and nodes[nid].label != label:
+                nid = f"{nid}_{len(nodes)}"
+            nodes[nid] = Node(id=nid, label=label, kind=kind, path=node_path)
+            current_label = label
+
+    # Resolve edges by label — try path fallback for ambiguous labels
+    label_map: dict[str, str] = {}
+    path_map: dict[str, str] = {}
+    for nid, node in nodes.items():
+        label_map[node.label] = nid
+        if node.path:
+            path_map[node.path] = nid
+
+    edges: list[Edge] = []
+    seen: set[tuple[str, str, str]] = set()
+    for src_lbl, tgt_lbl, etype, weight in pending_edges:
+        src_id = label_map.get(src_lbl) or path_map.get(src_lbl)
+        tgt_id = label_map.get(tgt_lbl) or path_map.get(tgt_lbl)
+        if src_id and tgt_id:
+            key = (src_id, tgt_id, etype)
+            if key not in seen:
+                seen.add(key)
+                edges.append(Edge(source=src_id, target=tgt_id, type=etype, weight=weight))
+
+    return Graph(nodes=nodes, edges=edges)
+
+
+def save_gg(graph: Graph, path: Path) -> None:
+    """Save a Graph as a native .gg adjacency-list file.
+
+    Token-optimal for LLM ingest: self-describing format, no schema needed,
+    outgoing edges co-located with each node for attention locality.
+    """
+    outgoing: dict[str, list[Edge]] = {}
+    for edge in graph.edges:
+        outgoing.setdefault(edge.source, []).append(edge)
+
+    lines = ["gg/1"]
+    for nid in sorted(graph.nodes, key=lambda x: graph.nodes[x].label.lower()):
+        node = graph.nodes[nid]
+        parts = [node.label]
+        if node.kind and node.kind != "unknown":
+            parts.append(f"[{node.kind}]")
+        if node.path:
+            parts.append(node.path)
+        lines.append(" ".join(parts))
+        if node.summary:
+            lines.append(f"  # {node.summary}")
+        for edge in sorted(outgoing.get(nid, []), key=lambda e: e.type):
+            tgt = graph.nodes.get(edge.target)
+            tgt_ref = tgt.label if tgt else edge.target
+            if edge.weight != 1.0:
+                lines.append(f"  {edge.type} {tgt_ref} {edge.weight:g}")
+            else:
+                lines.append(f"  {edge.type} {tgt_ref}")
+        lines.append("")
+
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def load_csv_edges(path: Path) -> Graph:
+    """Load a CSV/TSV edge list into a Graph.
+
+    Expects columns: source, target[, type[, weight]]
+    First row may be a header (detected automatically).
+    Nodes are auto-created from source/target values.
+    """
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    with path.open(encoding="utf-8", newline="") as f:
+        rows = list(csv.reader(f, delimiter=delimiter))
+
+    if not rows:
+        return Graph()
+
+    header = [c.lower().strip() for c in rows[0]]
+    is_header = any(h in ("source", "from", "src", "node1", "subject", "edge_source") for h in header)
+    data_rows = rows[1:] if is_header else rows
+
+    nodes: dict[str, Node] = {}
+    edges: list[Edge] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _nid(lbl: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_]", "_", lbl.strip())
+
+    for row in data_rows:
+        if len(row) < 2:
+            continue
+        src, tgt = row[0].strip(), row[1].strip()
+        if not src or not tgt:
+            continue
+        etype = row[2].strip() if len(row) > 2 and row[2].strip() else "relates"
+        try:
+            weight = float(row[3]) if len(row) > 3 and row[3].strip() else 1.0
+        except ValueError:
+            weight = 1.0
+
+        for lbl in (src, tgt):
+            nid = _nid(lbl)
+            if nid not in nodes:
+                nodes[nid] = Node(id=nid, label=lbl)
+
+        src_id, tgt_id = _nid(src), _nid(tgt)
+        key = (src_id, tgt_id, etype)
+        if key not in seen:
+            seen.add(key)
+            edges.append(Edge(source=src_id, target=tgt_id, type=etype, weight=weight))
+
+    return Graph(nodes=nodes, edges=edges)
+
+
+def load_any(path: Path) -> Graph:
+    """Load a graph from any supported format: .gg, .json, .csv, .tsv."""
+    suffix = path.suffix.lower()
+    if suffix == ".gg":
+        return load_gg(path)
+    if suffix in (".csv", ".tsv"):
+        return load_csv_edges(path)
+    return load_graph(path)
 
 
 def merge_graphify(base: Graph, overlay: Graph) -> Graph:
@@ -139,6 +319,7 @@ def find_graphify_path(workspace_root: Path = Path(".")) -> Path | None:
 
 def find_graph_path(workspace_root: Path = Path(".")) -> Path:
     candidates = [
+        workspace_root / ".graphgraph" / "graph.gg",    # native format preferred
         workspace_root / ".graphgraph" / "graph.json",
         workspace_root / "graphify-out" / "graph.json",
         workspace_root / ".code-review-graph" / "graph.json",

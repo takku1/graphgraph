@@ -103,6 +103,26 @@ def render_gg_max(
     return "\n".join(lines)
 
 
+def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    """Subject-verb-object triples — self-describing, zero schema overhead.
+
+    Format: Label -type-> Label (weight)
+    An LLM understands this cold with no instructions. Best for small 1-hop
+    queries where the schema preamble of gg_max would cost more than the savings.
+    Omits weight when 1.0 (implicit default).
+    """
+    node_labels = {nid: graph.nodes[nid].label for nid in nodes if nid in graph.nodes}
+    lines = []
+    for edge in edges:
+        src = node_labels.get(edge.source, edge.source)
+        tgt = node_labels.get(edge.target, edge.target)
+        if edge.weight != 1.0:
+            lines.append(f"{src} -{edge.type}-> {tgt} ({edge.weight:g})")
+        else:
+            lines.append(f"{src} -{edge.type}-> {tgt}")
+    return "\n".join(lines)
+
+
 def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str) -> str:
     if packet == "lowlevel":
         return render_lowlevel(graph, nodes, edges)
@@ -116,4 +136,6 @@ def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str)
         return render_gg_max(graph, nodes, edges)
     if packet == "gg_max_hybrid":
         return render_gg_max(graph, nodes, edges, hybrid=True)
+    if packet == "svo":
+        return render_svo(graph, nodes, edges)
     raise ValueError(f"unknown packet format: {packet}")
