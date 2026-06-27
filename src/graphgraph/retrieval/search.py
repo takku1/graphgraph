@@ -6,7 +6,7 @@ from .models import Match
 from .text import node_search_text, tokenize
 
 
-def search_nodes(graph: Graph, query: str, limit: int = 8, is_doc: bool = False) -> tuple[Match, ...]:
+def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float = 0.0) -> tuple[Match, ...]:
     """Rank graph nodes with a deterministic lexical score."""
     terms = tokenize(query)
     if not terms:
@@ -108,17 +108,15 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, is_doc: bool = False)
             pr_val = pagerank_scores.get(node.id, 0.0)
             if n_scores > 0:
                 pr_boost = pr_val * n_scores * 2.0
-                if is_doc:
-                    is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
-                    if not is_doc_node:
-                        pr_boost *= 0.15
+                is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
+                if not is_doc_node:
+                    pr_boost *= (1.0 - doc_intensity * 0.85)
                 score += min(pr_boost, 8.0)
             else:
                 deg_boost = min(degree.get(node.id, 0), 25) * 0.05
-                if is_doc:
-                    is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
-                    if not is_doc_node:
-                        deg_boost *= 0.15
+                is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
+                if not is_doc_node:
+                    deg_boost *= (1.0 - doc_intensity * 0.85)
                 score += deg_boost
 
             # --- GIT TEMPORAL GRAVITY ---

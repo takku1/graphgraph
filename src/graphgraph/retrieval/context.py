@@ -61,10 +61,10 @@ def retrieve_context(
     max_nodes: int | None = None,
     scopes: tuple[str, ...] = (),
 ) -> RetrievalResult:
-    from ..planning.budgets import is_doc_query
-    is_doc = is_doc_query(query_class, query)
+    from ..planning.budgets import doc_intensity_score
+    doc_intensity = doc_intensity_score(query_class, query)
     plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
-    matches = search_nodes(graph, query, limit=max(plan.anchor_limit, 1), is_doc=is_doc)
+    matches = search_nodes(graph, query, limit=max(plan.anchor_limit, 1), doc_intensity=doc_intensity)
     starts = tuple(match.node.id for match in matches[: plan.anchor_limit])
     if not starts:
         return RetrievalResult(starts=(), matches=matches, nodes=set(), edges=[])

@@ -126,12 +126,11 @@ def _subsystem_name(path: str) -> str:
     if not path:
         return "unknown"
     p = path.replace("\\", "/").strip("/")
-    if p.startswith("crates/"):
-        parts = p.split("/")
-        if len(parts) > 1:
-            return parts[1]
     parts = p.split("/")
     if len(parts) > 1:
+        # Detect common workspace folders: crates, packages, apps, libs, modules, src
+        if parts[0] in {"crates", "packages", "apps", "libs", "modules", "src", "subprojects"}:
+            return parts[1]
         return parts[0]
     return "root"
 

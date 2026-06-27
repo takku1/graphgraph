@@ -92,7 +92,18 @@ def default_node_budget(query_class: str, query: str = "") -> int:
 
 
 def is_doc_query(query_class: str, query: str) -> bool:
-    return query_class == "doc_summary" or (query_class == "subsystem_summary" and DOC_TERMS.search(query) is not None)
+    return doc_intensity_score(query_class, query) >= 0.25
+
+
+def doc_intensity_score(query_class: str, query: str) -> float:
+    if query_class == "doc_summary":
+        return 1.0
+    doc_keywords = {"readme", "install", "usage", "documentation", "guide", "setup", "docs", "markdown", "md"}
+    query_words = [w for w in query.lower().split() if len(w) > 1]
+    if not query_words:
+        return 0.0
+    matches = sum(1 for w in query_words if any(k in w for k in doc_keywords))
+    return matches / len(query_words)
 
 
 def plan_terms(text: str) -> tuple[str, ...]:
