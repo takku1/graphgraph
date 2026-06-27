@@ -474,6 +474,30 @@ def packet_graph_2hop_gg_max_hybrid(corpus: dict, idx: dict, task: dict) -> tupl
     return render_packet(idx, nodes, edges, mode="gg_max_hybrid"), nodes, edges
 
 
+def packet_graph_1hop_gg_lex(corpus: dict, idx: dict, task: dict) -> tuple[str, set[str], list[dict]]:
+    starts = score_nodes_bm25(idx, task["question"], limit=3) or score_nodes(idx, task["question"], limit=3)
+    nodes, edges = expand(idx, starts, hops=1)
+    return render_packet(idx, nodes, edges, mode="gg_lex"), nodes, edges
+
+
+def packet_graph_2hop_gg_lex(corpus: dict, idx: dict, task: dict) -> tuple[str, set[str], list[dict]]:
+    starts = score_nodes_bm25(idx, task["question"], limit=3) or score_nodes(idx, task["question"], limit=3)
+    nodes, edges = expand(idx, starts, hops=2)
+    return render_packet(idx, nodes, edges, mode="gg_lex"), nodes, edges
+
+
+def packet_graph_1hop_gg_lex_hybrid(corpus: dict, idx: dict, task: dict) -> tuple[str, set[str], list[dict]]:
+    starts = score_nodes_bm25(idx, task["question"], limit=3) or score_nodes(idx, task["question"], limit=3)
+    nodes, edges = expand(idx, starts, hops=1)
+    return render_packet(idx, nodes, edges, mode="gg_lex_hybrid"), nodes, edges
+
+
+def packet_graph_2hop_gg_lex_hybrid(corpus: dict, idx: dict, task: dict) -> tuple[str, set[str], list[dict]]:
+    starts = score_nodes_bm25(idx, task["question"], limit=3) or score_nodes(idx, task["question"], limit=3)
+    nodes, edges = expand(idx, starts, hops=2)
+    return render_packet(idx, nodes, edges, mode="gg_lex_hybrid"), nodes, edges
+
+
 STRATEGIES: dict[str, Callable[[dict, dict, dict], tuple[str, set[str], list[dict]]]] = {
     "full_markdown": packet_full_markdown,
     "keyword_markdown": packet_keyword,
@@ -484,12 +508,16 @@ STRATEGIES: dict[str, Callable[[dict, dict, dict], tuple[str, set[str], list[dic
     "graph_1hop_semantic_arrow": packet_graph_1hop_semantic_arrow,
     "graph_1hop_gg_max": packet_graph_1hop_gg_max,
     "graph_1hop_gg_max_hybrid": packet_graph_1hop_gg_max_hybrid,
+    "graph_1hop_gg_lex": packet_graph_1hop_gg_lex,
+    "graph_1hop_gg_lex_hybrid": packet_graph_1hop_gg_lex_hybrid,
     "graph_2hop": packet_graph_2hop,
     "graph_2hop_lowlevel": packet_graph_2hop_lowlevel,
     "graph_2hop_sql": packet_graph_2hop_sql,
     "graph_2hop_semantic_arrow": packet_graph_2hop_semantic_arrow,
     "graph_2hop_gg_max": packet_graph_2hop_gg_max,
     "graph_2hop_gg_max_hybrid": packet_graph_2hop_gg_max_hybrid,
+    "graph_2hop_gg_lex": packet_graph_2hop_gg_lex,
+    "graph_2hop_gg_lex_hybrid": packet_graph_2hop_gg_lex_hybrid,
     "graph_keyword_hybrid": packet_hybrid,
     "hierarchical_summary": packet_hierarchical,
 }
@@ -551,16 +579,37 @@ def render_packet(idx: dict, nodes: set[str], edges: list[dict], mode: str) -> s
             lines.append(f"{e['source']} -{e['type']}-> {e['target']} ({e['weight']})")
         return "\n".join(lines)
 
-    if mode in {"gg_max", "gg_max_hybrid"}:
+    if mode in {"gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid"}:
         relation_ids = {rel: i + 1 for i, rel in enumerate(RELATIONS)}
         lines = ["[r]"]
         for rel, rel_id in relation_ids.items():
             lines.append(f"{rel_id}:{rel}")
         lines.append("[n]")
-        node_to_idx = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
+        
+        is_lex = "gg_lex" in mode
+        if is_lex:
+            seen = set()
+            node_to_idx = {}
+            for node_id in sorted(nodes):
+                n = idx["nodes"][node_id]
+                label = n["label"]
+                base = "".join(c.lower() for c in label if c.isalnum())
+                if not base:
+                    base = "node"
+                candidate = base[:8]
+                if candidate in seen:
+                    suffix = 2
+                    while f"{candidate[:6]}{suffix}" in seen:
+                        suffix += 1
+                    candidate = f"{candidate[:6]}{suffix}"
+                seen.add(candidate)
+                node_to_idx[node_id] = candidate
+        else:
+            node_to_idx = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
+
         for node_id, idx_str in node_to_idx.items():
             n = idx["nodes"][node_id]
-            if mode == "gg_max_hybrid":
+            if "hybrid" in mode:
                 lines.append(f"{idx_str} {n['label']} [{n['kind']}] {n['path']} summary: {n['summary']}")
                 for fact in n["facts"][:2]:
                     lines.append(f"  - {fact}")
@@ -571,7 +620,11 @@ def render_packet(idx: dict, nodes: set[str], edges: list[dict], mode: str) -> s
             rel_id = relation_ids[e["type"]]
             src_idx = node_to_idx[e["source"]]
             tgt_idx = node_to_idx[e["target"]]
-            lines.append(f"{src_idx} {tgt_idx} {rel_id} {e['weight']}")
+            w = float(e["weight"])
+            if abs(w - 1.0) > 1e-9:
+                lines.append(f"{src_idx} {tgt_idx} {rel_id} {e['weight']}")
+            else:
+                lines.append(f"{src_idx} {tgt_idx} {rel_id}")
         return "\n".join(lines)
 
     lines = ["# Context Packet", "", "Nodes:"]

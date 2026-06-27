@@ -77,7 +77,6 @@ def ensure_graphs(locus: Path) -> dict[str, Path]:
             "--depth", "symbols",
             "--frontend", os.environ.get("LOCUS_FRONTEND", "auto"),
             "--docs",
-            "--communities",
             "--max-nodes", os.environ.get("LOCUS_MAX_NODES", "1200"),
             "--skip-dirs", "graphify-out", ".code-review-graph", "target", "target_new",
             "target_new2", "archive", "spikes", "test-inputs",

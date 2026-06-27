@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import re
+
+
+DOC_TERMS = re.compile(r"\b(readme|docs?|documentation|guide|install(?:ation)?|usage|setup|tutorial|manual)\b", re.IGNORECASE)
+PLAN_TOKEN = re.compile(r"[A-Za-z0-9_]+")
+
+QUERY_STOPWORDS = {
+    "a",
+    "about",
+    "all",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "can",
+    "do",
+    "does",
+    "for",
+    "from",
+    "give",
+    "how",
+    "in",
+    "is",
+    "it",
+    "me",
+    "of",
+    "on",
+    "or",
+    "show",
+    "tell",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
+
+DEFAULT_NODE_BUDGETS = {
+    "direct_lookup": 80,
+    "reverse_lookup": 80,
+    "multi_hop_path": 80,
+    "negative_query": 1,
+    "subsystem_summary": 120,
+    "blast_radius": 120,
+    "spreading_activation": 120,
+}
+DEFAULT_FALLBACK_NODE_BUDGET = 120
+DOC_NODE_BUDGET = 12
+
+
+def default_anchor_limit(query: str, query_class: str) -> int:
+    term_count = len(plan_terms(query))
+    if query_class in {"direct_lookup", "reverse_lookup"} and any("_" in raw for raw in PLAN_TOKEN.findall(query)):
+        return 1
+    if query_class in {"direct_lookup", "reverse_lookup"}:
+        return max(3, min(6, term_count + 1))
+    if is_doc_query(query_class, query):
+        return 3
+    if query_class == "subsystem_summary":
+        return max(6, min(16, term_count * 3))
+    if query_class == "blast_radius":
+        return max(3, min(8, term_count + 2))
+    return 3
+
+
+def retrieval_node_budget(query: str, query_class: str, max_nodes: int | None) -> int | None:
+    if is_doc_query(query_class, query):
+        return min(max_nodes, DOC_NODE_BUDGET) if max_nodes is not None else DOC_NODE_BUDGET
+    if max_nodes is None:
+        return default_node_budget(query_class, query)
+    if query_class != "subsystem_summary":
+        return max_nodes
+    summary_budget = max(16, min(24, len(plan_terms(query)) * 5))
+    return min(max_nodes, summary_budget)
+
+
+def default_node_budget(query_class: str, query: str = "") -> int:
+    if is_doc_query(query_class, query):
+        return DOC_NODE_BUDGET
+    return DEFAULT_NODE_BUDGETS.get(query_class, DEFAULT_FALLBACK_NODE_BUDGET)
+
+
+def is_doc_query(query_class: str, query: str) -> bool:
+    return query_class == "doc_summary" or (query_class == "subsystem_summary" and DOC_TERMS.search(query) is not None)
+
+
+def plan_terms(text: str) -> tuple[str, ...]:
+    terms = [term.lower().strip("_") for term in PLAN_TOKEN.findall(text)]
+    return tuple(dict.fromkeys(term for term in terms if len(term) >= 2 and term not in QUERY_STOPWORDS))

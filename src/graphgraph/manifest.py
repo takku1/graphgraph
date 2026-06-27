@@ -20,7 +20,7 @@ def compute_file_hash(path: Path) -> str:
 
 class Manifest:
     def __init__(self, data: dict[str, Any] | None = None):
-        # files: rel_path -> {hash, depth, frontend, docs, communities, nodes: list[str], edges: list[tuple[str, str, str]]}
+        # files: rel_path -> {hash, depth, frontend, docs, nodes: list[str], edges: list[tuple[str, str, str]]}
         self.files = data.get("files", {}) if data else {}
 
     @classmethod
@@ -45,7 +45,6 @@ class Manifest:
         depth: str,
         frontend: str,
         docs: bool,
-        communities: bool,
         nodes: list[str],
         edges: list[tuple[str, str, str]],
     ) -> None:
@@ -54,7 +53,6 @@ class Manifest:
             "depth": depth,
             "frontend": frontend,
             "docs": docs,
-            "communities": communities,
             "nodes": nodes,
             "edges": edges,
         }

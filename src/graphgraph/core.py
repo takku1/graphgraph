@@ -145,7 +145,10 @@ class Graph:
         hops: int,
         max_nodes: int | None = None,
         scopes: tuple[str, ...] = (),
+        direction: str = "both",
     ) -> tuple[set[str], list[Edge]]:
+        if direction not in {"both", "out", "in"}:
+            raise ValueError(f"unknown traversal direction: {direction}")
         outgoing = self.outgoing()
         incoming = self.incoming()
 
@@ -162,7 +165,13 @@ class Graph:
             scores: dict[str, float] = {}
 
             for nid in frontier:
-                for edge in outgoing.get(nid, []) + incoming.get(nid, []):
+                if direction == "out":
+                    candidate_edges = outgoing.get(nid, [])
+                elif direction == "in":
+                    candidate_edges = incoming.get(nid, [])
+                else:
+                    candidate_edges = outgoing.get(nid, []) + incoming.get(nid, [])
+                for edge in candidate_edges:
                     ekey = (edge.source, edge.target, edge.type)
                     if ekey not in seen_edges:
                         new_edges.append(edge)

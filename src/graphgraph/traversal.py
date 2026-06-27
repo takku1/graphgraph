@@ -12,6 +12,7 @@ class TraversalPolicy:
     preferred_relations: tuple[str, ...]
     weak_edge_limit: int
     min_confidence: float
+    direction: str = "both"
 
 
 DEFAULT_POLICY = TraversalPolicy(
@@ -30,6 +31,7 @@ POLICIES: dict[str, TraversalPolicy] = {
         ("contains", "imports", "calls", "references", "links"),
         weak_edge_limit=8,
         min_confidence=0.0,
+        direction="out",
     ),
     "reverse_lookup": TraversalPolicy(
         "reverse_lookup",
@@ -37,6 +39,7 @@ POLICIES: dict[str, TraversalPolicy] = {
         ("imports", "calls", "references", "links", "tests"),
         weak_edge_limit=12,
         min_confidence=0.0,
+        direction="in",
     ),
     "multi_hop_path": TraversalPolicy(
         "multi_hop_path",

@@ -136,6 +136,17 @@ def add_policy_node(graph: Graph, policy: Policy) -> tuple[Graph, GraphOperation
     return add_node(graph, policy_to_node(policy))
 
 
+def _dedupe_edges(edges: list[Edge]) -> list[Edge]:
+    seen: set[tuple[str, str, str]] = set()
+    out: list[Edge] = []
+    for edge in edges:
+        key = (edge.source, edge.target, edge.type)
+        if key not in seen:
+            seen.add(key)
+            out.append(edge)
+    return out
+
+
 def add_decision_trace(
     graph: Graph,
     trace_id: str,

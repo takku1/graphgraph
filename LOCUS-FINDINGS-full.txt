@@ -1,0 +1,649 @@
+Locus: 93 object(s) analyzed, 209 finding(s)
+
+Kind: 30 locus.inventory, 3 locus.role, 176 locus.structure
+Lane: 3 discovery, 206 observation
+Evidence: 40 inferred, 131 observed, 20 proved, 18 sampled
+Severity: 10 moderate, 199 note
+Obligations: 213 outstanding across 133 finding(s); 0 unverified; 0 promotable finding(s) still carry unverified debt — 213 informational
+
+object scopes: 38 expression, 2 function, 53 module
+[note] locus.inventory (observed)  graphgraph/ast_scanner.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.inventory-d6b228a78dd47c55
+[note] locus.inventory (observed)  graphgraph/cache.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.inventory-413afbda51ec6101
+[note] locus.inventory (observed)  graphgraph/cli.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.inventory-65a1cebb48d35335
+[note] locus.inventory (observed)  graphgraph/core.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.inventory-f554dacb168c0dd3
+[note] locus.inventory (observed)  graphgraph/doc_scanner.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/doc_scanner.py  id=locus.inventory-b29641713abac725
+[note] locus.inventory (observed)  graphgraph/eval.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.inventory-7ceedbb2c8da33c1
+[note] locus.inventory (observed)  graphgraph/frontends.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.inventory-3464d5d0a35245e5
+[note] locus.inventory (observed)  graphgraph/io.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.inventory-cfa18ee4db655dfd
+[note] locus.inventory (observed)  graphgraph/manifest.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.inventory-baa0e70263896e7f
+[note] locus.inventory (observed)  graphgraph/mcp_server.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.inventory-35d2029d77d07665
+[note] locus.inventory (observed)  graphgraph/metrics.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/metrics.py  id=locus.inventory-b88fb115b1be7165
+[note] locus.inventory (observed)  graphgraph/ontology.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ontology.py  id=locus.inventory-5871673bc7c57d53
+[note] locus.inventory (observed)  graphgraph/operations.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.inventory-5bdc9d1a4f4c01a9
+[note] locus.inventory (observed)  graphgraph/packets.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.inventory-46b42e5b9a28eaf9
+[note] locus.inventory (observed)  graphgraph/planner.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/planner.py  id=locus.inventory-ad71967340e80bdd
+[note] locus.inventory (observed)  graphgraph/policies.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/policies.py  id=locus.inventory-a40a0b538c90ab11
+[note] locus.inventory (observed)  graphgraph/retrieval.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.inventory-88ca36c60cbdd5cd
+[note] locus.inventory (observed)  graphgraph/scanner.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.inventory-e5b5ecac1afaf065
+[note] locus.inventory (observed)  graphgraph/schema/graph.schema.json  (json, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/schema/graph.schema.json  id=locus.inventory-a937650ca9968881
+[note] locus.inventory (observed)  graphgraph/terms.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/terms.py  id=locus.inventory-7199c09bd61512fd
+[note] locus.inventory (observed)  graphgraph/traversal.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/traversal.py  id=locus.inventory-74ec7e825b87ff99
+[note] locus.inventory (observed)  graphgraph/validate.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.inventory-b50a7b077a9771c1
+[note] locus.inventory (observed)  graphgraph/__init__.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/__init__.py  id=locus.inventory-352ab6ddb0eded09
+[note] locus.inventory (observed)  graphgraph/__main__.py  (python, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/__main__.py  id=locus.inventory-dd573fe700d2a0cb
+[note] locus.inventory (observed)  graphgraph.egg-info/dependency_links.txt  (unknown, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph.egg-info/dependency_links.txt  id=locus.inventory-8f8fe7034a4a6fdd
+[note] locus.inventory (observed)  graphgraph.egg-info/entry_points.txt  (unknown, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph.egg-info/entry_points.txt  id=locus.inventory-8fc4f44ef0b361b3
+[note] locus.inventory (observed)  graphgraph.egg-info/PKG-INFO  (unknown, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph.egg-info/PKG-INFO  id=locus.inventory-55fe2e7fa051d39d
+[note] locus.inventory (observed)  graphgraph.egg-info/requires.txt  (unknown, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph.egg-info/requires.txt  id=locus.inventory-fcd70d3fc4af9b7b
+[note] locus.inventory (observed)  graphgraph.egg-info/SOURCES.txt  (unknown, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph.egg-info/SOURCES.txt  id=locus.inventory-7fd1869dc2bccae5
+[note] locus.inventory (observed)  graphgraph.egg-info/top_level.txt  (unknown, source)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph.egg-info/top_level.txt  id=locus.inventory-b8f5c7574d6dcaad
+[note] locus.structure (observed)  project scan plan: 0 manifest(s), 0 build root(s), 3 entrypoint candidate(s), 23 analyzable file(s), 0 generated file(s) held to inventory-only
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src  id=locus.structure-1620f41af9576915
+    obligation: scan plan is structural only; build systems/import graphs are not executed yet
+    obligation: follow-up: route extraction and ranking from this plan instead of flat recursive order
+[note] locus.structure (observed)  entry point candidate: graphgraph/cli.py (Python __main__ guard)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-bffe8af5b8581098
+    obligation: entry point is inferred from project/file conventions, not executed
+    obligation: follow-up: route project scan from manifests/import graph before ranking findings
+[note] locus.structure (observed)  entry point candidate: graphgraph/mcp_server.py (Python __main__ guard)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-deca42ffae593292
+    obligation: entry point is inferred from project/file conventions, not executed
+    obligation: follow-up: route project scan from manifests/import graph before ranking findings
+[note] locus.structure (observed)  entry point candidate: graphgraph/__main__.py (Python __main__ guard)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/__main__.py  id=locus.structure-0efe688fd695089a
+    obligation: entry point is inferred from project/file conventions, not executed
+    obligation: follow-up: route project scan from manifests/import graph before ranking findings
+[note] locus.structure (proved)  functions [_defs_cs, _defs_go, _defs_java] are PROVED structural clones — their code-property-graph subgraphs are exactly isomorphic (a verified vertex matching), i.e. the same control/data-flow shape up to relabelling: factor them into one (docs/v4/10).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-49a56d98e49b77c4
+[note] locus.structure (proved)  functions [_call_pattern, _callsite_pattern] are PROVED structural clones — their code-property-graph subgraphs are exactly isomorphic (a verified vertex matching), i.e. the same control/data-flow shape up to relabelling: factor them into one (docs/v4/10).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-a2d52c9e9eed8cdc
+[note] locus.structure (observed)  extraction skipped 42 candidate(s) that did not parse; taxonomy: unsupported-function=19, project-helper-call=1, unsupported-operator=1, cast-or-type-syntax=1, source-language-syntax=18, unknown=2; sample: line 85 [unsupported-function] `sorted(set(names), len, True)` (parse error: unknown function 'set'); line 87 [unsupported-function] `compile(pat)` (parse error: unknown function 'compile'); line 93 [unsupported-function] `sorted(set(names), len, True)` (parse error: unknown function 'set')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-140e9b7da2a3c35b
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {key, self_cache_data} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-d3887b8dd60cf68e
+[note] locus.structure (observed)  expression over {self__hits, self__misses} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-f1a22c4df07a6167
+[note] locus.structure (observed)  extraction skipped 5 candidate(s) that did not parse; taxonomy: unsupported-function=4, source-api-call=1; sample: line 11 [unsupported-function] `sorted(anchors)` (parse error: unknown function 'sorted'); line 27 [unsupported-function] `OrderedDict()` (parse error: unknown function 'OrderedDict'); line 39 [unsupported-function] `OrderedDict()` (parse error: unknown function 'OrderedDict')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-271fc2e7324ffc3a
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {None, args_incremental, output_path} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-28db37afc23c8ef5
+[note] locus.structure (observed)  extraction skipped 58 candidate(s) that did not parse; taxonomy: unsupported-function=49, unsupported-operator=2, source-language-syntax=5, unknown=2; sample: line 25 [unsupported-function] `choose_packet(args_query_class)` (parse error: unknown function 'choose_packet'); line 99 [unsupported-function] `find_graph_path()` (parse error: unknown function 'find_graph_path'); line 102 [unsupported-function] `load_any(graph_path)` (parse error: unknown function 'load_any')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-942d75e720aa4c6a
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (proved)  functions [incoming, outgoing] are PROVED structural clones — their code-property-graph subgraphs are exactly isomorphic (a verified vertex matching), i.e. the same control/data-flow shape up to relabelling: factor them into one (docs/v4/10).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-fcc951fe82894c72
+[note] locus.structure (observed)  expression over {N, damping, dangling_sum} with 3 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-a59a1cb56ef08593
+[note] locus.structure (observed)  defined over the reals only where: N != 0
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-2f6f247990deb60c
+    obligation: domain: N != 0
+[note] locus.structure (observed)  expression over {edge_source, edge_target, nid} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-cfab1b526e9c9b88
+[note] locus.structure (observed)  expression over {included, next_set} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-a49af20c35bcf6f3
+[note] locus.structure (observed)  extraction skipped 33 candidate(s) that did not parse; taxonomy: unsupported-function=15, source-api-call=2, unsupported-operator=2, cast-or-type-syntax=1, source-language-syntax=7, unknown=6; sample: line 15 [unknown] `()` (parse error: unexpected token RParen); line 55 [unknown] `()` (parse error: unexpected token RParen); line 56 [unknown] `()` (parse error: unexpected token RParen)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-04f7b4dd6c1c4669
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  extraction skipped 23 candidate(s) that did not parse; taxonomy: unsupported-function=13, project-helper-call=1, source-api-call=1, cast-or-type-syntax=1, source-language-syntax=6, unknown=1; sample: line 41 [source-language-syntax] `[]` (parse error: unexpected token LBracket); line 43 [unsupported-function] `_file_label_index(file_map)` (parse error: unknown function '_file_label_index'); line 46 [unsupported-function] `_sections(doc)` (parse error: unknown function '_sections')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/doc_scanner.py  id=locus.structure-6eb6663aa8c6d30e
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {returned_ids, returned_labels, returned_paths} with 2 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-bc462893d53870f5
+[note] locus.structure (observed)  extraction skipped 15 candidate(s) that did not parse; taxonomy: unsupported-function=7, project-helper-call=1, source-api-call=2, source-language-syntax=3, unknown=2; sample: line 18 [unknown] `()` (parse error: unexpected token RParen); line 19 [unknown] `()` (parse error: unexpected token RParen); line 36 [source-language-syntax] `[]` (parse error: unexpected token LBracket)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-aa1f1354a2a82bdd
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {targets} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-f5389c403cd61461
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-7865fd82bd1c38ad
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  expression over {node_named_children} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-0cde64197417b1b8
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-66be92726eddf8e0
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  extraction skipped 49 candidate(s) that did not parse; taxonomy: unsupported-function=32, project-helper-call=1, unsupported-operator=1, cast-or-type-syntax=1, source-language-syntax=13, unknown=1; sample: line 52 [source-language-syntax] `[(f_path, f_rel, f_file_node_id, f_text) for f in files]` (parse error: unexpected token LBracket); line 53 [unsupported-function] `extract_symbols(tuples, max_total_symbols)` (parse error: unknown function 'extract_symbols'); line 54 [unsupported-function] `ExtractionResult(nodes, edges, self_name)` (parse error: unknown function 'ExtractionResult')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-3f8e2abc9d4a0a34
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {tokens} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-f6067937414fe9d5
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-02945eab56fa5d67
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  expression over {tokens} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-32a71b695f7308c5
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-c3e262ec4a562d57
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  expression over {rest} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-5c8f3a64d89d3fa7
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-21e289af6e1ba2e1
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  expression over {graph_nodes, nid} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-6ff852b411642b2a
+[note] locus.structure (observed)  expression over {edge_target, tgt, tgt_label} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-841cdc328fd7ecf7
+[note] locus.structure (observed)  expression over {norm, path_to_base_id} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-71edabee0908c9d1
+[note] locus.structure (observed)  expression over {base_id, new_nodes} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-1b0a03c5e12cbc90
+[note] locus.structure (observed)  expression over {c, workspace_root} with 2 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-8d9c7e1ff004cc6d
+[note] locus.structure (observed)  defined over the reals only where: c != 0
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-88c8f073e4c77191
+    obligation: domain: c != 0
+[note] locus.structure (observed)  extraction skipped 49 candidate(s) that did not parse; taxonomy: unsupported-function=29, project-helper-call=1, source-api-call=2, unsupported-operator=2, cast-or-type-syntax=4, source-language-syntax=6, unknown=5; sample: line 49 [unsupported-function] `Graph(nodes, edges, metadata)` (parse error: unknown function 'Graph'); line 70 [unknown] `value if value is not None else default` (parse error: expected 'else' in conditional expression); line 134 [source-language-syntax] `[]` (parse error: unexpected token LBracket)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-eb007ec73fb5a1ad
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  function summary: update_file = edges (graph-based composition from 0 definition(s); exact)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-8b10de66d5370385
+    obligation: L3 scope: closed form is exact under single-assignment + no control flow
+[note] locus.structure (observed)  expression over {edges} with 0 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-310f107b4246ae0e
+[note] locus.structure (proved)  proved shape: Increasing monotonicity, Linear curvature, linear growth — identity variable
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-ce3822b8258ec096
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  extraction skipped 6 candidate(s) that did not parse; taxonomy: unsupported-function=6; sample: line 12 [unsupported-function] `hashlib.sha256()` (parse error: unknown function 'sha256'); line 17 [unsupported-function] `hasher.hexdigest()` (parse error: unknown function 'hexdigest'); line 29 [unsupported-function] `cls()` (parse error: unknown function 'cls')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-d1753e5d12b0f270
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (proved)  functions [handle_initialize, handle_tools_list] are PROVED structural clones — their code-property-graph subgraphs are exactly isomorphic (a verified vertex matching), i.e. the same control/data-flow shape up to relabelling: factor them into one (docs/v4/10).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-2bb68e189984e81a
+[note] locus.structure (observed)  expression over {None, incremental, output_path} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-b556bf14c25e49b8
+[note] locus.structure (observed)  function summary: content = text (graph-based composition from 0 definition(s); exact)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-ae319bcacd8a7d77
+    obligation: L3 scope: closed form is exact under single-assignment + no control flow
+[note] locus.structure (observed)  expression over {text} with 0 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-07a830739662db85
+[note] locus.structure (proved)  proved shape: Increasing monotonicity, Linear curvature, linear growth — identity variable
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-994479d0c154006c
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  extraction skipped 35 candidate(s) that did not parse; taxonomy: unsupported-function=32, unsupported-operator=1, source-language-syntax=1, unknown=1; sample: line 228 [unsupported-function] `content(build_final_packet(args))` (parse error: unknown function 'build_final_packet'); line 230 [unsupported-function] `content(build_query_context(args))` (parse error: unknown function 'build_query_context'); line 241 [unsupported-function] `content(handle_build_graph(args))` (parse error: unknown function 'handle_build_graph')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-7a1a11138e83dad3
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  extraction skipped 11 candidate(s) that did not parse; taxonomy: unsupported-function=9, unknown=2; sample: line 30 [unsupported-function] `GraphSummary( len(graph_nodes), len(graph_edges), dict(Counter(node_kind for nod...` (parse error: unknown function 'len'); line 48 [unsupported-function] `set()` (parse error: unknown function 'set'); line 50 [unsupported-function] `graph_nodes.get(edge_source)` (parse error: unknown function 'get')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/metrics.py  id=locus.structure-d538ca183f37bc27
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {spec_strength, spec_traversable} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ontology.py  id=locus.structure-385e2ea23d05df30
+[note] locus.structure (observed)  extraction skipped 3 candidate(s) that did not parse; taxonomy: unsupported-function=3; sample: line 77 [unsupported-function] `relation_spec(relation)` (parse error: unknown function 'relation_spec'); line 82 [unsupported-function] `relation_spec(relation).weak` (parse error: unknown function 'relation_spec'); line 86 [unsupported-function] `PROVENANCE_CONFIDENCE.get(provenance, 0.6)` (parse error: unknown function 'get')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ontology.py  id=locus.structure-7a83be9e03789815
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {nodes, source_id} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-e9a23e69ea1296a6
+[note] locus.structure (observed)  expression over {nodes, target_id} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-2fd8d777b8761c90
+[note] locus.structure (observed)  expression over {edge_source, source_id, target_id} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-fc8b19ecca85af45
+[note] locus.structure (observed)  expression over {edge_target, source_id, target_id} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-ae3463416303ea29
+[note] locus.structure (observed)  extraction skipped 21 candidate(s) that did not parse; taxonomy: unsupported-function=12, source-language-syntax=5, unknown=4; sample: line 50 [source-language-syntax] `[]` (parse error: unexpected token LBracket); line 51 [source-language-syntax] `[]` (parse error: unexpected token LBracket); line 59 [unsupported-function] `dict(graph_nodes)` (parse error: unknown function 'dict')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-17bee924aff2e97d
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (inferred)  loop-invariant code motion: `src = piecewise([if edge_source == source_id then target_id], else edge_source)` does not depend on the loop index/iteration (variant-disjoint, pure, single-assignment) — hoist it above the loop over [edge] so it is computed once, not every iteration
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-826f21b53fe982a3
+    obligation: verify the right-hand side has no side effects whose execution count matters (it parses to a pure arithmetic expression, but confirm no observable effect)
+    obligation: verify `src` is not read before this assignment on any path through the loop body
+[note] locus.structure (inferred)  loop-invariant code motion: `tgt = piecewise([if edge_target == source_id then target_id], else edge_target)` does not depend on the loop index/iteration (variant-disjoint, pure, single-assignment) — hoist it above the loop over [edge] so it is computed once, not every iteration
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-bb7cab63fb1e30d0
+    obligation: verify the right-hand side has no side effects whose execution count matters (it parses to a pure arithmetic expression, but confirm no observable effect)
+    obligation: verify `tgt` is not read before this assignment on any path through the loop body
+[note] locus.structure (observed)  expression over {graph_nodes, node_id} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-e9b47a81a5d78836
+[note] locus.structure (observed)  expression over {edge_source, node_to_idx} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-25417a425f7dd07c
+[note] locus.structure (observed)  expression over {edge_target, node_to_idx} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-13936b79b72cf7f4
+[note] locus.structure (observed)  extraction skipped 28 candidate(s) that did not parse; taxonomy: unsupported-function=14, unsupported-operator=8, source-language-syntax=6; sample: line 7 [unsupported-function] `tuple(DEFAULT_RELATIONS)` (parse error: unknown function 'tuple'); line 11 [unsupported-function] `_relation_ids(edges, relations)` (parse error: unknown function '_relation_ids'); line 23 [unsupported-operator] `relation_ids.get(edge.type, edge.type)` (parse error: unsupported attribute '.type')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-3167438bde6982bd
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (inferred)  loop-invariant code motion: `src_idx = node_to_idx[edge_source]` does not depend on the loop index/iteration (variant-disjoint, pure, single-assignment) — hoist it above the loop over [edge] so it is computed once, not every iteration
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-7f55fd725ff2a0af
+    obligation: verify the right-hand side has no side effects whose execution count matters (it parses to a pure arithmetic expression, but confirm no observable effect)
+    obligation: verify `src_idx` is not read before this assignment on any path through the loop body
+[note] locus.structure (inferred)  loop-invariant code motion: `tgt_idx = node_to_idx[edge_target]` does not depend on the loop index/iteration (variant-disjoint, pure, single-assignment) — hoist it above the loop over [edge] so it is computed once, not every iteration
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-5c6584265597d2ce
+    obligation: verify the right-hand side has no side effects whose execution count matters (it parses to a pure arithmetic expression, but confirm no observable effect)
+    obligation: verify `tgt_idx` is not read before this assignment on any path through the loop body
+[note] locus.structure (observed)  extraction skipped 5 candidate(s) that did not parse; taxonomy: unsupported-function=2, source-language-syntax=1, unknown=2; sample: line 11 [unknown] `path == pattern` (parse error: comparison operators are only supported inside conditionals); line 15 [unsupported-function] `any(path_matches(pattern, path) for pattern in policy_applies_to for path in que...` (parse error: unknown function 'path_matches'); line 16 [unsupported-function] `set(policy_task_tags) & set(query_tags)` (parse error: unknown function 'set')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/policies.py  id=locus.structure-bd36a467bfa4f03c
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {term_count} with 3 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-ac3f8e00fdf056a5
+[note] locus.structure (proved)  proved shape: Increasing monotonicity, Unknown curvature, asymptotically bounded (converges to a finite limit) — structural: Increasing by sign composition of monotone parts (min/max/abs/affine + DCP rules, docs/v3/04)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-31a6df3615fdec74
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+    obligation: derivative singularities detected: (6*[]) = (1*[min(16*[], 3*[term_count^1;])^1;]) (switching boundary; left/right derivatives exist but differ)
+[note] locus.structure (observed)  expression over {term_count} with 2 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-9aa6bcb68ce5247b
+[note] locus.structure (proved)  proved shape: Increasing monotonicity, Unknown curvature, asymptotically bounded (converges to a finite limit) — structural: Increasing by sign composition of monotone parts (min/max/abs/affine + DCP rules, docs/v3/04)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-c3c92b899fa08923
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+    obligation: derivative singularities detected: (3*[]) = (1*[min(6*[], 1*[term_count^1;])^1;]) (switching boundary; left/right derivatives exist but differ)
+[note] locus.structure (observed)  expression over {edge_source, graph_nodes} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-1946ab2b6a1379ce
+[note] locus.structure (observed)  expression over {current} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-1fe96235512fcebe
+[note] locus.structure (proved)  proved shape: Increasing monotonicity, Linear curvature, linear growth — interval arithmetic: derivative > 0. Bounds: [-10.0,-0.0]→[1.000,1.000]; [0.0,10.0]→[1.000,1.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-1525129fcbf78708
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  extraction skipped 47 candidate(s) that did not parse; taxonomy: unsupported-function=18, project-helper-call=4, source-api-call=3, unsupported-operator=3, cast-or-type-syntax=3, source-language-syntax=7, unknown=9; sample: line 80 [unknown] `()` (parse error: unexpected token RParen); line 82 [source-language-syntax] `[token]` (parse error: unexpected token LBracket); line 88 [unknown] `tuple(dict.fromkeys(part for part in parts if len(part) >= 2))` (parse error: expected ',' or RParen, found Ident("for"))
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-4551636b5efed6c5
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {SKIP_DIRS, extra_skip} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-89b034a02a90a561
+[note] locus.structure (observed)  expression over {c, file_map} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-35ba810b6a4d6516
+[note] locus.structure (observed)  expression over {file_map, rel} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-3ff0738caf443b94
+[note] locus.structure (observed)  expression over {nid, previous_graph_nodes} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-f70d162ee3e3539e
+[note] locus.structure (observed)  expression over {max_nodes} with 2 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-4f83f941cbce7a39
+[note] locus.structure (proved)  proved shape: Increasing monotonicity, Convex curvature, asymptotically bounded (converges to a finite limit) — structural: Increasing by sign composition of monotone parts (min/max/abs/affine + DCP rules, docs/v3/04)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-372f508c0d726188
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+    obligation: derivative singularities detected: (500*[]) = (5*[max_nodes^1;]) (switching boundary; left/right derivatives exist but differ)
+[note] locus.structure (observed)  extraction skipped 43 candidate(s) that did not parse; taxonomy: unsupported-function=24, project-helper-call=2, unsupported-operator=1, cast-or-type-syntax=1, source-language-syntax=12, unknown=3; sample: line 97 [unsupported-function] `path.relative_to(root).as_posix()` (parse error: unknown function 'relative_to'); line 103 [source-language-syntax] `[]` (parse error: unexpected token LBracket); line 104 [source-language-syntax] `[]` (parse error: unexpected token LBracket)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-b3064b23a76e493d
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  extraction skipped 7 candidate(s) that did not parse; taxonomy: unsupported-function=4, project-helper-call=1, source-language-syntax=2; sample: line 41 [unsupported-function] `normalize_label(value)` (parse error: unknown function 'normalize_label'); line 44 [source-language-syntax] `[]` (parse error: unexpected token LBracket); line 53 [unsupported-function] `term_key(value)` (parse error: unknown function 'term_key')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/terms.py  id=locus.structure-2f1e72c2050d884d
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  extraction skipped 5 candidate(s) that did not parse; taxonomy: unsupported-function=4, unknown=1; sample: line 73 [unsupported-function] `POLICIES.get(query_class, DEFAULT_POLICY)` (parse error: unknown function 'get'); line 77 [unsupported-function] `relation_spec(relation)` (parse error: unknown function 'relation_spec'); line 78 [unsupported-function] `policy_preferred_relations.index(relation) if relation in policy_preferred_relat...` (parse error: unknown function 'index')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/traversal.py  id=locus.structure-5dab38fa808591e1
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (observed)  expression over {parts} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-b852add6ed12b9f8
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-122b6a0048884c3a
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  expression over {parts} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-432fedb0ef94d18c
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-b33ce154774db6ee
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  expression over {rn_parts} with 1 operations
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-acf7f3364b248e98
+[note] locus.structure (proved)  proved shape: Constant monotonicity, Linear curvature, unknown growth — interval arithmetic: derivative = 0. Bounds: [-10.0,-0.0]→[0.000,0.000]; [0.0,10.0]→[0.000,0.000].
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-588b84f98b32476b
+    obligation: sample range: {-10, -5, -2, -1, -0.5, -0.1, 0.1, 0.5, 1, 2, 5, 10} — behavior OUTSIDE this range is not captured
+[note] locus.structure (observed)  extraction skipped 33 candidate(s) that did not parse; taxonomy: unsupported-function=19, cast-or-type-syntax=1, source-language-syntax=11, unknown=2; sample: line 13 [unknown] `()` (parse error: unexpected token RParen); line 17 [unsupported-function] `packet.strip()` (parse error: unknown function 'strip'); line 19 [unsupported-function] `validate_lowlevel(text)` (parse error: unknown function 'validate_lowlevel')
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-d1fc2b135d41c788
+    obligation: coverage diagnostic: skipped candidates were not analyzed
+[note] locus.structure (proved)  PROVED structural clones across files: 2 functions whose code-property-graph subgraphs are exactly isomorphic (verified vertex matching) — the same control/data-flow shape up to relabelling, in different files: estimate_tokens (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py), _identifier (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py). Factor them into one (docs/v4/10).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-7966ac55fc8d180d
+[note] locus.structure (proved)  PROVED structural clones across files: 2 functions whose code-property-graph subgraphs are exactly isomorphic (verified vertex matching) — the same control/data-flow shape up to relabelling, in different files: _to_id (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py), provenance_confidence (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ontology.py). Factor them into one (docs/v4/10).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-56e5c977af44475c
+[moderate] locus.structure (inferred)  interprocedural effect: function `evaluate_graph` transitively performs I/O through its call chain (via load_any); calls to `evaluate_graph` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-a49b5bccb3121513
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `load_any` transitively performs I/O through its call chain (via load_csv_edges); calls to `load_any` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-92955f67fbbbe5e5
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `dispatch` transitively performs I/O through its call chain (via handle_tools_call); calls to `dispatch` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-4bb5224f61a63e20
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `handle_search_nodes` transitively performs I/O through its call chain (via load_any); calls to `handle_search_nodes` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-70a1c368df0a555e
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `handle_export_graph` transitively performs I/O through its call chain (via load_any); calls to `handle_export_graph` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-5829fdb26c1d53a0
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `handle_build_graph` transitively performs I/O through its call chain (via load_any, scan_directory); calls to `handle_build_graph` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-6e9c20e65ea7109f
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `build_query_context` transitively performs I/O through its call chain (via load_any); calls to `build_query_context` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-c25c72717bafc80d
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `build_final_packet` transitively performs I/O through its call chain (via load_any); calls to `build_final_packet` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-36fec7c86bac7a88
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `handle_tools_call` transitively performs I/O through its call chain (via build_final_packet, build_query_context, handle_build_graph, handle_export_graph, handle_search_nodes); calls to `handle_tools_call` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-e7615c21deb8c499
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[moderate] locus.structure (inferred)  interprocedural effect: function `scan_directory` transitively performs I/O through its call chain (via compute_file_hash, load_any); calls to `scan_directory` are therefore NOT effect-free and must not be hoisted, CSE'd, reordered, or eliminated as if pure
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-c88eabee4f612872
+    obligation: name-based call resolution: assumes the called name denotes the project function of that name
+    obligation: sound POSITIVE claim (the effect is reachable through resolved calls); this pass never claims the ABSENCE of effects (purity)
+[note] locus.structure (observed)  code structure observed: 10 functions, 1 class, 62 blocks, 75 assignments, 18 branchs, 31 loops, 198 calls, 12 returns; strongest structural weights: call=198, assignment=75, block=62; dataflow observed: 106 read symbols, 58 write symbols, 56 calls, 198 barrier-effect calls; effect verdict: barrier — 198 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-2046fac369eee39c
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 8 functions, 1 class, 18 blocks, 18 assignments, 4 branchs, 1 loop, 35 calls, 7 returns; strongest structural weights: call=35, assignment=18, block=18; dataflow observed: 42 read symbols, 13 write symbols, 25 calls, 34 barrier-effect calls; effect verdict: barrier — 34 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-90e499428c01be0d
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 17 functions, 69 blocks, 109 assignments, 22 branchs, 3 loops, 289 calls, 7 returns; strongest structural weights: call=289, assignment=109, block=69; dataflow observed: 170 read symbols, 70 write symbols, 97 calls, 289 barrier-effect calls; effect verdict: barrier — 289 barrier-effect call(s) [unknown, io] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-a0e467db24b674f4
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 6 functions, 5 classs, 41 blocks, 84 assignments, 16 branchs, 14 loops, 48 calls, 8 returns; strongest structural weights: assignment=84, call=48, block=41; dataflow observed: 78 read symbols, 67 write symbols, 28 calls, 47 barrier-effect calls; effect verdict: barrier — 47 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-056be0f822991ff9
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 6 functions, 1 class, 40 blocks, 48 assignments, 17 branchs, 14 loops, 122 calls, 10 returns; strongest structural weights: call=122, assignment=48, block=40; dataflow observed: 102 read symbols, 35 write symbols, 60 calls, 122 barrier-effect calls; effect verdict: barrier — 122 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/doc_scanner.py  id=locus.structure-66b7117797ce6981
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 7 functions, 2 classs, 16 blocks, 33 assignments, 4 branchs, 3 loops, 46 calls, 9 returns; strongest structural weights: call=46, assignment=33, block=16; dataflow observed: 67 read symbols, 25 write symbols, 31 calls, 46 barrier-effect calls; effect verdict: barrier — 46 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-a81b9f837c3fa2fe
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 27 functions, 7 classs, 144 blocks, 116 assignments, 60 branchs, 33 loops, 213 calls, 38 returns; strongest structural weights: call=213, block=144, assignment=116; dataflow observed: 172 read symbols, 76 write symbols, 103 calls, 212 barrier-effect calls; effect verdict: barrier — 212 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-dee51cb971133d7e
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 14 functions, 66 blocks, 80 assignments, 29 branchs, 13 loops, 171 calls, 19 returns; strongest structural weights: call=171, assignment=80, block=66; dataflow observed: 132 read symbols, 52 write symbols, 77 calls, 170 barrier-effect calls; effect verdict: barrier — 170 barrier-effect call(s) [unknown, io] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-27dce2f843dff6c5
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 6 functions, 1 class, 14 blocks, 5 assignments, 1 branch, 1 loop, 16 calls, 6 returns; strongest structural weights: call=16, block=14, function=6; dataflow observed: 21 read symbols, 4 write symbols, 14 calls, 16 barrier-effect calls; effect verdict: barrier — 16 barrier-effect call(s) [unknown, io] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-9091d506d5801d59
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 11 functions, 41 blocks, 77 assignments, 23 branchs, 1 loop, 188 calls, 27 returns; strongest structural weights: call=188, assignment=77, block=41; dataflow observed: 147 read symbols, 52 write symbols, 56 calls, 188 barrier-effect calls; effect verdict: barrier — 188 barrier-effect call(s) [unknown, io] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-607cd60cbe57fa2d
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 5 functions, 2 classs, 8 blocks, 21 assignments, 1 loop, 30 calls, 5 returns; strongest structural weights: call=30, assignment=21, block=8; dataflow observed: 43 read symbols, 21 write symbols, 14 calls, 30 barrier-effect calls; effect verdict: barrier — 30 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/metrics.py  id=locus.structure-1ba6a95615376165
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 4 functions, 1 class, 5 blocks, 11 assignments, 37 calls, 4 returns; strongest structural weights: call=37, assignment=11, block=5; dataflow observed: 17 read symbols, 11 write symbols, 5 calls, 37 barrier-effect calls; effect verdict: barrier — 37 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ontology.py  id=locus.structure-f434bb71900749a7
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 12 functions, 1 class, 28 blocks, 28 assignments, 9 branchs, 5 loops, 79 calls, 13 returns; strongest structural weights: call=79, assignment=28, block=28; dataflow observed: 76 read symbols, 21 write symbols, 33 calls, 78 barrier-effect calls; effect verdict: barrier — 78 barrier-effect call(s) [unknown, io] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-256bd63f7bf4cfb4
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 10 functions, 54 blocks, 42 assignments, 21 branchs, 20 loops, 106 calls, 18 returns; strongest structural weights: call=106, block=54, assignment=42; dataflow observed: 66 read symbols, 24 write symbols, 39 calls, 106 barrier-effect calls; effect verdict: barrier — 106 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-cdfc64f476521660
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 1 function, 1 class, 9 blocks, 4 assignments, 7 branchs, 11 calls, 8 returns; strongest structural weights: call=11, block=9, return=8; dataflow observed: 10 read symbols, 4 write symbols, 4 calls, 11 barrier-effect calls; effect verdict: barrier — 11 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/planner.py  id=locus.structure-707097b3c0db297c
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 4 functions, 7 blocks, 2 assignments, 3 branchs, 10 calls, 7 returns; strongest structural weights: call=10, block=7, return=7; dataflow observed: 24 read symbols, 2 write symbols, 8 calls, 10 barrier-effect calls; effect verdict: barrier — 10 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/policies.py  id=locus.structure-ddbe35a8cecd0d88
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 10 functions, 2 classs, 62 blocks, 78 assignments, 34 branchs, 10 loops, 136 calls, 19 returns; strongest structural weights: call=136, assignment=78, block=62; dataflow observed: 122 read symbols, 48 write symbols, 67 calls, 124 barrier-effect calls; effect verdict: barrier — 124 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-65cbbd59cfe09006
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 12 functions, 116 blocks, 94 assignments, 35 branchs, 40 loops, 191 calls, 21 returns; strongest structural weights: call=191, block=116, assignment=94; dataflow observed: 172 read symbols, 69 write symbols, 98 calls, 190 barrier-effect calls; effect verdict: barrier — 190 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-58a043912c8e50aa
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 4 functions, 15 blocks, 16 assignments, 7 branchs, 2 loops, 34 calls, 9 returns; strongest structural weights: call=34, assignment=16, block=15; dataflow observed: 33 read symbols, 13 write symbols, 25 calls, 34 barrier-effect calls; effect verdict: barrier — 34 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/terms.py  id=locus.structure-8abd5eba47232ab3
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 2 functions, 1 class, 3 blocks, 10 assignments, 12 calls, 2 returns; strongest structural weights: call=12, assignment=10, block=3; dataflow observed: 22 read symbols, 10 write symbols, 6 calls, 12 barrier-effect calls; effect verdict: barrier — 12 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: floating-point observed (arithmetic-reordering rewrites here are not bit-identical under IEEE-754)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/traversal.py  id=locus.structure-187f8c2484236328
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 8 functions, 1 class, 65 blocks, 66 assignments, 37 branchs, 10 loops, 143 calls, 18 returns; strongest structural weights: call=143, assignment=66, block=65; dataflow observed: 60 read symbols, 36 write symbols, 46 calls, 143 barrier-effect calls; effect verdict: barrier — 143 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier; numeric: integer-only observed (arithmetic reassociation is exact here)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-40d63f03054a269b
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 1 assignment; strongest structural weights: assignment=1; dataflow observed: 0 read symbols, 1 write symbols, 0 calls, 0 barrier-effect calls; effect verdict: local-writes-only (whole-region movement may be legal; per-statement reorder/CSE needs dependence facts); refactor: blocked by effect barrier
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/__init__.py  id=locus.structure-d456f2c76535aa52
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  code structure observed: 1 block, 1 branch, 1 call; strongest structural weights: block=1, branch=1, call=1; dataflow observed: 2 read symbols, 0 write symbols, 1 calls, 1 barrier-effect calls; effect verdict: barrier — 1 barrier-effect call(s) [unknown] block any movement/fusion/CSE/merge claim here; refactor: blocked by effect barrier
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/__main__.py  id=locus.structure-1b195076467ba5d1
+    obligation: AST inventory only; optimization advice requires dataflow and effect lenses
+[note] locus.structure (observed)  Entry-point walk: 1 entry point(s) [main], 176 function definition(s) project-wide, 12 reached via name-resolved static calls, 164 unreached.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-eb75ca207e6c18d3
+    obligation: resolution is name-based: dynamic dispatch, function values, re-exports, and same-named functions across files are merged or unresolved
+    obligation: 'unreachable' = no name-resolved static call path from a detected entry point — a review candidate (dead code, external entry point, or dynamic call), not a proof
+[note] locus.structure (observed)  Functions unreached from any detected entry point (164 of 176): __init__ (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py:24), _add_imports_from (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:541), _add_nested_contains (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:405), _add_returns (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:484), _add_rust_fields (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:439), _add_tree_sitter_calls (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:514), _add_tree_sitter_implements (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:389), _call_name (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:622), _call_names_in_range (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:599), _call_pattern (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py:82), _callsite_pattern (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py:90), _collect_defs (/mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:283), … 152 more. Review candidates: dead code, an undeclared entry point, or a dynamically dispatched call.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-6784fcb5c0ec3eed
+    obligation: resolution is name-based: dynamic dispatch, function values, re-exports, and same-named functions across files are merged or unresolved
+    obligation: 'unreachable' = no name-resolved static call path from a detected entry point — a review candidate (dead code, external entry point, or dynamic call), not a proof
+[note] locus.structure (inferred)  Call-chain simplification: 31 private helper(s) each reached from a single call site — inline/collapse candidates (inline the body into the sole caller, then remove the helper): _imported_symbol_names (called once in _add_imports_from, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:564); _node_text_range (called once in _add_returns, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:333); _return_type_name (called once in _add_returns, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:379); _rust_fields_in_range (called once in _add_rust_fields, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:354); _call_names_in_range (called once in _add_tree_sitter_calls, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:599); _call_name (called once in _call_names_in_range, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:622); _rust_impl_def (called once in _collect_defs, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:337); _language_for_name (called once in _parser_for_language, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:228); _parser_for_language (called once in _parser_for_suffix, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py:260); _node_recall (called once in evaluate_graph, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py:86); _recall (called once in evaluate_graph, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py:80); _file_label_index (called once in extract_document_context, /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/doc_scanner.py:211); … 19 more.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-0afd37d8b1fbb307
+    obligation: resolution is name-based: dynamic dispatch, function values, re-exports, and same-named functions across files are merged or unresolved, so the single-call-site count is an approximation
+    obligation: inlining is only behavior-preserving if the helper is effect-free (or its effects commute into the caller) — verify effects before applying
+    obligation: removing the helper assumes this is its only use; confirm no reflective, exported, or dynamically dispatched caller exists
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ast_scanner.py  id=locus.structure-2609c2cc4fa14d85
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-bcc4602bcaa0fe8c
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-e5fd32ad14e5879c
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-d50ecd4f1680008d
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/doc_scanner.py  id=locus.structure-c59241b5ce97d4c7
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-f51e7aaf637e956a
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-f39d32df10a57159
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-a881b93de1d81b88
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-ad5ca71fdaec442f
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-d559649063d68566
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/metrics.py  id=locus.structure-a266e96803ff9f59
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-48cd3c6d5e00cd22
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/packets.py  id=locus.structure-bd737a4319cf9309
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-d56d4443d963adc2
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-4b5ee18032c1d9a8
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/terms.py  id=locus.structure-d8028292790ff5ff
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Loop/reduction structure detected, but its combining operator is not a known associative+commutative reduction. It is NOT safe to parallelize or vectorize without first establishing that the combiner is associative and commutative and that there is no loop-carried (read-after-write) dependency.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-051dd94f673a4796
+    obligation: prove the combining operator is associative and commutative
+    obligation: prove the loop body has no loop-carried dependency
+[note] locus.structure (inferred)  Linear univariate expression: potential gradient or affine update step. If part of an iterative loop (x ← x - α·expr), this may be a gradient descent update on a quadratic objective.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/manifest.py  id=locus.structure-b0a57f81a5f22981
+    obligation: linear growth and zero-curvature profile only; verify surrounding loop context
+[note] locus.structure (sampled)  ODE pattern detected: f'(x) ≈ 0.000·f(x) — exponential growth. The general solution is f(x) = C·e^(0.000x). Stability: unstable (grows without bound).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-ec18881450911146
+    obligation: f'/f ≈ const verified only at sampled points — not a proof
+    obligation: verify initial condition to determine the constant of integration
+[note] locus.structure (sampled)  ODE pattern detected: f'(x) ≈ 0.000·f(x) — exponential growth. The general solution is f(x) = C·e^(0.000x). Stability: unstable (grows without bound).
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-e214f8b5fd4bc73a
+    obligation: f'/f ≈ const verified only at sampled points — not a proof
+    obligation: verify initial condition to determine the constant of integration
+[note] locus.structure (inferred)  Behavioral family discovered (16 members): these computations occupy one neighborhood in behavioral-profile space, clustered dynamically (single-link within radius 0.75) with no predefined archetype. Simplest representative: 1*[self_cache_data[key]^1;]. Members: 1*[self_cache_data[key]^1;], 1*[bitor(1*[included^1;], 1*[next_set^1;])^1;], 1*[graph_nodes[nid]^1;], 1*[path_to_base_id[norm]^1;], 1*[new_nodes[base_id]^1;], 1*[piecewise(if(Not(Equal(Var("spec_traversable"), Rational(Ratio { numer: 0, denom: 1 }))))->1*[spec_strength^1;], else->0)^1;], 1*[nodes[source_id]^1;], 1*[nodes[target_id]^1;], 1*[graph_nodes[node_id]^1;], 1*[node_to_idx[edge_source]^1;], 1*[node_to_idx[edge_target]^1;], 1*[graph_nodes[edge_source]^1;], 1*[bitor(1*[SKIP_DIRS^1;], 1*[extra_skip^1;])^1;], 1*[file_map[c]^1;], 1*[file_map[rel]^1;], 1*[previous_graph_nodes[nid]^1;]. The representative is the natural canonical form to compare or optimize the others against. MDL/NCD cross-check AGREES (parameter-free): intra-family description-length distance 0.79 < inter-family 0.88, so two independent metrics draw the same boundary — the family is corroborated, not metric-tuning artifact.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-6aa7054c78052436
+    obligation: Recognition only: behavioral similarity is not proof of equivalence.
+    obligation: Verify any cross-member rewrite preserves the intended semantics.
+[note] locus.structure (inferred)  Behavioral family discovered (6 members): these computations occupy one neighborhood in behavioral-profile space, clustered dynamically (single-link within radius 0.75) with no predefined archetype. Simplest representative: 1*[piecewise(if(Not(Equal(Var("args_incremental"), Rational(Ratio { numer: 0, denom: 1 }))))->1*[output_path^1;], else->1*[None^1;])^1;]. Members: 1*[piecewise(if(Not(Equal(Var("args_incremental"), Rational(Ratio { numer: 0, denom: 1 }))))->1*[output_path^1;], else->1*[None^1;])^1;], 1*[bitor(1*[bitor(1*[returned_ids^1;], 1*[returned_labels^1;])^1;], 1*[returned_paths^1;])^1;], 1*[piecewise(if(Not(Equal(Var("tgt"), Rational(Ratio { numer: 0, denom: 1 }))))->1*[tgt_label^1;], else->1*[edge_target^1;])^1;], 1*[piecewise(if(Not(Equal(Var("incremental"), Rational(Ratio { numer: 0, denom: 1 }))))->1*[output_path^1;], else->1*[None^1;])^1;], 1*[piecewise(if(Equal(Var("edge_source"), Var("source_id")))->1*[target_id^1;], else->1*[edge_source^1;])^1;], 1*[piecewise(if(Equal(Var("edge_target"), Var("source_id")))->1*[target_id^1;], else->1*[edge_target^1;])^1;]. The representative is the natural canonical form to compare or optimize the others against. MDL/NCD cross-check AGREES (parameter-free): intra-family description-length distance 0.79 < inter-family 0.88, so two independent metrics draw the same boundary — the family is corroborated, not metric-tuning artifact.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-c247933110e7443e
+    obligation: Recognition only: behavioral similarity is not proof of equivalence.
+    obligation: Verify any cross-member rewrite preserves the intended semantics.
+[note] locus.structure (inferred)  Behavioral family discovered (8 members): these computations occupy one neighborhood in behavioral-profile space, clustered dynamically (single-link within radius 0.75) with no predefined archetype. Simplest representative: 1*[targets[0]^1;]. Members: 1*[targets[0]^1;], 1*[node_named_children[0]^1;], 1*[tokens[0]^1;], 1*[tokens[1]^1;], 1*[rest[0]^1;], 1*[parts[0]^1;], 1*[parts[1]^1;], 1*[rn_parts[1]^1;]. The representative is the natural canonical form to compare or optimize the others against. MDL/NCD cross-check AGREES (parameter-free): intra-family description-length distance 0.79 < inter-family 0.88, so two independent metrics draw the same boundary — the family is corroborated, not metric-tuning artifact.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-b7bb95724cb825fb
+    obligation: Recognition only: behavioral similarity is not proof of equivalence.
+    obligation: Verify any cross-member rewrite preserves the intended semantics.
+[note] locus.structure (inferred)  Behavioral family discovered (3 members): these computations occupy one neighborhood in behavioral-profile space, clustered dynamically (single-link within radius 0.75) with no predefined archetype. Simplest representative: 1*[max(3*[], 1*[min(6*[], 1*[term_count^1;])^1;])^1;]. Members: 1*[max(6*[], 1*[min(16*[], 3*[term_count^1;])^1;])^1;], 1*[max(3*[], 1*[min(6*[], 1*[term_count^1;])^1;])^1;], 1*[max(500*[], 5*[max_nodes^1;])^1;]. The representative is the natural canonical form to compare or optimize the others against. MDL/NCD cross-check AGREES (parameter-free): intra-family description-length distance 0.79 < inter-family 0.88, so two independent metrics draw the same boundary — the family is corroborated, not metric-tuning artifact.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-39558de7296dcb0a
+    obligation: Recognition only: behavioral similarity is not proof of equivalence.
+    obligation: Verify any cross-member rewrite preserves the intended semantics.
+[note] locus.structure (sampled)  Version-ladder neighbors of `(self__hits + self__misses)`: 5 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 4 dominated rung(s) pruned); nearest 1 shown: tanh((self__hits + self__misses)) (up, shape-distance 0.053; wrap in tanh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cache.py  id=locus.structure-e50b0146b547bc5d
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if not (args_incremental == 0) then output_path], else None)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if not (args_incremental == 0) then output_path], else None)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/cli.py  id=locus.structure-da3a686f7089339b
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `(damping * dangling_sum * (N^-1))`: 6 coherent candidate(s) reduced to a 2-point Pareto frontier (shape-distance vs. structural complexity; 4 dominated rung(s) pruned); nearest 2 shown: sinh((damping * dangling_sum * (N^-1))) (up, shape-distance 0.012; wrap in sinh(·)); (damping * dangling_sum * (N^1)) (lateral, shape-distance 0.083; perturb -1 negate → 1). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-02bf2239d6d23e4d
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if edge_source == nid then edge_target], else edge_source)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if edge_source == nid then edge_target], else edge_source)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-1ad1d0afa41412a4
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `(included | next_set)`: 5 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 4 dominated rung(s) pruned); nearest 1 shown: tanh((included | next_set)) (up, shape-distance 0.017; wrap in tanh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.structure-04092cda086a90bf
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `((returned_ids | returned_labels) | returned_paths)`: 6 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 5 dominated rung(s) pruned); nearest 1 shown: tanh(((returned_ids | returned_labels) | returned_paths)) (up, shape-distance 0.017; wrap in tanh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/eval.py  id=locus.structure-09b318b34f5c7ed7
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if not (tgt == 0) then tgt_label], else edge_target)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if not (tgt == 0) then tgt_label], else edge_target)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-da9f8a98bf938304
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `(workspace_root * (c^-1))`: 3 coherent candidate(s) reduced to a 3-point Pareto frontier (shape-distance vs. structural complexity; 0 dominated rung(s) pruned); nearest 3 shown: ((workspace_root * (c^-1)) + (c^2)) (up, shape-distance 0.110; add term (c^2)); ((workspace_root * (c^-1)) + (workspace_root^2)) (up, shape-distance 0.110; add term (workspace_root^2)); (workspace_root * (c^1)) (lateral, shape-distance 0.245; perturb -1 negate → 1). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-a903b70cbb222db6
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if not (incremental == 0) then output_path], else None)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if not (incremental == 0) then output_path], else None)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/mcp_server.py  id=locus.structure-0a8ea1218dbab582
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if not (spec_traversable == 0) then spec_strength], else 0)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if not (spec_traversable == 0) then spec_strength], else 0)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/ontology.py  id=locus.structure-d9e784648765ef2f
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if edge_source == source_id then target_id], else edge_source)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if edge_source == source_id then target_id], else edge_source)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-6f2fbaca9d9cef85
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `piecewise([if edge_target == source_id then target_id], else edge_target)`: 4 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 3 dominated rung(s) pruned); nearest 1 shown: sinh(piecewise([if edge_target == source_id then target_id], else edge_target)) (up, shape-distance 0.012; wrap in sinh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/operations.py  id=locus.structure-a152f8f8302d3775
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `max(6, min(16, (term_count * 3)))`: 2 coherent candidate(s) reduced to a 2-point Pareto frontier (shape-distance vs. structural complexity; 0 dominated rung(s) pruned); nearest 2 shown: (max(6, min(16, (term_count * 3))) + (term_count^2)) (up, shape-distance 0.014; add term (term_count^2)); (max(6, min(16, (term_count * 3))) + term_count) (up, shape-distance 0.019; add term term_count). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-01893c3e447dca65
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `max(3, min(6, term_count))`: 2 coherent candidate(s) reduced to a 2-point Pareto frontier (shape-distance vs. structural complexity; 0 dominated rung(s) pruned); nearest 2 shown: (max(3, min(6, term_count)) + (term_count^2)) (up, shape-distance 0.038; add term (term_count^2)); (max(3, min(6, term_count)) + term_count) (up, shape-distance 0.070; add term term_count). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-e52357e9c67529e5
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `(current + 1)`: 14 coherent candidate(s) reduced to a 3-point Pareto frontier (shape-distance vs. structural complexity; 11 dominated rung(s) pruned); nearest 3 shown: sinh((current + 1)) (up, shape-distance 0.044; wrap in sinh(·)); (current + 1/2) (lateral, shape-distance 0.045; perturb 1 ÷2 → 1/2); current (down, shape-distance 0.236; drop term 1). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/retrieval.py  id=locus.structure-68597717007348d5
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.structure (sampled)  Version-ladder neighbors of `(SKIP_DIRS | extra_skip)`: 5 coherent candidate(s) reduced to a 1-point Pareto frontier (shape-distance vs. structural complexity; 4 dominated rung(s) pruned); nearest 1 shown: tanh((SKIP_DIRS | extra_skip)) (up, shape-distance 0.017; wrap in tanh(·)). Each is a DIFFERENT function (not an equivalent rewrite) — a hypothesized next version to validate against an objective, never a proved transform.
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/scanner.py  id=locus.structure-480db868abcb7623
+    obligation: Generative (mode 2): rungs are NOT equivalent to the source.
+    obligation: Coherence is sampled over a probe grid, not proved — treat each rung as a candidate to evaluate against the intended objective.
+    obligation: Objective (required for non-equivalent candidates): nearest non-dominated next version (minimize shape-distance and structural complexity). Supply weights to scalar-rank the frontier, then validate the chosen rung.
+[note] locus.role (inferred)  product-of-powers form is consistent with a Cobb-Douglas production/utility function (returns to scale = α+β; elasticity 1) (economics:cobb-douglas) (confidence 25%)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.role-9b5bced2edd70e43
+    supporting: structural operator `pow` present (MathIR)
+    invalid when: a product of powers also describes geometric volume, physical scaling, or any monomial — not specifically economic; structural match only; the variables may not denote this domain's quantities
+    assumes: domain interpretation (hypothesis): product-of-powers form is consistent with a Cobb-Douglas production/utility function (returns to scale = α+β; elasticity 1)
+[note] locus.role (inferred)  exp(-δt) or (1/(1+r))^t form is consistent with intertemporal discounting / net-present-value structure (economics:intertemporal-discounting) (confidence 30%)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/core.py  id=locus.role-08c7b52174b2ccc9
+    supporting: structural operator `pow` present (MathIR)
+    invalid when: exponential decay appears in physics, chemistry, and biology too; structural match only; the variables may not denote this domain's quantities
+    assumes: domain interpretation (hypothesis): exp(-δt) or (1/(1+r))^t form is consistent with intertemporal discounting / net-present-value structure
+[note] locus.role (inferred)  product-of-powers form is consistent with a Cobb-Douglas production/utility function (returns to scale = α+β; elasticity 1) (economics:cobb-douglas) (confidence 25%)
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.role-3abb50fda231825f
+    supporting: structural operator `pow` present (MathIR)
+    invalid when: a product of powers also describes geometric volume, physical scaling, or any monomial — not specifically economic; structural match only; the variables may not denote this domain's quantities
+    assumes: domain interpretation (hypothesis): product-of-powers form is consistent with a Cobb-Douglas production/utility function (returns to scale = α+β; elasticity 1)
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `targets` through index `0`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-5629b366215f0643
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `node_named_children` through index `0`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/frontends.py  id=locus.structure-0235a602ee056088
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `tokens` through index `0`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-60992d3c26981c39
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `tokens` through index `1`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-622628a4e9b99f00
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `rest` through index `0`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/io.py  id=locus.structure-e5a85cd04a93c7e7
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `parts` through index `0`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-c9e5611a19cda0a4
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `parts` through index `1`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-76221a3a6eb61da1
+    obligation: access geometry came from parsed index expressions, not string heuristics
+[note] locus.structure (observed)  data-dependent or irregular access to tensor `rn_parts` through index `1`
+    at /mnt/c/Users/dcarn/aiprojects/graphgraph/src/graphgraph/validate.py  id=locus.structure-e3fb04da5c00407d
+    obligation: access geometry came from parsed index expressions, not string heuristics
+Coverage: 30 file(s) inventoried; 23 analyzable, 23 analyzed, 23 produced object(s), 0 skipped/held, 0 read error(s)
+Parse failures: 518 candidate(s) skipped (unparsed) — 13 cast-or-type-syntax, 12 project-helper-call, 11 source-api-call, 103 source-language-syntax, 43 unknown, 315 unsupported-function, 21 unsupported-operator
+Suppressed non-formula candidates: 499 source construct(s) skipped before formula parsing

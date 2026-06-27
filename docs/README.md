@@ -16,6 +16,7 @@ The current answer is not a universal winner. The measured shape is:
 
 - [Empirical Findings](empirical-findings.md)
 - [Architecture](architecture.md)
+- [Adaptive Planning Math](adaptive-planning-math.md)
 - [LLM Connection Strategy](llm-connection-strategy.md)
 - [Integration Surfaces](integration-surfaces.md)
 

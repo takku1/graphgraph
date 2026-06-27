@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .io import load_any
 from .packets import render_packet
-from .planner import choose_packet
+from .planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
 from .retrieval import retrieve_context
 
 
@@ -50,11 +50,18 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
     for task in tasks:
         choice = choose_packet(task.query_class, task.query)
         retrieved = retrieve_context(graph, task.query, task.query_class, hops=choice.hops, max_nodes=max_nodes)
+        choice = choose_packet_for_subgraph(
+            choice,
+            compute_subgraph_stats(graph, retrieved.nodes, retrieved.edges),
+            query_class=task.query_class,
+        )
         packet = render_packet(graph, retrieved.nodes, retrieved.edges, choice.packet)
         returned_labels = {graph.nodes[nid].label for nid in retrieved.nodes if nid in graph.nodes}
         returned_paths = {graph.nodes[nid].path for nid in retrieved.nodes if nid in graph.nodes}
+        returned_label_stems = {_strip_known_suffix(label) for label in returned_labels}
+        returned_path_stems = {_strip_known_suffix(Path(path).name) for path in returned_paths if path}
         returned_ids = set(retrieved.nodes)
-        returned_node_keys = returned_ids | returned_labels | returned_paths
+        returned_node_keys = returned_ids | returned_labels | returned_paths | returned_label_stems | returned_path_stems
         returned_edges = {(edge.source, edge.target, edge.type) for edge in retrieved.edges}
         results.append(EvalResult(
             query=task.query,
@@ -104,4 +111,9 @@ def _norm_node_key(value: str) -> str:
     value = re.sub(r"\(\)$", "", value)
     value = value.replace("\\", "/")
     value = value.rsplit("/", 1)[-1]
+    value = _strip_known_suffix(value)
     return value.lower()
+
+
+def _strip_known_suffix(value: str) -> str:
+    return re.sub(r"\.(py|pyi|js|jsx|ts|tsx|rs|go|java|c|h|hpp|cpp|cs|md|rst|txt|json|yaml|yml|toml)$", "", value, flags=re.IGNORECASE)

@@ -155,6 +155,32 @@ def fmt_csr_arrays(graph: dict) -> str:
     return f"N={labels}\nR=dep\nCSR ptr={ptr_s}\ncol={col_s}\nw={weight_s}"
 
 
+def fmt_gg_lex(graph: dict) -> str:
+    lines = ["[r]", "1:dep", "[n]"]
+    seen = set()
+    node_to_id = {}
+    for node in graph["nodes"]:
+        label = node["name"]
+        base = "".join(c.lower() for c in label if c.isalnum())
+        if not base:
+            base = "node"
+        candidate = base[:8]
+        if candidate in seen:
+            suffix = 2
+            while f"{candidate[:6]}{suffix}" in seen:
+                suffix += 1
+            candidate = f"{candidate[:6]}{suffix}"
+        seen.add(candidate)
+        node_to_id[node["id"]] = candidate
+        lines.append(f"{candidate} {label}")
+    lines.append("[e]")
+    for edge in graph["edges"]:
+        src_id = node_to_id[edge["source"]]
+        tgt_id = node_to_id[edge["target"]]
+        lines.append(f"{src_id} {tgt_id} 1 {edge['dependency']}")
+    return "\n".join(lines)
+
+
 FORMATTERS: dict[str, Callable[[dict], str]] = {
     "json_pretty": fmt_json,
     "json_minified": fmt_json_min,
@@ -165,6 +191,7 @@ FORMATTERS: dict[str, Callable[[dict], str]] = {
     "relation_coded_adj": fmt_relation_coded_adj,
     "semantic_arrow": fmt_semantic_arrow,
     "gg_max": fmt_gg_max,
+    "gg_lex": fmt_gg_lex,
     "csr_arrays": fmt_csr_arrays,
 }
 

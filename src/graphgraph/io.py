@@ -8,6 +8,10 @@ from pathlib import Path
 from .core import Edge, Graph, Node, Policy
 
 
+def _label_to_id(lbl: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]", "_", lbl)
+
+
 def load_graph(path: Path) -> Graph:
     data = json.loads(path.read_text(encoding="utf-8"))
     nodes = {
@@ -134,9 +138,6 @@ def load_gg(path: Path) -> Graph:
     pending_edges: list[tuple[str, str, str, float]] = []  # (src_label, tgt_label, type, weight)
     current_label: str | None = None
 
-    def _to_id(lbl: str) -> str:
-        return re.sub(r"[^A-Za-z0-9_]", "_", lbl)
-
     for raw_line in text.splitlines():
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
@@ -169,7 +170,7 @@ def load_gg(path: Path) -> Graph:
                 rest = rest[1:]
             if rest:
                 node_path = rest[0]
-            nid = _to_id(label)
+            nid = _label_to_id(label)
             if nid in nodes and nodes[nid].label != label:
                 nid = f"{nid}_{len(nodes)}"
             nodes[nid] = Node(id=nid, label=label, kind=kind, path=node_path)
@@ -252,9 +253,6 @@ def load_csv_edges(path: Path) -> Graph:
     edges: list[Edge] = []
     seen: set[tuple[str, str, str]] = set()
 
-    def _nid(lbl: str) -> str:
-        return re.sub(r"[^A-Za-z0-9_]", "_", lbl.strip())
-
     for row in data_rows:
         if len(row) < 2:
             continue
@@ -268,11 +266,11 @@ def load_csv_edges(path: Path) -> Graph:
             weight = 1.0
 
         for lbl in (src, tgt):
-            nid = _nid(lbl)
+            nid = _label_to_id(lbl)
             if nid not in nodes:
                 nodes[nid] = Node(id=nid, label=lbl)
 
-        src_id, tgt_id = _nid(src), _nid(tgt)
+        src_id, tgt_id = _label_to_id(src), _label_to_id(tgt)
         key = (src_id, tgt_id, etype)
         if key not in seen:
             seen.add(key)

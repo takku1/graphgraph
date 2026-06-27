@@ -76,7 +76,6 @@ def main() -> None:
                 depth="symbols",
                 frontend=frontend,
                 docs=True,
-                communities=True,
             )
             graph_path = out_dir / f"{_safe_name(project)}.json"
             save_graph(graph, graph_path)

@@ -20,6 +20,13 @@ SCRIPTS = [
     "adaptive_policy_report.py",
     "final_packet_benchmark.py",
     "minmax_analysis.py",
+    "adaptive_threshold_sweep.py",
+    "mathematical_limit_search.py",
+    "real_project_packet_balance.py",
+    "hop_frontier_benchmark.py",
+    "adaptive_hop_policy_benchmark.py",
+    "token_proxy_calibration.py",
+    "real_project_answerability_limit.py",
 ]
 
 

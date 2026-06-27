@@ -53,8 +53,8 @@ def validate_gg_max(packet: str) -> ValidationResult:
         relations[rel_id.strip()] = rel.strip()
 
     for line in nonempty_lines(nodes_part):
-        # Fact/summary continuation lines (indented) — skip for node counting.
-        if line.startswith(" ") or line.startswith("-"):
+        # Fact/summary continuation lines (indented) or comments — skip for node counting.
+        if line.startswith(" ") or line.startswith("-") or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split(None, 1)]
         if len(parts) < 2:
@@ -65,10 +65,14 @@ def validate_gg_max(packet: str) -> ValidationResult:
 
     for line in nonempty_lines(edges_part):
         parts = [part.strip() for part in line.split()]
-        if len(parts) != 4:
+        if len(parts) == 3:
+            source, target, rel_id = parts
+            weight = "1.0"
+        elif len(parts) == 4:
+            source, target, rel_id, weight = parts
+        else:
             errors.append(f"bad edge row: {line}")
             continue
-        source, target, rel_id, weight = parts
         if source not in nodes:
             errors.append(f"edge source missing from nodes: {source}")
         if target not in nodes:
@@ -82,10 +86,14 @@ def validate_gg_max(packet: str) -> ValidationResult:
         edges.append((source, target, rel_id, weight))
 
     # Detect hybrid: node lines carry metadata beyond just index+label ([kind] annotation or legacy summary: prefix)
+    is_lex = any(not nid.isdigit() for nid in nodes)
     is_hybrid = "summary:" in packet or bool(
-        re.search(r"^\d+\s+\S+\s+\[", nodes_part, re.MULTILINE)
+        re.search(r"^\S+\s+\S+\s+\[", nodes_part, re.MULTILINE)
     )
-    fmt = "gg_max_hybrid" if is_hybrid else "gg_max"
+    if is_lex:
+        fmt = "gg_lex_hybrid" if is_hybrid else "gg_lex"
+    else:
+        fmt = "gg_max_hybrid" if is_hybrid else "gg_max"
     return ValidationResult(not errors, fmt, len(nodes), len(edges), tuple(errors))
 
 

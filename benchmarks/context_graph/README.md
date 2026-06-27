@@ -392,6 +392,31 @@ Outputs:
 - `benchmarks/context_graph/out/local_projects/local_project_eval.csv`
 - `benchmarks/context_graph/out/local_projects/local_project_eval.md`
 
+## Cross-Repo Anchor Stress
+
+Use this harsher fixed-policy benchmark to test anchor/search generalization
+across local projects and cloned resources. It generates exact-node tasks from
+the scanned graphs, holds the production policy fixed, and reports recall,
+tokens per hit, and over-retrieval/noise.
+
+```powershell
+$env:CROSS_REPO_MAX_NODES="700"
+$env:CROSS_REPO_REUSE_GRAPHS="0"
+python benchmarks\context_graph\cross_repo_anchor_stress.py
+```
+
+Optional project override:
+
+```powershell
+$env:CROSS_REPO_PATHS="C:\Users\dcarn\aiprojects\graphgraph;C:\Users\dcarn\aiprojects\resources\requests"
+```
+
+Outputs:
+
+- `benchmarks/context_graph/out/cross_repo_anchor/cross_repo_anchor_stress.csv`
+- `benchmarks/context_graph/out/cross_repo_anchor/cross_repo_anchor_stress.md`
+- `benchmarks/context_graph/out/cross_repo_anchor/graphs/<project>.json`
+
 ## Interpretation
 
 High recall with low token pressure is the useful region.

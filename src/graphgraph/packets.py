@@ -78,29 +78,36 @@ def render_gg_max(
         lines.append(f"{rel_id}:{rel}")
     lines.append("[n]")
     node_to_idx = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
-    for node_id, idx in node_to_idx.items():
-        node = graph.nodes[node_id]
-        if hybrid:
-            # Only emit metadata tokens that actually exist — fall back to plain label if none.
-            meta_parts = []
-            if node.kind and node.kind != "unknown":
-                meta_parts.append(f"[{node.kind}]")
-            if node.summary:
-                meta_parts.append(node.summary)
-            if meta_parts:
-                lines.append(f"{idx} {node.label} {' '.join(meta_parts)}")
+    grouped = _group_nodes_by_subsystem(nodes, graph)
+    for sub, sub_nodes in grouped:
+        lines.append(f"# subsystem: {sub}")
+        for node_id in sub_nodes:
+            idx = node_to_idx[node_id]
+            node = graph.nodes[node_id]
+            if hybrid:
+                # Only emit metadata tokens that actually exist — fall back to plain label if none.
+                meta_parts = []
+                if node.kind and node.kind != "unknown":
+                    meta_parts.append(f"[{node.kind}]")
+                if node.summary:
+                    meta_parts.append(node.summary)
+                if meta_parts:
+                    lines.append(f"{idx} {node.label} {' '.join(meta_parts)}")
+                else:
+                    lines.append(f"{idx} {node.label}")
+                for fact in node.facts[:3]:
+                    lines.append(f" {fact}")
             else:
                 lines.append(f"{idx} {node.label}")
-            for fact in node.facts[:3]:
-                lines.append(f" {fact}")
-        else:
-            lines.append(f"{idx} {node.label}")
     lines.append("[e]")
     for edge in edges:
         rel_id = relation_ids.get(edge.type, edge.type)
         src_idx = node_to_idx[edge.source]
         tgt_idx = node_to_idx[edge.target]
-        lines.append(f"{src_idx} {tgt_idx} {rel_id} {edge.weight:g}")
+        if abs(edge.weight - 1.0) > 1e-9:
+            lines.append(f"{src_idx} {tgt_idx} {rel_id} {edge.weight:g}")
+        else:
+            lines.append(f"{src_idx} {tgt_idx} {rel_id}")
     return "\n".join(lines)
 
 
@@ -113,6 +120,40 @@ def _relation_ids(edges: list[Edge], relations: tuple[str, ...]) -> dict[str, in
             seen.add(edge.type)
             ordered.append(edge.type)
     return {rel: i + 1 for i, rel in enumerate(ordered)}
+
+
+def _subsystem_name(path: str) -> str:
+    if not path:
+        return "unknown"
+    p = path.replace("\\", "/").strip("/")
+    if p.startswith("crates/"):
+        parts = p.split("/")
+        if len(parts) > 1:
+            return parts[1]
+    parts = p.split("/")
+    if len(parts) > 1:
+        return parts[0]
+    return "root"
+
+
+def _group_nodes_by_subsystem(nodes: set[str], graph: Graph) -> list[tuple[str, list[str]]]:
+    subsystems: dict[str, list[str]] = {}
+    for node_id in sorted(nodes):
+        node = graph.nodes.get(node_id)
+        if not node:
+            continue
+        sub = _subsystem_name(node.path)
+        subsystems.setdefault(sub, []).append(node_id)
+
+    def sub_key(item: tuple[str, list[str]]) -> tuple[int, str]:
+        name = item[0]
+        if name == "root":
+            return (0, "")
+        if name == "unknown":
+            return (2, "")
+        return (1, name)
+
+    return sorted(subsystems.items(), key=sub_key)
 
 
 def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
@@ -197,6 +238,74 @@ def render_tensor_array(graph: Graph, nodes: set[str], edges: list[Edge]) -> str
     return "\n".join(lines)
 
 
+def _lexical_ids(nodes: set[str], graph: Graph) -> dict[str, str]:
+    seen = set()
+    node_to_id = {}
+    for node_id in sorted(nodes):
+        node = graph.nodes[node_id]
+        label = node.label or node_id
+        # Normalize: keep alphanumeric and lowercase
+        base = "".join(c.lower() for c in label if c.isalnum())
+        if not base:
+            base = "node"
+        # Truncate to 8 chars
+        candidate = base[:8]
+        # Disambiguate collisions
+        if candidate in seen:
+            suffix = 2
+            while f"{candidate[:6]}{suffix}" in seen:
+                suffix += 1
+            candidate = f"{candidate[:6]}{suffix}"
+        seen.add(candidate)
+        node_to_id[node_id] = candidate
+    return node_to_id
+
+
+def render_gg_lex(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
+    hybrid: bool = False,
+) -> str:
+    relation_ids = _relation_ids(edges, relations)
+    lines = ["[r]"]
+    for rel, rel_id in relation_ids.items():
+        lines.append(f"{rel_id}:{rel}")
+    lines.append("[n]")
+    node_to_id = _lexical_ids(nodes, graph)
+    grouped = _group_nodes_by_subsystem(nodes, graph)
+    for sub, sub_nodes in grouped:
+        lines.append(f"# subsystem: {sub}")
+        for node_id in sub_nodes:
+            node = graph.nodes[node_id]
+            lex_id = node_to_id[node_id]
+            if hybrid:
+                meta_parts = []
+                if node.kind and node.kind != "unknown":
+                    meta_parts.append(f"[{node.kind}]")
+                if node.summary:
+                    meta_parts.append(node.summary)
+                if meta_parts:
+                    lines.append(f"{lex_id} {node.label} {' '.join(meta_parts)}")
+                else:
+                    lines.append(f"{lex_id} {node.label}")
+                for fact in node.facts[:3]:
+                    lines.append(f" {fact}")
+            else:
+                lines.append(f"{lex_id} {node.label}")
+    lines.append("[e]")
+    for edge in edges:
+        rel_id = relation_ids.get(edge.type, edge.type)
+        src_id = node_to_id[edge.source]
+        tgt_id = node_to_id[edge.target]
+        if abs(edge.weight - 1.0) > 1e-9:
+            lines.append(f"{src_id} {tgt_id} {rel_id} {edge.weight:g}")
+        else:
+            lines.append(f"{src_id} {tgt_id} {rel_id}")
+    return "\n".join(lines)
+
+
 def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str) -> str:
     if packet == "lowlevel":
         return render_lowlevel(graph, nodes, edges)
@@ -210,6 +319,10 @@ def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str)
         return render_gg_max(graph, nodes, edges)
     if packet == "gg_max_hybrid":
         return render_gg_max(graph, nodes, edges, hybrid=True)
+    if packet == "gg_lex":
+        return render_gg_lex(graph, nodes, edges)
+    if packet == "gg_lex_hybrid":
+        return render_gg_lex(graph, nodes, edges, hybrid=True)
     if packet == "svo":
         return render_svo(graph, nodes, edges)
     if packet == "doc_summary":
