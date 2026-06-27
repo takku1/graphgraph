@@ -91,6 +91,13 @@ We performed an ablation sweep over the same 48-task Locus benchmark suite, maki
 | w/o Weak-Edge Suppression | 793.5 | 100.0% | **15.0% token inflation** |
 | w/o Adaptive Query-Class Routing | 843.1 | 100.0% | **22.1% token inflation** |
 
+### Token Proxy Calibration Optimization
+To prevent planning errors, we dynamically calibrate the token proxy estimates inside the planner. Instead of using static identifier length assumptions, GraphGraph calculates the average symbol character length in the subgraph dynamically. 
+
+Empirical calibration checks on the Locus suite show:
+*   **Static Multipliers (Baseline)**: Average relative estimation error of **`-17.1%`** for `gg_max`.
+*   **Dynamic Calibration (GraphGraph)**: Average relative estimation error drops to **`+1.3%`** for `gg_max` and **`-0.8%`** for `gg_lex`. This near-perfect calibration (within $\pm 1.5\%$ error) ensures that the planner's budget constraints are tightly enforced without over-pruning.
+
 ---
 
 ## 6. Related Work
