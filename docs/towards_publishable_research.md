@@ -11,10 +11,29 @@ On a 48-task evaluation suite, GraphGraph achieves a **100.0% answerability rate
 
 ---
 
-## 1. Specification of the Competitor Baseline (Graphify)
+## 1. Introduction and System Architecture
 
-To establish a fair comparison, we compare GraphGraph against **Graphify**, a representative code-graph retrieval system:
-*   **Ingestion**: Both systems run equivalent tree-sitter AST extraction pipelines to produce code symbol nodes.
+GraphGraph is designed to bridge the gap between static graph databases and the self-attention constraints of LLMs during codebase Retrieval-Augmented Generation (RAG). 
+
+### System Pipeline
+The figure below illustrates the structural flow of a user query through the GraphGraph pipeline:
+
+```mermaid
+graph TD
+    UserQuery["User Input Query"] ──► Router["1. Query Router (BM25 / Keyword Search)"]
+    Router ──► Planner["2. Context Planner (Anchor limits / Path Hops Selection)"]
+    Planner ──► Retriever["3. Retriever (Spreading Activation / Churn Boosting)"]
+    Retriever ──► Throttle["4. Edge Density Throttle (R_ne scaling)"]
+    Throttle ──► Serializer["5. Serializer (gg_lex Subsystem Grouping)"]
+    Serializer ──► LLM["6. LLM Context Window (Legend Pre-Conditioning)"]
+```
+
+---
+
+## 2. Specification of the Competitor Baseline (Graphify)
+
+We compare GraphGraph against **Graphify**, an internal baseline representing traditional codebase retrieval structures:
+*   **Ingestion**: Both systems run equivalent tree-sitter AST extraction pipelines to produce codebase symbol maps, controlling for parser-quality variables.
 *   **Representation**: Graphify serializes subgraphs as verbose, human-readable node and edge strings:
     ```text
     NODE Contextminer [src=CLAUDE.md loc=L1 community=]
@@ -25,7 +44,19 @@ To establish a fair comparison, we compare GraphGraph against **Graphify**, a re
 
 ---
 
-## 2. Oracle Lower Bound (Evidence-Containment Minimum)
+## 3. Serialization Formats Side-by-Side Comparison
+
+The following table compares how Graphify, `gg_max`, and `gg_lex` represent the same code dependency (e.g. `AuthService` calling `TokenStore`):
+
+| Format | Representation Example | Primary Advantage | Attention Trade-Off |
+| :--- | :--- | :--- | :--- |
+| **Graphify** (Verbose) | `NODE AuthService [kind=struct]` <br> `NODE TokenStore [kind=struct]` <br> `EDGE AuthService --calls--> TokenStore` | Highly human-readable; self-descriptive. | Large token footprint; redundant label tokens. |
+| **`gg_max`** (Numeric) | `[n] 1 AuthService 2 TokenStore` <br> `[e] 1 2 calls` | Minimal token footprint (prompt floor). | **Attention Indirection Penalty**: LLM attention heads must perform multiple hops to resolve indices. |
+| **`gg_lex`** (Lexical) | `[n] authserv AuthService tokensto TokenStore` <br> `[e] authserv tokensto calls` | Bypasses indirection via inline lexical keys. | Small token premium (10-13%) over `gg_max`. |
+
+---
+
+## 4. Oracle Lower Bound (Evidence-Containment Minimum)
 
 We define the **Oracle Lower Bound** as the absolute minimum token size of a context packet that contains the exact minimal set of nodes and edges required to solve a given evaluation task. 
 
@@ -35,7 +66,7 @@ We define the **Oracle Lower Bound** as the absolute minimum token size of a con
 
 ---
 
-## 3. Disclosing Limitations: Cross-Repo Stress Test
+## 5. Disclosing Limitations: Cross-Repo Stress Test
 
 To maintain scientific integrity, we report failures and structural boundaries identified during the **Cross-Repo Stress Test**. The test evaluated GraphGraph on diverse repositories (e.g., `contextminer`, `locus`) using complex queries.
 
@@ -59,11 +90,11 @@ To maintain scientific integrity, we report failures and structural boundaries i
 
 ---
 
-## 4. Downstream Evaluation & Attention Indirection
+## 6. Downstream Evaluation & Attention Indirection
 
 ### Downstream Evaluation Methodology
 *   **Tasks ($N$)**: 48 code-modification tasks from the Locus benchmark suite.
-*   **Model**: Gemini 1.5 Flash (temperature = `0.0`).
+*   **Model**: Gemini 1.5 Flash (temperature = `0.0`, default context settings).
 *   **Success Metric**: Functional correctness (code compiles and passes target unit-test execution).
 
 | Serialization Format | Code-Generation Success Rate | Average Token Count |
@@ -79,7 +110,7 @@ We hypothesize that this **Attention Indirection Penalty** introduces significan
 
 ---
 
-## 5. Formal Ablation Study
+## 7. Formal Ablation Study
 
 We performed an ablation sweep over the same 48-task Locus benchmark suite, making all token counts directly comparable to the `690.0` baseline.
 
@@ -100,14 +131,52 @@ Empirical calibration checks on the Locus suite show:
 
 ---
 
-## 6. Related Work
+## 8. Related Work
 
 GraphGraph builds on a rich line of research in structured codebase context retrieval:
-*   **CodeGraph / RepoBench**: Prior systems focus on building extensive vector databases or executing static PageRank walks over call graphs. They typically output verbose JSON structures, ignoring the token cost of the representation format. GraphGraph is orthogonal: it accepts these graphs and optimizes their **prompt serialization format and attention-indirection footprint**.
+*   **Repoformer**: Introduces selective retrieval models for repository-level code completion. While Repoformer focuses on the neural decision-making of *when* to retrieve, GraphGraph focuses on the structural planning of *what* to retrieve and *how* to represent it efficiently.
+*   **RepoBench / CodeXEmbed**: Set up benchmarks for codebase retrieval, evaluating structural connectivity walks. They typically output verbose JSON structures, ignoring the token cost of the representation format. GraphGraph is orthogonal: it accepts these graphs and optimizes their **prompt serialization format and attention-indirection footprint**.
 *   **Prompt Compression (e.g., LLMLingua)**: General-purpose compressors use token-entropy models to prune text. However, they are blind to graph structures and frequently break topological references, destroying edge relationships. GraphGraph prunes nodes and edges structurally, preserving the integrity of the graph topology.
 
 ---
 
-## 7. Target Venue Positioning: ACL/EMNLP (Short Paper / System Demo)
+## 9. Ethics and Broader Impact Statement
 
- we target the **ACL/EMNLP Systems Demonstrations** or **Short Papers** track. The paper will focus on the downstream task accuracy and attention indirection properties of `gg_lex`, framing the work as a **Context Engineering System** that bridges the gap between structured code databases and LLM attention-head architectures.
+As an automated codebase context RAG tool, GraphGraph is designed to increase software engineering productivity and reduce LLM reasoning costs. However, we acknowledge potential security and ethical risks:
+*   **Vulnerability Propagation**: If the source codebase contains security flaws, the optimized context might bias the LLM to reproduce or scale these vulnerabilities in generated edits.
+*   **Privacy & Intellectual Property**: GraphGraph's local MCP architecture keeps the parsing and retrieval local on the user's system. However, developers must ensure that the downstream LLMs (if hosted externally) do not violate codebase confidentiality.
+
+---
+
+## 10. System Licensing and Reproducibility
+
+*   **License**: GraphGraph is open-sourced under the **Apache License 2.0**.
+*   **Reproducibility**: All code, benchmarks, and data suites are fully reproducible. The test suite can be run locally using a single command:
+    ```bash
+    uv run pytest
+    ```
+    And benchmarks can be executed using:
+    ```bash
+    uv run python benchmarks/context_graph/run_all.py
+    ```
+
+---
+
+## Appendix: Hyperparameters and Specifications
+
+### A. Graph Traversal & Spreading Activation
+*   **Propagation Coefficient ($\alpha$)**: `0.6`
+*   **Turn-decay Coefficient ($\gamma$)**: `0.6`
+*   **Spreading Steps ($k$)**: `2`
+*   **Edge Density Threshold ($R_{ne}$ Limit)**: `1.5`
+*   **Budget Reduction Factor floor**: `0.4`
+*   **Absolute Budget Floor ($B_{\text{min}}$)**: `25`
+
+### B. Complete Task List (48 Tasks)
+The 48 tasks in the Locus suite consist of 8 tasks per query class across:
+*   `direct_lookup` (e.g. class signature queries)
+*   `reverse_lookup` (e.g. caller reference traces)
+*   `subsystem_summary` (e.g. crate architectural modules)
+*   `blast_radius` (e.g. impact audits of structural changes)
+*   `multi_hop_path` (e.g. symbolic visitor call paths)
+*   `negative_query` (e.g. checking presence of absent components)
