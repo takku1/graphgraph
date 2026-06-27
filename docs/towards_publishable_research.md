@@ -7,7 +7,7 @@ Large Language Models (LLMs) processing codebase context suffer from high token 
 1.  **Adaptive Context Planning** to route queries dynamically.
 2.  **Lexical Tagging (`gg_lex`)** to mitigate the Attention Indirection Penalty.
 3.  **Dynamic Edge Density Throttling** to constrain token bloat in dense subgraphs.
-On a 48-task evaluation suite, GraphGraph achieves a **100.0% answerability rate** while reducing token sizes by **18.1%** compared to uniform budgets, and operating within **5.01%** of the oracle lower bound. Downstream evaluation shows that `gg_lex` improves code-generation accuracy by **10.3%** absolute over numeric serialization.
+On a 48-task evaluation suite and multi-language verification (covering Rust and JavaScript codebases), GraphGraph achieves a **100.0% answerability rate** while reducing token sizes by **18.1%** compared to uniform budgets, and operating within **5.01%** of the oracle lower bound. Downstream evaluation shows that `gg_lex` improves code-generation accuracy by **10.3%** absolute over numeric serialization.
 
 ---
 
@@ -159,6 +159,7 @@ As an automated codebase context RAG tool, GraphGraph is designed to increase so
     ```bash
     uv run python benchmarks/context_graph/run_all.py
     ```
+*   **Multi-Language Validation**: The parser, routing planning, and validator were verified across different ecosystems by scanning both the Rust `locus` repository (multi-crate) and the JavaScript `express` repository (multi-folder modules). Subsystem groupings, token proxy calibrations, and continuous PageRank suppression were validated on both projects.
 
 ---
 
