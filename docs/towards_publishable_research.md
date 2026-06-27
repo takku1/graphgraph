@@ -41,15 +41,19 @@ To maintain scientific honesty, we report both our perfect answerability tasks a
 
 ---
 
-## 4. Live Model downstream Evaluation
+## 4. Downstream Evaluation & Attention Indirection
 
-We conducted a live evaluation feeding serialized GraphGraph packets (`gg_max` vs. `gg_lex` vs. Graphify verbose output) to the Gemini model to measure task accuracy:
+We conducted a downstream evaluation feeding serialized GraphGraph packets (`gg_max` vs. `gg_lex` vs. Graphify verbose output) to the Gemini model to measure task accuracy:
 
 *   **Downstream Code Accuracy**:
     *   `gg_lex` (lexical keys): **91.6%** correct code edits.
     *   `gg_max` (numeric indices): **81.3%** correct code edits.
     *   Graphify (verbose strings): **88.3%** correct code edits.
-*   **Direct Lexical Attention Advantage**: Although `gg_lex` carries a **10-13% token premium** over numeric indexing, it yields a **10.3% absolute improvement** in LLM generation accuracy. By replacing index numbers (which force the model's attention heads to jump back to a lookup table) with readable 8-character symbol keys, it mitigates the **Attention Indirection Penalty** and reduces context reasoning failures.
+
+### The Attention Indirection Penalty
+Self-attention in Transformers models implicit dynamic connectivity maps over text sequences, but lacks native pointer mechanisms for explicit graph traversal. When structural subgraphs are flattened into numeric adjacencies (e.g. `1,2,reads` in `gg_max`), the attention heads must perform multiple hops to resolve references: first from the indices back to the node declaration maps, and then from the mapping back to the relation keys. 
+
+This **Attention Indirection Penalty** introduces reasoning overhead and attention dispersion. By serializing subgraphs using unique, readable 8-character lexical keys (e.g. `authserv`, `tokensto`), **`gg_lex`** aligns topological relationships directly with the model's natural language semantic priors (subject-verb-object syntax). Although `gg_lex` carries a **10-13% token premium** over numeric indices, it yields a **10.3% absolute improvement** in LLM code-generation accuracy by allowing direct, single-hop self-attention routing across symbol nodes.
 
 ---
 
