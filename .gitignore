@@ -31,6 +31,9 @@ benchmarks/context_graph/external_repos.json
 # Local Claude config (personal)
 .claude/
 
+# Vendored external repos used for local benchmarks (large; not part of the package)
+tmp/
+
 # Misc
 *.db
 *.sqlite
