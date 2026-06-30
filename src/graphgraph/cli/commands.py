@@ -384,7 +384,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         print(f"Rules already present in: {agents_file}")
 
     # 3. Write/Register SKILL.md
-    skills_dir = (dest_root / "skills" / "graphgraph") if not args.project else (dest_root / ".agents" / "skills" / "graphgraph")
+    skills_dir = (dest_root / "config" / "skills" / "graphgraph") if not args.project else (dest_root / ".agents" / "skills" / "graphgraph")
     skills_dir.mkdir(parents=True, exist_ok=True)
     skill_file = skills_dir / "SKILL.md"
 
@@ -395,19 +395,43 @@ def cmd_install(args: argparse.Namespace) -> None:
         "---\n\n"
         "# GraphGraph Integration Guide & Contract\n\n"
         "You are equipped with the **`graphgraph`** codebase context serialization engine. It is fully installed, configured, and registered on the system.\n\n"
-        "## 1. Finding Graph and Policy Files\n"
+        "> [!IMPORTANT]\n"
+        "> **ZERO-EXPLORATION CONTRACT**\n"
+        "> Do NOT execute command-line discovery (e.g., `Get-Command graphgraph`, `graphgraph --help`), and do NOT read the `graphgraph` package source files. The CLI commands and MCP tools are guaranteed to be present and are fully specified below. Use them directly.\n\n"
+        "## 1. Finding or Generating Graph and Policy Files\n"
         "Before invoking a tool, check for the presence of codebase graphs and policy files in the workspace:\n"
-        "* **Graph Path**: Check for `.graphgraph/graph.json` or `graphify-out/graph.json`.\n"
-        "* **Policies Path**: Look for `.agents/policies.json` or `.graphgraph/policies.json`.\n\n"
-        "## 2. MCP Server: `graphgraph` server\n"
+        "* **Graph Path**: Check for `.graphgraph/graph.json` or `graphify-out/graph.json` or `.code-review-graph/graph.json`.\n"
+        "* **Policies Path**: Look for `.agents/policies.json` or `.graphgraph/policies.json`.\n"
+        "* **Generate Graph**: If no graph file exists in the workspace, immediately run the scan command to generate it:\n"
+        "  ```bash\n"
+        "  graphgraph scan --depth symbols --docs\n"
+        "  ```\n\n"
+        "## 2. MCP Server Tools\n"
         "The following tools are available on the `graphgraph` MCP server:\n"
-        "- `plan_context` (query_class)\n"
-        "- `final_packet` (graph_path, query_class, starts, policies_path)\n"
-        "- `validate_packet` (packet)\n\n"
+        "- `graphgraph/plan_context`: Pass `query_class` to plan the expansion depth.\n"
+        "- `graphgraph/final_packet`: Generates the final compressed context packet. Arguments: `graph_path` (e.g. `.graphgraph/graph.json`), `query_class`, `starts` (node IDs/file paths/class names), `policies_path` (optional), `query` (optional).\n"
+        "- `graphgraph/validate_packet`: Mechanically check that a serialized context packet has valid nodes and edges.\n\n"
         "## 3. Global CLI: `graphgraph`\n"
         "Use the CLI for manual execution:\n"
         "- `graphgraph plan --query-class <query_class>`\n"
-        "- `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...`\n"
+        "- `graphgraph scan --depth symbols --docs` (generates native graph)\n"
+        "- `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...` (renders prompt context)\n\n"
+        "## 4. Query Class Strategies\n"
+        "Route queries to the correct formatting and depth based on the type of question:\n\n"
+        "| Query Class | Description / Example Question | Hops | Format | Reason |\n"
+        "| :--- | :--- | :---: | :--- | :--- |\n"
+        "| `direct_lookup` | \"What does file `x` do?\" or \"Show details for class `Y`\" | 1 | `gg_max_hybrid` | Needs inline summaries & facts |\n"
+        "| `reverse_lookup` | \"Which classes or modules reference class `X`?\" | 1 | `gg_max_hybrid` | Needs inline summaries & facts |\n"
+        "| `subsystem_summary` | \"Give me a high-level summary of the `auth` module\" | 1 | `gg_max_hybrid` | Needs inline summaries & facts |\n"
+        "| `blast_radius` | \"If I modify class `X`, what else might break?\" | 2 | `gg_max` | Topological traversal; saves tokens |\n"
+        "| `multi_hop_path` | \"How does class `X` call class `Z`?\" | 2 | `gg_max` | Topological traversal; saves tokens |\n"
+        "| `negative_query` | \"Is class `X` completely isolated/unreferenced?\" | 1 | `gg_max` | Pure topological check |\n\n"
+        "## 5. Execution Workflow for Codebase Questions\n"
+        "When the user asks a codebase structure/dependency question:\n"
+        "1. Check if `.graphgraph/graph.json` exists; if not, run `graphgraph scan --depth symbols --docs` first.\n"
+        "2. Map the user's question to a `query_class` and find the starting node ID(s).\n"
+        "3. Call `final_packet` MCP tool or run `graphgraph final` to render the context.\n"
+        "4. Inject the context payload directly into your response and answer the user's question.\n"
     )
     skill_file.write_text(skill_content, encoding="utf-8")
     print(f"Registered skill in: {skill_file}")
@@ -478,5 +502,5 @@ def cmd_install(args: argparse.Namespace) -> None:
                 "command": "uv" if has_uv else "graphgraph-mcp",
                 "args": ["run", "--project", str(Path(".").resolve().as_posix()), "graphgraph-mcp"] if has_uv else []
             }
-            claude_path.write_text(json.dumps(claude_data, indent=2), ensure_ascii=False)
+            claude_path.write_text(json.dumps(claude_data, indent=2, ensure_ascii=False), encoding="utf-8")
             print(f"Registered GraphGraph in Claude Desktop config: {claude_path}")
