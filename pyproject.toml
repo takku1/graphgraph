@@ -6,12 +6,30 @@ build-backend = "setuptools.build_meta"
 name = "graphgraph"
 version = "0.1.0"
 description = "Standalone LLM context graph engine and packet optimizer."
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "GraphGraph contributors", email = "dillon.c.carney@gmail.com" }]
+keywords = ["llm", "context-graph", "graph-rag", "retrieval", "mcp", "codebase"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "tree-sitter>=0.22",
     "tree-sitter-language-pack>=0.7",
     "keyring>=24.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/takku1/graphgraph"
+Repository = "https://github.com/takku1/graphgraph"
 
 [project.optional-dependencies]
 benchmark = [
@@ -25,5 +43,34 @@ benchmark = [
 graphgraph = "graphgraph.cli:main"
 graphgraph-mcp = "graphgraph.mcp_server:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+]
+
+[tool.uv]
+package = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tmp", "benchmarks", ".venv", ".graphgraph", "graphify-out", "*.egg-info"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["tmp", "benchmarks", "graphify-out", ".graphgraph", "docs/notes"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+# Long lines are tolerated: packet/rule strings are intentionally dense single lines.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Package __init__ modules re-export the public API surface.
+"__init__.py" = ["F401", "F403"]
+# Tests adjust sys.path before importing the package under test.
+"tests/*" = ["E402"]
