@@ -1,19 +1,19 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-import subprocess
 from ..core import Edge, Graph, Node
+from ..terms import term_key
 from .doc import DocumentInput, extract_document_context
 from .files import DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
 from .frontends import SourceFile, select_extractor
 from .imports import add_file_edges
-from ..terms import term_key
 
 
 def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
-    dirty_files = set()
-    churn_counts = {}
+    dirty_files: set[str] = set()
+    churn_counts: dict[str, int] = {}
     try:
         res_status = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -53,7 +53,7 @@ def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
 
 def scan_directory(
     root: Path,
-    max_nodes: int = 500,
+    max_nodes: int = 2000,
     generic_mentions: bool = False,
     skip_dirs: list[str] | None = None,
     depth: str = "files",
@@ -69,7 +69,11 @@ def scan_directory(
     """
     root = root.resolve()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
-    files = collect_files(root, max_nodes, extra_skip)
+
+    # Gather git metadata early so staged files get scan priority.
+    dirty_git, churn_git = _get_git_metadata(root)
+
+    files = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git)
 
     file_map: dict[str, str] = {}   # rel_posix -> node_id
     for f in files:
@@ -82,13 +86,14 @@ def scan_directory(
     seen: set[tuple[str, str]] = set()
 
     # Load manifest and previous graph if available and paths are provided
-    from ..manifest import Manifest, compute_file_hash
     from ..io import load_any
+    from ..manifest import Manifest, compute_file_hash
 
     manifest = None
     previous_graph = None
-    if manifest_path and previous_graph_path:
+    if manifest_path:
         manifest = Manifest.load(manifest_path)
+    if previous_graph_path:
         if previous_graph_path.exists():
             try:
                 previous_graph = load_any(previous_graph_path)
@@ -146,8 +151,6 @@ def scan_directory(
             else:
                 edges.append(Edge(source=src, target=tgt, type=etype))
                 seen.add((src, tgt))
-
-    dirty_git, churn_git = _get_git_metadata(root)
 
     # Create file nodes for dirty files
     for f, rel, fhash in dirty_files:
@@ -281,8 +284,13 @@ def scan_directory(
             del manifest.files[k]
 
         for f, rel, fhash in dirty_files:
-            file_nodes = [nid for nid, node in nodes.items() if find_file_for_node(nid) == rel]
             file_edges = [(e.source, e.target, e.type) for e in edges if find_file_for_node(e.source) == rel]
+            endpoint_nodes = {nid for edge in file_edges for nid in edge[:2] if nid in nodes}
+            file_nodes = sorted({
+                nid
+                for nid, node in nodes.items()
+                if find_file_for_node(nid) == rel or nid in endpoint_nodes
+            })
             manifest.update_file(
                 rel_path=rel,
                 file_hash=fhash,

@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import json
 import re
+import tempfile
 from pathlib import Path
 
 from .core import Edge, Graph, Node, Policy
+from .validate import ValidationResult, validate_graph_json
 
 
 def _label_to_id(lbl: str) -> str:
@@ -86,6 +88,10 @@ def save_graph(graph: Graph, path: Path) -> None:
     if path.suffix.lower() == ".gg":
         save_gg(graph, path)
         return
+    path.write_text(graph_to_json(graph) + "\n", encoding="utf-8")
+
+
+def graph_to_json(graph: Graph) -> str:
     data = {
         "nodes": [
             {
@@ -126,7 +132,37 @@ def save_graph(graph: Graph, path: Path) -> None:
             "pagerank": graph.pagerank_cache_payload(),
         },
     }
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
+    if path.suffix.lower() == ".gg":
+        save_gg(graph, path)
+        return ValidationResult(True, "gg", len(graph.nodes), len(graph.edges))
+
+    payload = graph_to_json(graph)
+    result = validate_graph_json(payload)
+    if not result.ok:
+        raise ValueError(
+            "Refusing to write invalid graph JSON: "
+            + "; ".join(result.errors[:5])
+            + (f"; ... {len(result.errors) - 5} more" if len(result.errors) > 5 else "")
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        tmp.write(payload)
+        tmp.write("\n")
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(path)
+    return result
 
 
 def load_gg(path: Path) -> Graph:
@@ -391,8 +427,9 @@ def find_graphify_path(workspace_root: Path = Path(".")) -> Path | None:
 def find_external_graph_path(workspace_root: Path = Path(".")) -> Path | None:
     """Find a non-native graph that can be ingested explicitly.
 
-    External graphs are compatibility inputs. They are deliberately excluded
-    from default graph discovery so GraphGraph remains standalone by default.
+    External graphs are explicit interop inputs. They are deliberately excluded
+    from default graph discovery so generated exports do not silently pollute
+    native scans.
     """
     for c in _EXTERNAL_GRAPH_CANDIDATES:
         p = workspace_root / c

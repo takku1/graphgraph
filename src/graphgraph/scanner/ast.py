@@ -12,7 +12,6 @@ from pathlib import Path
 
 from ..core import Edge, Node
 
-
 MAX_REFERENCE_PATTERN_NAMES = 5000
 
 

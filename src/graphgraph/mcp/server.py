@@ -6,15 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from ..frontends import available_frontends
-from ..io import load_any, save_graph, save_gg, find_graph_path
+from ..io import find_graph_path, load_any, save_gg, save_validated_graph
 from ..ontology import DEFAULT_RELATIONS
 from ..planning import plan_context
 from ..retrieval import search_nodes
-from ..scanner import scan_directory
 from ..services import render_final_packet, render_query_context
+from ..services.native import build_project_status, scan_validated_graph
 from ..traversal import POLICIES, traversal_policy
 from ..validate import validate_packet
-
 
 SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
 
@@ -84,6 +83,21 @@ TOOLS = [
         },
     },
     {
+        "name": "project_status",
+        "description": (
+            "Summarize graph validity, code/doc balance, package metadata, and optional "
+            "runtime probes. Use this before project-status answers that need more than a packet."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string", "description": "Project root directory. Defaults to current working directory."},
+                "graph_path": {"type": "string", "description": "Graph JSON path. Auto-detected if omitted."},
+                "probe": {"type": "boolean", "description": "Run lightweight python -m/import probes. Default: false."},
+            },
+        },
+    },
+    {
         "name": "validate_packet",
         "description": "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, or gg_max).",
         "inputSchema": {
@@ -101,7 +115,9 @@ TOOLS = [
             "to .graphgraph/graph.json. Works on any codebase or documentation tree. "
             "Detects import/dependency edges for Python, JS/TS, Go, Rust, Java, C#, C/C++, Ruby; "
             "link edges for Markdown, RST, and HTML. "
-            "Optionally enable generic_mentions to extract weak 'references' edges from any text file."
+            "Optionally enable generic_mentions to extract weak 'references' edges from any text file. "
+            "Built-in exclusions: repos/, references/, references_temp/, vendor/, node_modules/, .venv, etc. "
+            "Use skip_dirs or exclude_dirs to add project-specific exclusions."
         ),
         "inputSchema": {
             "type": "object",
@@ -109,9 +125,10 @@ TOOLS = [
                 "directory": {"type": "string", "description": "Directory to scan. Defaults to current working directory."},
                 "input_graph": {"type": "string", "description": "Path to an existing graph JSON (e.g. graphify output) to ingest instead of scanning."},
                 "output_path": {"type": "string", "description": "Where to save the graph. Defaults to .graphgraph/graph.json."},
-                "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 500."},
+                "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 2000."},
                 "generic_mentions": {"type": "boolean", "description": "Also add weak 'references' edges for any file that mentions another file's name. Useful for docs-heavy repos. Default: false."},
                 "skip_dirs": {"type": "array", "items": {"type": "string"}, "description": "Extra directory names to exclude (beyond built-ins). E.g. ['spikes', 'test-inputs']."},
+                "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "Alias for skip_dirs — extra directory names to exclude. Merged with skip_dirs if both supplied."},
                 "depth": {"type": "string", "enum": ["files", "symbols"], "description": "'files' (default): one node per file. 'symbols': adds native function/class/struct nodes with call/reference edges."},
                 "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"], "description": "Symbol extraction frontend for depth=symbols. auto prefers Tree-sitter when available."},
                 "docs": {"type": "boolean", "description": "Extract document sections and concept nodes from Markdown/RST/HTML/text."},
@@ -229,6 +246,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(build_final_packet(args))
     if name == "query_context":
         return content(build_query_context(args))
+    if name == "project_status":
+        return content(handle_project_status(args))
     if name == "validate_packet":
         result = validate_packet(str(args["packet"]))
         return content(json.dumps({
@@ -307,6 +326,17 @@ def build_query_context(args: dict[str, Any]) -> str:
     )
 
 
+def handle_project_status(args: dict[str, Any]) -> str:
+    directory = Path(str(args.get("directory") or "."))
+    graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else None
+    report = build_project_status(
+        directory=directory,
+        graph_path=graph_path,
+        run_probes=bool(args.get("probe")),
+    )
+    return json.dumps(report, indent=2, ensure_ascii=False)
+
+
 def handle_build_graph(args: dict[str, Any]) -> str:
     input_graph_str = args.get("input_graph")
     output_path_str = args.get("output_path") or ".graphgraph/graph.json"
@@ -315,45 +345,50 @@ def handle_build_graph(args: dict[str, Any]) -> str:
 
     if input_graph_str:
         graph = load_any(Path(input_graph_str))
-        save_graph(graph, output_path)
+        validation = save_validated_graph(graph, output_path)
         return json.dumps({
             "action": "ingested",
             "source": input_graph_str,
             "output": str(output_path),
             "nodes": len(graph.nodes),
             "edges": len(graph.edges),
+            "validation": {"ok": validation.ok, "format": validation.format},
         })
 
     directory = Path(args.get("directory") or ".")
-    max_nodes = int(args.get("max_nodes") or 500)
+    max_nodes = int(args.get("max_nodes") or 2000)
     generic_mentions = bool(args.get("generic_mentions", False))
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
+    exclude_dirs = [str(d) for d in args.get("exclude_dirs") or []]
+    # Merge exclude_dirs into skip_dirs (exclude_dirs is an intuitive alias)
+    all_skip = skip_dirs + [d for d in exclude_dirs if d not in skip_dirs]
     depth = str(args.get("depth") or "files")
     frontend = str(args.get("frontend") or "auto")
     docs = bool(args.get("docs", False))
     incremental = bool(args.get("incremental", True))
-    previous_graph_path = output_path if incremental else None
-    manifest_path = (output_path.parent / "manifest.json") if incremental else None
 
-    graph = scan_directory(
-        directory,
+    status = scan_validated_graph(
+        directory=directory,
+        output_path=output_path,
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
-        skip_dirs=skip_dirs,
+        skip_dirs=tuple(all_skip),
         depth=depth,
         frontend=frontend,
         docs=docs,
-        previous_graph_path=previous_graph_path,
-        manifest_path=manifest_path,
+        incremental=incremental,
     )
-
-    save_graph(graph, output_path)
+    graph = status.graph
+    validation = status.validation
+    assert validation is not None
     return json.dumps({
         "action": "scanned",
         "directory": str(directory.resolve()),
         "output": str(output_path),
         "nodes": len(graph.nodes),
         "edges": len(graph.edges),
+        "repaired": status.repaired,
+        "validation": {"ok": validation.ok, "format": validation.format},
     })
 
 

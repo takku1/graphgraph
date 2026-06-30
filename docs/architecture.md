@@ -16,7 +16,9 @@ native source scanner
 ```
 
 External graph files enter before the native store through explicit `ingest`.
-They are compatibility inputs, not default runtime sources.
+They are compatibility inputs, not default runtime sources. Installing
+GraphGraph and running normal scan/query/context commands does not invoke or
+read Graphify, code-review-graph, or other graph-tool outputs.
 
 ## Shared IR
 
@@ -67,11 +69,13 @@ Low-level and SQL packets should pass mechanical validation before they are
 returned to an LLM client. Validation checks block structure, node references,
 relation references, and numeric weights.
 
-The adaptive planner chooses per query class:
+The adaptive planner chooses per query class. Use `query_context` or
+`graphgraph context` as the default agent entry point so anchors are discovered
+from the natural-language query before packet rendering:
 
-- direct/reverse: usually `1hop gg_max`
-- path/blast: usually `2hop gg_max`
-- summary: `gg_max` for structural summaries, `gg_max_hybrid` or
+- direct/reverse: usually `1hop gg_max_hybrid`
+- path/blast: usually `2hop gg_max_hybrid`
+- summary: `gg_max_hybrid` for structural summaries or
   `doc_summary` when grounded prose/facts dominate
 - zero-edge packets: usually `semantic_arrow`
 

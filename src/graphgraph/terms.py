@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 _SPACE = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^A-Za-z0-9_]+")
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")

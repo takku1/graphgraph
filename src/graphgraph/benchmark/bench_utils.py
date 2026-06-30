@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import List, Tuple
 
 from graphgraph.scanner.ast import extract_symbols
+
 from ..core import Graph
+
 
 def run_extraction(files: List[Tuple[Path, str, str, str]], max_symbols: int = 5000) -> Tuple[Graph, float]:
     """Run symbol extraction on *files* and return the resulting ``Graph`` and elapsed time.

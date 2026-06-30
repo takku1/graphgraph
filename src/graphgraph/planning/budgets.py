@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-
 DOC_TERMS = re.compile(r"\b(readme|docs?|documentation|guide|install(?:ation)?|usage|setup|tutorial|manual)\b", re.IGNORECASE)
 PLAN_TOKEN = re.compile(r"[A-Za-z0-9_]+")
 

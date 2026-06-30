@@ -6,7 +6,6 @@ from pathlib import Path
 from .core import Graph, Node
 from .terms import term_key
 
-
 DOC_KINDS = {"section", "concept", "markdown", "rst", "html", "text", "doc"}
 CODE_KINDS = {
     "file",

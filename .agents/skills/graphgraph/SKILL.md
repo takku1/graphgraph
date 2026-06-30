@@ -1,52 +1,59 @@
 ---
 name: graphgraph
-description: Use GraphGraph in Codex / Antigravity for structural codebase questions, dependency lookup, blast radius analysis, multi-hop paths, context packet rendering, packet validation, or graph-backed retrieval.
+description: Use GraphGraph for codebase context retrieval: one-step graph build/query, dependency lookup, blast radius analysis, status packets, packet validation, or graph-backed source orientation.
 ---
 
-# GraphGraph Integration Guide & Contract
+# GraphGraph Operational Contract
 
-You are equipped with the **`graphgraph`** codebase context serialization engine. It is fully installed, configured, and registered on the system.
+GraphGraph is installed for native codebase context retrieval in Codex, Antigravity, and CLI workflows. Use it to orient on code structure before broad source searches.
 
 > [!IMPORTANT]
-> **ZERO-EXPLORATION CONTRACT**
-> Do NOT execute command-line discovery (e.g., `Get-Command graphgraph`, `graphgraph --help`), and do NOT read the `graphgraph` package source files. The CLI commands and MCP tools are guaranteed to be present and are fully specified below. Use them directly.
+> **DEFAULT PATH**
+> Prefer the MCP `graphgraph/query_context` tool when available. If MCP is unavailable, run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet.
 
-## 1. Finding or Generating Graph and Policy Files
-Before invoking a tool, check for the presence of codebase graphs and policy files in the workspace:
-* **Graph Path**: Check for `.graphgraph/graph.json` or `graphify-out/graph.json` or `.code-review-graph/graph.json`.
-* **Policies Path**: Look for `.agents/policies.json` or `.graphgraph/policies.json`.
-* **Generate Graph**: If no graph file exists in the workspace, immediately run the scan command to generate it:
-  ```bash
-  graphgraph scan --depth symbols --docs
-  ```
+> **BENCHMARK DISCIPLINE**
+> Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.
 
-## 2. MCP Server Tools
-The following tools are available on the `graphgraph` MCP server:
-- `graphgraph/plan_context`: Pass `query_class` to plan the expansion depth.
-- `graphgraph/final_packet`: Generates the final compressed context packet. Arguments: `graph_path` (e.g. `.graphgraph/graph.json`), `query_class`, `starts` (node IDs/file paths/class names), `policies_path` (optional), `query` (optional).
-- `graphgraph/validate_packet`: Mechanically check that a serialized context packet has valid nodes and edges.
+## Decision Rules
 
-## 3. Global CLI: `graphgraph`
-Use the CLI for manual execution:
-- `graphgraph plan --query-class <query_class>`
-- `graphgraph scan --depth symbols --docs` (generates native graph)
-- `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...` (renders prompt context)
+1. For natural-language codebase questions, call `graphgraph/query_context` first. Do not preselect node IDs unless the user supplied exact files/symbols.
+2. If no graph exists or MCP is unavailable, run `graphgraph context "<query>" --query-class subsystem_summary --show-stats`.
+3. For focused implementation work, add `--scope src/path` or use `search_nodes` before `final_packet`.
+4. Validate saved graph files with `graphgraph validate-graph`; validate rendered packets with `graphgraph validate`.
+5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.
 
-## 4. Query Class Strategies
-Route queries to the correct formatting and depth based on the type of question:
+## MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `query_context` | Natural-language query -> anchors -> compressed packet. Best default. |
+| `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |
+| `final_packet` | Render a packet from known node IDs. |
+| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |
+| `build_graph` | Build `.graphgraph/graph.json`; accepts `exclude_dirs`. |
+| `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |
+
+## CLI Fallback
+
+- One-step default: `graphgraph context "<query>" --query-class subsystem_summary --show-stats`
+- Project status: `graphgraph status --probe`
+- Force rebuild: `graphgraph context "<query>" --rebuild --scan-max-nodes 5000 --show-stats`
+- Focus scope: `graphgraph context "<query>" --scope src/graphgraph/retrieval --query-class blast_radius`
+- Validate graph: `graphgraph validate-graph`
+- Validate packet from stdin: `graphgraph query "<query>" --packet doc_summary | graphgraph validate`
+
+## Query Classes
 
 | Query Class | Description / Example Question | Hops | Format | Reason |
 | :--- | :--- | :---: | :--- | :--- |
-| `direct_lookup` | "What does file `x` do?" or "Show details for class `Y`" | 1 | `gg_max_hybrid` | Needs inline summaries & facts |
-| `reverse_lookup` | "Which classes or modules reference class `X`?" | 1 | `gg_max_hybrid` | Needs inline summaries & facts |
-| `subsystem_summary` | "Give me a high-level summary of the `auth` module" | 1 | `gg_max_hybrid` | Needs inline summaries & facts |
-| `blast_radius` | "If I modify class `X`, what else might break?" | 2 | `gg_max` | Topological traversal; saves tokens |
-| `multi_hop_path` | "How does class `X` call class `Z`?" | 2 | `gg_max` | Topological traversal; saves tokens |
-| `negative_query` | "Is class `X` completely isolated/unreferenced?" | 1 | `gg_max` | Pure topological check |
+| `direct_lookup` | Specific file/symbol details | 1 | `gg_max_hybrid` | inline source facts |
+| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg_max_hybrid` | reverse evidence |
+| `subsystem_summary` | High-level status or architecture area | 1 | `gg_max_hybrid` | balanced summary |
+| `blast_radius` | What changes if this is modified? | 2 | `gg_max` | topology-first |
+| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |
+| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |
+| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |
 
-## 5. Execution Workflow for Codebase Questions
-When the user asks a codebase structure/dependency question:
-1. Check if `.graphgraph/graph.json` exists; if not, run `graphgraph scan --depth symbols --docs` first.
-2. Map the user's question to a `query_class` and find the starting node ID(s).
-3. Call `final_packet` MCP tool or run `graphgraph final` to render the context.
-4. Inject the context payload directly into your response and answer the user's question.
+## Noise Controls
+
+Default scanning skips generated artifact directories such as `.graphgraph`, `graphify-out`, `.code-review-graph`, `evidence`, `artifacts`, `scratch`, `tmp`, build outputs, vendors, and cloned external repos. Normal install, scan, context, query, and MCP workflows do not invoke Graphify, code-review-graph, or other graph tools; external graph outputs are read only when explicitly passed to `ingest` or a graph-path argument. For project-specific noise, pass `exclude_dirs` in MCP or `--exclude <dir>` in CLI.

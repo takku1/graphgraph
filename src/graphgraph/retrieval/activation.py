@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from ..core import Edge, Graph, Node
-from ..traversal import relation_rank, traversal_policy
+
+from ..core import Edge, Graph
 
 
 class ActivationStateCache:

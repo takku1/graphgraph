@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import json
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .core import Edge, Graph, Node, Policy

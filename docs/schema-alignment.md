@@ -1,11 +1,12 @@
 # Schema Alignment And Import Compatibility
 
 `graphgraph` has a native graph contract. It also accepts outside graph shapes
-because comparison and migration matter.
+because interoperability, comparison, and migration matter.
 
-Compatibility must not define the architecture. A Graphify export, Neo4j edge
-dump, CSV file, or code-review graph should enter through `ingest`, normalize
-into the shared IR, and then behave like any other `.graphgraph` graph.
+Interop is a first-class boundary, not a thin wrapper. A Graphify export, Neo4j
+edge dump, CSV file, or code-review graph should enter through `ingest`,
+normalize into the shared IR, and then behave like any other `.graphgraph`
+graph.
 
 ## Native Fields
 
@@ -71,6 +72,9 @@ python -m graphgraph ingest --input graphify-out/graph.json --output .graphgraph
 
 Do not rely on implicit discovery of external graph directories. The default
 graph lookup should prefer `.graphgraph/graph.gg` and `.graphgraph/graph.json`.
+Normal install, scan, context, query, and MCP workflows do not touch external
+graph tools or their generated output directories unless an explicit input path
+is supplied.
 
 ## Evaluation Rule
 

@@ -1,83 +1,59 @@
 ---
 name: graphgraph
-description: Use GraphGraph in Codex for structural codebase questions, dependency lookup, blast radius analysis, multi-hop paths, context packet rendering, packet validation, or graph-backed retrieval. Prefer this over raw file dumps when a repository has or can build a .graphgraph graph.
+description: Use GraphGraph for codebase context retrieval: one-step graph build/query, dependency lookup, blast radius analysis, status packets, packet validation, or graph-backed source orientation.
 ---
 
-# GraphGraph For Codex
+# GraphGraph Operational Contract
 
-Use GraphGraph as Codex's local codebase context engine. It is a wrapper around
-the project CLI and MCP server, not a separate implementation.
+GraphGraph is installed for native codebase context retrieval in Codex, Antigravity, and CLI workflows. Use it to orient on code structure before broad source searches.
 
-## When To Use
+> [!IMPORTANT]
+> **DEFAULT PATH**
+> Prefer the MCP `graphgraph/query_context` tool when available. If MCP is unavailable, run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet.
 
-Use this skill when the user asks about:
+> **BENCHMARK DISCIPLINE**
+> Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.
 
-- codebase architecture or subsystem summaries,
-- dependencies, callers, blast radius, or multi-hop paths,
-- compact graph packets for LLM context,
-- `.graphgraph/graph.json` or `.graphgraph/graph.gg`,
-- packet validation or retrieval quality.
+## Decision Rules
 
-Do not use it for ordinary single-file edits where reading the file directly is
-faster and clearer.
+1. For natural-language codebase questions, call `graphgraph/query_context` first. Do not preselect node IDs unless the user supplied exact files/symbols.
+2. If no graph exists or MCP is unavailable, run `graphgraph context "<query>" --query-class subsystem_summary --show-stats`.
+3. For focused implementation work, add `--scope src/path` or use `search_nodes` before `final_packet`.
+4. Validate saved graph files with `graphgraph validate-graph`; validate rendered packets with `graphgraph validate`.
+5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.
 
-## Preferred Flow
+## MCP Tools
 
-1. Look for `.graphgraph/graph.json` first.
-2. If no native graph exists and the task needs structural retrieval, build one:
+| Tool | Purpose |
+|------|---------|
+| `query_context` | Natural-language query -> anchors -> compressed packet. Best default. |
+| `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |
+| `final_packet` | Render a packet from known node IDs. |
+| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |
+| `build_graph` | Build `.graphgraph/graph.json`; accepts `exclude_dirs`. |
+| `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |
 
-   ```powershell
-   uv run --project . graphgraph scan --directory . --depth symbols --docs --output .graphgraph/graph.json
-   ```
+## CLI Fallback
 
-3. Route the question to a query class:
+- One-step default: `graphgraph context "<query>" --query-class subsystem_summary --show-stats`
+- Project status: `graphgraph status --probe`
+- Force rebuild: `graphgraph context "<query>" --rebuild --scan-max-nodes 5000 --show-stats`
+- Focus scope: `graphgraph context "<query>" --scope src/graphgraph/retrieval --query-class blast_radius`
+- Validate graph: `graphgraph validate-graph`
+- Validate packet from stdin: `graphgraph query "<query>" --packet doc_summary | graphgraph validate`
 
-   | User need | Query class |
-   | --- | --- |
-   | What does this file/symbol do? | `direct_lookup` |
-   | Who references this symbol? | `reverse_lookup` |
-   | What changes if this changes? | `blast_radius` |
-   | How does A reach B? | `multi_hop_path` |
-   | Summarize a subsystem | `subsystem_summary` |
-   | Is this isolated or absent? | `negative_query` |
+## Query Classes
 
-4. Prefer the bundled MCP server when available. Otherwise use the CLI:
+| Query Class | Description / Example Question | Hops | Format | Reason |
+| :--- | :--- | :---: | :--- | :--- |
+| `direct_lookup` | Specific file/symbol details | 1 | `gg_max_hybrid` | inline source facts |
+| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg_max_hybrid` | reverse evidence |
+| `subsystem_summary` | High-level status or architecture area | 1 | `gg_max_hybrid` | balanced summary |
+| `blast_radius` | What changes if this is modified? | 2 | `gg_max` | topology-first |
+| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |
+| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |
+| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |
 
-   ```powershell
-   uv run --project . graphgraph query "query text" --query-class blast_radius --show-anchors
-   uv run --project . graphgraph final --graph .graphgraph/graph.json --query-class blast_radius --starts <node-id-or-label>
-   ```
+## Noise Controls
 
-5. Validate packets before relying on format-sensitive conclusions:
-
-   ```powershell
-   Get-Content packet.txt | uv run --project . graphgraph validate
-   ```
-
-## Evidence Rules
-
-- Treat GraphGraph packets as evidence containers, not final answers.
-- For `blast_radius` and `multi_hop_path`, prefer 2-hop evidence unless a
-  benchmark or user constraint justifies a narrower packet.
-- For negative queries, distinguish direct false-positive edges from unrelated
-  local context edges.
-- Do not use expected answer keys, benchmark labels, or evaluation fixtures to
-  construct retrieval queries or packets.
-
-## Benchmarks
-
-Before promoting scanner, retrieval, traversal, or packet changes, run:
-
-```powershell
-uv run --project . python benchmarks/context_graph/promote_check.py
-```
-
-Live model-answer scoring is separate and must be explicitly enabled:
-
-```powershell
-$env:RUN_OPENAI_REASONING_EVAL="1"; uv run --project . python benchmarks/context_graph/model_reasoning_benchmark.py
-$env:RUN_GEMINI_REASONING_EVAL="1"; uv run --project . python benchmarks/context_graph/model_reasoning_benchmark.py
-```
-
-Keep Gemini support intact. Codex integration is an additional distribution
-surface, not a replacement for OpenAI or Gemini benchmark providers.
+Default scanning skips generated artifact directories such as `.graphgraph`, `graphify-out`, `.code-review-graph`, `evidence`, `artifacts`, `scratch`, `tmp`, build outputs, vendors, and cloned external repos. Normal install, scan, context, query, and MCP workflows do not invoke Graphify, code-review-graph, or other graph tools; external graph outputs are read only when explicitly passed to `ingest` or a graph-path argument. For project-specific noise, pass `exclude_dirs` in MCP or `--exclude <dir>` in CLI.

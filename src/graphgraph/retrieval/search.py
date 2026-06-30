@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..core import Graph
-from ..core import Node
-
+from ..core import Graph, Node
 from .models import Match
 from .text import node_search_text, tokenize
 
@@ -25,12 +23,13 @@ class SearchIndexRow:
     path_name_exact_sequence: tuple[str, ...]
 
 
-def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float = 0.0, personalize: bool = False) -> tuple[Match, ...]:
+def search_nodes(graph: Graph, query: str, limit: int = 20, doc_intensity: float = 0.0, personalize: bool = False) -> tuple[Match, ...]:
     """Rank graph nodes with a deterministic lexical score."""
     terms = tokenize(query)
     if not terms:
         return ()
     query_terms = set(terms)
+    test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
 
     degree = graph.degree()
     if personalize:
@@ -146,6 +145,12 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
             score *= 0.5 + coverage
             if node.kind == "community":
                 score *= 0.65
+            if _is_test_node(node) and not test_query:
+                score *= 0.55
+                reasons.append("test_context_penalty")
+            if node.kind == "concept" and doc_intensity < 0.5:
+                score *= 0.45
+                reasons.append("concept_status_penalty")
 
             n_scores = len(pagerank_scores)
             pr_val = pagerank_scores.get(node.id, 0.0)
@@ -184,6 +189,19 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
     return tuple(matches[:limit])
 
 
+def _is_test_node(node: Node) -> bool:
+    path = node.path.replace("\\", "/").lower() if node.path else ""
+    label = node.label.lower()
+    return (
+        path.startswith("tests/")
+        or "/tests/" in path
+        or path.startswith("test/")
+        or "/test/" in path
+        or label.startswith("test_")
+        or label.endswith("_test")
+    )
+
+
 def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
     key = _search_index_key(graph)
     if graph._search_index_cache and graph._search_index_cache[0] == key:
@@ -191,21 +209,29 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
     rows: list[SearchIndexRow] = []
     for node in graph.nodes.values():
         haystack = node_search_text(node)
-        path_name = node.path.replace("\\", "/").rsplit("/", 1)[-1] if node.path else ""
+        norm_path = node.path.replace("\\", "/") if node.path else ""
+        path_name = norm_path.rsplit("/", 1)[-1] if norm_path else ""
+        # Include ALL intermediate directory segments in haystack so that
+        # queries like "featherwaight" find src/featherwaight/cli.py even
+        # when only the basename ("cli.py") was previously indexed.
+        path_dir_segments = "/".join(norm_path.split("/")[:-1]) if "/" in norm_path else ""
+        full_haystack = " ".join(filter(None, [haystack, path_dir_segments]))
         label_term_sequence = tuple(tokenize(node.label, keep_stopwords=True))
         path_name_sequence = tuple(tokenize(path_name, keep_stopwords=True))
+        # Also tokenize the full path (directories) for the path_name_terms index
+        path_dir_terms = set(tokenize(path_dir_segments, keep_stopwords=True)) if path_dir_segments else set()
         rows.append(
             SearchIndexRow(
                 node=node,
-                haystack=haystack,
-                haystack_terms=set(tokenize(haystack, keep_stopwords=True)),
+                haystack=full_haystack,
+                haystack_terms=set(tokenize(full_haystack, keep_stopwords=True)),
                 node_id=node.id.lower(),
                 label=node.label.lower(),
-                path=node.path.lower() if node.path else "",
+                path=norm_path.lower(),
                 label_terms=set(label_term_sequence),
                 label_term_sequence=label_term_sequence,
                 label_exact_sequence=_exact_identifier_sequence(node.label, label_term_sequence),
-                path_name_terms=set(path_name_sequence),
+                path_name_terms=set(path_name_sequence) | path_dir_terms,
                 path_name_sequence=path_name_sequence,
                 path_name_exact_sequence=_exact_identifier_sequence(path_name, path_name_sequence),
             )

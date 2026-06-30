@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import math
 from collections import Counter
 from dataclasses import dataclass
-import math
 
 from ..core import Graph
 from .budgets import default_node_budget, is_doc_query
-
 
 SOURCE_KINDS = {"python", "typescript", "javascript", "rust", "go", "java", "c", "cpp", "header", "lean"}
 SYMBOL_KINDS = {"function", "method", "class", "struct", "enum", "trait", "theorem"}

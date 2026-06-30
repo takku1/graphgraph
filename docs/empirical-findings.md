@@ -229,21 +229,27 @@ Current live `graphgraph` scan:
 
 | Metric | Value |
 | --- | ---: |
-| Nodes | 3,293 |
-| Edges | 9,540 |
-| Source file nodes | 90 |
-| Symbol nodes | 802 |
-| Doc-like nodes | 2,368 |
-| Import edges | 140 |
-| Imports/source file | 1.556 |
-| Weak edge ratio | 0.177 |
-| Doc node ratio | 0.719 |
+| Nodes | 3,463 |
+| Edges | 10,330 |
+| Source/symbol nodes | 980 |
+| Symbol nodes | 883 |
+| Doc-like nodes | 2,442 |
+| Other nodes | 41 |
+| Import/imports_from edges | 495 |
+| Weak edges (`confidence < 0.7`) | 2,727 |
+| Weak edge ratio | 0.264 |
+| Doc node ratio | 0.705 |
+| Generated export paths (`graphify-out`, `.code-review-graph`, `evidence`) | 0 |
 
 Finding: Python relative import resolution was load-bearing. Before the scanner
 fix, the live validation saw only 8 import edges; after resolving package
 relative imports and directory hierarchy for language-kind file nodes, the live
-shape is structurally plausible. The doc node ratio is high, so doc/concept
-noise remains an efficiency risk rather than a correctness win.
+shape is structurally plausible. The current clean rebuild also proves generated
+graph/export directories are excluded by default. The remaining shape risk is
+not generated-artifact pollution; it is doc/concept volume, especially
+free-floating concept nodes with no path. Broad status queries now penalize
+concept-only anchors unless the query is documentation-heavy, but packet
+efficiency still needs doc/concept pruning work.
 
 ## Search Hot Path
 
@@ -265,6 +271,25 @@ Current live `graphgraph` result:
 Finding: repeated search against a loaded graph is now fast enough for agent
 loops on this project shape. The remaining first-query cost is mostly graph
 load plus one lexical index build.
+
+## Live Query Noise
+
+`benchmarks/context_graph/live_query_noise.py` measures packet composition for
+runtime queries against the current live graph. Current result after generated
+artifact skips, clean rebuild semantics, concept-anchor penalties, and
+subsystem-summary doc/concept pruning:
+
+| Query | Class | Packet | Nodes | Edges | Doc nodes | Concepts | Doc ratio | Impl edges | Weak edges | Generated paths | Tokens |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| native_context_status | `subsystem_summary` | `gg_max_hybrid` | 118 | 381 | 5 | 0 | 0.042 | 331 | 0 | 0 | 2240 |
+| retrieval_noise | `subsystem_summary` | `gg_max_hybrid` | 81 | 180 | 0 | 0 | 0.000 | 162 | 0 | 0 | 1199 |
+| install_interop | `subsystem_summary` | `gg_max_hybrid` | 120 | 335 | 3 | 0 | 0.025 | 294 | 1 | 0 | 2028 |
+| doc_usage | `doc_summary` | `doc_summary` | 12 | 10 | 5 | 2 | 0.417 | 0 | 2 | 0 | 168 |
+
+Finding: normal broad runtime packets now keep generated export leakage at zero,
+remove pathless concept nodes, and keep doc spillover at `0-4.2%` while
+retaining hundreds of implementation edges. Documentation queries still use
+`doc_summary` and are allowed to carry more doc/concept evidence.
 
 ## Dynamic Budget
 
@@ -335,11 +360,12 @@ Codex plugin wrapper:
 | Skill size | 3,138 chars |
 
 Finding: the Codex plugin, marketplace entry, bundled skill, and MCP launch
-configuration are locally coherent. The current `.mcp.json` uses an absolute
+configuration are locally coherent. `graphgraph install --project --platform
+codex` generates the repo-local plugin and writes `.mcp.json` with an absolute
 Windows checkout path so Codex starts the server from the repository root and
-finds `.graphgraph/graph.json`; `scripts/configure_codex_plugin.py` rewrites
-that path for copied checkouts, and the integration check verifies the rewrite
-against a temporary repo copy.
+finds `.graphgraph/graph.json`; `scripts/configure_codex_plugin.py` remains a
+repair command for copied checkouts, and the integration check verifies that
+rewrite against a temporary repo copy.
 
 ## Doc-Code Pairing
 

@@ -8,7 +8,6 @@ from ..core import Edge, Node
 from ..operations import _dedupe_edges
 from ..terms import canonical_concept_label, concept_id, normalize_label, term_key
 
-
 _MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _RST_HEADING = re.compile(r"^(.+)\n([=\-~^\"#*+])\2{2,}\s*$", re.MULTILINE)
 _HTML_HEADING = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1>", re.IGNORECASE | re.DOTALL)

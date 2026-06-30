@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import json
-
+from dataclasses import dataclass, field
 from typing import Callable
 
 from .ontology import provenance_confidence, traversal_strength

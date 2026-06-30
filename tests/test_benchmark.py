@@ -7,16 +7,22 @@ This test exercises the new AST‑based Python extractor and measures:
 * Approximate token size of the resulting graph packet
 """
 
-import unittest
 import json
 import shutil
+import sys
 import tempfile
-from pathlib import Path
 import time
+import unittest
+from pathlib import Path
 
-from graphgraph.scanner.ast import extract_symbols
-from graphgraph.core import Graph
+ROOT = Path(__file__).parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from graphgraph.benchmark.bench_utils import estimate_token_size
+from graphgraph.core import Graph
+from graphgraph.scanner.ast import extract_symbols
+
 
 class BenchmarkExtractionTest(unittest.TestCase):
     def test_extraction_and_token_estimation(self):

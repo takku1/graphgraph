@@ -1,7 +1,8 @@
 # LLM-Native Context Graph Design
 
-This document states the direction bluntly: `graphgraph` should be a standalone
-context graph system, not an adapter around another graph generator.
+This document states the direction bluntly: `graphgraph` should own a native
+context graph runtime while interoperating with other graph generators through
+explicit imports and benchmarks.
 
 ## Thesis
 

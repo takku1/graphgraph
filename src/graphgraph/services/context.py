@@ -5,8 +5,8 @@ from pathlib import Path
 
 from ..cache import TopologicalKVCache, compute_cache_key
 from ..core import Graph, Query
-from ..io import find_graph_path, find_policies_path, find_lessons_path, load_any, load_policies
-from ..packets import render_gg_max, render_packet
+from ..io import find_graph_path, find_lessons_path, find_policies_path, load_any, load_policies
+from ..packets import render_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
 from ..policies import render_policy_packet, select_policies
 from ..retrieval import expand_context, retrieve_context
@@ -45,7 +45,26 @@ def render_final_packet(
     query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)
 
     resolved_starts = resolve_start_nodes(graph, starts)
+    if not resolved_starts:
+        # Build a helpful diagnostic: search the graph for candidates
+        from .._findnodes import suggest_node_ids
+        suggestions = suggest_node_ids(graph, starts, limit=6)
+        hint = ""
+        if suggestions:
+            hint = "  Closest matches in graph:\n" + "\n".join(
+                f"    {m.node.id}  ({m.node.label}, {m.node.kind}, {m.node.path})"
+                for m in suggestions
+            )
+        raise ValueError(
+            f"No graph nodes matched the requested starts: {starts!r}\n"
+            f"{hint}\n"
+            "  Options:\n"
+            "   1. Use 'search_nodes' tool to find the right node IDs first.\n"
+            "   2. Use 'query_context' tool with a natural-language query — no node IDs needed.\n"
+            "   3. Re-scan if the file was recently added: graphgraph scan --depth symbols --docs"
+        )
     nodes, edges = expand_context(graph, tuple(resolved_starts), plan)
+
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
 
     cache = TopologicalKVCache()
@@ -98,10 +117,21 @@ def render_final_packet(
 def resolve_start_nodes(graph: Graph, starts: list[str]) -> list[str]:
     """Resolve user-facing start handles to graph node IDs.
 
-    `Graph.expand()` intentionally accepts only node IDs. CLI/MCP callers often
-    know labels or paths, so this thin boundary helper accepts exact IDs first,
-    then exact path/label matches, then case-folded path/label/basename matches.
-    Ambiguous labels resolve to all matching active nodes in stable graph order.
+    ``Graph.expand()`` intentionally accepts only node IDs.  CLI/MCP callers
+    often know labels or paths, so this helper accepts:
+
+    1. Exact node IDs
+    2. Exact normalised path matches
+    3. Exact label matches
+    4. Case-folded path matches
+    5. Case-folded label matches
+    6. Case-folded basename matches
+    7. **Partial path suffix matches** – e.g. ``"featherwaight/cli.py"`` or
+       ``"src/featherwaight"`` will match nodes whose path *ends with* that
+       suffix (case-folded, forward-slash normalised).
+
+    Ambiguous labels/paths resolve to all matching active nodes in stable
+    graph order.
     """
     resolved: list[str] = []
     seen: set[str] = set()
@@ -154,6 +184,11 @@ def resolve_start_nodes(graph: Graph, starts: list[str]) -> list[str]:
             continue
         if folded in by_folded_basename:
             for node_id in by_folded_basename[folded]:
+                add(node_id)
+            continue
+        # Fallback: partial path-suffix match (e.g. "featherwaight/cli.py" or "src/featherwaight")
+        for path, node_id in by_folded_path.items():
+            if path.endswith(folded) or folded.endswith(path.rsplit("/", 1)[-1]):
                 add(node_id)
 
     return resolved

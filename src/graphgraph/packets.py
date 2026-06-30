@@ -3,7 +3,6 @@ from __future__ import annotations
 from .core import Edge, Graph
 from .ontology import DEFAULT_RELATIONS
 
-
 DEFAULT_RELATION_ORDER = tuple(DEFAULT_RELATIONS)
 
 
@@ -128,8 +127,16 @@ def _subsystem_name(path: str) -> str:
     p = path.replace("\\", "/").strip("/")
     parts = p.split("/")
     if len(parts) > 1:
-        # Detect common workspace folders: crates, packages, apps, libs, modules, src
-        if parts[0] in {"crates", "packages", "apps", "libs", "modules", "src", "subprojects"}:
+        # Detect common workspace folders that are just transparent wrappers.
+        # For these we look one level deeper for the actual subsystem name.
+        TRANSPARENT_WRAPPERS = {
+            "crates", "packages", "apps", "libs", "modules", "src", "subprojects",
+            "source", "sources", "lib", "pkg", "internal", "cmd", "service",
+            "services", "core", "common", "shared", "api", "server", "client",
+        }
+        if parts[0] in TRANSPARENT_WRAPPERS and len(parts) > 2:
+            return parts[1]
+        if parts[0] in TRANSPARENT_WRAPPERS:
             return parts[1]
         return parts[0]
     return "root"

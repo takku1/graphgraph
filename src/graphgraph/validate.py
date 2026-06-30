@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -23,7 +24,85 @@ def validate_packet(packet: str) -> ValidationResult:
         return validate_gg_max(text)
     if text.startswith("@nodes") or "@nodes" in text:
         return validate_semantic_arrow(text)
+    if text.startswith("[d]"):
+        return validate_doc_summary(text)
     return ValidationResult(False, "unknown", 0, 0, ("unknown packet format",))
+
+
+def validate_graph_json(graph_json: str) -> ValidationResult:
+    """Validate a saved GraphGraph JSON graph store, not a rendered packet."""
+    errors: list[str] = []
+    try:
+        data = json.loads(graph_json)
+    except json.JSONDecodeError as exc:
+        return ValidationResult(False, "graph_json", 0, 0, (f"invalid JSON: {exc.msg}",))
+
+    if not isinstance(data, dict):
+        return ValidationResult(False, "graph_json", 0, 0, ("graph JSON root must be an object",))
+
+    nodes_data = data.get("nodes")
+    edges_data = data.get("edges") or data.get("links") or []
+    if not isinstance(nodes_data, list):
+        errors.append("missing or invalid nodes array")
+        nodes_data = []
+    if not isinstance(edges_data, list):
+        errors.append("invalid edges array")
+        edges_data = []
+
+    node_ids: set[str] = set()
+    for index, item in enumerate(nodes_data):
+        if not isinstance(item, dict):
+            errors.append(f"bad node row at index {index}")
+            continue
+        node_id = item.get("id")
+        if not isinstance(node_id, str) or not node_id:
+            errors.append(f"node missing id at index {index}")
+            continue
+        if node_id in node_ids:
+            errors.append(f"duplicate node id: {node_id}")
+        node_ids.add(node_id)
+
+    edge_count = 0
+    for index, item in enumerate(edges_data):
+        if not isinstance(item, dict):
+            errors.append(f"bad edge row at index {index}")
+            continue
+        source = item.get("source")
+        target = item.get("target")
+        if not isinstance(source, str) or not source:
+            errors.append(f"edge missing source at index {index}")
+        elif source not in node_ids:
+            errors.append(f"edge source missing from nodes: {source}")
+        if not isinstance(target, str) or not target:
+            errors.append(f"edge missing target at index {index}")
+        elif target not in node_ids:
+            errors.append(f"edge target missing from nodes: {target}")
+        if not (item.get("type") or item.get("relation")):
+            errors.append(f"edge missing type/relation at index {index}")
+        try:
+            float(item.get("weight") if item.get("weight") is not None else 1.0)
+        except (TypeError, ValueError):
+            errors.append(f"bad edge weight at index {index}: {item.get('weight')}")
+        edge_count += 1
+
+    return ValidationResult(not errors, "graph_json", len(node_ids), edge_count, tuple(errors))
+
+
+def looks_like_graph_json(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped.startswith("{"):
+        return False
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("nodes"), list)
+
+
+def validate_any(text: str) -> ValidationResult:
+    if looks_like_graph_json(text):
+        return validate_graph_json(text)
+    return validate_packet(text)
 
 
 def validate_gg_max(packet: str) -> ValidationResult:
@@ -148,6 +227,27 @@ def validate_semantic_arrow(packet: str) -> ValidationResult:
         edges.append((source, target, rel_type, weight))
 
     return ValidationResult(not errors, "semantic_arrow", len(nodes), len(edges), tuple(errors))
+
+
+def validate_doc_summary(packet: str) -> ValidationResult:
+    errors: list[str] = []
+    lines = packet.splitlines()
+    if not lines or lines[0].strip() != "[d]":
+        errors.append("missing [d] header")
+        return ValidationResult(False, "doc_summary", 0, 0, tuple(errors))
+
+    node_count = 0
+    for raw_line in lines[1:]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if raw_line.startswith(" ") or raw_line.startswith("\t"):
+            continue
+        node_count += 1
+
+    if node_count == 0:
+        errors.append("no document rows")
+    return ValidationResult(not errors, "doc_summary", node_count, 0, tuple(errors))
 
 
 def validate_lowlevel(packet: str) -> ValidationResult:

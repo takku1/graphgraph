@@ -6,7 +6,6 @@ from pathlib import Path
 from ..core import Edge
 from .files import PARSEABLE_SUFFIXES
 
-
 _PY_FROM = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+([^\n#]+)", re.MULTILINE)
 _PY_BARE = re.compile(r"^\s*import\s+([^\n#]+)", re.MULTILINE)
 _JS_ES = re.compile(r'(?:import|from)\s+["\'](\.[^"\']+)["\']')

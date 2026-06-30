@@ -4,7 +4,6 @@ from ..core import Edge, Graph
 from ..ontology import is_weak_relation
 from ..policies import path_matches
 
-
 DEFAULT_EDGE_TYPE_LIMITS = {
     "references": 16,
     "links": 16,

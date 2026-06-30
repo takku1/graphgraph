@@ -1,10 +1,12 @@
 # graphgraph
 
-`graphgraph` is a standalone context graph engine for LLM agents.
+`graphgraph` is a native context graph engine for LLM agents.
 
-The goal is not to wrap another indexer. The goal is to build, store, retrieve,
-compress, validate, and benchmark graph-shaped project context in the format an
-LLM can use with the least token waste and the least interpretation loss.
+The goal is to build, store, retrieve, compress, validate, and benchmark
+graph-shaped project context in the format an LLM can use with the least token
+waste and the least interpretation loss. GraphGraph owns this runtime path, and
+also interoperates with Graphify, code-review-graph, CSV, and other graph
+systems as import sources and comparison baselines.
 
 Current native pieces:
 
@@ -17,11 +19,17 @@ Current native pieces:
 - **Agent Skill & Installer:** Streamlined registration via `graphgraph install` CLI utility.
 - **Repeatable Benchmarking:** In-tree integration checks (`promote_check.py`) evaluating recall, token calibration, and answerability limits.
 
-Compatibility is still useful, but it is not the architecture. `graphgraph
-ingest --input graphify-out/graph.json` is an import route, not the source of
-truth. Default graph discovery only uses native files under `.graphgraph/`;
-Graphify, code-review-graph, CSV, and other external graph shapes must be
-passed explicitly to `ingest` or to commands that accept a graph path.
+Interop is part of the architecture, not a fallback wrapper. `graphgraph ingest
+--input graphify-out/graph.json` normalizes outside graph data into the same
+retrieval and packet pipeline. Default graph discovery still uses native files
+under `.graphgraph/` so generated exports do not silently pollute scans;
+Graphify, code-review-graph, CSV, and other external graph shapes are passed
+explicitly to `ingest` or commands that accept a graph path.
+
+Install, scan, `context`, query, and MCP default workflows do not invoke
+Graphify, code-review-graph, or other graph tools, and they do not read those
+generated export directories. Those systems are used only when the user
+explicitly imports a graph file or runs a benchmark/comparison route.
 
 ## Design Bar
 
@@ -42,7 +50,7 @@ only the semantic text needed for the query.
 
 ## Installation & Setup
 
-You can install `graphgraph` using `uv` (recommended) or `pip`.
+You can install `graphgraph` using `uv` (recommended) or `pipx`.
 
 ### Step 1 — Install the package:
 
@@ -52,7 +60,7 @@ uv tool install .
 
 # Alternatives:
 pipx install .
-pip install -e .  # Developer editable installation
+pip install -e .  # Developer editable installation only
 ```
 
 ### Step 2 — Register the skill with your AI assistant:
@@ -65,8 +73,16 @@ graphgraph install
 # To install the assistant skill into the current repository instead of your user profile:
 graphgraph install --project
 
-# To target a specific platform (choices: codex, claude, cursor, all):
+# To target a specific platform (choices: codex, claude, cursor, gemini,
+# antigravity, agy, all). Codex writes a repo-local MCP plugin; Claude writes
+# Claude Desktop MCP config on global installs; Gemini/Antigravity/AGY write
+# assistant skill rules under the existing Gemini-style skill path.
 graphgraph install --project --platform codex
+
+# Keep the existing Gemini / Antigravity / AGY skill path explicit:
+graphgraph install --platform gemini
+graphgraph install --platform antigravity
+graphgraph install --platform agy
 ```
 
 ### 2. Zero-Install / Agent Tool Execution (NPX-style)
@@ -155,14 +171,20 @@ benchmark paths; it adds Codex as another installation surface.
 
 The plugin bundles:
 
+- `.codex-plugin/plugin.json`,
 - a Codex skill for structural codebase retrieval workflows,
 - an MCP server config that launches `graphgraph-mcp` with `uv run`,
 - a repo marketplace entry at `.agents/plugins/marketplace.json`.
 
+Generate or refresh the repo-local Codex plugin with:
+
+```powershell
+graphgraph install --project --platform codex
+```
+
 To make the repo marketplace visible to Codex:
 
 ```powershell
-python scripts\configure_codex_plugin.py --repo-root C:\Users\dcarn\aiprojects\graphgraph
 codex plugin marketplace add C:\Users\dcarn\aiprojects\graphgraph
 codex plugin add graphgraph@graphgraph-local
 ```
@@ -170,9 +192,11 @@ codex plugin add graphgraph@graphgraph-local
 Then start a new Codex thread and ask for `@graphgraph`, or ask a structural
 codebase question and let Codex invoke the bundled skill/MCP server.
 
-The configurator rewrites `plugins/graphgraph/.mcp.json` so `cwd` and the
-`uv --project` path point at the current checkout. Run it again after copying
-the repo to another machine or path.
+`graphgraph install --project --platform codex` writes
+`plugins/graphgraph/.mcp.json` so `cwd` and the `uv --project` path point at
+the current checkout. `python scripts\configure_codex_plugin.py --repo-root
+<checkout>` is still available as a repair command after copying the repo to
+another machine or path.
 
 ---
 
@@ -195,14 +219,22 @@ graphgraph scan --directory . --depth symbols --no-incremental --output .graphgr
 ```
 
 ### 2. Retrieve Context & Render Packets
-Retrieve relevant context paths from natural-language queries:
+Retrieve relevant context packets from natural-language queries. This is the
+preferred agent workflow because GraphGraph discovers anchors before rendering
+the packet:
 
 ```powershell
-# Retrieve query context anchors
+# One-step workflow: build/load .graphgraph/graph.json, discover anchors, render packet
+graphgraph context "what is the blast radius of auth changes" --query-class blast_radius --show-stats
+
+# Query an existing graph directly and show the resolved anchors
 graphgraph query "what is the blast radius of auth changes" --query-class blast_radius --show-anchors
 
-# Generate a final prompt packet for the LLM from anchor nodes
+# Use final only when you already have confirmed node IDs
 graphgraph final --query-class blast_radius --starts src_graphgraph_cli_py
+
+# Optional stable prefix for prompt-cache workflows
+graphgraph final --stable-skeleton --max-nodes 120
 ```
 
 ### 3. Profile Graph Shape
@@ -213,7 +245,18 @@ runtime defaults:
 graphgraph profile --graph .graphgraph/graph.json
 ```
 
-### 4. Exporters & Validators
+### 4. Summarize Project Status
+Validate the active graph, report code/doc balance, inspect package metadata,
+and optionally run lightweight Python import/module probes. Probe mode compares
+raw checkout behavior with src-layout `PYTHONPATH=src` behavior and prints
+runtime notes when a package only works after that path fix:
+
+```powershell
+graphgraph status --probe
+graphgraph status --json
+```
+
+### 5. Exporters & Validators
 
 ```powershell
 # Export to compact .gg adjacency format

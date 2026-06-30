@@ -178,7 +178,8 @@ def render_markdown(metrics: dict[str, Any]) -> str:
         "",
         "- This validates Codex packaging and MCP launch wiring only.",
         "- It does not prove Codex has installed the repo marketplace in the user's global config.",
-        "- Run `scripts/configure_codex_plugin.py` after copying the repo so `.mcp.json` points at that checkout.",
+        "- Run `graphgraph install --project --platform codex` to refresh the repo-local plugin for the current checkout.",
+        "- `scripts/configure_codex_plugin.py` remains a repair path after copying the repo.",
     ])
     return "\n".join(lines) + "\n"
 

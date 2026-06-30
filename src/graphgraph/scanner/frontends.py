@@ -8,9 +8,9 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 
-from .ast import extract_symbols
 from ..core import Edge, Node
 from ..operations import _dedupe_edges
+from .ast import extract_symbols
 
 
 @dataclass(frozen=True)

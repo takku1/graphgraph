@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from graphgraph import (
     Edge,
@@ -20,8 +23,8 @@ from graphgraph import (
     expire_edge,
     merge_node,
     operation_to_json,
-    policy_to_node,
     plan_context,
+    policy_to_node,
     read_operations,
     scan_directory,
     select_policies,
@@ -29,23 +32,61 @@ from graphgraph import (
 )
 from graphgraph.ast_scanner import extract_symbols
 from graphgraph.doc_scanner import DocumentInput, extract_document_context
+from graphgraph.doccode import summarize_doc_code_components, summarize_doc_code_coverage
 from graphgraph.eval import EvalTask, estimate_tokens, evaluate_graph
-from graphgraph.frontends import RegexExtractor, SourceFile, _imported_symbol_names, available_frontends, select_extractor, tree_sitter_available
-from graphgraph.io import load_graph, load_policies, save_graph, load_gg, save_gg, load_csv_edges, load_any
+from graphgraph.frontends import (
+    RegexExtractor,
+    SourceFile,
+    _imported_symbol_names,
+    available_frontends,
+    select_extractor,
+    tree_sitter_available,
+)
+from graphgraph.io import (
+    graph_to_json,
+    load_any,
+    load_csv_edges,
+    load_gg,
+    load_graph,
+    load_policies,
+    save_gg,
+    save_graph,
+    save_validated_graph,
+)
 from graphgraph.mcp_server import dispatch
 from graphgraph.metrics import compare_graphs, summarize_graph
-from graphgraph.doccode import summarize_doc_code_components, summarize_doc_code_coverage
-from graphgraph.packets import render_doc_summary, render_lowlevel, render_semantic_arrow, render_gg_max, render_sql, render_svo
+from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
+from graphgraph.packets import (
+    render_doc_summary,
+    render_gg_max,
+    render_lowlevel,
+    render_semantic_arrow,
+    render_sql,
+    render_svo,
+)
+from graphgraph.planning import (
+    profile_graph_shape,
+    recommend_context_window,
+    recommend_node_budget,
+    recommend_observed_context_window,
+)
 from graphgraph.policies import render_policy_packet
+from graphgraph.retrieval import (
+    budget_edges,
+    default_anchor_limit,
+    retrieval_node_budget,
+    retrieve_context,
+    search_nodes,
+    tokenize,
+)
+from graphgraph.retrieval.context import apply_shape_budget
 from graphgraph.retrieval.models import Match
-from graphgraph.retrieval import budget_edges, default_anchor_limit, retrieve_context, retrieval_node_budget, search_nodes, tokenize
 from graphgraph.services import render_final_packet
 from graphgraph.services.context import resolve_start_nodes
-from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
-from graphgraph.planning import profile_graph_shape, recommend_context_window, recommend_node_budget, recommend_observed_context_window
-from graphgraph.retrieval.context import apply_shape_budget
+from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
-from graphgraph.traversal import traversal_policy, relation_rank
+from graphgraph.traversal import relation_rank, traversal_policy
+from graphgraph.validate import validate_any, validate_graph_json
 
 
 def sample_graph() -> Graph:
@@ -234,8 +275,8 @@ N1,N2,1,0.9
 
     def test_spreading_activation_retrieval(self) -> None:
         graph = sample_graph()
-        from graphgraph.retrieval.context import retrieve_context
         from graphgraph.retrieval.activation import ActivationStateCache
+        from graphgraph.retrieval.context import retrieve_context
         cache = ActivationStateCache()
         if cache.cache_path.exists():
             try:
@@ -387,7 +428,12 @@ N1,N2,1,0.9
         self.assertEqual(override.node_budget, 40)
 
     def test_refine_packet_for_zero_edge_subgraph(self) -> None:
-        from graphgraph.planning import PacketChoice, compute_subgraph_stats, refine_packet_for_subgraph, refine_plan_for_subgraph
+        from graphgraph.planning import (
+            PacketChoice,
+            compute_subgraph_stats,
+            refine_packet_for_subgraph,
+            refine_plan_for_subgraph,
+        )
 
         refined = refine_packet_for_subgraph(PacketChoice(1, "gg_max", "test"), 0)
         self.assertEqual(refined.packet, "semantic_arrow")
@@ -974,6 +1020,16 @@ N1,N2,1,0.9
         self.assertEqual(result.starts[0], "N1")
         self.assertEqual(result.nodes, {"N1", "N2", "N3"})
 
+    def test_search_prefers_source_over_tests_unless_query_mentions_tests(self) -> None:
+        graph = Graph(
+            nodes={
+                "SRC": Node("SRC", "scan_directory", "function", "src/graphgraph/scanner/core.py"),
+                "TEST": Node("TEST", "test_scan_directory", "function", "tests/test_graphgraph_core.py"),
+            }
+        )
+        self.assertEqual(search_nodes(graph, "scan directory", limit=2)[0].node.id, "SRC")
+        self.assertEqual(search_nodes(graph, "test scan directory", limit=2)[0].node.id, "TEST")
+
     def test_structural_queries_prefer_code_anchors_over_docs(self) -> None:
         graph = Graph(
             nodes={
@@ -986,6 +1042,71 @@ N1,N2,1,0.9
         result = retrieve_context(graph, "alpha beta search mcts", "blast_radius", hops=1, max_nodes=4)
         self.assertEqual(result.starts[0], "C")
         self.assertIn("M", result.nodes)
+
+    def test_status_queries_penalize_floating_concepts_as_anchors(self) -> None:
+        graph = Graph(
+            nodes={
+                "CONCEPT": Node("CONCEPT", "operator planning status", "concept"),
+                "CODE": Node("CODE", "operator planning status", "function", "src/operator/planning.py"),
+                "FW": Node("FW", "firmware status", "function", "src/firmware/com.cpp"),
+            },
+            edges=[Edge("CODE", "FW", "mentions", confidence=0.2, provenance="doc_link")],
+        )
+        matches = search_nodes(graph, "operator planning status", limit=2)
+        self.assertEqual(matches[0].node.id, "CODE")
+        result = retrieve_context(graph, "operator planning status", "subsystem_summary", hops=1, max_nodes=8)
+        self.assertEqual(result.starts[0], "CODE")
+
+    def test_doc_queries_can_still_use_concept_anchors(self) -> None:
+        graph = Graph(
+            nodes={
+                "CONCEPT": Node("CONCEPT", "installation guide", "concept"),
+                "DOC": Node("DOC", "installation guide", "section", "README.md"),
+                "CODE": Node("CODE", "installation guide", "function", "src/install.py"),
+            },
+            edges=[Edge("DOC", "CONCEPT", "discusses")],
+        )
+        matches = search_nodes(graph, "README installation guide", limit=3, doc_intensity=1.0)
+        self.assertIn(matches[0].node.id, {"DOC", "CONCEPT"})
+
+    def test_subsystem_summary_prunes_doc_concept_spillover(self) -> None:
+        nodes = {
+            "SRC": Node("SRC", "operator planning status", "function", "src/operator/planning.py"),
+            "HELPER": Node("HELPER", "operator executor", "function", "src/operator/executor.py"),
+        }
+        edges = [Edge("SRC", "HELPER", "calls")]
+        for i in range(30):
+            doc_id = f"D{i}"
+            concept_id = f"C{i}"
+            nodes[doc_id] = Node(doc_id, f"operator planning note {i}", "section", f"docs/note_{i}.md")
+            nodes[concept_id] = Node(concept_id, f"operator planning concept {i}", "concept")
+            edges.append(Edge("SRC", doc_id, "explains", confidence=0.9, provenance="doc"))
+            edges.append(Edge(doc_id, concept_id, "discusses", confidence=0.9, provenance="doc"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(graph, "operator planning status", "subsystem_summary", hops=2, max_nodes=80)
+        doc_nodes = [nid for nid in result.nodes if graph.nodes[nid].kind in {"section", "markdown", "text", "rst", "html"}]
+        concept_nodes = [nid for nid in result.nodes if graph.nodes[nid].kind == "concept"]
+
+        self.assertIn("SRC", result.nodes)
+        self.assertIn("HELPER", result.nodes)
+        self.assertTrue(any(edge.source == "SRC" and edge.target == "HELPER" and edge.type == "calls" for edge in result.edges))
+        self.assertLessEqual(len(doc_nodes), 16)
+        self.assertLessEqual(len(concept_nodes), 2)
+        self.assertTrue(all(edge.source in result.nodes and edge.target in result.nodes for edge in result.edges))
+
+    def test_doc_summary_packet_does_not_use_status_pruning(self) -> None:
+        nodes = {
+            "DOC": Node("DOC", "README installation usage", "section", "README.md"),
+        }
+        for i in range(4):
+            nodes[f"C{i}"] = Node(f"C{i}", f"installation concept {i}", "concept")
+        edges = [Edge("DOC", f"C{i}", "discusses", confidence=0.9, provenance="doc") for i in range(4)]
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(graph, "README installation usage", "subsystem_summary", hops=1, max_nodes=40)
+        self.assertEqual(result.starts[0], "DOC")
+        self.assertGreaterEqual(len([nid for nid in result.nodes if graph.nodes[nid].kind == "concept"]), 3)
 
     def test_doc_code_pairing_matrix_separates_coverage_gaps(self) -> None:
         graph = Graph(
@@ -1080,6 +1201,126 @@ N1,N2,1,0.9
         self.assertIn("Usage [section] README.md L10", packet)
         self.assertIn("Run graphgraph scan.", packet)
         self.assertNotIn("discusses", packet)
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.format, "doc_summary")
+        self.assertEqual(result.node_count, 1)
+
+    def test_validate_graph_json_accepts_saved_graphs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            result = validate_graph_json(graph_path.read_text(encoding="utf-8"))
+            self.assertTrue(result.ok, result.errors)
+            self.assertEqual(result.format, "graph_json")
+            self.assertEqual(result.node_count, 3)
+            self.assertEqual(result.edge_count, 2)
+            self.assertEqual(validate_any(graph_path.read_text(encoding="utf-8")).format, "graph_json")
+
+    def test_validate_graph_json_rejects_edges_to_missing_nodes(self) -> None:
+        payload = json.dumps({
+            "nodes": [{"id": "A", "label": "A"}],
+            "edges": [{"source": "A", "target": "B", "type": "calls"}],
+        })
+        result = validate_graph_json(payload)
+        self.assertFalse(result.ok)
+        self.assertIn("edge target missing from nodes: B", result.errors)
+
+    def test_save_validated_graph_refuses_invalid_graph_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            before = graph_path.read_text(encoding="utf-8")
+            bad_graph = Graph(nodes={"A": Node("A", "A")}, edges=[Edge("A", "B", "calls")])
+
+            with self.assertRaisesRegex(ValueError, "Refusing to write invalid graph JSON"):
+                save_validated_graph(bad_graph, graph_path)
+
+            self.assertEqual(graph_path.read_text(encoding="utf-8"), before)
+
+    def test_cmd_scan_refuses_invalid_graph_without_overwrite(self) -> None:
+        from graphgraph.cli.commands import cmd_scan
+
+        class Args:
+            directory = "."
+            output = ""
+            incremental = True
+            skip_dirs = []
+            exclude_dirs = []
+            max_nodes = 2000
+            generic_mentions = False
+            depth = "symbols"
+            frontend = "regex"
+            docs = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            save_graph(sample_graph(), graph_path)
+            before = graph_path.read_text(encoding="utf-8")
+            bad_graph = Graph(nodes={"A": Node("A", "A")}, edges=[Edge("A", "B", "calls")])
+            args = Args()
+            args.directory = str(root)
+            args.output = str(graph_path)
+
+            with patch("graphgraph.services.native.scan_directory", return_value=bad_graph):
+                with self.assertRaisesRegex(ValueError, "Refusing to write invalid graph JSON"):
+                    cmd_scan(args)
+
+            self.assertEqual(graph_path.read_text(encoding="utf-8"), before)
+
+    def test_scan_validated_graph_repairs_invalid_incremental_scan(self) -> None:
+        from graphgraph.services.native import scan_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            bad_graph = Graph(nodes={"A": Node("A", "A")}, edges=[Edge("A", "B", "calls")])
+            clean_graph = sample_graph()
+
+            with patch("graphgraph.services.native.scan_directory", side_effect=[bad_graph, clean_graph]):
+                status = scan_validated_graph(directory=root, output_path=graph_path, incremental=True)
+
+            self.assertTrue(status.repaired)
+            self.assertTrue(graph_path.exists())
+            result = validate_graph_json(graph_path.read_text(encoding="utf-8"))
+            self.assertTrue(result.ok, result.errors)
+            self.assertEqual(result.node_count, 3)
+
+    def test_full_scan_manifest_keeps_doc_concept_edge_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text(
+                "# GraphGraph Workspace Rules\n\nUse `graphgraph/query_context` for Project Status.\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                docs=True,
+                previous_graph_path=None,
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            readme_nodes = manifest["files"]["README.md"]["nodes"]
+            self.assertTrue(any(node_id.startswith("concept_") for node_id in readme_nodes))
+
+            graph2 = scan_directory(
+                root,
+                depth="symbols",
+                docs=True,
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+            result = validate_graph_json(graph_to_json(graph2))
+            self.assertTrue(result.ok, result.errors)
 
     def test_retrieval_anchors_code_identifier_queries(self) -> None:
         graph = Graph(
@@ -1355,6 +1596,144 @@ N1,N2,1,0.9
                 (root / f"mod_{i}.py").write_text("pass\n", encoding="utf-8")
             graph = scan_directory(root, max_nodes=5)
             self.assertLessEqual(len(graph.nodes), 5)
+
+    def test_scanner_skips_tmp_directories_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "tmp").mkdir()
+            (root / "evidence").mkdir()
+            (root / "artifacts").mkdir()
+            (root / "graphify-out").mkdir()
+            (root / ".code-review-graph").mkdir()
+            (root / "src" / "app.py").write_text("def run(): pass\n", encoding="utf-8")
+            (root / "tmp" / "vendored.lean").write_text("def noisy := 1\n", encoding="utf-8")
+            (root / "evidence" / "status.md").write_text("# Old generated answer\n", encoding="utf-8")
+            (root / "artifacts" / "report.py").write_text("def generated(): pass\n", encoding="utf-8")
+            (root / "graphify-out" / "graph.json").write_text('{"nodes":[],"edges":[]}\n', encoding="utf-8")
+            (root / ".code-review-graph" / "graph.json").write_text('{"nodes":[],"edges":[]}\n', encoding="utf-8")
+
+            graph = scan_directory(root, depth="symbols")
+            paths = {node.path for node in graph.nodes.values()}
+            self.assertIn("src/app.py", paths)
+            self.assertNotIn("tmp/vendored.lean", paths)
+            self.assertNotIn("evidence/status.md", paths)
+            self.assertNotIn("artifacts/report.py", paths)
+            self.assertNotIn("graphify-out/graph.json", paths)
+            self.assertNotIn(".code-review-graph/graph.json", paths)
+
+    def test_python_module_cli_entrypoint_runs(self) -> None:
+        proc = subprocess.run(
+            [sys.executable, "-m", "graphgraph.cli", "--help"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("graphgraph", proc.stdout)
+
+    def test_native_context_builds_graph_and_skips_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "evidence").mkdir()
+            (root / "src" / "app.py").write_text("def run_context():\n    return 'ok'\n", encoding="utf-8")
+            (root / "evidence" / "old_status.md").write_text("# Generated status\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+
+            packet, status = render_native_context(
+                query="run context",
+                directory=root,
+                graph_path=graph_path,
+                rebuild=False,
+                query_class="direct_lookup",
+                max_nodes=20,
+            )
+
+            self.assertTrue(status.built)
+            self.assertTrue(graph_path.exists())
+            self.assertIn("run_context", packet)
+            paths = {node.path for node in status.graph.nodes.values()}
+            self.assertIn("src/app.py", paths)
+            self.assertNotIn("evidence/old_status.md", paths)
+            shape = graph_shape(status.graph)
+            self.assertGreaterEqual(shape["source_nodes"], 1)
+
+            packet2, status2 = render_native_context(
+                query="run context",
+                directory=root,
+                graph_path=graph_path,
+                rebuild=False,
+                query_class="direct_lookup",
+                max_nodes=20,
+            )
+            self.assertFalse(status2.built)
+            self.assertEqual(packet2, packet)
+
+            (root / "src" / "app.py").write_text("def run_context_clean():\n    return 'ok'\n", encoding="utf-8")
+            packet3, status3 = render_native_context(
+                query="run context clean",
+                directory=root,
+                graph_path=graph_path,
+                rebuild=True,
+                query_class="direct_lookup",
+                max_nodes=20,
+            )
+            self.assertTrue(status3.built)
+            self.assertIn("run_context_clean", packet3)
+            self.assertNotIn("run_context():", packet3)
+
+    def test_project_status_reports_validation_package_and_runtime_hint(self) -> None:
+        from graphgraph.services.native import build_project_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src" / "featherwaight").mkdir(parents=True)
+            (root / "src" / "featherwaight" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (root / "pyproject.toml").write_text(
+                "[project]\n"
+                "name = \"featherwaight\"\n"
+                "version = \"0.1.0\"\n"
+                "[project.scripts]\n"
+                "featherwaight = \"featherwaight.cli:main\"\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True)
+            save_graph(Graph(nodes={"P": Node("P", "package", "python", "src/featherwaight/__init__.py")}), graph_path)
+
+            report = build_project_status(directory=root, graph_path=graph_path, run_probes=True)
+
+            self.assertTrue(report["graph"]["validation"]["ok"])
+            self.assertEqual(report["package"]["name"], "featherwaight")
+            self.assertEqual(report["package"]["module"], "featherwaight")
+            self.assertTrue(report["package"]["src_layout"])
+            self.assertIn("PYTHONPATH=src", report["package"]["import_hint"])
+            probes = {probe["name"]: probe for probe in report["runtime_probes"]}
+            self.assertFalse(probes["raw_import"]["ok"])
+            self.assertTrue(probes["src_import"]["ok"])
+            self.assertIn("script_target_import:featherwaight", probes)
+            self.assertFalse(probes["raw_module_help"]["ok"])
+            self.assertTrue(any("PYTHONPATH includes src" in note for note in report["runtime_notes"]))
+
+    def test_mcp_project_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True)
+            save_graph(sample_graph(), graph_path)
+            response = dispatch({
+                "jsonrpc": "2.0", "id": 16, "method": "tools/call",
+                "params": {"name": "project_status", "arguments": {
+                    "directory": str(root),
+                    "graph_path": str(graph_path),
+                }},
+            })
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertTrue(data["graph"]["validation"]["ok"])
+            self.assertEqual(data["graph"]["shape"]["nodes"], 3)
 
     def test_scanner_markdown_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1738,6 +2117,7 @@ N1,N2,1,0.9
 
     def test_kv_cache(self) -> None:
         import time
+
         from graphgraph.cache import TopologicalKVCache, compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1811,13 +2191,34 @@ N1,N2,1,0.9
     def test_scan_directory_no_communities_param(self) -> None:
         """scan_directory must not accept a communities keyword argument."""
         import inspect
+
         from graphgraph.scanner import scan_directory
         sig = inspect.signature(scan_directory)
         self.assertNotIn("communities", sig.parameters)
 
+    def test_cli_stdio_handles_unicode_on_cp1252_streams(self) -> None:
+        import io
+        import sys
+
+        from graphgraph.cli import _configure_stdio
+
+        original_stdout = sys.stdout
+        raw = io.BytesIO()
+        fake_stdout = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+        try:
+            sys.stdout = fake_stdout
+            _configure_stdio()
+            print("query_context -> anchors -> packet")
+            print("query_context \u2192 anchors \u2192 packet")
+            sys.stdout.flush()
+        finally:
+            sys.stdout = original_stdout
+            fake_stdout.detach()
+
     def test_cmd_install_project(self) -> None:
-        from graphgraph.cli.commands import cmd_install
         import os
+
+        from graphgraph.cli.commands import cmd_install
 
         class DummyArgs:
             project = True
@@ -1834,18 +2235,45 @@ N1,N2,1,0.9
                 self.assertTrue(agents_md.exists())
                 content = agents_md.read_text(encoding="utf-8")
                 self.assertIn("# GraphGraph Workspace Rules", content)
+                self.assertIn("One-step context packet", content)
+                self.assertIn("graphgraph context", content)
+                self.assertIn("Known-node packet only", content)
+                self.assertIn("stable-skeleton", content)
 
                 # Check skill
                 skill_md = Path(".agents") / "skills" / "graphgraph" / "SKILL.md"
                 self.assertTrue(skill_md.exists())
                 skill_content = skill_md.read_text(encoding="utf-8")
                 self.assertIn("name: graphgraph", skill_content)
+                self.assertIn("query_context", skill_content)
 
-                # Check plugin .mcp.json and marketplace.json
+                # Check complete Codex plugin bundle and marketplace.json
+                plugin_json = Path("plugins") / "graphgraph" / ".codex-plugin" / "plugin.json"
+                self.assertTrue(plugin_json.exists())
+                plugin_data = json.loads(plugin_json.read_text(encoding="utf-8"))
+                self.assertEqual(plugin_data["name"], "graphgraph")
+                self.assertEqual(plugin_data["skills"], "./skills/")
+                self.assertEqual(plugin_data["mcpServers"], "./.mcp.json")
+
                 mcp_json = Path("plugins") / "graphgraph" / ".mcp.json"
                 self.assertTrue(mcp_json.exists())
+                mcp_data = json.loads(mcp_json.read_text(encoding="utf-8"))
+                server = mcp_data["mcpServers"]["graphgraph"]
+                self.assertEqual(server["command"], "uv")
+                self.assertIn("--project", server["args"])
+                self.assertEqual(server["args"][-1], "graphgraph-mcp")
+
+                plugin_skill = Path("plugins") / "graphgraph" / "skills" / "graphgraph" / "SKILL.md"
+                self.assertTrue(plugin_skill.exists())
+                self.assertIn("name: graphgraph", plugin_skill.read_text(encoding="utf-8"))
+
                 marketplace_json = Path(".agents") / "plugins" / "marketplace.json"
                 self.assertTrue(marketplace_json.exists())
+                marketplace = json.loads(marketplace_json.read_text(encoding="utf-8"))
+                entry = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "graphgraph")
+                self.assertEqual(entry["source"]["path"], "./plugins/graphgraph")
+                self.assertEqual(entry["policy"]["installation"], "AVAILABLE")
+                self.assertEqual(entry["policy"]["authentication"], "ON_INSTALL")
             finally:
                 os.chdir(orig_cwd)
 
@@ -1867,8 +2295,8 @@ N1,N2,1,0.9
         self.assertEqual(js_sources.get("other"), "another")
 
     def test_render_final_packet_injects_lessons(self) -> None:
+        from graphgraph.core import Graph, Node
         from graphgraph.services import render_final_packet
-        from graphgraph.core import Node, Graph, Edge
         
         g = Graph(
             nodes={"A": Node("A", "AuthService", "service", "auth.py")},
@@ -1900,7 +2328,7 @@ N1,N2,1,0.9
                 ctx.find_lessons_path = orig_find_lessons
 
     def test_personalized_pagerank(self) -> None:
-        from graphgraph.core import Node, Graph, Edge
+        from graphgraph.core import Edge, Graph, Node
         from graphgraph.retrieval import search_nodes
         
         g = Graph(

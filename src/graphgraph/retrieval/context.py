@@ -6,17 +6,19 @@ from ..core import Edge, Graph
 from ..doccode import doc_code_bias
 from ..ontology import provenance_confidence
 from ..planning import ContextPlan, compute_subgraph_stats, plan_context
-from ..planning.budgets import plan_terms
+from ..planning.budgets import doc_intensity_score, plan_terms
 from ..planning.shape import profile_graph_shape, recommend_node_budget
 from ..traversal import relation_rank, traversal_policy
-
 from .budgeting import budget_edges, enrich_runtime_context
 from .models import Match, RetrievalResult
 from .search import search_nodes
 
-
 STRUCTURAL_QUERY_CLASSES = {"blast_radius", "multi_hop_path", "reverse_lookup"}
 NON_STRUCTURAL_KINDS = {"concept", "section", "markdown", "rst", "html", "text"}
+STRUCTURAL_RELATIONS = {
+    "calls", "imports", "imports_from", "reads", "writes", "uses", "implements",
+    "tests", "configures", "returns", "defines", "data_flow", "control_flow",
+}
 
 
 def expand_context(
@@ -50,6 +52,7 @@ def expand_context(
     stats = compute_subgraph_stats(graph, nodes, edges)
     weak_limit = adaptive_weak_edge_limit(plan.weak_edge_limit, stats.weak_edge_ratio, stats.relation_entropy, stats.edges)
     edges = budget_edges(edges, max_nodes=effective_node_budget, weak_limit=weak_limit)
+    nodes, edges = prune_doc_concept_noise(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
     return enrich_runtime_context(graph, nodes, edges, max_nodes=effective_node_budget)
 
 
@@ -61,6 +64,150 @@ def adaptive_weak_edge_limit(base_limit: int, weak_edge_ratio: float, relation_e
     return max(4, int(base_limit * 0.75))
 
 
+def prune_doc_concept_noise(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    max_nodes: int | None,
+) -> tuple[set[str], list[Edge]]:
+    """Trim doc/concept spillover for broad non-document summaries.
+
+    The scanner should retain documentation and concepts because doc queries need
+    them. Broad status/subsystem packets are different: pathless concepts and
+    weak doc relation fans can crowd out implementation evidence.
+    """
+    if plan.query_class != "subsystem_summary":
+        return nodes, edges
+    if plan.packet == "doc_summary":
+        return nodes, edges
+
+    start_set = set(starts)
+    structural: set[str] = set()
+    doc_like: list[tuple[float, str]] = []
+    concepts: list[tuple[float, str]] = []
+    node_edge_scores = _node_edge_scores(edges)
+
+    budget = max_nodes or plan.node_budget or len(nodes)
+    doc_limit = max(6, min(18, budget // 5))
+    concept_limit = max(1, min(4, budget // 30))
+
+    for node_id in nodes:
+        node = graph.nodes.get(node_id)
+        if not node:
+            continue
+        if node_id in start_set:
+            structural.add(node_id)
+            continue
+        if node.kind == "concept":
+            concepts.append((_context_node_score(node_id, node_edge_scores, node.path), node_id))
+            continue
+        if node.kind in NON_STRUCTURAL_KINDS:
+            doc_like.append((_context_node_score(node_id, node_edge_scores, node.path), node_id))
+            continue
+        structural.add(node_id)
+
+    keep = set(structural)
+    keep.update(node_id for _score, node_id in sorted(doc_like, reverse=True)[:doc_limit])
+    keep.update(node_id for _score, node_id in sorted(concepts, reverse=True)[:concept_limit])
+    keep = reserve_structural_neighbors(graph, keep, structural, max_nodes or plan.node_budget)
+    pruned_edges = [edge for edge in edges if edge.source in keep and edge.target in keep]
+    pruned_edges = include_reserved_structural_edges(graph, keep, pruned_edges)
+    return keep, pruned_edges
+
+
+def reserve_structural_neighbors(
+    graph: Graph,
+    keep: set[str],
+    structural: set[str],
+    max_nodes: int | None,
+    reserve_limit: int = 12,
+) -> set[str]:
+    if not structural:
+        return keep
+
+    reserved: list[str] = []
+    seen = set(keep)
+    for edge in sorted(graph.edges, key=lambda e: (e.source, e.target, e.type)):
+        if edge.type not in STRUCTURAL_RELATIONS or not edge.active:
+            continue
+        if edge.source in structural and _is_structural_node(graph, edge.target) and edge.target not in seen:
+            reserved.append(edge.target)
+            seen.add(edge.target)
+        elif edge.target in structural and _is_structural_node(graph, edge.source) and edge.source not in seen:
+            reserved.append(edge.source)
+            seen.add(edge.source)
+        if len(reserved) >= reserve_limit:
+            break
+
+    if not reserved:
+        return keep
+
+    out = set(keep)
+    for node_id in reserved:
+        if max_nodes is not None and len(out) >= max_nodes:
+            removable = _least_valuable_doc_node(graph, out)
+            if removable is None:
+                break
+            out.remove(removable)
+        out.add(node_id)
+    return out
+
+
+def include_reserved_structural_edges(graph: Graph, keep: set[str], edges: list[Edge]) -> list[Edge]:
+    seen = {(edge.source, edge.target, edge.type) for edge in edges}
+    out = list(edges)
+    for edge in graph.edges:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen or edge.type not in STRUCTURAL_RELATIONS:
+            continue
+        if edge.source in keep and edge.target in keep:
+            out.append(edge)
+            seen.add(key)
+    return out
+
+
+def _is_structural_node(graph: Graph, node_id: str) -> bool:
+    node = graph.nodes.get(node_id)
+    return bool(node and node.active and node.kind not in NON_STRUCTURAL_KINDS)
+
+
+def _least_valuable_doc_node(graph: Graph, nodes: set[str]) -> str | None:
+    for node_id in sorted(nodes):
+        node = graph.nodes.get(node_id)
+        if node and node.kind == "concept":
+            return node_id
+    for node_id in sorted(nodes):
+        node = graph.nodes.get(node_id)
+        if node and node.kind in NON_STRUCTURAL_KINDS:
+            return node_id
+    return None
+
+
+def _node_edge_scores(edges: list[Edge]) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    for edge in edges:
+        relation_bonus = {
+            "explains": 3.0,
+            "contains": 2.5,
+            "section_of": 1.5,
+            "mentions": 0.5,
+            "discusses": 0.5,
+        }.get(edge.type, 1.0)
+        score = relation_bonus * edge.confidence * provenance_confidence(edge.provenance)
+        scores[edge.source] = max(scores.get(edge.source, 0.0), score)
+        scores[edge.target] = max(scores.get(edge.target, 0.0), score)
+    return scores
+
+
+def _context_node_score(node_id: str, edge_scores: dict[str, float], path: str) -> float:
+    score = edge_scores.get(node_id, 0.0)
+    if path:
+        score += 2.0
+    return score
+
+
 def retrieve_context(
     graph: Graph,
     query: str,
@@ -70,7 +217,6 @@ def retrieve_context(
     max_nodes: int | None = None,
     scopes: tuple[str, ...] = (),
 ) -> RetrievalResult:
-    from ..planning.budgets import doc_intensity_score
     doc_intensity = doc_intensity_score(query_class, query)
     graph_bias = doc_code_bias(graph)
     doc_intensity *= 0.75 + graph_bias * 0.5

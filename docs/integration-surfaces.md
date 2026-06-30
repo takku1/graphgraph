@@ -17,7 +17,8 @@ system belong on different surfaces.
 MCP is good for live agent calls:
 
 - plan context for this task,
-- render a final packet,
+- retrieve anchors from a natural-language query and render a context packet,
+- render a final packet from already-known node IDs,
 - select scoped policies,
 - validate a packet before the model sees it.
 
@@ -39,7 +40,7 @@ src/graphgraph core library
   -> CLI / offline tool
        build graphs, parse docs, run benchmarks
   -> MCP server
-       serve final packets to LLM agents
+       serve natural-language query packets and known-node final packets to LLM agents
   -> plugin / skill
        install and call CLI/MCP from a host product
 ```
@@ -50,9 +51,10 @@ library. CLI, MCP, and plugins should be wrappers.
 ## Current Recommendation
 
 1. Keep benchmark/index/build workflows as CLI tools.
-2. Use MCP for live LLM context retrieval.
-3. Use the repo-local Codex plugin at `plugins/graphgraph` for installable
-   Codex distribution once the local checkout path is configured.
+2. Use MCP `query_context` for live LLM context retrieval; use `final_packet`
+   only after resolving exact node IDs.
+3. Use `graphgraph install --project --platform codex` to generate or refresh
+   the repo-local Codex plugin at `plugins/graphgraph`.
 
 ## Codex Packaging
 
@@ -68,7 +70,9 @@ rendering, and validation stay in `src/graphgraph`; the plugin only teaches
 Codex when to use those tools and how to launch the MCP server.
 
 For the local Windows checkout, `.mcp.json` uses an absolute `cwd` and
-`uv --project` path so Codex starts the server from the repository root. Run
-`python scripts\configure_codex_plugin.py --repo-root <checkout>` after moving
-or copying the repo; the Codex integration benchmark includes a temporary-copy
-probe for this path rewrite.
+`uv --project` path so Codex starts the server from the repository root.
+`graphgraph install --project --platform codex` writes those paths for the
+current checkout. `python scripts\configure_codex_plugin.py --repo-root
+<checkout>` remains available as a repair command after moving or copying the
+repo; the Codex integration benchmark includes a temporary-copy probe for this
+path rewrite.

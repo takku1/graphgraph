@@ -1,4 +1,3 @@
-from .scanner import extract_symbols
 from .core import Edge, Graph, Node, Policy, Query
 from .operations import (
     GraphOperation,
@@ -18,7 +17,7 @@ from .packets import render_hybrid, render_lowlevel, render_sql
 from .planning import ContextPlan, PacketChoice, choose_packet, plan_context
 from .policies import select_policies
 from .retrieval import Match, RetrievalResult, retrieve_context, search_nodes
-from .scanner import scan_directory
+from .scanner import extract_symbols, scan_directory
 from .terms import canonical_concept_label, concept_id, normalize_label, term_key
 from .validate import ValidationResult, validate_packet
 

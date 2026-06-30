@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .core import Graph, Node, Edge
 
 def compute_file_hash(path: Path) -> str:
     """Compute SHA-256 hash of a file."""
