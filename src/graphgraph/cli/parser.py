@@ -1,22 +1,26 @@
 import argparse
+
 from .commands import (
-    cmd_plan,
-    cmd_doctor,
-    cmd_render,
-    cmd_final,
-    cmd_query,
-    cmd_validate,
-    cmd_scan,
-    cmd_ingest,
-    cmd_export,
-    cmd_ontology,
-    cmd_compare,
     cmd_cache,
+    cmd_compare,
+    cmd_context,
+    cmd_doctor,
     cmd_eval,
+    cmd_export,
+    cmd_final,
     cmd_frontends,
-    cmd_profile,
-    cmd_traversal,
+    cmd_ingest,
     cmd_install,
+    cmd_ontology,
+    cmd_plan,
+    cmd_profile,
+    cmd_query,
+    cmd_render,
+    cmd_scan,
+    cmd_status,
+    cmd_traversal,
+    cmd_validate,
+    cmd_validate_graph,
 )
 
 
@@ -61,18 +65,49 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--show-anchors", action="store_true")
     query.set_defaults(func=cmd_query)
 
-    validate = sub.add_parser("validate")
-    validate.add_argument("--packet")
+    context = sub.add_parser("context", help="One-step native workflow: ensure a graph exists, then render query context.")
+    context.add_argument("query", help="Natural-language query used to find graph anchors.")
+    context.add_argument("--directory", "-d", help="Root directory to scan if a graph must be built (default: cwd).")
+    context.add_argument("--graph", help="Graph JSON path to read/write (default: .graphgraph/graph.json).")
+    context.add_argument("--rebuild", action="store_true", help="Force a graph rebuild before querying.")
+    context.add_argument("--scan-max-nodes", type=int, default=2000, help="Max files/nodes collected during auto-build (default: 2000).")
+    context.add_argument("--query-class", default="subsystem_summary")
+    context.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    context.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
+    context.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: measured by query class.")
+    context.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
+    context.add_argument("--skip-dirs", nargs="*", metavar="DIR", help="Additional directory names to skip during auto-build.")
+    context.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs", help="Alias: extra directory names to exclude during auto-build.")
+    context.add_argument("--show-anchors", action="store_true")
+    context.add_argument("--show-stats", action="store_true", help="Print graph load/build shape metrics to stderr.")
+    context.set_defaults(func=cmd_context)
+
+    status = sub.add_parser("status", help="Summarize graph validity, code/doc balance, package metadata, and optional runtime probes.")
+    status.add_argument("--directory", "-d", help="Project root directory (default: cwd).")
+    status.add_argument("--graph", help="Graph JSON path. Auto-detected from native .graphgraph if omitted.")
+    status.add_argument("--probe", action="store_true", help="Run lightweight python -m/import probes with src-layout PYTHONPATH when needed.")
+    status.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    status.set_defaults(func=cmd_status)
+
+    validate = sub.add_parser("validate", help="Validate a rendered graph packet, or auto-detect saved graph JSON.")
+    validate.add_argument("--packet", help="Rendered packet file, graph JSON file, or omitted to read stdin.")
     validate.set_defaults(func=cmd_validate)
+
+    validate_graph = sub.add_parser("validate-graph", help="Validate a saved GraphGraph JSON graph file.")
+    validate_graph.add_argument("--graph", help="Graph JSON path. Auto-detected from .graphgraph if omitted.")
+    validate_graph.set_defaults(func=cmd_validate_graph)
 
     scan = sub.add_parser("scan", help="Scan a directory and build a graph from import relationships.")
     scan.add_argument("--directory", "-d", help="Root directory to scan (default: cwd).")
     scan.add_argument("--output", "-o", help="Output graph JSON path (default: .graphgraph/graph.json).")
-    scan.add_argument("--max-nodes", type=int, default=500, help="Max nodes to collect (default: 500).")
+    scan.add_argument("--max-nodes", type=int, default=2000, help="Max nodes to collect (default: 2000).")
     scan.add_argument("--generic-mentions", action="store_true", default=False,
                       help="Add weak 'references' edges for any file that mentions another file's stem name.")
     scan.add_argument("--skip-dirs", nargs="*", metavar="DIR",
                       help="Additional directory names to skip (e.g. --skip-dirs spikes test-inputs).")
+    scan.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs",
+                      help="Alias: extra directory names to exclude (same as --skip-dirs). "
+                           "E.g. --exclude repos references_temp.")
     scan.add_argument("--depth", choices=["files", "symbols"], default="files",
                       help="'files' (default): one node per file. 'symbols': adds function/class/struct nodes.")
     scan.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto",
@@ -129,7 +164,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     install = sub.add_parser("install", help="Register/Install GraphGraph assistant skill, workspace rules, and MCP plugins.")
     install.add_argument("--project", "-p", action="store_true", help="Install locally to the current project repository (.agents/ directory) instead of user home.")
-    install.add_argument("--platform", choices=["codex", "claude", "cursor", "all"], default="all", help="Target AI assistant platforms to register on.")
+    install.add_argument(
+        "--platform",
+        choices=[
+            "codex",
+            "claude",
+            "claude-code",
+            "claude-desktop",
+            "cursor",
+            "gemini",
+            "antigravity",
+            "agy",
+            "all",
+        ],
+        default="all",
+        help=(
+            "Target AI assistant platform(s) to register on. 'claude' covers both Claude Code "
+            "(project .mcp.json + .claude/skills, or global ~/.claude skill + ~/.claude.json) and "
+            "Claude Desktop (global). Use 'claude-code' or 'claude-desktop' to target one. "
+            "gemini/antigravity/agy use the existing .gemini skill path."
+        ),
+    )
     install.set_defaults(func=cmd_install)
 
     return parser
