@@ -34,6 +34,9 @@ benchmarks/context_graph/external_repos.json
 # Vendored external repos used for local benchmarks (large; not part of the package)
 tmp/
 
+# Machine-specific MCP registration written by `graphgraph install` (absolute paths)
+.mcp.json
+
 # Misc
 *.db
 *.sqlite

@@ -8,8 +8,11 @@ description: Use GraphGraph for codebase context retrieval: one-step graph build
 GraphGraph is installed for native codebase context retrieval in Codex, Antigravity, and CLI workflows. Use it to orient on code structure before broad source searches.
 
 > [!IMPORTANT]
+> **STEP 0 -- CHECK TOOL AVAILABILITY FIRST**
+> The `graphgraph/*` MCP tools only exist if a graphgraph MCP server is registered for *this* client. Many sessions (e.g. Claude Code without project `.mcp.json`) have **no** graphgraph MCP server even when Claude Desktop does. Before following any MCP step, confirm a tool named `graphgraph/query_context` (or similar) is actually available. **If it is not, silently switch to the CLI path below -- do NOT try to translate MCP tool names into CLI flags.** Run `graphgraph doctor` to see per-client MCP status.
+
 > **DEFAULT PATH**
-> Prefer the MCP `graphgraph/query_context` tool when available. If MCP is unavailable, run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet.
+> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet.
 
 > **BENCHMARK DISCIPLINE**
 > Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.
@@ -33,14 +36,24 @@ GraphGraph is installed for native codebase context retrieval in Codex, Antigrav
 | `build_graph` | Build `.graphgraph/graph.json`; accepts `exclude_dirs`. |
 | `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |
 
-## CLI Fallback
+## CLI Commands (the real subcommands)
 
-- One-step default: `graphgraph context "<query>" --query-class subsystem_summary --show-stats`
+The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands with **disjoint** options -- do not, e.g., pass `--starts` to `query` (it has no such flag). Use this map:
+
+| Need | Subcommand | Anchors | Example |
+|------|-----------|---------|---------|
+| Ask a natural-language question (auto-finds anchors) | `context` | auto | `graphgraph context "how does retrieval work" --query-class subsystem_summary --show-stats` |
+| Same, on an existing graph only (no auto-build) | `query` | auto | `graphgraph query "callers of retrieve_context" --query-class reverse_lookup --show-anchors` |
+| Render from node IDs you already know | `final` | `--starts <id>...` | `graphgraph final --query-class blast_radius --starts src_graphgraph_retrieval_context_py` |
+| Low-level render from known IDs (no policies) | `render` | `--starts <id>...` | `graphgraph render --query-class direct_lookup --starts <id>` |
+
+Notes: `--starts` exists only on `final` and `render`. `context`/`query` take free text and discover anchors themselves; use `--show-anchors` to see what they picked. Other helpers:
+
 - Project status: `graphgraph status --probe`
 - Force rebuild: `graphgraph context "<query>" --rebuild --scan-max-nodes 5000 --show-stats`
 - Focus scope: `graphgraph context "<query>" --scope src/graphgraph/retrieval --query-class blast_radius`
-- Validate graph: `graphgraph validate-graph`
-- Validate packet from stdin: `graphgraph query "<query>" --packet doc_summary | graphgraph validate`
+- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects `.graphgraph/graph.json`)
+- Validate a rendered packet from stdin: `graphgraph query "<query>" --packet gg_max | graphgraph validate`
 
 ## Query Classes
 
@@ -53,6 +66,8 @@ GraphGraph is installed for native codebase context retrieval in Codex, Antigrav
 | `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |
 | `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |
 | `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |
+
+Format note: `gg_max`/`gg_max_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg_max` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.
 
 ## Noise Controls
 

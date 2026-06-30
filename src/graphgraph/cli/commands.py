@@ -168,31 +168,53 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print("    - Import external graphs explicitly with: graphgraph ingest --input <path> --output .graphgraph/graph.json")
 
 
-    # 5. MCP Settings Verification
+    # 5. MCP Settings Verification (per client, not a single generic "OK").
     print("\n[MCP Server Integration]")
-    if platform.system() == "Windows":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            claude_config = Path(appdata) / "Claude" / "claude_desktop_config.json"
-            if claude_config.exists():
-                try:
-                    with open(claude_config, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    servers = data.get("mcpServers", {})
-                    if "graphgraph" in servers:
-                        info = servers["graphgraph"]
-                        print("  Claude Desktop: Configured (OK)")
-                        print(f"    - Command: {info.get('command')}")
-                    else:
-                        print("  Claude Desktop: Found, but 'graphgraph' server is not configured")
-                except Exception as e:
-                    print(f"  Claude Desktop: Found config but failed to parse: {e}")
-            else:
-                print("  Claude Desktop: Claude config directory exists, but claude_desktop_config.json is missing")
-        else:
-            print("  Claude Desktop: APPDATA path not found")
-    else:
-        print("  Claude Desktop config check is only supported on Windows in this doctor version")
+
+    def _report_mcp_client(label: str, config_path: Path | None, missing_hint: str) -> bool:
+        """Print whether the graphgraph MCP server is registered for one client."""
+        if config_path is None:
+            print(f"  {label}: config location unavailable on this platform")
+            return False
+        if not config_path.exists():
+            print(f"  {label}: not configured ({missing_hint})")
+            return False
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"  {label}: found config but failed to parse: {e}")
+            return False
+        servers = data.get("mcpServers", {})
+        if "graphgraph" in servers:
+            print(f"  {label}: Configured (OK)  [{config_path}]")
+            print(f"    - Command: {servers['graphgraph'].get('command')}")
+            return True
+        print(f"  {label}: config present but 'graphgraph' server not registered ({missing_hint})")
+        return False
+
+    home = Path.home()
+    appdata = os.environ.get("APPDATA")
+    desktop_cfg = (Path(appdata) / "Claude" / "claude_desktop_config.json") if appdata else None
+
+    code_global = _report_mcp_client(
+        "Claude Code (user ~/.claude.json)",
+        home / ".claude.json",
+        "run: graphgraph install --platform claude-code",
+    )
+    code_project = _report_mcp_client(
+        "Claude Code (project ./.mcp.json)",
+        Path(".mcp.json"),
+        "run: graphgraph install --project --platform claude-code",
+    )
+    desktop = _report_mcp_client(
+        "Claude Desktop",
+        desktop_cfg,
+        "run: graphgraph install --platform claude-desktop",
+    )
+
+    if not (code_global or code_project or desktop):
+        print("  [!] No client has the graphgraph MCP server registered.")
+        print("      In a Claude Code session, MCP tools will be unavailable; use the `graphgraph` CLI instead.")
 
 
 def cmd_render(args: argparse.Namespace) -> None:
@@ -346,7 +368,32 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
-    packet = Path(args.packet).read_text(encoding="utf-8") if args.packet else sys.stdin.read()
+    if args.packet:
+        packet = Path(args.packet).read_text(encoding="utf-8")
+    elif not sys.stdin.isatty():
+        packet = sys.stdin.read()
+    else:
+        packet = ""
+
+    # When no packet/stdin is supplied, honor the documented "auto-detect saved
+    # graph JSON" behavior instead of failing on empty input.
+    if not packet.strip():
+        try:
+            graph_path = find_graph_path()
+        except FileNotFoundError:
+            graph_path = None
+        if graph_path is not None:
+            print(f"No packet supplied; auto-detected saved graph: {graph_path}")
+            result = validate_graph_json(graph_path.read_text(encoding="utf-8"))
+            status = "PASS" if result.ok else "FAIL"
+            print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
+            for error in result.errors:
+                print(f"- {error}")
+            return
+        print("FAIL no input: pipe a packet via stdin, pass --packet <file>, or run `graphgraph validate-graph`.")
+        print("  (no saved graph found under .graphgraph/ to auto-detect)")
+        return
+
     result = validate_any(packet)
     status = "PASS" if result.ok else "FAIL"
     print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count}")
@@ -684,6 +731,7 @@ def cmd_install(args: argparse.Namespace) -> None:
             "It is available as a CLI tool (`graphgraph`) and, on platforms with MCP config, as an MCP server (`graphgraph` server).\n\n"
             "## Instinctive Tool Guide\n\n"
             "When the user asks codebase structure/dependency questions or says \"using graphgraph now to build context\":\n"
+            "0. **Check MCP availability first:** The `graphgraph/*` MCP tools exist only if a graphgraph MCP server is registered for *this* client; many sessions have none even when Claude Desktop does. If those tools are not present, use the `graphgraph` CLI instead and do NOT map MCP tool names onto CLI flags (the CLI subcommands `context`/`query`/`final` have different options). `graphgraph doctor` shows per-client MCP status.\n"
             "1. **Zero-Exploration Contract:** Immediately check if `.graphgraph/graph.json` exists in the workspace. "
             "If it does not exist, immediately run `graphgraph scan --depth symbols --docs` to generate it. "
             "Do NOT run custom shell listings or file-discovery loops.\n"
@@ -731,8 +779,10 @@ def cmd_install(args: argparse.Namespace) -> None:
         "# GraphGraph Operational Contract\n\n"
         "GraphGraph is installed for native codebase context retrieval in Codex, Antigravity, and CLI workflows. Use it to orient on code structure before broad source searches.\n\n"
         "> [!IMPORTANT]\n"
+        "> **STEP 0 -- CHECK TOOL AVAILABILITY FIRST**\n"
+        "> The `graphgraph/*` MCP tools only exist if a graphgraph MCP server is registered for *this* client. Many sessions (e.g. Claude Code without project `.mcp.json`) have **no** graphgraph MCP server even when Claude Desktop does. Before following any MCP step, confirm a tool named `graphgraph/query_context` (or similar) is actually available. **If it is not, silently switch to the CLI path below -- do NOT try to translate MCP tool names into CLI flags.** Run `graphgraph doctor` to see per-client MCP status.\n\n"
         "> **DEFAULT PATH**\n"
-        "> Prefer the MCP `graphgraph/query_context` tool when available. If MCP is unavailable, run `graphgraph context \"<query>\" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet.\n\n"
+        "> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context \"<query>\" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet.\n\n"
         "> **BENCHMARK DISCIPLINE**\n"
         "> Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.\n\n"
         "## Decision Rules\n\n"
@@ -750,13 +800,20 @@ def cmd_install(args: argparse.Namespace) -> None:
         "| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |\n"
         "| `build_graph` | Build `.graphgraph/graph.json`; accepts `exclude_dirs`. |\n"
         "| `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |\n\n"
-        "## CLI Fallback\n\n"
-        "- One-step default: `graphgraph context \"<query>\" --query-class subsystem_summary --show-stats`\n"
+        "## CLI Commands (the real subcommands)\n\n"
+        "The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands with **disjoint** options -- do not, e.g., pass `--starts` to `query` (it has no such flag). Use this map:\n\n"
+        "| Need | Subcommand | Anchors | Example |\n"
+        "|------|-----------|---------|---------|\n"
+        "| Ask a natural-language question (auto-finds anchors) | `context` | auto | `graphgraph context \"how does retrieval work\" --query-class subsystem_summary --show-stats` |\n"
+        "| Same, on an existing graph only (no auto-build) | `query` | auto | `graphgraph query \"callers of retrieve_context\" --query-class reverse_lookup --show-anchors` |\n"
+        "| Render from node IDs you already know | `final` | `--starts <id>...` | `graphgraph final --query-class blast_radius --starts src_graphgraph_retrieval_context_py` |\n"
+        "| Low-level render from known IDs (no policies) | `render` | `--starts <id>...` | `graphgraph render --query-class direct_lookup --starts <id>` |\n\n"
+        "Notes: `--starts` exists only on `final` and `render`. `context`/`query` take free text and discover anchors themselves; use `--show-anchors` to see what they picked. Other helpers:\n\n"
         "- Project status: `graphgraph status --probe`\n"
         "- Force rebuild: `graphgraph context \"<query>\" --rebuild --scan-max-nodes 5000 --show-stats`\n"
         "- Focus scope: `graphgraph context \"<query>\" --scope src/graphgraph/retrieval --query-class blast_radius`\n"
-        "- Validate graph: `graphgraph validate-graph`\n"
-        "- Validate packet from stdin: `graphgraph query \"<query>\" --packet doc_summary | graphgraph validate`\n\n"
+        "- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects `.graphgraph/graph.json`)\n"
+        "- Validate a rendered packet from stdin: `graphgraph query \"<query>\" --packet gg_max | graphgraph validate`\n\n"
         "## Query Classes\n\n"
         "| Query Class | Description / Example Question | Hops | Format | Reason |\n"
         "| :--- | :--- | :---: | :--- | :--- |\n"
@@ -767,6 +824,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |\n"
         "| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |\n"
         "| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |\n\n"
+        "Format note: `gg_max`/`gg_max_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg_max` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.\n\n"
         "## Noise Controls\n\n"
         "Default scanning skips generated artifact directories such as `.graphgraph`, `graphify-out`, `.code-review-graph`, `evidence`, `artifacts`, `scratch`, `tmp`, build outputs, vendors, and cloned external repos. Normal install, scan, context, query, and MCP workflows do not invoke Graphify, code-review-graph, or other graph tools; external graph outputs are read only when explicitly passed to `ingest` or a graph-path argument. For project-specific noise, pass `exclude_dirs` in MCP or `--exclude <dir>` in CLI.\n"
     )

@@ -165,6 +165,22 @@ class GraphGraphCoreTest(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(result.format, "sql")
 
+    def test_sql_uses_short_integer_handles_not_qualified_ids(self) -> None:
+        # Regression: sql edge rows must reference short integer handles, not the
+        # full qualified node ids (which made the format scale badly on real repos).
+        graph = sample_graph()
+        nodes, edges = graph.expand(["N1"], hops=2)
+        packet = render_sql(graph, nodes, edges)
+        edge_line = next(line for line in packet.splitlines() if line.startswith("TABLE edges:"))
+        rows = edge_line.split("|", 1)[1]
+        # No qualified node id should appear in the edge rows.
+        for node_id in nodes:
+            self.assertNotIn(node_id, rows, f"qualified id {node_id} leaked into sql edge rows")
+        # Edge endpoints should be the integer handles assigned in node order.
+        for entry in [e.strip() for e in rows.split("|") if e.strip()]:
+            source, target = entry.split(",")[:2]
+            self.assertTrue(source.isdigit() and target.isdigit(), entry)
+
     def test_render_and_validate_semantic_arrow(self) -> None:
         graph = sample_graph()
         nodes, edges = graph.expand(["N1"], hops=2)

@@ -26,11 +26,23 @@ def render_lowlevel(graph: Graph, nodes: set[str], edges: list[Edge], relations:
 
 
 def render_sql(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    # Use short integer handles as the node ``id`` so edge rows do not repeat the
+    # full qualified node ids. Qualified ids can be long (e.g.
+    # ``pkg_module_py__Class_method``); repeating them on every edge made this
+    # format scale badly on real repos. The integer ``id`` column is the join key
+    # for edges; ``path`` still carries the source location for traceability.
+    node_to_idx = {node_id: i + 1 for i, node_id in enumerate(sorted(nodes))}
     node_rows = []
     for node_id in sorted(nodes):
         node = graph.nodes[node_id]
-        node_rows.append(f"{node.id},{node.label},{node.kind},{node.path}")
-    edge_rows = [f"{edge.source},{edge.target},{edge.type},{edge.weight:g}" for edge in edges]
+        node_rows.append(f"{node_to_idx[node_id]},{node.label},{node.kind},{node.path}")
+    edge_rows = []
+    for edge in edges:
+        source = node_to_idx.get(edge.source)
+        target = node_to_idx.get(edge.target)
+        if source is None or target is None:
+            continue
+        edge_rows.append(f"{source},{target},{edge.type},{edge.weight:g}")
     return (
         "TABLE nodes: id,label,kind,path | "
         + " | ".join(node_rows)
