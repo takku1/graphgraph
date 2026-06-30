@@ -1,0 +1,36 @@
+{
+  "name": "graphgraph",
+  "version": "0.1.0",
+  "description": "Codex integration for GraphGraph codebase context retrieval, packet validation, and MCP tools.",
+  "author": {
+    "name": "GraphGraph"
+  },
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "mcp",
+    "codebase-context",
+    "graph-rag",
+    "retrieval"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "GraphGraph",
+    "shortDescription": "Use compact graph packets for codebase context in Codex.",
+    "longDescription": "GraphGraph bundles a Codex skill and MCP server configuration for scanning repositories, finding graph anchors, rendering final context packets, and validating compressed codebase graph evidence.",
+    "developerName": "GraphGraph",
+    "category": "Productivity",
+    "capabilities": [
+      "Codebase context",
+      "MCP tools",
+      "Local retrieval"
+    ],
+    "defaultPrompt": [
+      "Use GraphGraph to explain this subsystem.",
+      "Find the blast radius with GraphGraph.",
+      "Validate a GraphGraph packet."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

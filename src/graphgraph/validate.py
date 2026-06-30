@@ -19,10 +19,10 @@ def validate_packet(packet: str) -> ValidationResult:
         return validate_lowlevel(text)
     if text.startswith("TABLE nodes:"):
         return validate_sql(text)
-    if text.startswith("@nodes") or "@nodes" in text:
-        return validate_semantic_arrow(text)
     if text.startswith("[r]") or "[r]" in text:
         return validate_gg_max(text)
+    if text.startswith("@nodes") or "@nodes" in text:
+        return validate_semantic_arrow(text)
     return ValidationResult(False, "unknown", 0, 0, ("unknown packet format",))
 
 
@@ -52,9 +52,12 @@ def validate_gg_max(packet: str) -> ValidationResult:
         rel_id, rel = line.split(":", 1)
         relations[rel_id.strip()] = rel.strip()
 
-    for line in nonempty_lines(nodes_part):
+    for raw_line in nodes_part.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
         # Fact/summary continuation lines (indented) or comments — skip for node counting.
-        if line.startswith(" ") or line.startswith("-") or line.startswith("#"):
+        if raw_line.startswith(" ") or raw_line.startswith("\t") or line.startswith("-") or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split(None, 1)]
         if len(parts) < 2:

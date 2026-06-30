@@ -7,8 +7,8 @@ from ..core import Edge
 from .files import PARSEABLE_SUFFIXES
 
 
-_PY_FROM = re.compile(r"^from\s+([\w.]+)\s+import", re.MULTILINE)
-_PY_BARE = re.compile(r"^import\s+([\w.]+)", re.MULTILINE)
+_PY_FROM = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+([^\n#]+)", re.MULTILINE)
+_PY_BARE = re.compile(r"^\s*import\s+([^\n#]+)", re.MULTILINE)
 _JS_ES = re.compile(r'(?:import|from)\s+["\'](\.[^"\']+)["\']')
 _JS_REQ = re.compile(r'require\s*\(\s*["\'](\.[^"\']+)["\']\s*\)')
 _GO_IMPORT = re.compile(r'"(\.[^"]+)"')
@@ -22,6 +22,7 @@ _RUBY_REQ = re.compile(r"""require\s+['"](\.[^'"]+)['"]""")
 _MD_LINK = re.compile(r"""\[(?:[^\]]*)\]\((\.[^)#"'\s]+)\)""")
 _RST_INCLUDE = re.compile(r"""^\.\.\s+(?:include|literalinclude)::\s+(\S+)""", re.MULTILINE)
 _HTML_HREF = re.compile(r"""href=["'](\.[^"'#\s]+)["']""")
+_LEAN_IMPORT = re.compile(r"^import\s+([a-zA-Z_0-9.]+)", re.MULTILINE)
 
 _JS_EXTS = (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")
 
@@ -65,9 +66,10 @@ def add_file_edges(
 
         if suffix == ".py":
             for match in _PY_FROM.finditer(text):
-                add_edge(src_id, _resolve_py(match.group(1), path, root, file_map))
+                add_edge(src_id, _resolve_py(match.group(1), path, root, file_map, imported=match.group(2)))
             for match in _PY_BARE.finditer(text):
-                add_edge(src_id, _resolve_py(match.group(1), path, root, file_map))
+                for module in _python_import_modules(match.group(1)):
+                    add_edge(src_id, _resolve_py(module, path, root, file_map))
         elif suffix in {".ts", ".tsx", ".js", ".jsx"}:
             for match in _JS_ES.finditer(text):
                 add_edge(src_id, _resolve_js(match.group(1), path, root, file_map))
@@ -105,9 +107,41 @@ def add_file_edges(
         elif suffix in {".html", ".htm"}:
             for match in _HTML_HREF.finditer(text):
                 add_edge(src_id, _resolve_relative(match.group(1), path, root, file_map), "links")
+        elif suffix == ".lean":
+            for match in _LEAN_IMPORT.finditer(text):
+                add_edge(src_id, _resolve_lean(match.group(1), file_map))
 
 
-def _resolve_py(module: str, current: Path, root: Path, file_map: dict[str, str]) -> str | None:
+def _resolve_py(module: str, current: Path, root: Path, file_map: dict[str, str], imported: str = "") -> str | None:
+    module = module.strip()
+    if not module:
+        return None
+    if module.startswith("."):
+        level = len(module) - len(module.lstrip("."))
+        tail = module[level:]
+        base = current.parent
+        for _ in range(max(0, level - 1)):
+            base = base.parent
+        candidates = []
+        if tail:
+            rel_tail = Path(*tail.split("."))
+            candidates.extend([base / rel_tail.with_suffix(".py"), base / rel_tail / "__init__.py"])
+        else:
+            for imported_module in _python_import_modules(imported):
+                if imported_module == "*":
+                    continue
+                rel_imported = Path(*imported_module.split("."))
+                candidates.extend([base / rel_imported.with_suffix(".py"), base / rel_imported / "__init__.py"])
+            candidates.append(base / "__init__.py")
+        for candidate in candidates:
+            try:
+                rel = candidate.resolve().relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if rel in file_map:
+                return file_map[rel]
+        return None
+
     parts = module.split(".")
     candidates = ["/".join(parts) + ".py", "/".join(parts) + "/__init__.py"]
     for candidate in candidates:
@@ -118,6 +152,23 @@ def _resolve_py(module: str, current: Path, root: Path, file_map: dict[str, str]
         rel = "/".join(pkg + [candidate]) if pkg else candidate
         if rel in file_map:
             return file_map[rel]
+    return None
+
+
+def _python_import_modules(raw: str) -> list[str]:
+    modules = []
+    for part in raw.split(","):
+        module = part.strip().split(" as ", 1)[0].strip()
+        if module:
+            modules.append(module)
+    return modules
+
+
+def _resolve_lean(module: str, file_map: dict[str, str]) -> str | None:
+    filename = module.replace(".", "/") + ".lean"
+    for rel, nid in file_map.items():
+        if rel.endswith(filename) or rel == filename:
+            return nid
     return None
 
 

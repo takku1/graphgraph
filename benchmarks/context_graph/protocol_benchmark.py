@@ -653,18 +653,27 @@ def score_packet(task: dict, packet_nodes: set[str], packet_edges: list[dict], t
         path_recall = len(set(task["expected_path"]) & packet_nodes) / len(task["expected_path"])
     irrelevant = len(packet_nodes - expected_nodes) / max(1, len(packet_nodes))
     negative_ok = 1.0
+    negative_direct_edge_count = 0
     if task.get("negative"):
-        negative_ok = 1.0 if not packet_edge_keys else 0.0
+        negative_direct_edge_count = count_edges_between(packet_edge_keys, expected_nodes)
+        negative_ok = 1.0 if negative_direct_edge_count == 0 else 0.0
     return {
         "node_recall": node_recall,
         "edge_recall": edge_recall,
         "path_recall": path_recall,
         "irrelevant_context_ratio": irrelevant,
         "negative_ok": negative_ok,
+        "negative_direct_edge_count": negative_direct_edge_count,
         "retrieved_nodes": len(packet_nodes),
         "retrieved_edges": len(packet_edges),
         "corpus_coverage": len(packet_nodes) / max(1, total_nodes),
     }
+
+
+def count_edges_between(edges: set[tuple[str, str, str]], nodes: set[str]) -> int:
+    if len(nodes) < 2:
+        return len([edge for edge in edges if edge[0] in nodes or edge[1] in nodes])
+    return sum(1 for source, target, _kind in edges if source in nodes and target in nodes)
 
 
 def storage_size(path: Path) -> int:

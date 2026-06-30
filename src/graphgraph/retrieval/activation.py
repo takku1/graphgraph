@@ -75,6 +75,17 @@ def spreading_activation(
                 for neighbor in neighbors:
                     next_activation[neighbor] = next_activation.get(neighbor, 0.0) + spread_energy
 
+        # 4. Bellman early-stopping constraint: expected value of next-stage information vs. token cost
+        new_nodes = {nid: score for nid, score in next_activation.items() if nid not in activation}
+        total_new_energy = sum(new_nodes.values())
+        # Estimate token cost of new nodes (roughly 8.0 tokens per node)
+        estimated_new_tokens = len(new_nodes) * 8.0
+        if estimated_new_tokens > 0:
+            marginal_utility = total_new_energy / estimated_new_tokens
+            # If the expected marginal utility falls below our convergence threshold, stop early
+            if marginal_utility < 0.005:
+                break
+
         activation = next_activation
 
     # 4. Sort and select the top max_nodes by score

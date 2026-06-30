@@ -55,6 +55,26 @@
     "metadata": {
       "type": "object",
       "additionalProperties": { "type": "string" }
+    },
+    "centrality": {
+      "type": "object",
+      "properties": {
+        "pagerank": {
+          "type": "object",
+          "properties": {
+            "algorithm": { "type": "string" },
+            "version": { "type": "integer" },
+            "damping": { "type": "number" },
+            "max_iter": { "type": "integer" },
+            "tol": { "type": "number" },
+            "signature": { "type": "string" },
+            "scores": {
+              "type": "object",
+              "additionalProperties": { "type": "number" }
+            }
+          }
+        }
+      }
     }
   },
   "required": ["nodes", "edges"]

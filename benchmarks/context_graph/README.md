@@ -33,6 +33,157 @@ Run the main suite:
 python benchmarks\context_graph\run_all.py
 ```
 
+Run the structural promotion gate before treating scanner, planner, traversal,
+or packet changes as defaults:
+
+```powershell
+python benchmarks\context_graph\promote_check.py
+```
+
+This gate runs unit tests, live graph shape validation, token proxy calibration,
+search hot-path timing, real-project answerability, frontier policy checks,
+dynamic budget checks, planner fit, prompt preflight, and Codex plugin/MCP
+integration checks. It also writes a benchmark integration
+inventory so exploratory scripts are visible instead of silently becoming dead code. It is a
+structural/retrieval gate only; live model answer quality still requires the
+explicit model reasoning commands below.
+
+To inspect which benchmark scripts are promotion-critical, run-all coverage,
+documented-only, or exploratory:
+
+```powershell
+python benchmarks\context_graph\integration_inventory.py
+```
+
+Output:
+
+- `benchmarks/context_graph/out/inventory/integration_inventory.md`
+
+Current promotion-critical scripts:
+
+- `live_graph_shape.py`
+- `search_hot_path_benchmark.py`
+- `token_proxy_calibration.py`
+- `real_project_answerability_limit.py`
+- `dynamic_budget_benchmark.py`
+- `frontier_policy_benchmark.py`
+- `planner_fit_benchmark.py`
+- `prompt_preflight.py`
+- `codex_integration_check.py`
+
+Current run-all support scripts that are not promotion gates:
+
+- `adaptive_hop_policy_benchmark.py`
+- `adaptive_policy_report.py`
+- `adaptive_threshold_sweep.py`
+- `bitpack_benchmark.py`
+- `constraint_context_benchmark.py`
+- `doc_code_pairing_benchmark.py`
+- `final_packet_benchmark.py`
+- `format_benchmark.py`
+- `hop_frontier_benchmark.py`
+- `interpretability_benchmark.py`
+- `mathematical_limit_search.py`
+- `minmax_analysis.py`
+- `model_reasoning_benchmark.py`
+- `packet_roundtrip_validator.py`
+- `protocol_benchmark.py`
+- `real_project_packet_balance.py`
+- `source_route_benchmark.py`
+
+Current documented/manual scripts that are not in broad run-all:
+
+- `cross_project_live_shape.py`
+- `cross_repo_anchor_stress.py`
+- `llm_answer_benchmark.py`
+- `local_project_eval.py`
+- `local_project_smoke.py`
+- `locus_benchmark.py`
+- `prep_external_repos.py`
+- `run_benchmark.py`
+
+Current exploratory script:
+
+- `density_benchmark.py`
+
+## Cross-Project Live Shape
+
+## Codex Integration Check
+
+Use this after changing `plugins/graphgraph`, `.agents/plugins`, MCP launch
+configuration, or Codex-facing docs:
+
+```powershell
+python benchmarks\context_graph\codex_integration_check.py
+```
+
+Output:
+
+- `benchmarks/context_graph/out/codex/codex_integration_check.json`
+- `benchmarks/context_graph/out/codex/codex_integration_check.md`
+
+The check measures:
+
+- plugin manifest and skill wiring,
+- bundled MCP server declaration,
+- marketplace source path,
+- `uv` command availability,
+- MCP project/cwd consistency,
+- a launch probe using `graphgraph doctor`,
+- a temporary-copy configurator probe for checkout-specific path rewriting.
+
+It validates local Codex packaging and launch wiring. It does not prove the
+marketplace has been installed into a user's global Codex config.
+
+## Dynamic Context Windows
+
+Use this to audit whether retrieval budgets are merely fixed presets or are
+responding to project size, graph density, weak-edge pressure, doc density, and
+available token window:
+
+```powershell
+python benchmarks\context_graph\dynamic_budget_benchmark.py
+```
+
+The report compares:
+
+- `current_default`: measured production runtime budgets,
+- `shape_recommended`: conservative graph-shape trims currently allowed by the
+  promotion gate,
+- `context_window`: experimental token-window sizing with page/sparse-window
+  hints from static graph shape,
+- `observed_window`: experimental second-pass sizing from the actual rendered
+  first packet after anchors are known.
+
+Promotion requires preserving answerability and improving real rendered-token
+saturation/noise for the intended objective, not just predicted saturation.
+
+To measure scanner shape for the current `graphgraph` repo, run:
+
+```powershell
+python benchmarks\context_graph\cross_project_live_shape.py
+```
+
+Run other projects one at a time with `--repo`. Output:
+
+- `benchmarks/context_graph/out/live/cross_project_live_shape.md`
+- `benchmarks/context_graph/out/live/cross_project_live_shape.json`
+
+The script ignores existing project `.graphgraph` directories while measuring.
+To rebuild and write fresh project-local caches too:
+
+```powershell
+python benchmarks\context_graph\cross_project_live_shape.py --refresh-project-graph
+```
+
+Projects in `C:\Users\dcarn\aiprojects` and
+`C:\Users\dcarn\aiprojects\resources` should be run explicitly so their scan
+cost and graph shape stay attributable to that project:
+
+```powershell
+python benchmarks\context_graph\cross_project_live_shape.py --repo C:\Users\dcarn\aiprojects\resources\lean4 --max-nodes 2200
+```
+
 The current architecture recommendation is summarized in:
 
 - `benchmarks/context_graph/architecture_blueprint.md`
@@ -268,6 +419,24 @@ Output:
 
 This report gates source routes by extraction recall/precision, picks the
 cheapest passing packet shape, and chooses the scoped constraint strategy.
+
+## Live Graph Shape
+
+Use this after scanner changes to measure the current repository instead of
+only saved graphs:
+
+```powershell
+python benchmarks\context_graph\live_graph_shape.py
+```
+
+Outputs:
+
+- `benchmarks/context_graph/out/live/live_graph_shape.md`
+- `benchmarks/context_graph/out/live/live_graph_shape.json`
+- `benchmarks/context_graph/out/live/live_graph_shape.graph.json`
+
+The report checks import density, doc/weak-edge pressure, live query packet
+validation, and the zero-edge `semantic_arrow` gate.
 
 ## Final Packet Composition
 

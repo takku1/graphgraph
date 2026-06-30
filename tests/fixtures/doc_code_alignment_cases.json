@@ -1,0 +1,53 @@
+{
+  "cases": [
+    {
+      "name": "semantic_pair_only",
+      "nodes": [
+        ["D", "Doc Concept", "section", "docs/doc.md"],
+        ["C", "Doc Concept", "function", "src/doc_concept.py"],
+        ["DO", "Doc Only", "section", "docs/notes.md"],
+        ["CO", "Code Only", "function", "src/code_only.py"],
+        ["N", "Loose Note", "policy", "policies.json"]
+      ],
+      "edges": [],
+      "expect": {
+        "semantic": {
+          "paired_keys": 1,
+          "doc_only_keys": 1,
+          "code_only_keys": 1
+        },
+        "components": {
+          "paired_components": 0,
+          "doc_only_components": 2,
+          "code_only_components": 2
+        }
+      }
+    },
+    {
+      "name": "component_pair",
+      "nodes": [
+        ["D", "API Overview", "section", "docs/api.md"],
+        ["M", "Routing", "concept", "docs/api.md"],
+        ["C", "render_packet", "function", "src/render.py"],
+        ["DO", "Setup Notes", "section", "docs/setup.md"],
+        ["CO", "parse_query", "function", "src/query.py"]
+      ],
+      "edges": [
+        ["D", "M", "discusses"],
+        ["M", "C", "explains"]
+      ],
+      "expect": {
+        "semantic": {
+          "paired_keys": 0,
+          "doc_only_keys": 3,
+          "code_only_keys": 2
+        },
+        "components": {
+          "paired_components": 1,
+          "doc_only_components": 1,
+          "code_only_components": 1
+        }
+      }
+    }
+  ]
+}

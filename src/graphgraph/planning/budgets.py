@@ -70,6 +70,8 @@ def default_anchor_limit(query: str, query_class: str) -> int:
     if query_class == "subsystem_summary":
         return max(6, min(16, term_count * 3))
     if query_class == "blast_radius":
+        if term_count <= 2:
+            return 6
         return max(3, min(8, term_count + 2))
     return 3
 

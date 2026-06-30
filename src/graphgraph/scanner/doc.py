@@ -72,10 +72,12 @@ def extract_document_context(
             ))
 
             body = doc.text[start:end]
+            body_keys: set[str] = set()
             for concept in _concepts(title + "\n" + body):
                 key = term_key(concept)
                 if not key:
                     continue
+                body_keys.add(key)
                 concept_counts[key] = concept_counts.get(key, 0) + 1
                 cid = concept_id(concept)
                 if cid not in nodes:
@@ -97,6 +99,26 @@ def extract_document_context(
                     source_location=doc.rel,
                 ))
 
+            if symbol_map:
+                for alias, target_id in symbol_map.items():
+                    if not alias or target_id == doc.file_node_id:
+                        continue
+                    # Determine if alias matches a canonical term key or appears case‑insensitively in the body
+                    alias_lower = alias.lower()
+                    canonical_match = alias in body_keys
+                    if canonical_match or alias_lower in body.lower():
+                        # Boost weight for canonical matches, slightly lower for raw matches
+                        weight = 1.0 if canonical_match else 0.9
+                        edges.append(Edge(
+                            section_id,
+                            target_id,
+                            "explains",
+                            weight=weight,
+                            confidence=0.8,
+                            provenance="doc_reference",
+                            source_location=doc.rel,
+                        ))
+
             for file_label, target_id in label_to_file.items():
                 if file_label.lower() in body.lower() and target_id != doc.file_node_id:
                     edges.append(Edge(
@@ -108,20 +130,6 @@ def extract_document_context(
                         provenance="doc_reference",
                         source_location=doc.rel,
                     ))
-
-            if symbol_map:
-                for symbol_label, target_id in symbol_map.items():
-                    if len(symbol_label) >= 4 and symbol_label in body:
-                        if re.search(rf"\b{re.escape(symbol_label)}\b", body):
-                            edges.append(Edge(
-                                section_id,
-                                target_id,
-                                "explains",
-                                weight=0.9,
-                                confidence=0.8,
-                                provenance="doc_reference",
-                                source_location=doc.rel,
-                            ))
 
         # If a document has no headings, make one coarse section so docs are not
         # invisible to graph retrieval.

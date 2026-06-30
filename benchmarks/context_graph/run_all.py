@@ -19,6 +19,8 @@ SCRIPTS = [
     "prompt_preflight.py",
     "adaptive_policy_report.py",
     "final_packet_benchmark.py",
+    "live_graph_shape.py",
+    "search_hot_path_benchmark.py",
     "minmax_analysis.py",
     "adaptive_threshold_sweep.py",
     "mathematical_limit_search.py",
@@ -27,6 +29,11 @@ SCRIPTS = [
     "adaptive_hop_policy_benchmark.py",
     "token_proxy_calibration.py",
     "real_project_answerability_limit.py",
+    "dynamic_budget_benchmark.py",
+    "planner_fit_benchmark.py",
+    "frontier_policy_benchmark.py",
+    "doc_code_pairing_benchmark.py",
+    "integration_inventory.py",
 ]
 
 

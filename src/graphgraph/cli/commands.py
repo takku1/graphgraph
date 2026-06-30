@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -12,9 +14,10 @@ from ..io import load_any, save_graph, save_gg, find_graph_path, find_policies_p
 from ..metrics import compare_graphs
 from ..ontology import DEFAULT_RELATIONS
 from ..packets import render_packet
-from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
+from ..planning import compute_subgraph_stats, plan_context, profile_graph_shape, recommend_node_budget, refine_plan_for_subgraph
 from ..scanner import scan_directory
 from ..services import render_final_packet, render_query_context, render_stable_skeleton
+from ..services.context import resolve_start_nodes
 from ..traversal import POLICIES, traversal_policy
 from ..validate import validate_packet
 
@@ -25,6 +28,29 @@ def cmd_plan(args: argparse.Namespace) -> None:
         f"{plan.hops}hop {plan.direction} {plan.packet} "
         f"n={plan.node_budget} anchors={plan.anchor_limit}: {plan.reason}"
     )
+
+
+def cmd_profile(args: argparse.Namespace) -> None:
+    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    graph = load_any(graph_path)
+    shape = profile_graph_shape(graph)
+    query = getattr(args, "query", "")
+    report = {
+        "graph": str(graph_path),
+        "shape": shape.__dict__,
+        "budget_candidates": [
+            recommend_node_budget(query_class, query, shape).__dict__
+            for query_class in (
+                "direct_lookup",
+                "reverse_lookup",
+                "multi_hop_path",
+                "blast_radius",
+                "subsystem_summary",
+                "negative_query",
+            )
+        ],
+    }
+    print(json.dumps(report, indent=2))
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
@@ -110,7 +136,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         except Exception as e:
             print(f"    - Error loading graph: {e}")
     except FileNotFoundError:
-        print("  Active Graph: No graph file found in .graphgraph/ or graphify-out/")
+        print("  Active Graph: No native graph file found in .graphgraph/")
+        print("    - Build one with: graphgraph scan --directory . --depth symbols --docs --output .graphgraph/graph.json")
+        print("    - Import external graphs explicitly with: graphgraph ingest --input <path> --output .graphgraph/graph.json")
 
     # 5. MCP Settings Verification
     print("\n[MCP Server Integration]")
@@ -142,7 +170,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 def cmd_render(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     graph = load_any(graph_path)
-    starts = args.starts
+    starts = resolve_start_nodes(graph, args.starts)
     plan = plan_context(args.query_class, max_nodes=args.max_nodes)
     nodes, edges = graph.expand(starts, hops=plan.hops, max_nodes=plan.node_budget, direction=plan.direction)
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
@@ -313,3 +341,142 @@ def cmd_traversal(args: argparse.Namespace) -> None:
         print(json.dumps(traversal_policy(args.query_class).__dict__, indent=2, ensure_ascii=False))
         return
     print(json.dumps({name: policy.__dict__ for name, policy in POLICIES.items()}, indent=2, ensure_ascii=False))
+
+
+def cmd_install(args: argparse.Namespace) -> None:
+    # 1. Determine destination root
+    if args.project:
+        dest_root = Path(".")
+        print(f"Installing GraphGraph skill locally in project root: {dest_root.resolve()}")
+    else:
+        dest_root = Path.home() / ".gemini"
+        print(f"Installing GraphGraph skill globally in: {dest_root.resolve()}")
+
+    # 2. Write/Register AGENTS.md rules
+    agents_file = (dest_root / "config" / "AGENTS.md") if not args.project else (dest_root / ".agents" / "AGENTS.md")
+    agents_file.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_content = ""
+    if agents_file.exists():
+        existing_content = agents_file.read_text(encoding="utf-8")
+
+    rule_marker = "# GraphGraph Workspace Rules" if args.project else "# GraphGraph Global Rules"
+    if rule_marker not in existing_content:
+        rule_content = f"\n\n{rule_marker}\n\n"
+        rule_content += (
+            "You have direct access to the **`graphgraph`** codebase context serialization engine. "
+            "It is fully installed and registered on this system as both a CLI tool (`graphgraph`) and an MCP server (`graphgraph` server).\n\n"
+            "## Instinctive Tool Guide\n\n"
+            "Use `graphgraph` to retrieve highly optimized, token-efficient codebase context packets for LLM queries instead of traditional vector search or raw file dumps.\n\n"
+            "### 1. Available MCP Tools\n"
+            "* **`graphgraph/plan_context`**: Pass `query_class` to plan the expansion depth.\n"
+            "* **`graphgraph/final_packet`**: Generates the final compressed context packet containing graph topology and active constraints.\n\n"
+            "### 2. Available CLI Commands\n"
+            "* **Scan Directory**: `graphgraph scan --directory . --depth symbols --output .graphgraph/graph.json`\n"
+            "* **Query anchors**: `graphgraph query \"what is the blast radius of stats\" --show-anchors`\n"
+            "* **Render/Print Graph**: `graphgraph render --query-class <query_class> --starts <node_id>...`\n"
+            "* **Render Final LLM packet**: `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...`\n\n"
+            "When answering architectural or dependency questions, immediately retrieve the context packet using `graphgraph/final_packet` or `graphgraph final` instead of exploring files manually.\n"
+        )
+        agents_file.write_text(existing_content + rule_content, encoding="utf-8")
+        print(f"Updated rules in: {agents_file}")
+    else:
+        print(f"Rules already present in: {agents_file}")
+
+    # 3. Write/Register SKILL.md
+    skills_dir = (dest_root / "skills" / "graphgraph") if not args.project else (dest_root / ".agents" / "skills" / "graphgraph")
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    skill_file = skills_dir / "SKILL.md"
+
+    skill_content = (
+        "---\n"
+        "name: graphgraph\n"
+        "description: Use GraphGraph in Codex / Antigravity for structural codebase questions, dependency lookup, blast radius analysis, multi-hop paths, context packet rendering, packet validation, or graph-backed retrieval.\n"
+        "---\n\n"
+        "# GraphGraph Integration Guide & Contract\n\n"
+        "You are equipped with the **`graphgraph`** codebase context serialization engine. It is fully installed, configured, and registered on the system.\n\n"
+        "## 1. Finding Graph and Policy Files\n"
+        "Before invoking a tool, check for the presence of codebase graphs and policy files in the workspace:\n"
+        "* **Graph Path**: Check for `.graphgraph/graph.json` or `graphify-out/graph.json`.\n"
+        "* **Policies Path**: Look for `.agents/policies.json` or `.graphgraph/policies.json`.\n\n"
+        "## 2. MCP Server: `graphgraph` server\n"
+        "The following tools are available on the `graphgraph` MCP server:\n"
+        "- `plan_context` (query_class)\n"
+        "- `final_packet` (graph_path, query_class, starts, policies_path)\n"
+        "- `validate_packet` (packet)\n\n"
+        "## 3. Global CLI: `graphgraph`\n"
+        "Use the CLI for manual execution:\n"
+        "- `graphgraph plan --query-class <query_class>`\n"
+        "- `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...`\n"
+    )
+    skill_file.write_text(skill_content, encoding="utf-8")
+    print(f"Registered skill in: {skill_file}")
+
+    # 4. Handle Platform-Specific Registrations (Codex, Claude, Cursor)
+    platform = getattr(args, "platform", "all")
+    if platform in ("codex", "all") and args.project:
+        # Write Codex plugin files
+        plugins_dir = dest_root / "plugins" / "graphgraph"
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+
+        mcp_path = plugins_dir / ".mcp.json"
+        mcp_data = {
+            "mcpServers": {
+                "graphgraph": {
+                    "command": "uv",
+                    "args": ["run", "--project", str(Path(".").resolve().as_posix()), "graphgraph-mcp"],
+                    "cwd": str(Path(".").resolve().as_posix()),
+                    "startup_timeout_sec": 20,
+                    "tool_timeout_sec": 120
+                }
+            }
+        }
+        mcp_path.write_text(json.dumps(mcp_data, indent=2), encoding="utf-8")
+        print(f"Registered Codex MCP config in: {mcp_path}")
+
+        market_dir = dest_root / ".agents" / "plugins"
+        market_dir.mkdir(parents=True, exist_ok=True)
+        market_file = market_dir / "marketplace.json"
+        market_data = {
+            "name": "graphgraph-local",
+            "interface": {
+                "displayName": "GraphGraph Local"
+            },
+            "plugins": [
+                {
+                    "name": "graphgraph",
+                    "source": {
+                        "source": "local",
+                        "path": "./plugins/graphgraph"
+                    },
+                    "policy": {
+                        "installation": "AVAILABLE",
+                        "authentication": "ON_INSTALL"
+                    },
+                    "category": "Productivity"
+                }
+            ]
+        }
+        market_file.write_text(json.dumps(market_data, indent=2), encoding="utf-8")
+        print(f"Registered Codex local plugin reference in: {market_file}")
+
+    if platform in ("claude", "all") and not args.project:
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            claude_path = Path(appdata) / "Claude" / "claude_desktop_config.json"
+            claude_path.parent.mkdir(parents=True, exist_ok=True)
+            claude_data = {}
+            if claude_path.exists():
+                try:
+                    claude_data = json.loads(claude_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+
+            servers = claude_data.setdefault("mcpServers", {})
+            has_uv = shutil.which("uv") is not None
+            servers["graphgraph"] = {
+                "command": "uv" if has_uv else "graphgraph-mcp",
+                "args": ["run", "--project", str(Path(".").resolve().as_posix()), "graphgraph-mcp"] if has_uv else []
+            }
+            claude_path.write_text(json.dumps(claude_data, indent=2), ensure_ascii=False)
+            print(f"Registered GraphGraph in Claude Desktop config: {claude_path}")

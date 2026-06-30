@@ -1,12 +1,31 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ..core import Graph
+from ..core import Node
 
 from .models import Match
 from .text import node_search_text, tokenize
 
 
-def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float = 0.0) -> tuple[Match, ...]:
+@dataclass(frozen=True)
+class SearchIndexRow:
+    node: Node
+    haystack: str
+    haystack_terms: set[str]
+    node_id: str
+    label: str
+    path: str
+    label_terms: set[str]
+    label_term_sequence: tuple[str, ...]
+    label_exact_sequence: tuple[str, ...]
+    path_name_terms: set[str]
+    path_name_sequence: tuple[str, ...]
+    path_name_exact_sequence: tuple[str, ...]
+
+
+def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float = 0.0, personalize: bool = False) -> tuple[Match, ...]:
     """Rank graph nodes with a deterministic lexical score."""
     terms = tokenize(query)
     if not terms:
@@ -14,21 +33,37 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
     query_terms = set(terms)
 
     degree = graph.degree()
-    pagerank_scores = graph.pagerank()
+    if personalize:
+        personalization = {}
+        for row in _search_index(graph):
+            node_id = row.node_id
+            score = 0.0
+            for term in terms:
+                if term == node_id:
+                    score += 8.0
+                if term == row.label:
+                    score += 4.0
+                elif term in row.label_terms:
+                    score += 2.0
+            if score > 0:
+                personalization[node_id] = score
+        pagerank_scores = graph.personalized_pagerank(personalization)
+    else:
+        pagerank_scores = graph.pagerank()
     matches: list[Match] = []
-    for node in graph.nodes.values():
-        haystack = node_search_text(node)
-        haystack_terms = set(tokenize(haystack, keep_stopwords=True))
-        node_id = node.id.lower()
-        label = node.label.lower()
-        path = node.path.lower() if node.path else ""
-        label_terms = set(tokenize(node.label, keep_stopwords=True))
-        label_term_sequence = tuple(tokenize(node.label, keep_stopwords=True))
-        label_exact_sequence = _exact_identifier_sequence(node.label, label_term_sequence)
-        path_name = node.path.replace("\\", "/").rsplit("/", 1)[-1] if node.path else ""
-        path_name_terms = set(tokenize(path_name, keep_stopwords=True))
-        path_name_sequence = tuple(tokenize(path_name, keep_stopwords=True))
-        path_name_exact_sequence = _exact_identifier_sequence(path_name, path_name_sequence)
+    for row in _search_index(graph):
+        node = row.node
+        haystack = row.haystack
+        haystack_terms = row.haystack_terms
+        node_id = row.node_id
+        label = row.label
+        path = row.path
+        label_terms = row.label_terms
+        label_term_sequence = row.label_term_sequence
+        label_exact_sequence = row.label_exact_sequence
+        path_name_terms = row.path_name_terms
+        path_name_sequence = row.path_name_sequence
+        path_name_exact_sequence = row.path_name_exact_sequence
         score = 0.0
         reasons: list[str] = []
         matched_terms: set[str] = set()
@@ -46,7 +81,11 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
                     score += 4.0
                 reasons.append(f"label_exact:{term}")
                 matched_terms.add(term)
-            elif term in label:
+            elif term in label_terms:
+                score += 4.0
+                reasons.append(f"label:{term}")
+                matched_terms.add(term)
+            elif len(term) >= 5 and term in label:
                 score += 4.0
                 reasons.append(f"label:{term}")
                 matched_terms.add(term)
@@ -54,7 +93,11 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
                 score += 8.0
                 reasons.append(f"path_exact:{term}")
                 matched_terms.add(term)
-            elif node.path and term in path:
+            elif node.path and term in path_name_terms:
+                score += 3.0
+                reasons.append(f"path:{term}")
+                matched_terms.add(term)
+            elif node.path and len(term) >= 5 and term in path:
                 score += 3.0
                 reasons.append(f"path:{term}")
                 matched_terms.add(term)
@@ -74,7 +117,7 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
                 score += 1.0
                 reasons.append(f"term:{term}")
                 matched_terms.add(term)
-            elif term in haystack and not any(reason.endswith(f":{term}") for reason in reasons):
+            elif len(term) >= 5 and term in haystack and not any(reason.endswith(f":{term}") for reason in reasons):
                 score += 0.5
                 reasons.append(f"text:{term}")
                 matched_terms.add(term)
@@ -139,6 +182,45 @@ def search_nodes(graph: Graph, query: str, limit: int = 8, doc_intensity: float 
 
     matches.sort(key=lambda m: (-m.score, m.node.path, m.node.label))
     return tuple(matches[:limit])
+
+
+def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
+    key = _search_index_key(graph)
+    if graph._search_index_cache and graph._search_index_cache[0] == key:
+        return graph._search_index_cache[1]  # type: ignore[return-value]
+    rows: list[SearchIndexRow] = []
+    for node in graph.nodes.values():
+        haystack = node_search_text(node)
+        path_name = node.path.replace("\\", "/").rsplit("/", 1)[-1] if node.path else ""
+        label_term_sequence = tuple(tokenize(node.label, keep_stopwords=True))
+        path_name_sequence = tuple(tokenize(path_name, keep_stopwords=True))
+        rows.append(
+            SearchIndexRow(
+                node=node,
+                haystack=haystack,
+                haystack_terms=set(tokenize(haystack, keep_stopwords=True)),
+                node_id=node.id.lower(),
+                label=node.label.lower(),
+                path=node.path.lower() if node.path else "",
+                label_terms=set(label_term_sequence),
+                label_term_sequence=label_term_sequence,
+                label_exact_sequence=_exact_identifier_sequence(node.label, label_term_sequence),
+                path_name_terms=set(path_name_sequence),
+                path_name_sequence=path_name_sequence,
+                path_name_exact_sequence=_exact_identifier_sequence(path_name, path_name_sequence),
+            )
+        )
+    cached = tuple(rows)
+    graph._search_index_cache = (key, cached)
+    return cached
+
+
+def _search_index_key(graph: Graph) -> tuple[object, ...]:
+    return (
+        tuple(sorted((nid, id(node)) for nid, node in graph.nodes.items())),
+        graph.metadata.get("git_dirty", ""),
+        graph.metadata.get("git_high_churn", ""),
+    )
 
 
 def _exact_identifier_sequence(raw: str, token_sequence: tuple[str, ...]) -> tuple[str, ...]:

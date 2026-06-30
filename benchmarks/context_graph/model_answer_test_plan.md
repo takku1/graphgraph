@@ -40,18 +40,31 @@ Purpose:
 Inputs:
 
 - `out/protocol/model_reasoning_prompts.jsonl`
+- `out/protocol/model_reasoning_eval_keys.jsonl` for private scorer-only answer keys
 - `out/protocol/prompt_preflight.md`
 - variants: `lowlevel_schema`, `sql_schema`, `hybrid_schema`
 - hops: `1`, `2`
 - tasks: direct lookup, reverse lookup, multi-hop path, blast radius,
   subsystem summary, negative query
 
+Execution:
+
+- `python benchmarks/context_graph/model_reasoning_benchmark.py` generates the
+  frozen prompt set, writes scorer-only eval keys separately, and skips live
+  model calls.
+- `RUN_OPENAI_REASONING_EVAL=1 python benchmarks/context_graph/model_reasoning_benchmark.py`
+  runs OpenAI scoring.
+- `RUN_GEMINI_REASONING_EVAL=1 python benchmarks/context_graph/model_reasoning_benchmark.py`
+  runs Gemini scoring.
+- `SCORE_EXISTING_REASONING_ANSWERS=1 python benchmarks/context_graph/model_reasoning_benchmark.py`
+  rescored saved answers without calling a model.
+
 Pass gates:
 
 - JSON parse pass rate: `>= 0.98`
 - node recall: `>= 0.90`
 - edge recall: `>= 0.85`
-- hallucinated edge rate: `<= 0.03`
+- hallucinated edge rate against packet-available edges: `<= 0.03`
 - negative-query false-positive edge rate: `0.00`
 
 Decision rule:
@@ -169,6 +182,8 @@ Every live run should report:
 - packet variant
 - hop depth
 - prompt tokens
+- prompt evidence node recall
+- prompt evidence edge recall
 - output tokens when available
 - TTFT milliseconds
 - total latency milliseconds
@@ -177,7 +192,12 @@ Every live run should report:
 - edge recall
 - hallucinated node count
 - hallucinated edge count
+- irrelevant-but-available node count
+- irrelevant-but-available edge count
+- packet node precision
+- packet edge precision
 - negative-query false positives
+- prompt records with embedded answer-key fields
 - estimated input cost
 - estimated output cost
 
@@ -185,6 +205,8 @@ Every live run should report:
 
 - Generate prompts before running the model.
 - Reuse the same saved prompts for every model.
+- Keep expected nodes and edges out of prompt records. Store them only in
+  scorer-owned eval-key artifacts.
 - Do not edit a packet after seeing an answer unless starting a new named
   benchmark version.
 - Do not compare a cached-schema packet against an uncached verbose packet
@@ -193,3 +215,5 @@ Every live run should report:
   wording.
 - If a model returns invalid JSON, count it as a parse failure. Do not manually
   repair the answer for scoring.
+- Do not trigger live model calls merely because an API key is present. Live
+  calls require an explicit `RUN_*_REASONING_EVAL=1` flag.

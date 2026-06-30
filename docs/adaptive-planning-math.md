@@ -72,12 +72,15 @@ This is based on the current real-project evidence-containment benchmark:
 
 | Budget policy | Answerable | Avg tokens |
 | --- | ---: | ---: |
-| production default | 48/48 | 580.5 |
-| uniform 120 | 48/48 | 710.3 |
-| unbounded | 48/48 | 6401.1 |
+| production default | 48/48 | 635.4 |
+| uniform 120 | 48/48 | 766.3 |
+| unbounded | 48/48 | 7351.2 |
+| cheapest answerable oracle | 48/48 | 607.7 |
 
-The production default is about `2.918%` above the cheapest answerable frontier
-in the deterministic oracle.
+The production default is about `4.563%` above the cheapest answerable frontier
+in the deterministic oracle. A fitted per-class candidate policy reaches
+the same measured policy. Cheaper candidates remain useful probes only when
+they preserve query-class semantics and pass the promotion gate.
 
 ## Packet Gate
 
@@ -103,6 +106,112 @@ p(readable) = sigmoid(k * (t - edge_count))
 ```
 
 Where current real-project data implies `t = 0`.
+
+The fitted activation benchmark confirms that this smooth form collapses back
+to the same hard gate on current data:
+
+```text
+best hard gate: semantic_arrow if edges <= 0 else gg_max
+best sigmoid:   midpoint ~= 0.5, k ~= 0.5, hard decision identical
+```
+
+So the activation form is still useful for future model-specific
+interpretability risk, but the present data does not justify a softer packet
+selector.
+
+## Discrete Gates vs Continuous Scores
+
+Current data supports a hybrid planner shape:
+
+```text
+hard_gate(query_class, edge_count, direction)
+then continuous_score(candidate | query, subgraph, budget)
+```
+
+Use discrete gates when the empirical surface has a sharp cliff:
+
+- `edge_count == 0` is the packet-format cliff.
+- query class controls hop depth because path/blast/summary tasks have
+  different evidence requirements.
+- direction is discrete because `out`, `in`, and `both` represent different
+  semantics, not just different weights.
+
+Use continuous functions inside a fixed gate when ranking candidates:
+
+```text
+score(edge) =
+  relation_strength
+* provenance_confidence
+* edge_confidence
+* query_overlap_bonus
+/ hub_degree_penalty
+```
+
+The current frontier benchmark tested relation-strength, degree-penalized,
+query-overlap, and marginal-gain expansion. These scored policies saved tokens
+but lost too much required evidence, so they remain benchmark candidates rather
+than runtime defaults.
+
+The elegant formula target is therefore not a single global ceiling. It is a
+constrained optimizer with a hard feasibility boundary:
+
+```text
+minimize over S,p:
+  token_cost(p, S)
++ lambda_missing * missing_evidence_risk(S, Q)
++ lambda_noise   * irrelevant_context_noise(S, Q)
++ lambda_model   * interpretation_risk(p, M)
++ lambda_latency * latency_cost(S)
+
+subject to:
+  packet_validate(p, S) == true
+  evidence_recall(S, Q) >= required_recall(Q.class)
+  token_cost(p, S) <= budget
+```
+
+The current runtime approximates that with measured hard gates. Candidate
+continuous formulas should compete only inside the feasible region:
+
+```text
+edge_gain(e, Q, S) =
+  relation_strength(e)
+* provenance_confidence(e)
+* edge_confidence(e)
+* novelty(target(e), S)
+* query_overlap(target(e), Q)
+/ (1 + log(1 + degree(target(e))))
+```
+
+Expansion should continue only while:
+
+```text
+max(edge_gain / marginal_token_cost) >= tau(query_class)
+```
+
+Current empirical data says this smooth frontier is a research candidate, not
+the default: fixed expansion still dominates recall on hard path and hub tasks.
+
+## Calibrated Token Surface
+
+The runtime proxy now uses the fitted linear surface:
+
+```text
+token_cost(packet, Gq) ~= a_p + b_p * |Vq| + c_p * |Eq|
+```
+
+Measured on the saved real-project packet balance:
+
+| Packet | `a_p` | `b_p` node | `c_p` edge | R2 |
+| --- | ---: | ---: | ---: | ---: |
+| `gg_max` | 45.37 | -0.710 | 7.193 | 0.8901 |
+| `semantic_arrow` | 30.20 | 1.081 | 12.035 | 0.9734 |
+| `lowlevel` | 56.10 | 1.102 | 10.066 | 0.9625 |
+| `sql` | 29.93 | 12.278 | 11.696 | 0.9541 |
+| `gg_max_hybrid` | 50.55 | 4.812 | 7.956 | 0.7064 |
+
+The edge coefficients explain why `semantic_arrow` loses on non-empty
+structural packets: it pays for repeated labels on every edge, while `gg_max`
+pays a compact relation/index cost after the node map.
 
 ## Subgraph Statistic Gates
 
@@ -209,8 +318,11 @@ already pass the evidence-containment oracle.
 
 Before promoting more adaptive behavior, each candidate policy should pass:
 
+- live graph shape checks
 - packet validation
 - deterministic evidence containment
+- frontier current-expansion comparison
+- token proxy semantic-vs-gg decision agreement
 - prompt preflight coverage
 - live model parsing
 - live node/edge recall
@@ -222,4 +334,10 @@ set exists at:
 
 ```text
 benchmarks/context_graph/out/protocol/model_reasoning_prompts.jsonl
+```
+
+Run the structural gate with:
+
+```text
+python benchmarks/context_graph/promote_check.py
 ```

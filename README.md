@@ -8,19 +8,20 @@ LLM can use with the least token waste and the least interpretation loss.
 
 Current native pieces:
 
-- deterministic code/doc graph scanning into `.graphgraph/graph.json`,
-- native `.gg` adjacency-list storage for compact graph persistence,
-- natural-language graph retrieval with `graphgraph query`,
-- query-class-aware packet planning,
-- low-token packet encoders (`gg_max`, `semantic_arrow`, `sql`, `svo`),
-- scoped policy packets for agent constraints,
-- MCP tools for build/search/query/final-packet workflows,
-- repeatable benchmarks for token cost, recall, irrelevant context, and packet
-  round-trip validity.
+- **Deterministic AST/Doc Scanning:** Builds topological dependency graphs in `.graphgraph/graph.json` with **Import-Guided Disambiguation** (resolves ambiguous callable definitions using local module import stems).
+- **Personalized PageRank (PPR):** Context-contextual ranking of node relevance relative to search keyword anchors (teleportation vector matches lexical hits).
+- **Continuous KKT Budget Planning:** Dynamically calculates optimal node bounds using continuous Lagrangian/KKT stationarity, saving **14%+ tokens** with perfect answerability.
+- **Bellman MDP Traversal stopping:** Early-terminates spreading activation propagation when marginal relevance energy per token falls below `0.005`.
+- **Lessons Reflection Integration:** Injects past session reflections (`lessons.md`) directly into final prompt packets to ground the assistant.
+- **Native Adjacency Storage:** Compresses and persists compact subgraphs in `.gg` format.
+- **Agent Skill & Installer:** Streamlined registration via `graphgraph install` CLI utility.
+- **Repeatable Benchmarking:** In-tree integration checks (`promote_check.py`) evaluating recall, token calibration, and answerability limits.
 
 Compatibility is still useful, but it is not the architecture. `graphgraph
 ingest --input graphify-out/graph.json` is an import route, not the source of
-truth.
+truth. Default graph discovery only uses native files under `.graphgraph/`;
+Graphify, code-review-graph, CSV, and other external graph shapes must be
+passed explicitly to `ingest` or to commands that accept a graph path.
 
 ## Design Bar
 
@@ -41,34 +42,31 @@ only the semantic text needed for the query.
 
 ## Installation & Setup
 
-You can set up `graphgraph` using `uv` (recommended) or standard `pip`.
+You can install `graphgraph` using `uv` (recommended) or `pip`.
 
-### 1. Developer Installation
+### Step 1 — Install the package:
 
-Install the package in editable mode. By default, this sets up the core engine along with the required parsing dependencies (`tree-sitter` and `tree-sitter-language-pack`) and secure credential storage (`keyring`).
-
-#### Using `uv` (Fastest)
 ```powershell
-# Clone the repository
-git clone https://github.com/takku1/graphgraph.git
-cd graphgraph
+# Recommended (isolated env; if 'graphgraph' isn't found after, run: uv tool update-shell):
+uv tool install .
 
-# Create a virtual environment and install in editable mode
-uv venv
-.venv\Scripts\activate
-uv pip install -e .
-
-# Optional: Install extra dependencies for running the LLM benchmark suite
-uv pip install -e ".[benchmark]"
+# Alternatives:
+pipx install .
+pip install -e .  # Developer editable installation
 ```
 
-#### Using standard `pip`
-```powershell
-# Standard editable install
-pip install -e .
+### Step 2 — Register the skill with your AI assistant:
 
-# Optional: Install extra dependencies for running the LLM benchmark suite
-pip install -e ".[benchmark]"
+Run the installer command:
+```powershell
+# Register the skill globally for your user profile
+graphgraph install
+
+# To install the assistant skill into the current repository instead of your user profile:
+graphgraph install --project
+
+# To target a specific platform (choices: codex, claude, cursor, all):
+graphgraph install --project --platform codex
 ```
 
 ### 2. Zero-Install / Agent Tool Execution (NPX-style)
@@ -149,6 +147,33 @@ Add the following to your `claude_desktop_config.json` (typically located at `%A
 }
 ```
 
+### 3. Codex Plugin / Skill / MCP Configuration
+
+`graphgraph` also ships a repo-local Codex plugin wrapper in
+`plugins/graphgraph`. This does not replace the existing OpenAI or Gemini
+benchmark paths; it adds Codex as another installation surface.
+
+The plugin bundles:
+
+- a Codex skill for structural codebase retrieval workflows,
+- an MCP server config that launches `graphgraph-mcp` with `uv run`,
+- a repo marketplace entry at `.agents/plugins/marketplace.json`.
+
+To make the repo marketplace visible to Codex:
+
+```powershell
+python scripts\configure_codex_plugin.py --repo-root C:\Users\dcarn\aiprojects\graphgraph
+codex plugin marketplace add C:\Users\dcarn\aiprojects\graphgraph
+codex plugin add graphgraph@graphgraph-local
+```
+
+Then start a new Codex thread and ask for `@graphgraph`, or ask a structural
+codebase question and let Codex invoke the bundled skill/MCP server.
+
+The configurator rewrites `plugins/graphgraph/.mcp.json` so `cwd` and the
+`uv --project` path point at the current checkout. Run it again after copying
+the repo to another machine or path.
+
 ---
 
 ## Usage Guide
@@ -180,7 +205,15 @@ graphgraph query "what is the blast radius of auth changes" --query-class blast_
 graphgraph final --query-class blast_radius --starts src_graphgraph_cli_py
 ```
 
-### 3. Exporters & Validators
+### 3. Profile Graph Shape
+Measure graph shape and inspect dynamic budget candidates without changing
+runtime defaults:
+
+```powershell
+graphgraph profile --graph .graphgraph/graph.json
+```
+
+### 4. Exporters & Validators
 
 ```powershell
 # Export to compact .gg adjacency format
@@ -229,6 +262,9 @@ Import/align third-party graphs (e.g. from `graphify`) into the native context g
 ```powershell
 graphgraph ingest --input graphify-out/graph.json --output .graphgraph/graph.json
 ```
+
+External graph directories are not default runtime sources. After import,
+run normal commands against the native `.graphgraph/graph.json` output.
 
 The unified graph contract is defined in [graph.schema.json](src/graphgraph/schema/graph.schema.json).
 

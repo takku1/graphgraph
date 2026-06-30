@@ -8,6 +8,7 @@ from .doc import DocumentInput, extract_document_context
 from .files import DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
 from .frontends import SourceFile, select_extractor
 from .imports import add_file_edges
+from ..terms import term_key
 
 
 def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
@@ -172,6 +173,38 @@ def scan_directory(
             facts=facts,
         )
 
+    # Module hierarchy: add directory nodes and contains edges for every file
+    # node, regardless of language-specific kind.
+    import re
+    for _rel, file_nid in file_map.items():
+        file_node = nodes.get(file_nid)
+        if not file_node:
+            continue
+        rel_path = Path(file_node.path)
+        parent = rel_path.parent
+        if parent == Path('.'):
+            continue
+        dir_rel = parent.as_posix()
+        dir_id = f"dir_{re.sub(r'[^A-Za-z0-9_]', '_', dir_rel)}"
+        if dir_id not in nodes:
+            dir_node = Node(
+                id=dir_id,
+                label=parent.name,
+                kind="package",
+                path=dir_rel,
+                facts=(),
+            )
+            nodes[dir_id] = dir_node
+        edges.append(Edge(
+            source=dir_id,
+            target=file_nid,
+            type="contains",
+            weight=1.0,
+            confidence=0.9,
+            provenance="hierarchy",
+            source_location="",
+        ))
+
     add_file_edges(
         dirty_files=dirty_files,
         root=root,
@@ -225,7 +258,12 @@ def scan_directory(
                 continue
             doc_inputs.append(DocumentInput(f, rel, file_map[rel], text))
         if doc_inputs:
-            symbol_map = {node.label: nid for nid, node in nodes.items() if node.kind not in {"file", "concept", "section"}}
+            symbol_map: dict[str, str] = {}
+            for nid, node in nodes.items():
+                if node.kind in {"file", "concept", "section"}:
+                    continue
+                for alias in _symbol_aliases(node):
+                    symbol_map.setdefault(alias, nid)
             doc_nodes, doc_edges = extract_document_context(doc_inputs, file_map, symbol_map=symbol_map)
             nodes.update(doc_nodes)
             existing = {(e.source, e.target, e.type) for e in edges}
@@ -257,4 +295,65 @@ def scan_directory(
         manifest.save(manifest_path)
 
     graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
+    # Adjust confidence for edges using node centrality (degree) and visibility modifiers
+    deg = graph.degree()
+    
+    # Calculate max degree per node kind
+    max_deg_by_kind = {}
+    for nid, node in graph.nodes.items():
+        k = node.kind
+        d = deg.get(nid, 0)
+        if k not in max_deg_by_kind or d > max_deg_by_kind[k]:
+            max_deg_by_kind[k] = d
+
+    adjusted_edges = []
+    for e in graph.edges:
+        tgt_node = graph.nodes.get(e.target)
+        if tgt_node and tgt_node.kind not in {"file", "package", "concept", "section", "unknown"}:
+            confidence_adj = 0.0
+            
+            # 1. Centrality Boost (for explains/references/calls edges)
+            if e.type in {"explains", "references", "calls"}:
+                kind = tgt_node.kind
+                max_kind_deg = max_deg_by_kind.get(kind, 1) or 1
+                node_deg = deg.get(e.target, 0)
+                # Boost up to +20% based on normalized degree centrality within the same kind
+                confidence_adj += 0.2 * (node_deg / max_kind_deg)
+                
+            # 2. Visibility penalty
+            if "modifier:private" in tgt_node.facts or "modifier:local" in tgt_node.facts:
+                confidence_adj -= 0.15
+            elif "modifier:protected" in tgt_node.facts:
+                confidence_adj -= 0.05
+                
+            new_conf = min(1.0, max(0.0, e.confidence + confidence_adj))
+            adjusted_edges.append(
+                Edge(
+                    source=e.source,
+                    target=e.target,
+                    type=e.type,
+                    weight=e.weight,
+                    confidence=new_conf,
+                    provenance=e.provenance,
+                    evidence=e.evidence,
+                    source_location=e.source_location,
+                    valid_from=e.valid_from,
+                    valid_to=e.valid_to,
+                    active=e.active,
+                )
+            )
+        else:
+            adjusted_edges.append(e)
+    graph = Graph(nodes=graph.nodes, edges=adjusted_edges, metadata=graph.metadata)
     return graph
+
+
+def _symbol_aliases(node: Node) -> tuple[str, ...]:
+    aliases: list[str] = []
+    for raw in (node.label, Path(node.path).stem if node.path else ""):
+        if not raw:
+            continue
+        for candidate in (raw, term_key(raw)):
+            if candidate and candidate not in aliases:
+                aliases.append(candidate)
+    return tuple(aliases)

@@ -123,19 +123,21 @@ Use a ladder instead of a single favorite format:
 
 - Native retrieval is only lexical anchor search plus graph expansion. It is a
   bootstrap, not yet competitive with hybrid lexical/vector/graph retrieval.
-- Symbol extraction exists, but the graph lacks a durable incremental update
-  manifest.
+- Symbol extraction and a durable file-hash manifest exist, but the active
+  project graph can still regress to file-level evidence if dependencies or
+  scanner options are missing.
 - There is no native semantic extraction route for docs beyond links and weak
   filename mentions.
 - There is no live model answer benchmark in CI, so compression can outrun
   interpretation accuracy.
-- `.gg` is promising, but it needs a formal spec, round-trip tests across large
-  graphs, and model parsing tests.
+- `.gg` has basic round-trip tests, but still needs a formal spec, large-graph
+  regression coverage, and model parsing tests.
 
 ## Near-Term Direction
 
 1. Make `.graphgraph/graph.gg` and `.graphgraph/graph.json` the native stores.
-2. Add incremental manifests with file hash, extractor version, and node IDs.
+2. Enforce active-graph quality checks so symbol/doc scans do not silently
+   degrade to file-only graphs.
 3. Add hybrid retrieval: lexical anchors, graph expansion, optional embeddings,
    and source snippet grafting.
 4. Extend benchmarks to compare against Graphify output and standard RAG packet

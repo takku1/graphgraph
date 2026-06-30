@@ -123,13 +123,14 @@ def main() -> None:
     run_eval = (
         os.environ.get("RUN_OPENAI_ANSWER_EVAL") == "1"
         or os.environ.get("RUN_GEMINI_ANSWER_EVAL") == "1"
-        or bool(openai_key)
-        or bool(gemini_key)
     )
 
     if not run_eval:
         print("Live model execution skipped for llm_answer_benchmark.py.")
-        print("Set OPENAI_API_KEY or GEMINI_API_KEY or store key in Windows Credential Manager to run live answers.")
+        if openai_key or gemini_key:
+            print("API key detected, but live calls require RUN_OPENAI_ANSWER_EVAL=1 or RUN_GEMINI_ANSWER_EVAL=1.")
+        else:
+            print("Set OPENAI_API_KEY or GEMINI_API_KEY, or store a key in Windows Credential Manager, before explicit live runs.")
         return
 
     rows = []

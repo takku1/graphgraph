@@ -14,7 +14,9 @@ from .commands import (
     cmd_cache,
     cmd_eval,
     cmd_frontends,
+    cmd_profile,
     cmd_traversal,
+    cmd_install,
 )
 
 
@@ -112,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
     traversal.add_argument("--query-class")
     traversal.set_defaults(func=cmd_traversal)
 
+    profile = sub.add_parser("profile", help="Measure graph shape and show dynamic budget candidates.")
+    profile.add_argument("--graph", help="Graph path. Auto-detected from native .graphgraph if omitted.")
+    profile.add_argument("--query", default="", help="Optional query text for doc/query budget heuristics.")
+    profile.set_defaults(func=cmd_profile)
+
     doctor = sub.add_parser("doctor", help="Run system diagnostics and verify environment, tools, credentials, and MCP configs.")
     doctor.set_defaults(func=cmd_doctor)
 
@@ -119,5 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
     cache_cmd.add_argument("--graph", help="Graph path (used to locate cache file). Defaults to .graphgraph/.")
     cache_cmd.add_argument("--clear", action="store_true", help="Delete all cached entries.")
     cache_cmd.set_defaults(func=cmd_cache)
+
+    install = sub.add_parser("install", help="Register/Install GraphGraph assistant skill, workspace rules, and MCP plugins.")
+    install.add_argument("--project", "-p", action="store_true", help="Install locally to the current project repository (.agents/ directory) instead of user home.")
+    install.add_argument("--platform", choices=["codex", "claude", "cursor", "all"], default="all", help="Target AI assistant platforms to register on.")
+    install.set_defaults(func=cmd_install)
 
     return parser

@@ -54,6 +54,11 @@ SCHEMAS = {
         "Decode GG-MAX. [r] maps relation_id:relation. [n] maps node_idx node_label. "
         "[e] rows are source_idx target_idx relation_id weight. Answer using node labels and relation labels."
     ),
+    "gg_lex_schema": (
+        "Decode GG-LEX. [r] maps relation_id:relation. [n] maps unique 8-character lexical tag node_label. "
+        "[e] rows are source_tag target_tag relation_id. Answer using node labels and relation labels."
+    ),
+    "gg_lex_hybrid_schema": "Use the lexical relationship list and grounding snippets. Do not invent nodes or edges.",
 }
 
 
@@ -74,6 +79,10 @@ def render_variant(idx: dict, nodes: set[str], edges: list[dict], variant: str) 
         return render_packet(idx, nodes, edges, mode="semantic_arrow")
     if variant == "gg_max_schema":
         return render_packet(idx, nodes, edges, mode="gg_max")
+    if variant == "gg_lex_schema":
+        return render_packet(idx, nodes, edges, mode="gg_lex")
+    if variant == "gg_lex_hybrid_schema":
+        return render_packet(idx, nodes, edges, mode="gg_lex_hybrid")
     raise ValueError(f"unknown variant {variant}")
 
 

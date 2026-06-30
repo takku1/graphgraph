@@ -34,11 +34,16 @@ from graphgraph.frontends import RegexExtractor, SourceFile, _imported_symbol_na
 from graphgraph.io import load_graph, load_policies, save_graph, load_gg, save_gg, load_csv_edges, load_any
 from graphgraph.mcp_server import dispatch
 from graphgraph.metrics import compare_graphs, summarize_graph
+from graphgraph.doccode import summarize_doc_code_components, summarize_doc_code_coverage
 from graphgraph.packets import render_doc_summary, render_lowlevel, render_semantic_arrow, render_gg_max, render_sql, render_svo
 from graphgraph.policies import render_policy_packet
+from graphgraph.retrieval.models import Match
 from graphgraph.retrieval import budget_edges, default_anchor_limit, retrieve_context, retrieval_node_budget, search_nodes, tokenize
 from graphgraph.services import render_final_packet
+from graphgraph.services.context import resolve_start_nodes
 from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
+from graphgraph.planning import profile_graph_shape, recommend_context_window, recommend_node_budget, recommend_observed_context_window
+from graphgraph.retrieval.context import apply_shape_budget
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
 from graphgraph.traversal import traversal_policy, relation_rank
 
@@ -250,6 +255,37 @@ N1,N2,1,0.9
         self.assertIn("N3", result2.nodes)
         self.assertIn("N1", result2.nodes)
 
+    def test_adaptive_anchor_limit_handles_symbol_plateaus(self) -> None:
+        from graphgraph.retrieval.context import _adaptive_anchor_limit
+
+        plan = plan_context("blast_radius", "parse")
+        plateau = (
+            Match(Node("A", "parse", "function", "a/parse.rs"), 23.74, ()),
+            Match(Node("B", "parse", "function", "b/parse.rs"), 23.70, ()),
+            Match(Node("C", "parse", "function", "c/parse.rs"), 23.69, ()),
+            Match(Node("D", "parse", "function", "d/fowler.rs"), 19.24, ()),
+            Match(Node("E", "parse", "function", "e/mod.rs"), 19.21, ()),
+        )
+        self.assertEqual(_adaptive_anchor_limit(plateau, plan, "parse"), 3)
+
+        wide_plateau = (
+            Match(Node("A", "search", "method", "a/mcts.py"), 24.09, ()),
+            Match(Node("B", "search", "method", "b/alphabeta.py"), 23.998, ()),
+            Match(Node("C", "search", "method", "c/engine.py"), 19.551, ()),
+            Match(Node("D", "search", "function", "d/tbprobe.cpp"), 19.477, ()),
+            Match(Node("E", "search", "header", "e/search.h"), 18.5, ()),
+        )
+        self.assertEqual(_adaptive_anchor_limit(wide_plateau, plan, "search"), 5)
+
+        same_stem = (
+            Match(Node("A", "translate", "function", "src/hir/translate.rs"), 30.50, ()),
+            Match(Node("B", "t_err", "function", "src/hir/translate.rs"), 12.50, ()),
+            Match(Node("C", "ascii_class", "function", "src/hir/translate.rs"), 12.44, ()),
+            Match(Node("D", "translate.rs", "rust", "src/hir/translate.rs"), 11.73, ()),
+            Match(Node("E", "hir_capture", "function", "src/hir/translate.rs"), 11.19, ()),
+        )
+        self.assertEqual(_adaptive_anchor_limit(same_stem, plan, "translate"), 4)
+
     def test_policy_can_be_graph_node(self) -> None:
         policy = Policy("P1", "security", "must", ("server/auth/**",), ("security",), "Use constant-time token checks", "Full policy")
         node = policy_to_node(policy)
@@ -311,32 +347,32 @@ N1,N2,1,0.9
         self.assertIn("applied_policy", edge_types)
 
     def test_choose_packet_empirical_alignment(self) -> None:
-        # Empirical data: structural packets with edges → gg_max token floor.
-        self.assertEqual(choose_packet("direct_lookup").packet, "gg_max")
+        # Empirical data: structural packets with edges → gg_max_hybrid provides inline evidence.
+        self.assertEqual(choose_packet("direct_lookup").packet, "gg_max_hybrid")
         self.assertEqual(choose_packet("direct_lookup").hops, 1)
-        self.assertEqual(choose_packet("reverse_lookup").packet, "gg_max")
+        self.assertEqual(choose_packet("reverse_lookup").packet, "gg_max_hybrid")
         self.assertEqual(choose_packet("reverse_lookup").hops, 1)
-        # blast_radius / multi_hop → gg_max 2-hop (token floor for topology)
+        # blast_radius / multi_hop → gg_max_hybrid 2-hop
         self.assertEqual(choose_packet("blast_radius").hops, 2)
-        self.assertEqual(choose_packet("blast_radius").packet, "gg_max")
+        self.assertEqual(choose_packet("blast_radius").packet, "gg_max_hybrid")
         self.assertEqual(choose_packet("multi_hop_path").hops, 2)
-        self.assertEqual(choose_packet("multi_hop_path").packet, "gg_max")
-        # summary → gg_max unless it is explicitly documentation-oriented.
-        self.assertEqual(choose_packet("subsystem_summary").packet, "gg_max")
+        self.assertEqual(choose_packet("multi_hop_path").packet, "gg_max_hybrid")
+        # summary → gg_max_hybrid unless it is explicitly documentation-oriented.
+        self.assertEqual(choose_packet("subsystem_summary").packet, "gg_max_hybrid")
         self.assertEqual(choose_packet("subsystem_summary", "README installation usage").packet, "doc_summary")
         self.assertEqual(choose_packet("doc_summary").packet, "doc_summary")
         # negative/absence probes avoid pulling unrelated edges.
         self.assertEqual(choose_packet("negative_query").hops, 0)
         self.assertEqual(choose_packet("negative_query").packet, "semantic_arrow")
-        # unknown → conservative 2-hop gg_max
+        # unknown → conservative 2-hop gg_max_hybrid
         self.assertEqual(choose_packet("unknown_xyz").hops, 2)
-        self.assertEqual(choose_packet("unknown_xyz").packet, "gg_max")
+        self.assertEqual(choose_packet("unknown_xyz").packet, "gg_max_hybrid")
 
     def test_context_plan_unifies_runtime_policy(self) -> None:
         direct = plan_context("direct_lookup", "what does AuthService call")
         self.assertEqual(direct.hops, 1)
         self.assertEqual(direct.direction, "out")
-        self.assertEqual(direct.packet, "gg_max")
+        self.assertEqual(direct.packet, "gg_max_hybrid")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
         self.assertIn("context_plan_v2", direct.planner_version)
@@ -376,6 +412,108 @@ N1,N2,1,0.9
         summary_plan = refine_plan_for_subgraph(plan_context("subsystem_summary", "auth subsystem"), summary_stats)
         self.assertEqual(summary_plan.packet, "gg_max_hybrid")
 
+    def test_calibrated_token_surface_preserves_packet_cliff(self) -> None:
+        from graphgraph.planning import estimate_packet_tokens
+
+        zero_edge = estimate_packet_tokens(2, 0)
+        self.assertLessEqual(zero_edge["semantic_arrow"], zero_edge["gg_max"])
+
+        structural = estimate_packet_tokens(20, 10)
+        self.assertLess(structural["gg_max"], structural["semantic_arrow"])
+        self.assertLess(structural["gg_max"], structural["sql"])
+
+    def test_graph_shape_budget_recommendations_are_candidate_only(self) -> None:
+        graph = Graph(
+            nodes={
+                **{f"S{i}": Node(f"S{i}", f"source_{i}", "python") for i in range(30)},
+                **{f"D{i}": Node(f"D{i}", f"doc_{i}", "section") for i in range(100)},
+                **{f"F{i}": Node(f"F{i}", f"func_{i}", "function") for i in range(20)},
+            },
+            edges=[
+                *[Edge(f"D{i}", f"F{i % 20}", "mentions") for i in range(100)],
+                *[Edge(f"F{i}", f"F{(i + 1) % 20}", "calls") for i in range(20)],
+            ],
+        )
+        shape = profile_graph_shape(graph)
+        self.assertGreater(shape.doc_node_ratio, 0.6)
+        path_recommendation = recommend_node_budget("multi_hop_path", "runtime graph", shape)
+        self.assertEqual(path_recommendation.base_budget, 80)
+        self.assertLess(path_recommendation.recommended_budget, path_recommendation.base_budget)
+        self.assertEqual(path_recommendation.mode, "candidate")
+
+        blast_recommendation = recommend_node_budget("blast_radius", "runtime graph", shape)
+        self.assertEqual(blast_recommendation.base_budget, 120)
+        self.assertEqual(blast_recommendation.recommended_budget, blast_recommendation.base_budget)
+        self.assertEqual(blast_recommendation.mode, "measured_default")
+
+    def test_context_window_budget_expands_small_sparse_and_pages_huge_dense(self) -> None:
+        small = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"node_{i}", "function") for i in range(300)},
+            edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(40)],
+        )
+        small_window = recommend_context_window("subsystem_summary", "", profile_graph_shape(small))
+        self.assertGreater(small_window.recommended_budget, 120)
+        self.assertEqual(small_window.mode, "single_window")
+
+        huge = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"node_{i}", "function") for i in range(6000)},
+            edges=[
+                Edge(f"N{i % 6000}", f"N{(i + 1) % 6000}", "references")
+                for i in range(18000)
+            ],
+        )
+        huge_window = recommend_context_window("direct_lookup", "", profile_graph_shape(huge))
+        self.assertLess(huge_window.recommended_budget, 80)
+        self.assertIn(huge_window.mode, {"paged", "sparse_window"})
+
+    def test_observed_context_window_uses_rendered_first_page(self) -> None:
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"node_{i}", "function") for i in range(600)},
+            edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(80)],
+        )
+        shape = profile_graph_shape(graph)
+        underfilled = recommend_observed_context_window(
+            "multi_hop_path",
+            "",
+            shape,
+            observed_budget=80,
+            observed_nodes=80,
+            observed_tokens=360,
+        )
+        self.assertGreater(underfilled.recommended_budget, 80)
+        self.assertIn(underfilled.mode, {"single_window", "sparse_window"})
+
+        oversized = recommend_observed_context_window(
+            "multi_hop_path",
+            "",
+            shape,
+            observed_budget=80,
+            observed_nodes=80,
+            observed_tokens=1400,
+        )
+        self.assertLess(oversized.recommended_budget, 80)
+        self.assertEqual(oversized.mode, "paged")
+
+    def test_shape_budget_applies_only_safe_runtime_trims(self) -> None:
+        graph = Graph(
+            nodes={
+                **{f"S{i}": Node(f"S{i}", f"source_{i}", "python") for i in range(30)},
+                **{f"D{i}": Node(f"D{i}", f"doc_{i}", "section") for i in range(100)},
+                **{f"F{i}": Node(f"F{i}", f"func_{i}", "function") for i in range(20)},
+            },
+            edges=[
+                *[Edge(f"D{i}", f"F{i % 20}", "mentions") for i in range(100)],
+                *[Edge(f"F{i}", f"F{(i + 1) % 20}", "calls") for i in range(20)],
+            ],
+        )
+        path_plan = apply_shape_budget(graph, plan_context("multi_hop_path"), "")
+        self.assertLess(path_plan.node_budget, 80)
+        self.assertIn("shape_budget", path_plan.planner_version)
+
+        blast_plan = apply_shape_budget(graph, plan_context("blast_radius"), "")
+        self.assertEqual(blast_plan.node_budget, 120)
+        self.assertNotIn("shape_budget", blast_plan.planner_version)
+
     def test_graph_metrics_summary_and_comparison(self) -> None:
         left = sample_graph()
         right = Graph(
@@ -391,7 +529,6 @@ N1,N2,1,0.9
         comparison = compare_graphs(left, right)
         self.assertEqual(comparison.shared_node_paths, 1)
         self.assertEqual(comparison.shared_edge_keys, 0)
-
         equivalent = Graph(
             nodes={
                 "X1": Node("X1", "AuthService", "service", "server/auth.py"),
@@ -401,6 +538,75 @@ N1,N2,1,0.9
         )
         normalized = compare_graphs(left, equivalent)
         self.assertEqual(normalized.shared_normalized_edges, 1)
+
+    def test_pagerank_scores_active_graph_without_rebuilding_semantics(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "A"),
+                "B": Node("B", "B"),
+                "C": Node("C", "C"),
+                "D": Node("D", "D", active=False),
+            },
+            edges=[
+                Edge("A", "B", "calls"),
+                Edge("C", "B", "calls"),
+                Edge("B", "A", "references"),
+                Edge("A", "D", "calls"),
+            ],
+        )
+        scores = graph.pagerank(max_iter=10)
+        self.assertEqual(set(scores), {"A", "B", "C"})
+        self.assertGreater(scores["B"], scores["C"])
+        self.assertAlmostEqual(sum(scores.values()), 1.0, places=6)
+
+    def test_pagerank_cache_reuses_and_invalidates_on_graph_shape(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "A"),
+                "B": Node("B", "B"),
+                "C": Node("C", "C"),
+            },
+            edges=[Edge("A", "B", "calls")],
+        )
+        first = graph.pagerank()
+        cache = graph._pagerank_cache
+        self.assertIsNotNone(cache)
+        second = graph.pagerank()
+        self.assertEqual(first, second)
+        self.assertIs(graph._pagerank_cache, cache)
+
+        graph.edges.append(Edge("C", "B", "calls"))
+        third = graph.pagerank()
+        self.assertNotEqual(graph._pagerank_cache, cache)
+        self.assertGreater(third["B"], first["B"])
+
+    def test_save_graph_persists_valid_pagerank_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.json"
+            graph = sample_graph()
+            save_graph(graph, path)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIn("centrality", raw)
+            self.assertIn("pagerank", raw["centrality"])
+
+            loaded = load_graph(path)
+            self.assertIsNotNone(loaded._pagerank_cache)
+            self.assertEqual(loaded.pagerank(), graph.pagerank())
+
+    def test_load_graph_rejects_stale_pagerank_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.json"
+            graph = sample_graph()
+            save_graph(graph, path)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["edges"].append({"source": "N3", "target": "N1", "type": "calls"})
+            path.write_text(json.dumps(raw), encoding="utf-8")
+
+            loaded = load_graph(path)
+            self.assertIsNone(loaded._pagerank_cache)
+            scores = loaded.pagerank()
+            self.assertIsNotNone(loaded._pagerank_cache)
+            self.assertIn("N1", scores)
 
 
     def test_terms_normalize_concepts_consistently(self) -> None:
@@ -565,7 +771,7 @@ N1,N2,1,0.9
 
 
     def test_default_path_resolution(self) -> None:
-        from graphgraph.io import find_graph_path, find_policies_path
+        from graphgraph.io import find_external_graph_path, find_graph_path, find_policies_path
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
@@ -581,6 +787,17 @@ N1,N2,1,0.9
 
             self.assertEqual(find_graph_path(workspace_root=root), mock_graph)
 
+            graphify_dir = root / "graphify-out"
+            graphify_dir.mkdir()
+            graphify_graph = graphify_dir / "graph.json"
+            graphify_graph.write_text("{}", encoding="utf-8")
+            self.assertEqual(find_graph_path(workspace_root=root), mock_graph)
+            self.assertEqual(find_external_graph_path(workspace_root=root), graphify_graph)
+            mock_graph.unlink()
+            with self.assertRaises(FileNotFoundError):
+                find_graph_path(workspace_root=root)
+            self.assertEqual(find_graph_path(workspace_root=root, include_external=True), graphify_graph)
+
             mock_policies = root / "policies.json"
             mock_policies.write_text("[]", encoding="utf-8")
             self.assertEqual(find_policies_path(workspace_root=root), mock_policies)
@@ -590,14 +807,14 @@ N1,N2,1,0.9
         assert response is not None
         text = response["result"]["content"][0]["text"]
         self.assertIn('"hops": 2', text)
-        self.assertIn('"packet": "gg_max"', text)
+        self.assertIn('"packet": "gg_max_hybrid"', text)
 
     def test_mcp_plan_context_direct_lookup(self) -> None:
         response = dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "plan_context", "arguments": {"query_class": "direct_lookup"}}})
         assert response is not None
         text = response["result"]["content"][0]["text"]
         data = json.loads(text)
-        self.assertEqual(data["packet"], "gg_max")
+        self.assertEqual(data["packet"], "gg_max_hybrid")
         self.assertEqual(data["hops"], 1)
 
     def test_mcp_describe_formats(self) -> None:
@@ -757,6 +974,99 @@ N1,N2,1,0.9
         self.assertEqual(result.starts[0], "N1")
         self.assertEqual(result.nodes, {"N1", "N2", "N3"})
 
+    def test_structural_queries_prefer_code_anchors_over_docs(self) -> None:
+        graph = Graph(
+            nodes={
+                "D": Node("D", "Alpha Beta Search", "section", "docs/search.md"),
+                "C": Node("C", "Alpha Beta Search", "python", "src/search.py"),
+                "M": Node("M", "MCTS", "python", "src/mcts.py"),
+            },
+            edges=[Edge("C", "M", "calls")],
+        )
+        result = retrieve_context(graph, "alpha beta search mcts", "blast_radius", hops=1, max_nodes=4)
+        self.assertEqual(result.starts[0], "C")
+        self.assertIn("M", result.nodes)
+
+    def test_doc_code_pairing_matrix_separates_coverage_gaps(self) -> None:
+        graph = Graph(
+            nodes={
+                "D": Node("D", "Doc Concept", "section", "docs/doc.md"),
+                "C": Node("C", "Doc Concept", "function", "src/doc_concept.py"),
+                "DO": Node("DO", "Doc Only", "section", "docs/notes.md"),
+                "CO": Node("CO", "Code Only", "function", "src/code_only.py"),
+                "N": Node("N", "Loose Note", "policy", "policies.json"),
+            },
+        )
+        coverage = summarize_doc_code_coverage(graph)
+        self.assertEqual(coverage.paired_keys, 1)
+        self.assertEqual(coverage.doc_only_keys, 1)
+        self.assertEqual(coverage.code_only_keys, 1)
+        self.assertGreaterEqual(coverage.unlabeled_keys, 1)
+
+    def test_doc_code_component_pairing_detects_real_graph_links(self) -> None:
+        graph = Graph(
+            nodes={
+                "D": Node("D", "API Overview", "section", "docs/api.md"),
+                "M": Node("M", "Routing", "concept", "docs/api.md"),
+                "C": Node("C", "render_packet", "function", "src/render.py"),
+                "DO": Node("DO", "Setup Notes", "section", "docs/setup.md"),
+                "CO": Node("CO", "parse_query", "function", "src/query.py"),
+            },
+            edges=[
+                Edge("D", "M", "discusses"),
+                Edge("M", "C", "explains"),
+            ],
+        )
+        coverage = summarize_doc_code_components(graph)
+        self.assertEqual(coverage.paired_components, 1)
+        self.assertEqual(coverage.doc_only_components, 1)
+        self.assertEqual(coverage.code_only_components, 1)
+        self.assertTrue(any("D" in example.doc_nodes for example in coverage.paired_examples))
+
+    def test_doc_code_alignment_fixture_cases(self) -> None:
+        fixture = Path(__file__).with_name("fixtures") / "doc_code_alignment_cases.json"
+        data = json.loads(fixture.read_text(encoding="utf-8"))
+        for case in data["cases"]:
+            nodes = {
+                nid: Node(nid, label, kind, path)
+                for nid, label, kind, path in case["nodes"]
+            }
+            edges = [Edge(source, target, etype) for source, target, etype in case["edges"]]
+            graph = Graph(nodes=nodes, edges=edges)
+
+            semantic = summarize_doc_code_coverage(graph)
+            components = summarize_doc_code_components(graph)
+            expect = case["expect"]
+
+            self.assertEqual(semantic.paired_keys, expect["semantic"]["paired_keys"], case["name"])
+            self.assertEqual(semantic.doc_only_keys, expect["semantic"]["doc_only_keys"], case["name"])
+            self.assertEqual(semantic.code_only_keys, expect["semantic"]["code_only_keys"], case["name"])
+            self.assertEqual(components.paired_components, expect["components"]["paired_components"], case["name"])
+            self.assertEqual(components.doc_only_components, expect["components"]["doc_only_components"], case["name"])
+            self.assertEqual(components.code_only_components, expect["components"]["code_only_components"], case["name"])
+
+    def test_search_short_terms_do_not_match_inside_unrelated_words(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "ContextService", "function", "src/context.py"),
+                "B": Node("B", "Text", "file", "src/text.py"),
+            }
+        )
+        matches = search_nodes(graph, "text", limit=2)
+        self.assertEqual(matches[0].node.id, "B")
+
+    def test_search_index_cache_reuses_and_invalidates_on_node_shape(self) -> None:
+        graph = Graph(nodes={"A": Node("A", "AlphaSearch", "function", "src/a.py")})
+        self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
+        cache = graph._search_index_cache
+        self.assertIsNotNone(cache)
+        self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
+        self.assertIs(graph._search_index_cache, cache)
+
+        graph.nodes["B"] = Node("B", "BetaSearch", "function", "src/b.py")
+        self.assertEqual(search_nodes(graph, "beta search", limit=1)[0].node.id, "B")
+        self.assertIsNot(graph._search_index_cache, cache)
+
     def test_render_doc_summary_omits_topology_and_keeps_facts(self) -> None:
         graph = Graph(
             nodes={
@@ -792,6 +1102,9 @@ N1,N2,1,0.9
 
     def test_subsystem_summary_uses_compact_node_budget(self) -> None:
         self.assertEqual(default_anchor_limit("README installation usage", "subsystem_summary"), 3)
+        self.assertEqual(default_anchor_limit("search", "blast_radius"), 6)
+        self.assertEqual(default_anchor_limit("auth service", "blast_radius"), 6)
+        self.assertEqual(default_anchor_limit("compiler expression rules", "blast_radius"), 5)
         self.assertEqual(retrieval_node_budget("auth service", "direct_lookup", None), 80)
         self.assertEqual(retrieval_node_budget("compile rules", "reverse_lookup", None), 80)
         self.assertEqual(retrieval_node_budget("compile to runtime path", "multi_hop_path", None), 80)
@@ -830,7 +1143,10 @@ N1,N2,1,0.9
 
     def test_relation_ontology_drives_traversal_and_weak_budgeting(self) -> None:
         self.assertEqual(relation_spec("calls").family, "execution")
+        self.assertEqual(relation_spec("explains").family, "document")
         self.assertGreater(traversal_strength("calls"), traversal_strength("references"))
+        self.assertGreater(traversal_strength("references"), traversal_strength("section_of"))
+        self.assertGreater(traversal_strength("explains"), traversal_strength("section_of"))
         self.assertGreater(provenance_confidence("tree_sitter"), provenance_confidence("regex_reference"))
         edges = [Edge("N1", f"N{i}", "unknown_relation", 0.5) for i in range(30)]
         kept = budget_edges(edges)
@@ -935,6 +1251,30 @@ N1,N2,1,0.9
         self.assertIn("constrained_by", packet)
         self.assertNotIn("references", packet)
 
+    def test_resolve_start_nodes_accepts_id_path_basename_and_label(self) -> None:
+        graph = sample_graph()
+        self.assertEqual(resolve_start_nodes(graph, ["N1"]), ["N1"])
+        self.assertEqual(resolve_start_nodes(graph, ["server/auth.py"]), ["N1"])
+        self.assertEqual(resolve_start_nodes(graph, ["auth.py"]), ["N1"])
+        self.assertEqual(resolve_start_nodes(graph, ["AuthService"]), ["N1"])
+        callable_graph = Graph(nodes={"F": Node("F", "validate_packet()", "function")})
+        self.assertEqual(resolve_start_nodes(callable_graph, ["validate_packet"]), ["F"])
+
+    def test_render_final_packet_resolves_human_facing_starts(self) -> None:
+        graph = sample_graph()
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(graph, graph_path)
+            packet = render_final_packet(
+                starts=["AuthService"],
+                query_class="direct_lookup",
+                graph_path=graph_path,
+                cache_namespace="test_label_start",
+            )
+        self.assertIn("AuthService", packet)
+        self.assertIn("TokenStore", packet)
+        self.assertIn("[e]", packet)
+
     def test_mcp_build_graph_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -969,6 +1309,33 @@ N1,N2,1,0.9
             utils_id = next(nid for nid, n in graph.nodes.items() if n.label == "utils.py")
             self.assertIn((app_id, db_id), edge_pairs)
             self.assertIn((app_id, utils_id), edge_pairs)
+
+    def test_scanner_detects_python_relative_imports_and_hierarchy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg = root / "pkg"
+            sub = pkg / "sub"
+            sub.mkdir(parents=True)
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+            (sub / "__init__.py").write_text("", encoding="utf-8")
+            (pkg / "core.py").write_text("def connect(): pass\n", encoding="utf-8")
+            (pkg / "utils.py").write_text("def helper(): pass\n", encoding="utf-8")
+            (sub / "worker.py").write_text(
+                "from ..core import connect\nfrom . import local\nimport pkg.utils as utils\n",
+                encoding="utf-8",
+            )
+            (sub / "local.py").write_text("def local(): pass\n", encoding="utf-8")
+            graph = scan_directory(root)
+            edge_pairs = {(e.source, e.target, e.type) for e in graph.edges}
+            worker_id = next(nid for nid, n in graph.nodes.items() if n.path == "pkg/sub/worker.py")
+            core_id = next(nid for nid, n in graph.nodes.items() if n.path == "pkg/core.py")
+            local_id = next(nid for nid, n in graph.nodes.items() if n.path == "pkg/sub/local.py")
+            utils_id = next(nid for nid, n in graph.nodes.items() if n.path == "pkg/utils.py")
+
+            self.assertIn((worker_id, core_id, "imports"), edge_pairs)
+            self.assertIn((worker_id, local_id, "imports"), edge_pairs)
+            self.assertIn((worker_id, utils_id, "imports"), edge_pairs)
+            self.assertTrue(any(e.type == "contains" and e.target == worker_id for e in graph.edges))
 
     def test_scanner_skips_pycache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1015,6 +1382,10 @@ N1,N2,1,0.9
             self.assertIn("concept", kinds)
             self.assertIn("section_of", edge_types)
             self.assertIn("discusses", edge_types)
+            self.assertEqual(
+                relation_spec("explains").description,
+                "Source text explains target concept or implementation detail.",
+            )
             section = next(node for node in nodes.values() if node.kind == "section")
             self.assertTrue(section.facts)
 
@@ -1040,6 +1411,16 @@ N1,N2,1,0.9
             self.assertEqual(graph.metadata["docs"], "true")
             self.assertIn("section", {node.kind for node in graph.nodes.values()})
             self.assertIn("concept", {node.kind for node in graph.nodes.values()})
+
+    def test_scanner_docs_flag_links_symbols_to_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# API\n\nThe `render_packet` helper is used here.\n", encoding="utf-8")
+            (root / "render.py").write_text("def render_packet():\n    return None\n", encoding="utf-8")
+            graph = scan_directory(root, docs=True, depth="symbols", frontend="regex")
+            edge_types = {e.type for e in graph.edges}
+            self.assertIn("explains", edge_types)
+            self.assertTrue(any(edge.type == "explains" for edge in graph.edges))
 
 
     def test_scanner_c_includes(self) -> None:
@@ -1433,6 +1814,119 @@ N1,N2,1,0.9
         from graphgraph.scanner import scan_directory
         sig = inspect.signature(scan_directory)
         self.assertNotIn("communities", sig.parameters)
+
+    def test_cmd_install_project(self) -> None:
+        from graphgraph.cli.commands import cmd_install
+        import os
+
+        class DummyArgs:
+            project = True
+            platform = "codex"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orig_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                cmd_install(DummyArgs())
+
+                # Check workspace rules
+                agents_md = Path(".agents") / "AGENTS.md"
+                self.assertTrue(agents_md.exists())
+                content = agents_md.read_text(encoding="utf-8")
+                self.assertIn("# GraphGraph Workspace Rules", content)
+
+                # Check skill
+                skill_md = Path(".agents") / "skills" / "graphgraph" / "SKILL.md"
+                self.assertTrue(skill_md.exists())
+                skill_content = skill_md.read_text(encoding="utf-8")
+                self.assertIn("name: graphgraph", skill_content)
+
+                # Check plugin .mcp.json and marketplace.json
+                mcp_json = Path("plugins") / "graphgraph" / ".mcp.json"
+                self.assertTrue(mcp_json.exists())
+                marketplace_json = Path(".agents") / "plugins" / "marketplace.json"
+                self.assertTrue(marketplace_json.exists())
+            finally:
+                os.chdir(orig_cwd)
+
+    def test_imported_symbol_sources(self) -> None:
+        from graphgraph.scanner.frontends import _imported_symbol_sources
+        
+        # Test python imports
+        py_text = "from my_module import foo, bar as b\nfrom other.helper import transform"
+        py_sources = _imported_symbol_sources(".py", py_text)
+        self.assertEqual(py_sources.get("foo"), "my_module")
+        self.assertEqual(py_sources.get("bar"), "my_module")
+        self.assertEqual(py_sources.get("transform"), "helper")
+        
+        # Test js/ts imports
+        js_text = "import { transform, load as l } from './my_helper';\nimport { other } from '../another';"
+        js_sources = _imported_symbol_sources(".ts", js_text)
+        self.assertEqual(js_sources.get("transform"), "my_helper")
+        self.assertEqual(js_sources.get("load"), "my_helper")
+        self.assertEqual(js_sources.get("other"), "another")
+
+    def test_render_final_packet_injects_lessons(self) -> None:
+        from graphgraph.services import render_final_packet
+        from graphgraph.core import Node, Graph, Edge
+        
+        g = Graph(
+            nodes={"A": Node("A", "AuthService", "service", "auth.py")},
+            edges=[]
+        )
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            g_path = tmp / "graph.json"
+            save_graph(g, g_path)
+            
+            # Write a dummy lessons file
+            lessons_file = tmp / "lessons.md"
+            lessons_file.write_text("Avoid exploring legacy routes", encoding="utf-8")
+            
+            # Mock find_lessons_path and find_graph_path
+            import graphgraph.services.context as ctx
+            orig_find_graph = ctx.find_graph_path
+            orig_find_lessons = ctx.find_lessons_path
+            ctx.find_graph_path = lambda: g_path
+            ctx.find_lessons_path = lambda: lessons_file
+            
+            try:
+                packet = render_final_packet(starts=["A"], query_class="direct_lookup")
+                self.assertIn("LESSONS / PAST SESSION REFLECTIONS:", packet)
+                self.assertIn("Avoid exploring legacy routes", packet)
+            finally:
+                ctx.find_graph_path = orig_find_graph
+                ctx.find_lessons_path = orig_find_lessons
+
+    def test_personalized_pagerank(self) -> None:
+        from graphgraph.core import Node, Graph, Edge
+        from graphgraph.retrieval import search_nodes
+        
+        g = Graph(
+            nodes={
+                "A": Node("A", "AuthService", "service", "auth.py", active=True),
+                "B": Node("B", "TokenStore", "data", "tokens.py", active=True),
+                "C": Node("C", "AuditLog", "data", "audit.py", active=True),
+            },
+            edges=[
+                Edge("A", "B", "calls", 1.0),
+                Edge("C", "B", "calls", 1.0),
+            ]
+        )
+        
+        # Standard PageRank: B has incoming edges from A and C, so it should rank highest globally.
+        pr = g.pagerank()
+        self.assertGreater(pr["B"], pr["A"])
+        
+        # Personalized PageRank starting at A: A should receive the highest probability, and B (directly connected to A) should receive more than C (not connected to A).
+        ppr = g.personalized_pagerank(personalization={"A": 1.0})
+        self.assertGreater(ppr["A"], ppr["B"])
+        self.assertGreater(ppr["B"], ppr["C"])
+        
+        # Test personalized search
+        matches = search_nodes(g, "AuthService", personalize=True)
+        self.assertEqual(matches[0].node.id, "A")
 
 
 if __name__ == "__main__":

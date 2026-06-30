@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 from ..cache import TopologicalKVCache, compute_cache_key
-from ..core import Query
-from ..io import find_graph_path, find_policies_path, load_any, load_policies
+from ..core import Graph, Query
+from ..io import find_graph_path, find_policies_path, find_lessons_path, load_any, load_policies
 from ..packets import render_gg_max, render_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
 from ..policies import render_policy_packet, select_policies
@@ -44,22 +44,32 @@ def render_final_packet(
     policies = load_policies(resolved_policies_path) if resolved_policies_path else []
     query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)
 
-    nodes, edges = expand_context(graph, tuple(starts), plan)
+    resolved_starts = resolve_start_nodes(graph, starts)
+    nodes, edges = expand_context(graph, tuple(resolved_starts), plan)
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
 
     cache = TopologicalKVCache()
     cache_key = compute_cache_key(
-        starts,
+        resolved_starts,
         query_class,
         plan.hops,
         (
             f"{plan.packet}|{cache_namespace}|{plan.planner_version}|{query_text}|"
-            f"{paths}|{tags}|{plan.node_budget}|{plan.direction}"
+            f"{paths}|{tags}|{plan.node_budget}|{plan.direction}|{tuple(starts)}"
         ),
     )
     cached_packet = cache.get(resolved_graph_path, cache_key)
     if cached_packet:
         return cached_packet
+
+    # 5. Read lessons/reflections if available
+    lessons_path = find_lessons_path()
+    lessons_packet = ""
+    if lessons_path:
+        try:
+            lessons_packet = lessons_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
 
     selected = select_policies(policies, query)
     policy_packet = render_policy_packet(selected, compact=True)
@@ -73,6 +83,8 @@ def render_final_packet(
             "The 8-character abbreviations (e.g. authserv) represent unique file/symbol nodes. Edges list call dependencies.\n"
             "Treat this as your ground-truth architectural map to answer coding queries."
         )
+    if lessons_packet:
+        out_lines.extend(["LESSONS / PAST SESSION REFLECTIONS:", lessons_packet, ""])
     if policy_packet:
         out_lines.extend(["CONSTRAINTS:", policy_packet, "\nGRAPH:"])
     else:
@@ -81,6 +93,77 @@ def render_final_packet(
     final_output = "\n".join(out_lines)
     cache.set(resolved_graph_path, cache_key, final_output)
     return final_output
+
+
+def resolve_start_nodes(graph: Graph, starts: list[str]) -> list[str]:
+    """Resolve user-facing start handles to graph node IDs.
+
+    `Graph.expand()` intentionally accepts only node IDs. CLI/MCP callers often
+    know labels or paths, so this thin boundary helper accepts exact IDs first,
+    then exact path/label matches, then case-folded path/label/basename matches.
+    Ambiguous labels resolve to all matching active nodes in stable graph order.
+    """
+    resolved: list[str] = []
+    seen: set[str] = set()
+    by_path = {
+        node.path.replace("\\", "/").strip("/"): node_id
+        for node_id, node in graph.nodes.items()
+        if node.path and node.active
+    }
+    by_label: dict[str, list[str]] = {}
+    by_folded_path = {_start_key(path): node_id for path, node_id in by_path.items()}
+    by_folded_basename: dict[str, list[str]] = {}
+    by_folded_label: dict[str, list[str]] = {}
+
+    for node_id, node in graph.nodes.items():
+        if not node.active:
+            continue
+        by_label.setdefault(node.label, []).append(node_id)
+        by_folded_label.setdefault(_start_key(node.label), []).append(node_id)
+        if node.path:
+            basename = _start_key(node.path.replace("\\", "/").rsplit("/", 1)[-1])
+            by_folded_basename.setdefault(basename, []).append(node_id)
+
+    def add(node_id: str) -> None:
+        if node_id not in seen:
+            seen.add(node_id)
+            resolved.append(node_id)
+
+    for raw in starts:
+        start = raw.strip()
+        if not start:
+            continue
+        norm_path = start.replace("\\", "/").strip("/")
+        folded = _start_key(norm_path)
+        if start in graph.nodes and graph.nodes[start].active:
+            add(start)
+            continue
+        if norm_path in by_path:
+            add(by_path[norm_path])
+            continue
+        if start in by_label:
+            for node_id in by_label[start]:
+                add(node_id)
+            continue
+        if folded in by_folded_path:
+            add(by_folded_path[folded])
+            continue
+        if folded in by_folded_label:
+            for node_id in by_folded_label[folded]:
+                add(node_id)
+            continue
+        if folded in by_folded_basename:
+            for node_id in by_folded_basename[folded]:
+                add(node_id)
+
+    return resolved
+
+
+def _start_key(value: str) -> str:
+    key = value.strip().casefold()
+    if key.endswith("()"):
+        key = key[:-2]
+    return key
 
 
 def render_query_context(

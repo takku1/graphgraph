@@ -5,8 +5,7 @@ constraint selection, validation, and scoring. External graph tools are import
 routes; they are not the core architecture.
 
 ```text
-native source scanner / imported graph
-  -> shared context IR
+native source scanner
   -> native graph store
   -> retrieval planner
   -> graph packet encoder
@@ -15,6 +14,9 @@ native source scanner / imported graph
   -> mechanical validation
   -> live model scoring
 ```
+
+External graph files enter before the native store through explicit `ingest`.
+They are compatibility inputs, not default runtime sources.
 
 ## Shared IR
 
@@ -67,10 +69,11 @@ relation references, and numeric weights.
 
 The adaptive planner chooses per query class:
 
-- direct/reverse: often `1hop sql`
+- direct/reverse: usually `1hop gg_max`
 - path/blast: usually `2hop gg_max`
-- summary: usually `1hop gg_max_hybrid`
-- tiny evidence packets: often `svo` or `semantic_arrow`
+- summary: `gg_max` for structural summaries, `gg_max_hybrid` or
+  `doc_summary` when grounded prose/facts dominate
+- zero-edge packets: usually `semantic_arrow`
 
 ## Constraint Policies
 

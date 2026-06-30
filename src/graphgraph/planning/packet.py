@@ -7,22 +7,22 @@ from .types import PacketChoice, SubgraphStats
 def choose_packet(query_class: str, query: str = "") -> PacketChoice:
     """Return the empirically measured optimal packet strategy per query class."""
     if query_class == "direct_lookup":
-        return PacketChoice(1, "gg_max", "1-hop direct lookups: gg_max is the measured token floor")
+        return PacketChoice(1, "gg_max_hybrid", "1-hop direct lookups: gg_max_hybrid provides inline evidence")
     if query_class == "reverse_lookup":
-        return PacketChoice(1, "gg_max", "1-hop reverse lookups: gg_max is the measured token floor")
+        return PacketChoice(1, "gg_max_hybrid", "1-hop reverse lookups: gg_max_hybrid provides inline evidence")
     if query_class == "multi_hop_path":
-        return PacketChoice(2, "gg_max", "path queries need 2-hop topology; gg_max is the token floor")
+        return PacketChoice(2, "gg_max_hybrid", "path queries need 2-hop topology; gg_max_hybrid provides inline evidence")
     if query_class == "blast_radius":
-        return PacketChoice(2, "gg_max", "blast-radius needs 2-hop topology; gg_max is the token floor")
+        return PacketChoice(2, "gg_max_hybrid", "blast-radius needs 2-hop topology; gg_max_hybrid provides inline evidence")
     if is_doc_query(query_class, query):
         return PacketChoice(1, "doc_summary", "documentation summaries need grounded snippets more than topology")
     if query_class == "subsystem_summary":
-        return PacketChoice(1, "gg_max", "subsystem summaries: gg_max is the current structural token floor")
+        return PacketChoice(1, "gg_max_hybrid", "subsystem summaries: gg_max_hybrid provides inline evidence")
     if query_class == "spreading_activation":
-        return PacketChoice(2, "gg_max", "spreading activation leverages 2-step energy propagation; gg_max is the floor")
+        return PacketChoice(2, "gg_max_hybrid", "spreading activation leverages 2-step energy propagation; gg_max_hybrid provides inline evidence")
     if query_class == "negative_query":
         return PacketChoice(0, "semantic_arrow", "negative queries need anchor evidence without pulling unrelated edges")
-    return PacketChoice(2, "gg_max", "unknown query class: conservative 2-hop gg_max")
+    return PacketChoice(2, "gg_max_hybrid", "unknown query class: conservative 2-hop gg_max_hybrid")
 
 
 def refine_packet_for_subgraph(choice: PacketChoice, edge_count: int) -> PacketChoice:
@@ -43,21 +43,15 @@ def refine_packet_for_subgraph(choice: PacketChoice, edge_count: int) -> PacketC
 def choose_packet_for_subgraph(choice: PacketChoice, stats: SubgraphStats, query_class: str = "") -> PacketChoice:
     """Apply measured post-retrieval packet refinements.
 
-    Real-project sweeps show semantic_arrow only beats gg_max when the retrieved
+    Real-project sweeps show semantic_arrow only beats gg_max/gg_max_hybrid when the retrieved
     subgraph has zero edges. For any non-empty structural graph, gg_max remains
     the token floor. The helper keeps docs/explicit formats unchanged.
     """
     if choice.packet in {"doc_summary", "semantic_arrow"}:
         return choice
-    if stats.edges == 0 and choice.packet == "gg_max":
+    if stats.edges == 0 and choice.packet in {"gg_max", "gg_max_hybrid"}:
         semantic_tokens = stats.estimated_tokens_by_packet.get("semantic_arrow", 0)
-        gg_tokens = stats.estimated_tokens_by_packet.get("gg_max", 0)
+        gg_tokens = stats.estimated_tokens_by_packet.get(choice.packet, 0)
         if semantic_tokens <= gg_tokens:
             return PacketChoice(choice.hops, "semantic_arrow", "zero-edge packets avoid gg_max relation-map overhead")
-    if query_class == "subsystem_summary" and choice.packet == "gg_max" and stats.edges > 0:
-        gg_tokens = stats.estimated_tokens_by_packet.get("gg_max", 0)
-        hybrid_tokens = stats.estimated_tokens_by_packet.get("gg_max_hybrid", 0)
-        bounded_premium = hybrid_tokens <= max(gg_tokens + 48, int(gg_tokens * 1.15))
-        if stats.factful_node_ratio >= 0.5 and stats.weak_edge_ratio < 0.75 and bounded_premium:
-            return PacketChoice(choice.hops, "gg_max_hybrid", "fact-rich subsystem summary keeps bounded inline evidence")
     return choice

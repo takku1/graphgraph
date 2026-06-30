@@ -7,7 +7,7 @@ Large Language Models (LLMs) processing codebase context suffer from high token 
 1.  **Adaptive Context Planning** to route queries dynamically.
 2.  **Lexical Tagging (`gg_lex`)** to mitigate the Attention Indirection Penalty.
 3.  **Dynamic Edge Density Throttling** to constrain token bloat in dense subgraphs.
-On a 48-task evaluation suite and multi-language verification (covering Rust and JavaScript codebases), GraphGraph achieves a **100.0% answerability rate** while reducing token sizes by **18.1%** compared to a uniform 120-node cap, and operating within **5.01%** of the oracle lower bound (the evidence-containment minimum). Downstream evaluation shows that `gg_lex` improves code-generation accuracy by **10.3%** absolute over numeric serialization.
+On a 48-task deterministic evidence-containment suite and multi-language verification (covering Rust and JavaScript codebases), GraphGraph achieves a **100.0% answerability rate** while reducing token sizes by **18.1%** compared to a uniform 120-node cap, and operating within **5.01%** of the oracle lower bound (the evidence-containment minimum). Live model-answer scoring remains the next required proof before claiming downstream code-generation accuracy.
 
 ---
 
@@ -91,23 +91,23 @@ To maintain scientific integrity, we report failures and structural boundaries i
 
 ---
 
-## 6. Downstream Evaluation & Attention Indirection
+## 6. Planned Downstream Evaluation & Attention Indirection
 
 ### Downstream Evaluation Methodology
 *   **Tasks ($N$)**: 48 code-modification tasks from the Locus benchmark suite.
 *   **Model**: Gemini 1.5 Flash (temperature = `0.0`, default context settings).
 *   **Success Metric**: Functional correctness (code compiles and passes target unit-test execution).
 
-| Serialization Format | Code-Generation Success Rate | Average Token Count |
-| :--- | :---: | :---: |
-| **`gg_lex` (Lexical Tagging)** | **91.6%** | 772.8 |
-| **`gg_max` (Numeric Indexing)** | 81.3% | **690.0** |
-| **Graphify (Verbose Strings)** | 88.3% | 1286.4 |
+| Serialization Format | Expected Measurement | Current Status |
+| :--- | :--- | :--- |
+| **`gg_lex` (Lexical Tagging)** | Code-generation success rate and packet tokens | Needs live scoring |
+| **`gg_max` (Numeric Indexing)** | Code-generation success rate and packet tokens | Deterministic token floor measured |
+| **Graphify (Verbose Strings)** | Code-generation success rate and packet tokens | Baseline packet route available |
 
 ### The Attention Indirection Penalty
 Self-attention in Transformers models implicit dynamic connectivity maps over input sequences, but lacks a native pointer mechanism for graph traversal. Under numeric adjacency serialization (e.g. `1,2,reads` in `gg_max`), the attention heads must perform multiple hops to resolve references: first from the indices back to the node mapping block, and then from the mapping to the relation keys.
 
-We hypothesize that this **Attention Indirection Penalty** introduces significant reasoning overhead and attention dispersion. By serializing subgraphs using unique, readable 8-character lexical keys (e.g. `authserv`, `tokensto`), **`gg_lex`** aligns topological relationships directly with the model's natural language semantic priors (subject-verb-object syntax). Although `gg_lex` carries a **10-13% token premium** over numeric indices, it yields a **10.3% absolute improvement** in LLM task success rate. With $N=48$ binary outcomes, the standard error on $91.6\%$ is $\approx 4.0\%$, and on $81.3\%$ is $\approx 5.6\%$. The $10.3\%$ difference is statistically significant ($p < 0.05$ under McNemar's test), but remains subject to moderate variance.
+We hypothesize that this **Attention Indirection Penalty** introduces reasoning overhead and attention dispersion. By serializing subgraphs using unique, readable 8-character lexical keys (e.g. `authserv`, `tokensto`), **`gg_lex`** may align topological relationships more directly with the model's natural language priors. This remains an empirical question: the benchmark must compare `gg_lex`, `gg_max`, and verbose baselines on frozen prompts before promoting lexical handles as the default.
 
 *Confounding Factors:* While we frame this performance delta as a mitigation of attention indirection, lexical keys also introduce two confounding advantages:
 1.  **Direct Semantic Priming**: Truncated keys (e.g., `auth` or `serv`) carry residual semantic signals that directly aid target identification.

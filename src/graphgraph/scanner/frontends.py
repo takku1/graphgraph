@@ -107,7 +107,7 @@ class TreeSitterExtractor:
         _add_nested_contains(defs_by_file, nodes, edges)
         _add_rust_fields(defs_by_file, nodes, edges)
         _add_returns(defs_by_file, nodes, name_to_symbols, edges)
-        _add_imports_from(defs_by_file, name_to_symbols, edges)
+        _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
         _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
         return ExtractionResult(nodes=nodes, edges=_dedupe_edges(edges), frontend=self.name)
 
@@ -510,19 +510,67 @@ def _add_returns(
             ))
 
 
+def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
+    """Map imported symbol local name to its module/file stem source.
+    e.g. 'from helper import transform' -> {'transform': 'helper'}
+    """
+    sources: dict[str, str] = {}
+    if suffix == ".py":
+        for m in re.finditer(r"^from\s+([\w.]+)\s+import\s+(.+)$", text, re.MULTILINE):
+            module_name = m.group(1).split(".")[-1]
+            for part in m.group(2).split(","):
+                name = part.strip().split(" as ", 1)[0].strip()
+                if _identifier(name):
+                    sources[name] = module_name
+    elif suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        for m in re.finditer(r"import\s+\{([^}]+)\}\s+from\s+['\"]([^'\"]+)['\"]", text):
+            module_name = Path(m.group(2)).stem
+            for part in m.group(1).split(","):
+                name = part.strip().split(" as ", 1)[0].strip()
+                if _identifier(name):
+                    sources[name] = module_name
+    return sources
+
+
 def _add_tree_sitter_calls(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
 ) -> None:
-    callable_names = {
-        name for name, ids in name_to_symbols.items()
+    # 1. Identify globally unique callables
+    unique_callables = {
+        name: ids[0] for name, ids in name_to_symbols.items()
         if len(ids) == 1 and nodes[ids[0]].kind in {"function", "method"}
     }
-    if not callable_names:
-        return
+
     for source, defs, root in defs_by_file:
+        suffix = source.path.suffix.lower()
+        imported_sources = _imported_symbol_sources(suffix, source.text)
+        
+        # Build local resolutions dictionary starting with globally unique callables
+        local_resolutions = dict(unique_callables)
+
+        # 2. Add locally imported symbols, using module stem matching for disambiguation
+        all_imported = _imported_symbol_names(suffix, source.text)
+        for name in all_imported:
+            targets = name_to_symbols.get(name, [])
+            if len(targets) == 1:
+                local_resolutions[name] = targets[0]
+            elif len(targets) > 1:
+                # Disambiguate by matching import stem (e.g. 'helper') to target file stem
+                stem = imported_sources.get(name)
+                if stem:
+                    matching = []
+                    for tgt_id in targets:
+                        node = nodes.get(tgt_id)
+                        if node:
+                            node_stem = Path(node.path).stem
+                            if node_stem.lower() == stem.lower():
+                                matching.append(tgt_id)
+                    if len(matching) == 1:
+                        local_resolutions[name] = matching[0]
+
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
         for d in callable_defs:
             src_id = f"{source.file_node_id}__{d.name}"
@@ -530,26 +578,42 @@ def _add_tree_sitter_calls(
                 continue
             calls = _call_names_in_range(root, source.text.encode("utf-8", errors="replace"), d.start, d.end)
             for call in calls:
-                if call not in callable_names:
-                    continue
-                for tgt_id in name_to_symbols.get(call, []):
-                    if tgt_id != src_id:
-                        edges.append(Edge(src_id, tgt_id, "calls", confidence=0.9, provenance="tree_sitter"))
+                tgt_id = local_resolutions.get(call)
+                if tgt_id and tgt_id != src_id:
+                    edges.append(Edge(src_id, tgt_id, "calls", confidence=0.9, provenance="tree_sitter"))
 
 
 def _add_imports_from(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
 ) -> None:
     for source, _defs, _root in defs_by_file:
-        imported_names = _imported_symbol_names(source.path.suffix.lower(), source.text)
+        suffix = source.path.suffix.lower()
+        imported_names = _imported_symbol_names(suffix, source.text)
+        imported_sources = _imported_symbol_sources(suffix, source.text)
+        
         for name in imported_names:
             targets = name_to_symbols.get(name, [])
-            if len(targets) != 1:
-                continue
-            target = targets[0]
-            if not target.startswith(source.file_node_id + "__"):
+            target = None
+            if len(targets) == 1:
+                target = targets[0]
+            elif len(targets) > 1:
+                # Disambiguate by matching import stem to target file stem
+                stem = imported_sources.get(name)
+                if stem:
+                    matching = []
+                    for tgt_id in targets:
+                        node = nodes.get(tgt_id)
+                        if node:
+                            node_stem = Path(node.path).stem
+                            if node_stem.lower() == stem.lower():
+                                matching.append(tgt_id)
+                    if len(matching) == 1:
+                        target = matching[0]
+
+            if target and not target.startswith(source.file_node_id + "__"):
                 edges.append(Edge(
                     source.file_node_id,
                     target,

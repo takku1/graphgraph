@@ -52,6 +52,48 @@ GENERIC_LABELS = {
     "regex",
     "test",
 }
+TASK_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "which",
+    "with",
+}
+HUB_NODE_KINDS = {
+    "class",
+    "enum",
+    "function",
+    "method",
+    "python",
+    "javascript",
+    "typescript",
+    "rust",
+    "go",
+    "java",
+    "header",
+    "source",
+}
 
 SKIP_DIRS = (
     ".git",
@@ -142,7 +184,16 @@ def make_tasks(graph: Graph) -> list[Task]:
 
     outgoing = graph.outgoing()
     degree = graph.degree()
-    hubs = sorted((node for node in active if outgoing.get(node.id) and usable_anchor_node(node)), key=lambda n: degree.get(n.id, 0), reverse=True)
+    hubs = sorted(
+        (
+            node for node in active
+            if outgoing.get(node.id)
+            and node.kind in HUB_NODE_KINDS
+            and usable_anchor_node(node)
+        ),
+        key=lambda n: degree.get(n.id, 0),
+        reverse=True,
+    )
     for node in hubs[:2]:
         neighbor_edges = outgoing.get(node.id, [])[:2]
         expected = tuple(dict.fromkeys([node.id, *(edge.target for edge in neighbor_edges)]))
@@ -170,6 +221,8 @@ def usable_concept_node(node: Node) -> bool:
     query = split_query(node)
     terms = query.split()
     if len(terms) < 2:
+        return False
+    if any(term in TASK_STOPWORDS for term in terms):
         return False
     if has_control_chars(query):
         return False
@@ -235,7 +288,7 @@ def split_query(node: Node) -> str:
     parts = []
     for token in raw.replace("_", " ").replace("-", " ").replace(".", " ").split():
         parts.extend(split_camel(token))
-    query = " ".join(part.lower() for part in parts if len(part) >= 2)
+    query = " ".join(part.lower() for part in parts if len(part) >= 2 and part.lower() not in TASK_STOPWORDS)
     return query or raw.lower()
 
 

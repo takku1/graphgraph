@@ -39,6 +39,10 @@
   "thresholds": {
     "min_node_recall": 0.75,
     "min_edge_recall": 0.65,
-    "max_irrelevant_context_ratio": 0.85
+    "max_irrelevant_context_ratio": 0.85,
+    "min_live_imports_per_source_file": 0.05,
+    "require_current_answerability": true,
+    "require_frontier_current_expand": true,
+    "require_semantic_gg_proxy_agreement": true
   }
 }

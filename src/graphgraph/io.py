@@ -50,7 +50,13 @@ def load_graph(path: Path) -> Graph:
         for item in edges_data
     ]
     metadata = {str(k): str(v) for k, v in (data.get("metadata") or {}).items()}
-    return Graph(nodes=nodes, edges=edges, metadata=metadata)
+    graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
+    centrality = data.get("centrality") or {}
+    if isinstance(centrality, dict):
+        pagerank_payload = centrality.get("pagerank")
+        if isinstance(pagerank_payload, dict):
+            graph.seed_pagerank_cache(pagerank_payload)
+    return graph
 
 
 def load_policies(path: Path) -> list[Policy]:
@@ -116,6 +122,9 @@ def save_graph(graph: Graph, path: Path) -> None:
             for edge in graph.edges
         ],
         "metadata": dict(graph.metadata),
+        "centrality": {
+            "pagerank": graph.pagerank_cache_payload(),
+        },
     }
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -356,7 +365,13 @@ def merge_graphify(base: Graph, overlay: Graph) -> Graph:
     return Graph(nodes=new_nodes, edges=new_edges, metadata=dict(base.metadata))
 
 
-_GRAPHIFY_CANDIDATES = [
+_NATIVE_GRAPH_CANDIDATES = [
+    ".graphgraph/graph.gg",
+    ".graphgraph/graph.json",
+]
+
+_EXTERNAL_GRAPH_CANDIDATES = [
+    ".code-review-graph/graph.json",
     "graphify-out/graph.json",
     ".graphify/graph.json",
     "graphify/graph.json",
@@ -364,25 +379,39 @@ _GRAPHIFY_CANDIDATES = [
 
 
 def find_graphify_path(workspace_root: Path = Path(".")) -> Path | None:
-    for c in _GRAPHIFY_CANDIDATES:
+    for c in _EXTERNAL_GRAPH_CANDIDATES:
+        if "graphify" not in c:
+            continue
         p = workspace_root / c
         if p.exists():
             return p
     return None
 
 
-def find_graph_path(workspace_root: Path = Path(".")) -> Path:
-    candidates = [
-        workspace_root / ".graphgraph" / "graph.gg",    # native format preferred
-        workspace_root / ".graphgraph" / "graph.json",
-        workspace_root / ".code-review-graph" / "graph.json",
-    ]
+def find_external_graph_path(workspace_root: Path = Path(".")) -> Path | None:
+    """Find a non-native graph that can be ingested explicitly.
+
+    External graphs are compatibility inputs. They are deliberately excluded
+    from default graph discovery so GraphGraph remains standalone by default.
+    """
+    for c in _EXTERNAL_GRAPH_CANDIDATES:
+        p = workspace_root / c
+        if p.exists():
+            return p
+    return None
+
+
+def find_graph_path(workspace_root: Path = Path("."), *, include_external: bool = False) -> Path:
+    candidates = [workspace_root / c for c in _NATIVE_GRAPH_CANDIDATES]
+    if include_external:
+        candidates.extend(workspace_root / c for c in _EXTERNAL_GRAPH_CANDIDATES)
     for c in candidates:
         if c.exists():
             return c
     raise FileNotFoundError(
-        "Could not find a codebase graph file in default paths: "
-        f"{[str(c) for c in candidates]}. Please specify the path explicitly."
+        "Could not find a native GraphGraph file in default paths: "
+        f"{[str(c) for c in candidates]}. Run `graphgraph scan --output .graphgraph/graph.json` "
+        "or specify a graph path explicitly. External graphs must be passed to `graphgraph ingest --input ...`."
     )
 
 
@@ -392,6 +421,18 @@ def find_policies_path(workspace_root: Path = Path(".")) -> Path | None:
         workspace_root / "policies.json",
         workspace_root / ".code-review-graph" / "policies.json",
         workspace_root / ".agents" / "policies.json",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
+def find_lessons_path(workspace_root: Path = Path(".")) -> Path | None:
+    candidates = [
+        workspace_root / ".graphgraph" / "lessons.md",
+        workspace_root / ".graphgraph" / "reflections" / "LESSONS.md",
+        workspace_root / "lessons.md",
     ]
     for c in candidates:
         if c.exists():

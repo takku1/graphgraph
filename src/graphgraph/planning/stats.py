@@ -6,12 +6,16 @@ from .types import SubgraphStats
 
 
 WEAK_RELATIONS = {"references", "links", "mentions", "discusses", "section_of"}
-PACKET_ESTIMATE_OVERHEAD = {
-    "gg_max": 8,
-    "semantic_arrow": 3,
-    "sql": 9,
-    "lowlevel": 12,
-    "gg_max_hybrid": 8,
+
+# Calibrated by benchmarks/context_graph/planner_fit_benchmark.py on the saved
+# real-project packet balance rows. These are planning estimates only; final
+# reporting still uses rendered packet token counts.
+PACKET_TOKEN_SURFACE = {
+    "gg_max": (11.74, 1.496, 6.215),
+    "semantic_arrow": (-0.27, 3.029, 11.273),
+    "sql": (25.60, 14.471, 10.797),
+    "lowlevel": (24.67, 3.086, 9.296),
+    "gg_max_hybrid": (-7.46, 9.103, 6.665),
 }
 
 
@@ -55,21 +59,16 @@ def compute_subgraph_stats(graph: Graph, nodes: set[str], edges: list[Edge]) -> 
 
 
 def estimate_packet_tokens(nodes: int, edges: int, avg_label_len: float = 10.0, fact_token_proxy: int = 0) -> dict[str, int]:
-    """Fast packet token proxy used for planning, not reporting."""
-    label_tokens = max(1.0, avg_label_len / 4.0)
-    
-    # gg_max prints: "IDX LABEL" (overhead ~1.5 tokens per node)
-    gg_max_node_tokens = 1.5 + label_tokens
-    # gg_max edge prints: "SRC TGT REL" (overhead ~3 tokens per edge)
-    gg_max_edge_tokens = 3.0
-    
-    # semantic_arrow prints: "SRC -REL-> TGT" (two labels + relation overhead ~3.5 tokens)
-    arrow_edge_tokens = (label_tokens * 2.0) + 3.5
-    
-    return {
-        "gg_max": PACKET_ESTIMATE_OVERHEAD["gg_max"] + int(nodes * gg_max_node_tokens + edges * gg_max_edge_tokens),
-        "semantic_arrow": PACKET_ESTIMATE_OVERHEAD["semantic_arrow"] + int(nodes * label_tokens + edges * arrow_edge_tokens),
-        "sql": PACKET_ESTIMATE_OVERHEAD["sql"] + int(nodes * (label_tokens + 4.0) + edges * 8.5),
-        "lowlevel": PACKET_ESTIMATE_OVERHEAD["lowlevel"] + int(nodes * 4.0 + edges * 5.0),
-        "gg_max_hybrid": PACKET_ESTIMATE_OVERHEAD["gg_max_hybrid"] + int(nodes * gg_max_node_tokens + edges * gg_max_edge_tokens + fact_token_proxy),
-    }
+    """Fast packet token proxy used for planning, not reporting.
+
+    ``avg_label_len`` is accepted for API compatibility and future calibration,
+    but the current measured surface is intentionally node/edge based because
+    it preserved packet-winner decisions on the saved real-project rows.
+    """
+    estimates: dict[str, int] = {}
+    for packet, (intercept, node_coef, edge_coef) in PACKET_TOKEN_SURFACE.items():
+        estimate = intercept + node_coef * nodes + edge_coef * edges
+        if packet == "gg_max_hybrid":
+            estimate += fact_token_proxy
+        estimates[packet] = max(0, int(round(estimate)))
+    return estimates

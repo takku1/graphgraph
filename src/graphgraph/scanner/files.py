@@ -27,6 +27,7 @@ EXT_KIND: dict[str, str] = {
     ".c": "c", ".h": "header", ".hpp": "header",
     ".rb": "ruby", ".php": "php", ".swift": "swift",
     ".kt": "kotlin", ".scala": "scala", ".hs": "haskell",
+    ".lean": "lean",
     ".json": "json", ".yaml": "yaml", ".yml": "yaml",
     ".toml": "toml", ".ini": "ini", ".env": "env",
     ".md": "markdown", ".mdx": "markdown", ".rst": "rst",
@@ -42,7 +43,7 @@ PARSEABLE_SUFFIXES = frozenset({
     ".py", ".ts", ".tsx", ".js", ".jsx",
     ".go", ".rs", ".java", ".cs",
     ".cpp", ".cxx", ".cc", ".c", ".h", ".hpp",
-    ".rb", ".php",
+    ".rb", ".php", ".lean",
     ".md", ".mdx", ".rst", ".html", ".htm",
 })
 
@@ -50,7 +51,7 @@ SOURCE_SUFFIXES = frozenset({
     ".py", ".ts", ".tsx", ".js", ".jsx", ".go",
     ".rs", ".java", ".cs", ".cpp", ".cxx", ".cc",
     ".c", ".h", ".hpp", ".rb", ".php", ".swift",
-    ".kt", ".scala",
+    ".kt", ".scala", ".lean",
 })
 
 DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".html", ".htm", ".txt"})
@@ -63,9 +64,10 @@ def node_id(path: Path, root: Path) -> str:
 
 def collect_files(root: Path, max_nodes: int, extra_skip: frozenset[str] = frozenset()) -> list[Path]:
     skip = SKIP_DIRS | extra_skip
-    source: list[Path] = []
-    other: list[Path] = []
-    for path in root.rglob("*"):
+    code_files: list[Path] = []
+    doc_files: list[Path] = []
+    other_files: list[Path] = []
+    for path in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
         if not path.is_file():
             continue
         if any(part in skip or part.startswith("target") or part.endswith(".egg-info") for part in path.parts):
@@ -73,10 +75,10 @@ def collect_files(root: Path, max_nodes: int, extra_skip: frozenset[str] = froze
         if path.suffix in SKIP_SUFFIXES:
             continue
         suffix_l = path.suffix.lower()
-        if suffix_l in DOC_SUFFIXES or path.name.lower() == "readme.md":
-            source.insert(0, path)
-        elif suffix_l in SOURCE_SUFFIXES:
-            source.append(path)
+        if suffix_l in SOURCE_SUFFIXES:
+            code_files.append(path)
+        elif suffix_l in DOC_SUFFIXES or path.name.lower() == "readme.md":
+            doc_files.append(path)
         else:
-            other.append(path)
-    return (source + other)[:max_nodes]
+            other_files.append(path)
+    return (code_files + doc_files + other_files)[:max_nodes]

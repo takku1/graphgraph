@@ -18,6 +18,7 @@ MAX_REFERENCE_PATTERN_NAMES = 5000
 
 # ── definition patterns per language ────────────────────────────────────────
 
+# Existing regex patterns retained for non-AST fallback (unused for .py now)
 _PY_CLASS = re.compile(r"^class\s+(\w+)", re.MULTILINE)
 _PY_DEF = re.compile(r"^(    )?(?:async\s+)?def\s+(\w+)\s*\(", re.MULTILINE)
 
@@ -76,6 +77,13 @@ _C_FUNC = re.compile(
     re.MULTILINE,
 )
 
+_LEAN_DEF = re.compile(
+    r"^\s*(?:@\[[^\]]*\]\s*)*(private|protected|noncomputable|partial|scoped|local)?\s*"
+    r"(def|theorem|lemma|inductive|structure|class|abbrev|opaque|axiom)\s+"
+    r"([a-zA-Z_0-9.?!'«»]+)",
+    re.MULTILINE
+)
+
 
 # ── identifier reference pattern (used for call detection) ───────────────────
 
@@ -92,7 +100,9 @@ def _callsite_pattern(names: list[str]) -> re.Pattern[str] | None:
         return None
     escaped = sorted(set(names), key=len, reverse=True)
     pat = "|".join(re.escape(n) for n in escaped[:MAX_REFERENCE_PATTERN_NAMES])
-    return re.compile(r"\b(" + pat + r")\b\s*(?:!|::)?\s*\(")
+    # Match function calls, optionally qualified (e.g., module.func())
+    # Use a negative lookbehind to allow a preceding dot for qualified names.
+    return re.compile(r"(?<!\.)\b(" + pat + r")\b\s*(?:!|::)?\s*\(")
 
 
 # ── symbol extraction per language ───────────────────────────────────────────
@@ -103,16 +113,45 @@ class SymbolDef:
     kind: str
     line: int
     start: int = 0
+    modifier: str | None = None
 
 
-def _defs_py(text: str) -> list[SymbolDef]:
+def _defs_py_ast(text: str) -> list[SymbolDef]:
+    """Extract Python symbols using the built‑in ``ast`` module.
+
+    Provides accurate line numbers and avoids false positives from regex.
+    """
+    import ast
     defs: list[SymbolDef] = []
-    for m in _PY_CLASS.finditer(text):
-        defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1, m.start()))
-    for m in _PY_DEF.finditer(text):
-        indent, name = m.group(1), m.group(2)
-        kind = "method" if indent else "function"
-        defs.append(SymbolDef(name, kind, text[:m.start()].count("\n") + 1, m.start()))
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return []
+
+    # Attach parent references for method detection.
+    for n in ast.walk(tree):
+        for child in ast.iter_child_nodes(n):
+            setattr(child, "parent", n)
+
+    class Visitor(ast.NodeVisitor):
+        def generic_visit(self, node):
+            super().generic_visit(node)
+
+        def visit_ClassDef(self, node: ast.ClassDef):
+            defs.append(SymbolDef(node.name, "class", node.lineno, node.col_offset))
+            self.generic_visit(node)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef):
+            kind = "method" if isinstance(getattr(node, "parent", None), ast.ClassDef) else "function"
+            defs.append(SymbolDef(node.name, kind, node.lineno, node.col_offset))
+            self.generic_visit(node)
+
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+            kind = "method" if isinstance(getattr(node, "parent", None), ast.ClassDef) else "function"
+            defs.append(SymbolDef(node.name, kind, node.lineno, node.col_offset))
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
     return defs
 
 
@@ -179,8 +218,29 @@ def _defs_c(text: str) -> list[SymbolDef]:
     return defs
 
 
+def _defs_lean(text: str) -> list[SymbolDef]:
+    defs: list[SymbolDef] = []
+    for m in _LEAN_DEF.finditer(text):
+        modifier = m.group(1)
+        keyword = m.group(2)
+        name = m.group(3)
+        kind = {
+            "def": "function",
+            "theorem": "theorem",
+            "lemma": "theorem",
+            "inductive": "inductive",
+            "structure": "structure",
+            "class": "class",
+            "abbrev": "abbrev",
+            "opaque": "opaque",
+            "axiom": "axiom",
+        }.get(keyword, "function")
+        defs.append(SymbolDef(name, kind, text[:m.start()].count("\n") + 1, m.start(), modifier=modifier))
+    return defs
+
+
 _EXTRACTORS: dict[str, callable] = {
-    ".py": _defs_py,
+    ".py": _defs_py_ast,  # Use AST‑based extraction for Python files.
     ".rs": _defs_rust,
     ".ts": _defs_js,
     ".tsx": _defs_js,
@@ -195,6 +255,7 @@ _EXTRACTORS: dict[str, callable] = {
     ".cc": _defs_c,
     ".h": _defs_c,
     ".hpp": _defs_c,
+    ".lean": _defs_lean,
 }
 
 _NOISE_NAMES = frozenset({
@@ -253,12 +314,20 @@ def extract_symbols(
             if total >= max_total_symbols:
                 break
             sym_id = f"{file_nid}__{d.name}"
+            facts = []
+            if d.name.startswith("__") and not d.name.endswith("__"):
+                facts.append("modifier:private")
+            elif d.name.startswith("_"):
+                facts.append("modifier:protected")
+            elif getattr(d, "modifier", None):
+                facts.append(f"modifier:{d.modifier}")
             symbol_nodes[sym_id] = Node(
                 id=sym_id,
                 label=d.name,
                 kind=d.kind,
                 path=rel,
                 summary=f"L{d.line}",
+                facts=tuple(facts),
             )
             symbol_edges.append(Edge(source=file_nid, target=sym_id, type="contains", weight=1.0, confidence=0.8, provenance="regex_ast"))
             symbol_to_file[sym_id] = file_nid
