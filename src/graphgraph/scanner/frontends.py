@@ -692,6 +692,23 @@ def _identifier(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value))
 
 
+_CALL_NODE_TYPES = {
+    "call_expression",           # JS/TS, Go, Rust, C/C++, Kotlin, Scala, Swift
+    "call",                      # Python, Ruby
+    "invocation_expression",     # C#
+    "method_invocation",         # Java
+    "function_call_expression",  # PHP
+    "member_call_expression",    # PHP  (obj->method())
+    "scoped_call_expression",    # PHP  (Class::method())
+    "command",                   # Ruby (method call without parentheses)
+    "command_call",              # Ruby (receiver.method arg)
+    "method_call",               # misc grammars
+}
+
+# Fields that hold the callee across the grammars above.
+_CALL_NAME_FIELDS = ("function", "name", "method")
+
+
 def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[str]:
     names: set[str] = set()
     stack = [root]
@@ -700,15 +717,22 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[st
         if int(node.end_byte) < start or int(node.start_byte) > end:
             continue
         stack.extend(reversed(list(getattr(node, "named_children", ()))))
-        if node.type not in {"call_expression", "call"}:
+        if node.type not in _CALL_NODE_TYPES:
             continue
         fn = None
-        try:
-            fn = node.child_by_field_name("function")
-        except Exception:
-            fn = None
-        if fn is None and getattr(node, "named_children", ()):
-            fn = node.named_children[0]
+        for field in _CALL_NAME_FIELDS:
+            try:
+                fn = node.child_by_field_name(field)
+            except Exception:
+                fn = None
+            if fn is not None:
+                break
+        if fn is None:
+            # Fall back to the first named child that is not the argument list.
+            for child in getattr(node, "named_children", ()):
+                if "argument" not in child.type:
+                    fn = child
+                    break
         name = _call_name(fn, text) if fn is not None else ""
         if name:
             names.add(name)

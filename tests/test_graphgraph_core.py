@@ -1026,6 +1026,33 @@ N1,N2,1,0.9
             nested = {(edge.source, edge.target, edge.type) for edge in result.edges}
             self.assertIn((class_id, resolve_id, "contains"), nested)
 
+    def test_tree_sitter_resolves_cross_file_calls_csharp_and_java(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        cases = {
+            "csharp": {
+                "RecipeResolver.cs": "namespace G { public class RecipeResolver {\n  public int Resolve(string id) { return Compute(id); }\n} }\n",
+                "CombatResolver.cs": "namespace G { public class CombatResolver {\n  public int Compute(string id) { return 7; }\n} }\n",
+                "expect": ("Resolve", "Compute"),
+            },
+            "java": {
+                "A.java": "class A { int run(){ return help(); } }\n",
+                "B.java": "class B { int help(){ return 1; } }\n",
+                "expect": ("run", "help"),
+            },
+        }
+        for _lang, spec in cases.items():
+            expect = spec.pop("expect")
+            with tempfile.TemporaryDirectory() as tmp:
+                srcs = []
+                for name, text in spec.items():
+                    f = Path(tmp) / name
+                    f.write_text(text, encoding="utf-8")
+                    srcs.append(SourceFile(f, name, name.replace(".", "_"), text))
+                result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
+                calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
+                self.assertIn(expect, calls, f"missing cross-file call edge {expect}; got {calls}")
+
     def test_tree_sitter_extractor_captures_additional_languages(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
