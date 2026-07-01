@@ -33,6 +33,7 @@ def scan_validated_graph(
     frontend: str = "auto",
     docs: bool = True,
     skip_dirs: tuple[str, ...] = (),
+    include_dirs: tuple[str, ...] = (),
     generic_mentions: bool = False,
     incremental: bool = True,
 ) -> GraphBuildStatus:
@@ -46,6 +47,7 @@ def scan_validated_graph(
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         skip_dirs=list(skip_dirs),
+        include=list(include_dirs),
         depth=depth,
         frontend=frontend,
         docs=docs,
@@ -64,6 +66,7 @@ def scan_validated_graph(
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         skip_dirs=list(skip_dirs),
+        include=list(include_dirs),
         depth=depth,
         frontend=frontend,
         docs=docs,

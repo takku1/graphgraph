@@ -973,6 +973,81 @@ N1,N2,1,0.9
             self.assertTrue(any(edge.type == "field_of" and edge.target == point_id for edge in result.edges))
             self.assertTrue(any(edge.type == "returns" and edge.source == make_id and edge.target == point_id for edge in result.edges))
 
+    def test_collect_files_include_overrides_default_skip(self) -> None:
+        from graphgraph.scanner.files import collect_files, find_pruned_dirs
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "game" / "build").mkdir(parents=True)
+            (root / "game" / "build" / "README.md").write_text("# guide", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+            # By default, a directory named 'build' is skipped.
+            default = {p.relative_to(root).as_posix() for p in collect_files(root, 100)}
+            self.assertNotIn("game/build/README.md", default)
+            # find_pruned_dirs reports it (not silent).
+            self.assertIn("build", find_pruned_dirs(root, frozenset({"build"})))
+            # --include build keeps it.
+            included = {p.relative_to(root).as_posix() for p in collect_files(root, 100, include=frozenset({"build"}))}
+            self.assertIn("game/build/README.md", included)
+
+    def test_tree_sitter_extractor_captures_csharp_class_and_methods(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            f = root / "RecipeResolver.cs"
+            text = (
+                "namespace Game.Resolvers {\n"
+                "  public class RecipeResolver : IRecipeCanon {\n"
+                "    public RecipeResolver() {}\n"
+                "    public Recipe Resolve(string id) { return null; }\n"
+                "  }\n"
+                "  public struct RecipeRecord { public int Id; }\n"
+                "  public enum RecipeKind { Weapon, Armor }\n"
+                "  public interface IRecipeCanon { }\n"
+                "}\n"
+            )
+            f.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(f, "RecipeResolver.cs", "RecipeResolver_cs", text)],
+                max_total_symbols=50,
+            )
+            by_label = {node.label: node for node in result.nodes.values()}
+            self.assertIn("RecipeResolver", by_label)
+            self.assertEqual(by_label["RecipeResolver"].kind, "class")
+            self.assertEqual(by_label["Resolve"].kind, "method")
+            self.assertEqual(by_label["RecipeRecord"].kind, "struct")
+            self.assertEqual(by_label["RecipeKind"].kind, "enum")
+            self.assertEqual(by_label["IRecipeCanon"].kind, "interface")
+            # Method should be nested under the class via a contains edge.
+            class_id = next(nid for nid, n in result.nodes.items() if n.label == "RecipeResolver" and n.kind == "class")
+            resolve_id = next(nid for nid, n in result.nodes.items() if n.label == "Resolve")
+            nested = {(edge.source, edge.target, edge.type) for edge in result.edges}
+            self.assertIn((class_id, resolve_id, "contains"), nested)
+
+    def test_tree_sitter_extractor_captures_additional_languages(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        cases = {
+            "svc.rb": ("class RecipeResolver\n  def resolve(id)\n    1\n  end\nend\n", "RecipeResolver", "resolve"),
+            "svc.php": ("<?php\nclass RecipeResolver { public function resolve($id){return 1;} }\n", "RecipeResolver", "resolve"),
+            "Svc.kt": ("class RecipeResolver { fun resolve(id: String): Int { return 1 } }\n", "RecipeResolver", "resolve"),
+            "Svc.scala": ("class RecipeResolver { def resolve(id: String): Int = 1 }\n", "RecipeResolver", "resolve"),
+            "Svc.swift": ("class RecipeResolver { func resolve(_ id: String) -> Int { return 1 } }\n", "RecipeResolver", "resolve"),
+        }
+        for fname, (text, type_name, member) in cases.items():
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / fname
+                f.write_text(text, encoding="utf-8")
+                result = select_extractor("tree_sitter").extract_symbols(
+                    [SourceFile(f, fname, fname.replace(".", "_"), text)],
+                    max_total_symbols=50,
+                )
+                labels = {node.label for node in result.nodes.values()}
+                self.assertIn(type_name, labels, f"{fname}: missing type node")
+                self.assertIn(member, labels, f"{fname}: missing member node")
+
     def test_imported_symbol_name_extraction(self) -> None:
         rust = "use crate::rules::{compile_rules_slice, RuleRecord};\nuse crate::foo::Bar as Baz;\n"
         py = "from server.auth import AuthService, TokenStore as Store\n"

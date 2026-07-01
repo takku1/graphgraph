@@ -67,11 +67,36 @@ def node_id(path: Path, root: Path) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", rel)
 
 
+def find_pruned_dirs(root: Path, skip: frozenset[str]) -> set[str]:
+    """Return names of *skip*-listed directories under *root* that hold entries.
+
+    Used to warn that real content was excluded by a default skip rule (e.g. a
+    project directory literally named ``build``) instead of dropping it silently.
+    """
+    import os
+
+    pruned: set[str] = set()
+    for dirpath, dirnames, _filenames in os.walk(root):
+        kept = []
+        for d in dirnames:
+            if d in skip or d.startswith("target") or d.endswith(".egg-info"):
+                try:
+                    if any(Path(dirpath, d).iterdir()):
+                        pruned.add(d)
+                except OSError:
+                    pass
+            else:
+                kept.append(d)
+        dirnames[:] = kept  # do not descend into skipped directories
+    return pruned
+
+
 def collect_files(
     root: Path,
     max_nodes: int,
     extra_skip: frozenset[str] = frozenset(),
     git_staged: set[str] | None = None,
+    include: frozenset[str] = frozenset(),
 ) -> list[Path]:
     """Collect files from *root*, honouring skip rules.
 
@@ -83,7 +108,7 @@ def collect_files(
     are ignored.  A directory is also skipped when any path component matches
     the pattern ``target*`` or ends with ``.egg-info``.
     """
-    skip = SKIP_DIRS | extra_skip
+    skip = (SKIP_DIRS | extra_skip) - include
     priority_files: list[Path] = []   # staged / git-modified
     code_files: list[Path] = []
     doc_files: list[Path] = []

@@ -61,6 +61,7 @@ def scan_directory(
     docs: bool = False,
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
+    include: list[str] | None = None,
 ) -> Graph:
     """Scan *root* and build a Graph of file-level (and optionally symbol-level) nodes.
 
@@ -69,11 +70,12 @@ def scan_directory(
     """
     root = root.resolve()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
+    include_set = frozenset(include) if include else frozenset()
 
     # Gather git metadata early so staged files get scan priority.
     dirty_git, churn_git = _get_git_metadata(root)
 
-    files = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git)
+    files = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git, include=include_set)
 
     file_map: dict[str, str] = {}   # rel_posix -> node_id
     for f in files:

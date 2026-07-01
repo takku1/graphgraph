@@ -417,6 +417,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
     skip_dirs: list[str] = list(args.skip_dirs or [])
     exclude_dirs: list[str] = list(getattr(args, "exclude_dirs", None) or [])
     all_skip = skip_dirs + [d for d in exclude_dirs if d not in skip_dirs]
+    include_dirs: list[str] = list(getattr(args, "include", None) or [])
 
     status = scan_validated_graph(
         directory=root,
@@ -424,6 +425,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
         max_nodes=args.max_nodes,
         generic_mentions=args.generic_mentions,
         skip_dirs=tuple(all_skip),
+        include_dirs=tuple(include_dirs),
         depth=args.depth,
         frontend=args.frontend,
         docs=args.docs,
@@ -456,6 +458,27 @@ def cmd_scan(args: argparse.Namespace) -> None:
     print(f"  Source nodes : {source_nodes}  |  Doc nodes : {doc_nodes}  |  Other : {total_nodes - source_nodes - doc_nodes}")
     if all_skip:
         print(f"  Excluded dirs: {', '.join(all_skip)}")
+    if include_dirs:
+        print(f"  Force-included: {', '.join(include_dirs)}")
+    # Surface default-skip directories that actually held content, so real
+    # project dirs literally named e.g. `build`/`out` are not dropped silently.
+    # Never-real infra/VCS/tooling dirs are excluded from the note to keep it
+    # low-noise; ambiguous names (build, out, dist, target, archive, ...) remain.
+    from ..scanner.files import SKIP_DIRS, find_pruned_dirs
+    _NEVER_REPORT = {
+        ".git", ".svn", ".hg", "__pycache__", ".venv", "venv", "env", ".tox",
+        ".mypy_cache", ".pytest_cache", ".eggs", "site-packages", "node_modules",
+        ".graphgraph", ".cache", ".next", ".nuxt", "graphify-out",
+        ".code-review-graph", ".artifacts",
+    }
+    default_skipped = (SKIP_DIRS - set(all_skip) - set(include_dirs)) - _NEVER_REPORT
+    pruned = find_pruned_dirs(root, frozenset(default_skipped))
+    if pruned:
+        print(
+            "  Auto-skipped : "
+            + ", ".join(sorted(pruned))
+            + "  (default rule; re-scan with --include <dir> to keep any of these)"
+        )
     top_kinds = sorted(kind_counts.items(), key=lambda kv: -kv[1])[:8]
     print("  Top kinds    : " + "  ".join(f"{k}={v}" for k, v in top_kinds))
     if source_nodes == 0:

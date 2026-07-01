@@ -108,6 +108,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs",
                       help="Alias: extra directory names to exclude (same as --skip-dirs). "
                            "E.g. --exclude repos references_temp.")
+    scan.add_argument("--include", nargs="*", metavar="DIR",
+                      help="Directory names to keep even though a default skip rule would drop them "
+                           "(e.g. a real project dir named 'build' or 'out'). E.g. --include build out.")
     scan.add_argument("--depth", choices=["files", "symbols"], default="files",
                       help="'files' (default): one node per file. 'symbols': adds function/class/struct nodes.")
     scan.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto",

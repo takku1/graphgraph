@@ -205,7 +205,7 @@ another machine or path.
 Once installed, the CLI tools `graphgraph` and `graphgraph-mcp` are added to your environment path.
 
 ### 1. Build a Native Context Graph
-The scanner builds a symbol-level graph. By default, scanning uses **incremental updates** to only parse changed files.
+The scanner builds a symbol-level graph. With Tree-sitter installed, `--depth symbols` emits class/function/method/struct/enum/interface nodes (with `contains` edges) for Python, JavaScript/TypeScript, Go, Rust, Java, C#, C/C++, Ruby, PHP, Kotlin, Scala, and Swift. Files in languages without a symbol frontend fall back to file-level nodes. By default, scanning uses **incremental updates** to only parse changed files.
 
 ```powershell
 # Standard incremental scan

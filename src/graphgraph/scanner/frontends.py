@@ -115,7 +115,7 @@ class TreeSitterExtractor:
 def tree_sitter_available() -> bool:
     return find_spec("tree_sitter") is not None and any(
         _language_available(name)
-        for name in ("python", "rust", "javascript", "typescript", "go", "java", "c", "cpp")
+        for name in ("python", "rust", "javascript", "typescript", "go", "java", "c", "cpp", "csharp")
     )
 
 
@@ -177,6 +177,12 @@ _SUFFIX_LANGUAGE = {
     ".cxx": "cpp",
     ".cc": "cpp",
     ".hpp": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".swift": "swift",
 }
 
 _LANGUAGE_MODULES = {
@@ -189,6 +195,12 @@ _LANGUAGE_MODULES = {
     "java": ("tree_sitter_java",),
     "c": ("tree_sitter_c",),
     "cpp": ("tree_sitter_cpp",),
+    "csharp": ("tree_sitter_c_sharp",),
+    "ruby": ("tree_sitter_ruby",),
+    "php": ("tree_sitter_php",),
+    "kotlin": ("tree_sitter_kotlin",),
+    "scala": ("tree_sitter_scala",),
+    "swift": ("tree_sitter_swift",),
 }
 
 _DEF_TYPES = {
@@ -206,6 +218,25 @@ _DEF_TYPES = {
     "class": "class",
     "type_declaration": "type",
     "interface_declaration": "interface",
+    # C# (tree-sitter c_sharp)
+    "struct_declaration": "struct",
+    "enum_declaration": "enum",
+    "constructor_declaration": "method",
+    "record_declaration": "class",
+    "record_struct_declaration": "struct",
+    # Ruby
+    "method": "method",
+    "singleton_method": "method",
+    "module": "class",
+    # PHP / Scala traits
+    "trait_declaration": "trait",
+    "trait_definition": "trait",
+    # Kotlin / Scala objects and Scala class/def (function_definition/class_definition
+    # already mapped above)
+    "object_declaration": "class",
+    "object_definition": "class",
+    # Swift protocols
+    "protocol_declaration": "interface",
 }
 
 _NAME_NODE_TYPES = {
@@ -214,6 +245,8 @@ _NAME_NODE_TYPES = {
     "field_identifier",
     "property_identifier",
     "shorthand_property_identifier",
+    "simple_identifier",  # Kotlin function/property names
+    "constant",  # Ruby class/module names
 }
 
 
