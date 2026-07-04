@@ -81,7 +81,7 @@ from graphgraph.retrieval import (
 )
 from graphgraph.retrieval.context import apply_shape_budget
 from graphgraph.retrieval.models import Match
-from graphgraph.services import render_final_packet
+from graphgraph.services import render_final_packet, render_query_context
 from graphgraph.services.context import resolve_start_nodes
 from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
@@ -278,6 +278,19 @@ N1,N2,1,0.9
         result = validate_packet(packet)
         self.assertFalse(result.ok)
         self.assertIn("edge target missing from nodes: N2", result.errors)
+
+    def test_validation_rejects_empty_packets(self) -> None:
+        packets = [
+            "@nodes\n\n@edges\n",
+            "[r]\n1:reads\n[n]\n\n[e]\n",
+            "<g>\n<r>\n1:reads\n</r>\n<n>\n</n>\n<a>\n</a>\n</g>",
+            "TABLE nodes: |\nTABLE edges: |\n",
+        ]
+        for packet in packets:
+            with self.subTest(packet=packet.splitlines()[0]):
+                result = validate_packet(packet)
+                self.assertFalse(result.ok)
+                self.assertIn("empty packet: no nodes", result.errors)
 
     def test_policy_selection(self) -> None:
         policies = [
@@ -1148,6 +1161,16 @@ N1,N2,1,0.9
         self.assertEqual(search_nodes(graph, "scan directory", limit=2)[0].node.id, "SRC")
         self.assertEqual(search_nodes(graph, "test scan directory", limit=2)[0].node.id, "TEST")
 
+    def test_search_nodes_respects_scope(self) -> None:
+        graph = Graph(
+            nodes={
+                "BACKEND": Node("BACKEND", "Alpha", "function", "backend/a.py"),
+                "FRONTEND": Node("FRONTEND", "Alpha", "function", "frontend/a.ts"),
+            }
+        )
+        matches = search_nodes(graph, "alpha", limit=5, scopes=("backend",))
+        self.assertEqual([match.node.id for match in matches], ["BACKEND"])
+
     def test_structural_queries_prefer_code_anchors_over_docs(self) -> None:
         graph = Graph(
             nodes={
@@ -1283,6 +1306,43 @@ N1,N2,1,0.9
             self.assertEqual(components.paired_components, expect["components"]["paired_components"], case["name"])
             self.assertEqual(components.doc_only_components, expect["components"]["doc_only_components"], case["name"])
             self.assertEqual(components.code_only_components, expect["components"]["code_only_components"], case["name"])
+
+    def test_load_eval_tasks_accepts_repo_manifest_shapes(self) -> None:
+        from graphgraph.eval import load_eval_tasks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flat = Path(tmp) / "flat.json"
+            flat.write_text(
+                json.dumps([
+                    {
+                        "question": "What reaches auth?",
+                        "expected_nodes": ["AuthService"],
+                        "expected_edges": [["A", "B"], ["B", "C", "calls"]],
+                    }
+                ]),
+                encoding="utf-8",
+            )
+            nested = Path(tmp) / "nested.json"
+            nested.write_text(
+                json.dumps({
+                    "projects": {
+                        "demo": [
+                            {
+                                "query": "auth blast radius",
+                                "query_class": "blast_radius",
+                                "expected_nodes": ["AuthService"],
+                            }
+                        ]
+                    }
+                }),
+                encoding="utf-8",
+            )
+
+            flat_tasks = load_eval_tasks(flat)
+            nested_tasks = load_eval_tasks(nested)
+            self.assertEqual(flat_tasks[0].query, "What reaches auth?")
+            self.assertEqual(flat_tasks[0].expected_edges, (("A", "B"), ("B", "C", "calls")))
+            self.assertEqual(nested_tasks[0].query, "auth blast radius")
 
     def test_search_short_terms_do_not_match_inside_unrelated_words(self) -> None:
         graph = Graph(
@@ -1493,6 +1553,40 @@ N1,N2,1,0.9
             self.assertEqual(data["anchors"][0]["id"], "N1")
             self.assertIn("[e]", data["packet"])
 
+    def test_render_query_context_honors_hops_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            packet = render_query_context(
+                query="auth service",
+                query_class="blast_radius",
+                graph_path=graph_path,
+                hops=0,
+            )
+            self.assertIn("AuthService", packet)
+            self.assertNotIn("TokenStore", packet)
+            self.assertNotIn("reads", packet)
+
+    def test_mcp_query_context_honors_hops_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            response = dispatch({
+                "jsonrpc": "2.0", "id": 56, "method": "tools/call",
+                "params": {"name": "query_context", "arguments": {
+                    "query": "auth service",
+                    "query_class": "blast_radius",
+                    "graph_path": str(graph_path),
+                    "hops": 0,
+                    "show_anchors": True,
+                }},
+            })
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertEqual(data["anchors"][0]["id"], "N1")
+            self.assertIn("AuthService", data["packet"])
+            self.assertNotIn("N2: TokenStore", data["packet"])
+
     def test_budget_edges_caps_weak_references(self) -> None:
         edges = [Edge("N1", f"N{i}", "references", 0.5) for i in range(30)]
         edges += [Edge("N1", "N2", "calls", 1.0) for _ in range(3)]
@@ -1549,13 +1643,15 @@ N1,N2,1,0.9
     def test_retrieve_context_respects_scope(self) -> None:
         graph = Graph(
             nodes={
-                "A": Node("A", "Alpha", path="backend/a.py"),
+                "A": Node("A", "Alpha Worker", path="backend/a.py"),
                 "B": Node("B", "Beta", path="backend/b.py"),
-                "C": Node("C", "Client", path="frontend/c.ts"),
+                "C": Node("C", "Alpha", path="frontend/c.ts"),
             },
-            edges=[Edge("A", "B", "calls"), Edge("A", "C", "calls")],
+            edges=[Edge("A", "B", "calls"), Edge("C", "A", "calls")],
         )
         result = retrieve_context(graph, "alpha", "blast_radius", hops=1, scopes=("backend",))
+        self.assertEqual(result.starts, ("A",))
+        self.assertIn("A", result.nodes)
         self.assertIn("B", result.nodes)
         self.assertNotIn("C", result.nodes)
 
@@ -2332,6 +2428,52 @@ N1,N2,1,0.9
         finally:
             sys.stdout = original_stdout
             fake_stdout.detach()
+
+    def test_cli_validate_empty_packet_exits_nonzero(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        proc = subprocess.run(
+            [sys.executable, "-m", "graphgraph", "validate"],
+            input="@nodes\n\n@edges\n",
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL semantic_arrow nodes=0 edges=0", proc.stdout)
+        self.assertIn("empty packet: no nodes", proc.stdout)
+
+    def test_cli_final_bad_start_exits_cleanly(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "graphgraph",
+                    "final",
+                    "--graph",
+                    str(graph_path),
+                    "--query-class",
+                    "blast_radius",
+                    "--starts",
+                    "totally_bogus_id",
+                ],
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("Error: No graph nodes matched the requested starts", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
 
     def test_cmd_install_project(self) -> None:
         import os

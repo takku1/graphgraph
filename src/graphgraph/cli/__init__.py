@@ -21,9 +21,15 @@ def _configure_stdio() -> None:
 
 
 def main() -> None:
+    import sys
+
     _configure_stdio()
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 __all__ = ["build_parser", "main", "_configure_stdio"]

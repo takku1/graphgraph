@@ -23,7 +23,14 @@ class SearchIndexRow:
     path_name_exact_sequence: tuple[str, ...]
 
 
-def search_nodes(graph: Graph, query: str, limit: int = 20, doc_intensity: float = 0.0, personalize: bool = False) -> tuple[Match, ...]:
+def search_nodes(
+    graph: Graph,
+    query: str,
+    limit: int = 20,
+    doc_intensity: float = 0.0,
+    personalize: bool = False,
+    scopes: tuple[str, ...] = (),
+) -> tuple[Match, ...]:
     """Rank graph nodes with a deterministic lexical score."""
     terms = tokenize(query)
     if not terms:
@@ -32,9 +39,12 @@ def search_nodes(graph: Graph, query: str, limit: int = 20, doc_intensity: float
     test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
 
     degree = graph.degree()
+    rows = tuple(row for row in _search_index(graph) if _row_in_scope(row, scopes))
+    if not rows:
+        return ()
     if personalize:
         personalization = {}
-        for row in _search_index(graph):
+        for row in rows:
             node_id = row.node_id
             score = 0.0
             for term in terms:
@@ -50,7 +60,7 @@ def search_nodes(graph: Graph, query: str, limit: int = 20, doc_intensity: float
     else:
         pagerank_scores = graph.pagerank()
     matches: list[Match] = []
-    for row in _search_index(graph):
+    for row in rows:
         node = row.node
         haystack = row.haystack
         haystack_terms = row.haystack_terms
@@ -187,6 +197,21 @@ def search_nodes(graph: Graph, query: str, limit: int = 20, doc_intensity: float
 
     matches.sort(key=lambda m: (-m.score, m.node.path, m.node.label))
     return tuple(matches[:limit])
+
+
+def _row_in_scope(row: SearchIndexRow, scopes: tuple[str, ...]) -> bool:
+    if not scopes:
+        return True
+    values = (row.node.scope, row.node.path, row.node.source)
+    for value in values:
+        if not value:
+            continue
+        normalized = value.replace("\\", "/").strip("/")
+        for raw_scope in scopes:
+            scope = raw_scope.replace("\\", "/").strip("/")
+            if normalized == scope or normalized.startswith(scope + "/"):
+                return True
+    return False
 
 
 def _is_test_node(node: Node) -> bool:

@@ -16,7 +16,7 @@ class EvalTask:
     query: str
     query_class: str
     expected_nodes: tuple[str, ...] = ()
-    expected_edges: tuple[tuple[str, str, str], ...] = ()
+    expected_edges: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -32,16 +32,37 @@ class EvalResult:
 
 def load_eval_tasks(path: Path) -> list[EvalTask]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    tasks = data.get("tasks", data) if isinstance(data, dict) else data
+    tasks = _iter_task_records(data)
     out: list[EvalTask] = []
     for task in tasks:
+        query = task.get("query", task.get("question"))
+        if not query:
+            continue
         out.append(EvalTask(
-            query=str(task["query"]),
+            query=str(query),
             query_class=str(task.get("query_class", "blast_radius")),
             expected_nodes=tuple(str(item) for item in task.get("expected_nodes", [])),
-            expected_edges=tuple(tuple(edge) for edge in task.get("expected_edges", [])),
+            expected_edges=tuple(tuple(str(part) for part in edge) for edge in task.get("expected_edges", [])),
         ))
     return out
+
+
+def _iter_task_records(data: object) -> list[dict[str, object]]:
+    if isinstance(data, list):
+        return [task for task in data if isinstance(task, dict)]
+    if not isinstance(data, dict):
+        return []
+    tasks = data.get("tasks")
+    if isinstance(tasks, list):
+        return [task for task in tasks if isinstance(task, dict)]
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        out: list[dict[str, object]] = []
+        for project_tasks in projects.values():
+            if isinstance(project_tasks, list):
+                out.extend(task for task in project_tasks if isinstance(task, dict))
+        return out
+    return []
 
 
 def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | None = None) -> list[EvalResult]:
@@ -67,7 +88,7 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
             query=task.query,
             query_class=task.query_class,
             node_recall=_node_recall(task.expected_nodes, returned_node_keys),
-            edge_recall=_recall(set(task.expected_edges), returned_edges),
+            edge_recall=_edge_recall(task.expected_edges, returned_edges),
             returned_nodes=len(retrieved.nodes),
             returned_edges=len(retrieved.edges),
             token_estimate=estimate_tokens(packet),
@@ -88,6 +109,20 @@ def _recall(expected: set[object], returned: set[object]) -> float:
     if not expected:
         return 1.0
     return len(expected & returned) / len(expected)
+
+
+def _edge_recall(expected: tuple[tuple[str, ...], ...], returned: set[tuple[str, str, str]]) -> float:
+    if not expected:
+        return 1.0
+    returned_pairs = {(source, target) for source, target, _type in returned}
+    hits = 0
+    for edge in expected:
+        if len(edge) >= 3:
+            if (edge[0], edge[1], edge[2]) in returned:
+                hits += 1
+        elif len(edge) == 2 and (edge[0], edge[1]) in returned_pairs:
+            hits += 1
+    return hits / len(expected)
 
 
 def _node_recall(expected: tuple[str, ...], returned: set[str]) -> float:

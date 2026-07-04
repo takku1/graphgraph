@@ -207,6 +207,7 @@ def render_query_context(
     query_class: str = "blast_radius",
     graph_path: Path | None = None,
     packet: str | None = None,
+    hops: int | None = None,
     anchor_limit: int | None = None,
     max_nodes: int | None = None,
     scopes: tuple[str, ...] = (),
@@ -216,7 +217,7 @@ def render_query_context(
 ) -> str:
     resolved_graph_path = graph_path or find_graph_path()
     graph = load_any(resolved_graph_path)
-    plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes)
+    plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
     result = retrieve_context(
         graph,
         query,
@@ -234,7 +235,7 @@ def render_query_context(
     if packet is None:
         plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, result.nodes, result.edges))
     else:
-        plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, packet=packet)
+        plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops, packet=packet)
 
     cache = TopologicalKVCache()
     cache_key = compute_cache_key(

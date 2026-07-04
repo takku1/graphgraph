@@ -275,6 +275,7 @@ def cmd_query(args: argparse.Namespace) -> None:
         query_class=args.query_class,
         graph_path=graph_path,
         packet=args.packet,
+        hops=args.hops,
         anchor_limit=args.anchor_limit,
         max_nodes=args.max_nodes,
         scopes=tuple(args.scope),
@@ -389,9 +390,12 @@ def cmd_validate(args: argparse.Namespace) -> None:
             print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
             for error in result.errors:
                 print(f"- {error}")
+            if not result.ok:
+                sys.exit(1)
             return
         print("FAIL no input: pipe a packet via stdin, pass --packet <file>, or run `graphgraph validate-graph`.")
         print("  (no saved graph found under .graphgraph/ to auto-detect)")
+        sys.exit(1)
         return
 
     result = validate_any(packet)
@@ -399,6 +403,8 @@ def cmd_validate(args: argparse.Namespace) -> None:
     print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count}")
     for error in result.errors:
         print(f"- {error}")
+    if not result.ok:
+        sys.exit(1)
 
 
 def cmd_validate_graph(args: argparse.Namespace) -> None:
@@ -408,6 +414,8 @@ def cmd_validate_graph(args: argparse.Namespace) -> None:
     print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
     for error in result.errors:
         print(f"- {error}")
+    if not result.ok:
+        sys.exit(1)
 
 
 def cmd_scan(args: argparse.Namespace) -> None:

@@ -224,7 +224,14 @@ def retrieve_context(
     if max_nodes is None:
         plan = apply_shape_budget(graph, plan, query)
     candidate_limit = max(plan.anchor_limit, plan.anchor_limit * 3 if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit)
-    matches = search_nodes(graph, query, limit=max(candidate_limit, 1), doc_intensity=doc_intensity)
+    matches = search_nodes(
+        graph,
+        query,
+        limit=max(candidate_limit, 1),
+        doc_intensity=doc_intensity,
+        personalize=True,
+        scopes=scopes,
+    )
     effective_anchor_limit = _adaptive_anchor_limit(matches, plan, query) if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit
     selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class)
     starts = tuple(match.node.id for match in selected_matches)

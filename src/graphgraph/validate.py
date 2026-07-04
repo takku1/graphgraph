@@ -17,16 +17,28 @@ class ValidationResult:
 def validate_packet(packet: str) -> ValidationResult:
     text = packet.strip()
     if text.startswith("<g>"):
-        return validate_lowlevel(text)
+        return _require_nonempty_nodes(validate_lowlevel(text))
     if text.startswith("TABLE nodes:"):
-        return validate_sql(text)
+        return _require_nonempty_nodes(validate_sql(text))
     if text.startswith("[r]") or "[r]" in text:
-        return validate_gg_max(text)
+        return _require_nonempty_nodes(validate_gg_max(text))
     if text.startswith("@nodes") or "@nodes" in text:
-        return validate_semantic_arrow(text)
+        return _require_nonempty_nodes(validate_semantic_arrow(text))
     if text.startswith("[d]"):
-        return validate_doc_summary(text)
+        return _require_nonempty_nodes(validate_doc_summary(text))
     return ValidationResult(False, "unknown", 0, 0, ("unknown packet format",))
+
+
+def _require_nonempty_nodes(result: ValidationResult) -> ValidationResult:
+    if result.ok and result.node_count == 0:
+        return ValidationResult(
+            False,
+            result.format,
+            result.node_count,
+            result.edge_count,
+            result.errors + ("empty packet: no nodes",),
+        )
+    return result
 
 
 def validate_graph_json(graph_json: str) -> ValidationResult:
