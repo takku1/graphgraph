@@ -81,7 +81,7 @@ from graphgraph.retrieval import (
 )
 from graphgraph.retrieval.context import apply_shape_budget
 from graphgraph.retrieval.models import Match
-from graphgraph.services import render_final_packet, render_query_context
+from graphgraph.services import render_final_packet, render_query_context, render_source_snippets
 from graphgraph.services.context import resolve_start_nodes
 from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
@@ -1590,6 +1590,58 @@ N1,N2,1,0.9
             self.assertEqual(data["anchors"][0]["id"], "N1")
             self.assertIn("AuthService", data["packet"])
             self.assertNotIn("N2: TokenStore", data["packet"])
+
+    def test_render_source_snippets_uses_node_line_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "auth.py"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "def helper():\n"
+                "    return 1\n"
+                "\n"
+                "def login():\n"
+                "    token = helper()\n"
+                "    return token\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir()
+            graph = Graph(nodes={
+                "F": Node("F", "login", "function", "src/auth.py", summary="L4"),
+            })
+            save_graph(graph, graph_path)
+
+            out = render_source_snippets(starts=["F"], graph_path=graph_path, context_lines=1, max_lines=5)
+            self.assertIn("## login (F)", out)
+            self.assertIn("src/auth.py:3", out)
+            self.assertIn("4 | def login():", out)
+            self.assertIn("5 |     token = helper()", out)
+            self.assertNotIn("1 | def helper", out)
+
+    def test_mcp_source_snippets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "auth.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("def login():\n    return 'ok'\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir()
+            save_graph(Graph(nodes={"F": Node("F", "login", "function", "src/auth.py", summary="L1")}), graph_path)
+
+            response = dispatch({
+                "jsonrpc": "2.0", "id": 57, "method": "tools/call",
+                "params": {"name": "source_snippets", "arguments": {
+                    "graph_path": str(graph_path),
+                    "starts": ["login"],
+                    "context_lines": 0,
+                    "max_lines": 3,
+                }},
+            })
+            assert response is not None
+            text = response["result"]["content"][0]["text"]
+            self.assertIn("## login (F)", text)
+            self.assertIn("1 | def login():", text)
 
     def test_budget_edges_caps_weak_references(self) -> None:
         edges = [Edge("N1", f"N{i}", "references", 0.5) for i in range(30)]

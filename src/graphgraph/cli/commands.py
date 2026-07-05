@@ -21,7 +21,7 @@ from ..planning import (
     recommend_node_budget,
     refine_plan_for_subgraph,
 )
-from ..services import render_final_packet, render_query_context, render_stable_skeleton
+from ..services import render_final_packet, render_query_context, render_source_snippets, render_stable_skeleton
 from ..services.context import resolve_start_nodes
 from ..services.native import build_project_status, graph_shape, render_native_context, scan_validated_graph
 from ..traversal import POLICIES, traversal_policy
@@ -289,6 +289,18 @@ def cmd_query(args: argparse.Namespace) -> None:
         cache_namespace="cli_query",
     )
     print(output)
+
+
+def cmd_snippets(args: argparse.Namespace) -> None:
+    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    print(
+        render_source_snippets(
+            starts=list(args.starts),
+            graph_path=graph_path,
+            context_lines=args.context_lines,
+            max_lines=args.max_lines,
+        )
+    )
 
 
 def cmd_context(args: argparse.Namespace) -> None:

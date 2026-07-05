@@ -10,7 +10,7 @@ from ..io import find_graph_path, load_any, save_gg, save_validated_graph
 from ..ontology import DEFAULT_RELATIONS
 from ..planning import plan_context
 from ..retrieval import search_nodes
-from ..services import render_final_packet, render_query_context
+from ..services import render_final_packet, render_query_context, render_source_snippets
 from ..services.native import build_project_status, scan_validated_graph
 from ..traversal import POLICIES, traversal_policy
 from ..validate import validate_packet
@@ -107,6 +107,23 @@ TOOLS = [
                 "packet": {"type": "string"},
             },
             "required": ["packet"],
+        },
+    },
+    {
+        "name": "source_snippets",
+        "description": (
+            "Render bounded source excerpts for selected graph node IDs, labels, or paths. "
+            "Use this after query_context when exact code lines are needed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {"type": "string", "description": "Path to native graphgraph graph; auto-detected if omitted."},
+                "starts": {"type": "array", "items": {"type": "string"}, "description": "Node IDs, labels, or paths."},
+                "context_lines": {"type": "integer", "description": "Lines before/after symbol line. Default: 4."},
+                "max_lines": {"type": "integer", "description": "Maximum lines per excerpt. Default: 40."},
+            },
+            "required": ["starts"],
         },
     },
     {
@@ -258,6 +275,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
             "edge_count": result.edge_count,
             "errors": list(result.errors),
         }))
+    if name == "source_snippets":
+        return content(handle_source_snippets(args))
     if name == "build_graph":
         return content(handle_build_graph(args))
     if name == "search_nodes":
@@ -325,6 +344,17 @@ def build_query_context(args: dict[str, Any]) -> str:
         show_anchors=bool(args.get("show_anchors")),
         cache_namespace="mcp_query",
         json_anchors=True,
+    )
+
+
+def handle_source_snippets(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    return render_source_snippets(
+        starts=[str(item) for item in args["starts"]],
+        graph_path=graph_path,
+        context_lines=int(args.get("context_lines") or 4),
+        max_lines=int(args.get("max_lines") or 40),
     )
 
 

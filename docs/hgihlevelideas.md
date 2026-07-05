@@ -47,6 +47,13 @@ query-specific packets that an LLM can actually use.
    - Support flat task lists, `tasks`, nested `projects`, `query`, and
      `question` task records.
 
+9. Lazy source snippets
+   - First-stage packets stay graph-shaped and compact.
+   - Exact source is loaded only for selected node IDs, labels, or paths via
+     the `snippets` CLI/MCP path.
+   - Excerpts are bounded by line count and centered on node line metadata when
+     available.
+
 ## Deferred Until There Is A Benchmark Need
 
 1. SQLite/duckdb/mmap runtime store
@@ -65,10 +72,6 @@ query-specific packets that an LLM can actually use.
 4. Contradiction detection
    - Valuable, but it needs doc/code alignment metrics and explicit false
      positive handling. Do not bolt it into retrieval as a heuristic.
-
-5. Source-snippet lazy loading
-   - Good product direction, but it should be a second MCP/CLI call that takes
-     selected node IDs and returns exact line ranges.
 
 ## Rejected As Currently Too Vague
 
@@ -89,4 +92,4 @@ query-specific packets that an LLM can actually use.
 2. Measure loaded-graph search latency separately from CLI startup.
 3. Use packet dependency metadata for incremental cache invalidation once the
    scanner exposes changed node IDs and changed paths.
-4. Add a lazy source-snippet command for selected node IDs.
+4. Build project-specific benchmarks for snippet usefulness and answer impact.

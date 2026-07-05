@@ -17,6 +17,7 @@ from .commands import (
     cmd_query,
     cmd_render,
     cmd_scan,
+    cmd_snippets,
     cmd_status,
     cmd_traversal,
     cmd_validate,
@@ -81,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--show-anchors", action="store_true")
     context.add_argument("--show-stats", action="store_true", help="Print graph load/build shape metrics to stderr.")
     context.set_defaults(func=cmd_context)
+
+    snippets = sub.add_parser("snippets", help="Render bounded source excerpts for selected graph node IDs, labels, or paths.")
+    snippets.add_argument("--graph", help="Graph JSON path. Auto-detected from .graphgraph if omitted.")
+    snippets.add_argument("--starts", nargs="+", required=True, help="Node IDs, labels, or paths to load source for.")
+    snippets.add_argument("--context-lines", type=int, default=4, help="Lines before/after symbol line. Default: 4.")
+    snippets.add_argument("--max-lines", type=int, default=40, help="Maximum lines per excerpt. Default: 40.")
+    snippets.set_defaults(func=cmd_snippets)
 
     status = sub.add_parser("status", help="Summarize graph validity, code/doc balance, package metadata, and optional runtime probes.")
     status.add_argument("--directory", "-d", help="Project root directory (default: cwd).")
