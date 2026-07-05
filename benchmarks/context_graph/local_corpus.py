@@ -30,6 +30,16 @@ OWN_PROJECT_NAMES: tuple[str, ...] = (
 )
 
 # resources/*: small/medium tier (roughly <2500 source files), no cap needed.
+#
+# crewAI is deliberately excluded: it's a ~20k-file monorepo (multiple nested
+# packages plus several fully-duplicated versioned doc snapshots under
+# docs/v1.x.x/) containing 30k-40k-line generated JSON "doc" files
+# (docs/docs.json, lib/crewai-tools/tool.specs.json). With docs=True the doc
+# extraction path spent 10+ minutes on it without finishing, wildly out of
+# line with every other repo of comparable raw file count -- a real scanner
+# perf edge case on pathological doc dumps, but out of scope for the storage
+# backend bake-off this corpus feeds. Revisit if scanner doc-extraction gets
+# a size guard.
 RESOURCES_SMALL_MEDIUM_NAMES: tuple[str, ...] = (
     "requests",
     "flask",
@@ -38,7 +48,6 @@ RESOURCES_SMALL_MEDIUM_NAMES: tuple[str, ...] = (
     "graphify",
     "langgraph",
     "redis",
-    "crewAI",
     "sympy",
     "z3",
     "lean",
