@@ -232,7 +232,13 @@ def cmd_render(args: argparse.Namespace) -> None:
         return
 
     packet = render_packet(graph, nodes, edges, plan.packet)
-    cache.set(graph_path, cache_key, packet)
+    cache.set(
+        graph_path,
+        cache_key,
+        packet,
+        node_ids=nodes,
+        paths=[graph.nodes[node_id].path for node_id in nodes if node_id in graph.nodes and graph.nodes[node_id].path],
+    )
     print(packet)
 
 

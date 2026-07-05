@@ -110,7 +110,13 @@ def render_final_packet(
         out_lines.append("GRAPH:")
     out_lines.append(graph_packet)
     final_output = "\n".join(out_lines)
-    cache.set(resolved_graph_path, cache_key, final_output)
+    cache.set(
+        resolved_graph_path,
+        cache_key,
+        final_output,
+        node_ids=nodes,
+        paths=_node_paths(graph, nodes),
+    )
     return final_output
 
 
@@ -284,7 +290,13 @@ def render_query_context(
     else:
         response = graph_packet
 
-    cache.set(resolved_graph_path, cache_key, response)
+    cache.set(
+        resolved_graph_path,
+        cache_key,
+        response,
+        node_ids=result.nodes,
+        paths=_node_paths(graph, result.nodes),
+    )
     return response
 
 
@@ -292,3 +304,13 @@ def _raise_if_invalid(packet: str) -> None:
     validation = validate_packet(packet)
     if not validation.ok:
         raise ValueError("generated graph packet failed validation: " + "; ".join(validation.errors))
+
+
+def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            node.path
+            for node_id in node_ids
+            if (node := graph.nodes.get(node_id)) is not None and node.path
+        )
+    )

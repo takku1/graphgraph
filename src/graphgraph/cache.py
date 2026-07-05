@@ -66,9 +66,22 @@ class TopologicalKVCache:
         self._hits += 1
         return entry.get("packet")
 
-    def set(self, graph_path: Path, key: str, packet: str) -> None:
+    def set(
+        self,
+        graph_path: Path,
+        key: str,
+        packet: str,
+        *,
+        node_ids: list[str] | set[str] | tuple[str, ...] = (),
+        paths: list[str] | set[str] | tuple[str, ...] = (),
+    ) -> None:
         mtime = graph_path.stat().st_mtime if graph_path.exists() else 0.0
-        self.cache_data[key] = {"graph_mtime": mtime, "packet": packet}
+        self.cache_data[key] = {
+            "graph_mtime": mtime,
+            "packet": packet,
+            "node_ids": sorted(set(node_ids)),
+            "paths": sorted(path for path in set(paths) if path),
+        }
         self.cache_data.move_to_end(key)
         while len(self.cache_data) > self.max_entries:
             self.cache_data.popitem(last=False)

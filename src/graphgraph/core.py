@@ -66,6 +66,7 @@ class Graph:
     metadata: dict[str, str] = field(default_factory=dict)
     _pagerank_cache: tuple[tuple[object, ...], dict[str, float]] | None = field(default=None, init=False, repr=False)
     _search_index_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
+    _search_token_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
 
     def _edges_by_key(self, key_fn: Callable[[Edge], str]) -> dict[str, list[Edge]]:
         grouped: dict[str, list[Edge]] = {}

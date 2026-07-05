@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 
 from ..core import Graph, Node
@@ -39,7 +40,7 @@ def search_nodes(
     test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
 
     degree = graph.degree()
-    rows = tuple(row for row in _search_index(graph) if _row_in_scope(row, scopes))
+    rows = _candidate_rows(graph, terms, scopes)
     if not rows:
         return ()
     if personalize:
@@ -212,6 +213,45 @@ def _row_in_scope(row: SearchIndexRow, scopes: tuple[str, ...]) -> bool:
             if normalized == scope or normalized.startswith(scope + "/"):
                 return True
     return False
+
+
+def _candidate_rows(graph: Graph, terms: tuple[str, ...], scopes: tuple[str, ...]) -> tuple[SearchIndexRow, ...]:
+    rows = _search_index(graph)
+    if not terms:
+        return ()
+    if scopes:
+        scoped = tuple(row for row in rows if _row_in_scope(row, scopes))
+        if not scoped:
+            return ()
+        rows = scoped
+
+    by_term = _search_token_index(graph)
+    candidate_ids: set[str] = set()
+    for term in terms:
+        candidate_ids.update(by_term.get(term, ()))
+    if not candidate_ids:
+        return rows
+    return tuple(row for row in rows if row.node.id in candidate_ids)
+
+
+def _search_token_index(graph: Graph) -> dict[str, tuple[str, ...]]:
+    key = _search_index_key(graph)
+    if graph._search_token_cache and graph._search_token_cache[0] == key:
+        return graph._search_token_cache[1]  # type: ignore[return-value]
+    by_term: dict[str, set[str]] = defaultdict(set)
+    for row in _search_index(graph):
+        tokens = (
+            set(row.haystack_terms)
+            | set(row.label_terms)
+            | set(row.path_name_terms)
+            | {row.node_id, row.label, row.path}
+        )
+        for token in tokens:
+            if token:
+                by_term[token].add(row.node.id)
+    cached = {term: tuple(sorted(node_ids)) for term, node_ids in by_term.items()}
+    graph._search_token_cache = (key, cached)
+    return cached
 
 
 def _is_test_node(node: Node) -> bool:

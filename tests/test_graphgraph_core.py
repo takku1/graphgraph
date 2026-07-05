@@ -1359,12 +1359,16 @@ N1,N2,1,0.9
         self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
         cache = graph._search_index_cache
         self.assertIsNotNone(cache)
+        token_cache = graph._search_token_cache
+        self.assertIsNotNone(token_cache)
         self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
         self.assertIs(graph._search_index_cache, cache)
+        self.assertIs(graph._search_token_cache, token_cache)
 
         graph.nodes["B"] = Node("B", "BetaSearch", "function", "src/b.py")
         self.assertEqual(search_nodes(graph, "beta search", limit=1)[0].node.id, "B")
         self.assertIsNot(graph._search_index_cache, cache)
+        self.assertIsNot(graph._search_token_cache, token_cache)
 
     def test_render_doc_summary_omits_topology_and_keeps_facts(self) -> None:
         graph = Graph(
@@ -2346,10 +2350,28 @@ N1,N2,1,0.9
             self.assertIsNone(cache.get(graph_path, key))
             cache.set(graph_path, key, "rendered_packet_data")
             self.assertEqual(cache.get(graph_path, key), "rendered_packet_data")
+            self.assertEqual(cache.cache_data[key]["node_ids"], [])
+            self.assertEqual(cache.cache_data[key]["paths"], [])
 
             time.sleep(0.01)
             graph_path.write_text('{"nodes": {}}', encoding="utf-8")
             self.assertIsNone(cache.get(graph_path, key))
+
+    def test_kv_cache_records_packet_dependencies(self) -> None:
+        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            graph_path = tmp / "graph.json"
+            graph_path.write_text("{}", encoding="utf-8")
+            cache = TopologicalKVCache(tmp / "kv_cache.json")
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg_max")
+            cache.set(graph_path, key, "packet", node_ids={"B", "A"}, paths={"src/a.py", ""})
+
+            loaded = TopologicalKVCache(tmp / "kv_cache.json")
+            self.assertEqual(loaded.get(graph_path, key), "packet")
+            self.assertEqual(loaded.cache_data[key]["node_ids"], ["A", "B"])
+            self.assertEqual(loaded.cache_data[key]["paths"], ["src/a.py"])
 
     def test_kv_cache_stats(self) -> None:
         from graphgraph.cache import TopologicalKVCache, compute_cache_key
