@@ -36,6 +36,13 @@ DEFAULT_PROJECT_PATHS = (
     r"C:\Users\dcarn\aiprojects\resources\regex",
     r"C:\Users\dcarn\aiprojects\resources\z3",
 )
+LOCAL_PROJECT_PATHS = (
+    r"C:\Users\dcarn\aiprojects\graphgraph",
+    r"C:\Users\dcarn\aiprojects\contextminer",
+    r"C:\Users\dcarn\aiprojects\chess",
+    r"C:\Users\dcarn\aiprojects\slotmachine",
+)
+RESOURCES_ROOT = Path(r"C:\Users\dcarn\aiprojects\resources")
 
 GENERIC_LABELS = {
     "__call__",
@@ -125,6 +132,10 @@ def project_paths() -> list[Path]:
     raw = os.environ.get("CROSS_REPO_PATHS")
     if raw:
         return [Path(item.strip()) for item in raw.split(";") if item.strip()]
+    if os.environ.get("CROSS_REPO_SUITE") == "expanded":
+        resources = sorted(RESOURCES_ROOT.iterdir()) if RESOURCES_ROOT.exists() else ()
+        resource_paths = [path for path in resources if path.is_dir()]
+        return [Path(item) for item in LOCAL_PROJECT_PATHS] + resource_paths
     return [Path(item) for item in DEFAULT_PROJECT_PATHS]
 
 
@@ -408,6 +419,15 @@ def write(rows: list[dict[str, object]], *, max_nodes: int, frontend: str) -> No
     if failures:
         lines.extend([
             "",
+            "## Failure Classes",
+            "",
+            "| Class | Count |",
+            "| --- | ---: |",
+        ])
+        for label, count in failure_class_counts(failures).items():
+            lines.append(f"| {label} | {count} |")
+        lines.extend([
+            "",
             "## Failures",
             "",
             "| Project | Kind | Class | Query | Recall | Missing |",
@@ -432,6 +452,37 @@ def write(rows: list[dict[str, object]], *, max_nodes: int, frontend: str) -> No
 def avg(rows: list[dict[str, object]], key: str) -> float:
     values = [float(row[key]) for row in rows if row.get(key) not in {"", None}]
     return sum(values) / max(1, len(values))
+
+
+def failure_class_counts(rows: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        label = classify_failure(row)
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def classify_failure(row: dict[str, object]) -> str:
+    query = str(row.get("query", ""))
+    terms = query.split()
+    kind = str(row.get("task_kind", ""))
+    missing = str(row.get("missing", "")).lower()
+    hits = int(float(row.get("hits", 0) or 0))
+    if kind == "concept_summary":
+        return "concept anchor/prune miss"
+    if kind == "file_summary":
+        return "file basename miss"
+    if kind == "negative_sparse":
+        return "negative sparse basename tie"
+    if kind == "symbol_direct" and len(terms) == 1:
+        return "ambiguous duplicate symbol"
+    if kind == "hub_blast" and hits > 0:
+        return "partial blast-radius neighborhood"
+    if kind == "hub_blast" and ("test_" in missing or "tests_" in missing):
+        return "test hub ambiguity"
+    if kind == "hub_blast":
+        return "generic blast-radius anchor"
+    return "other"
 
 
 def safe_name(value: str) -> str:

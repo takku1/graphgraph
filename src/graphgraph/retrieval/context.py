@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 from ..core import Edge, Graph
@@ -52,7 +53,9 @@ def expand_context(
     stats = compute_subgraph_stats(graph, nodes, edges)
     weak_limit = adaptive_weak_edge_limit(plan.weak_edge_limit, stats.weak_edge_ratio, stats.relation_entropy, stats.edges)
     edges = budget_edges(edges, max_nodes=effective_node_budget, weak_limit=weak_limit)
+    nodes, edges = reserve_start_evidence(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
     nodes, edges = prune_doc_concept_noise(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
+    edges = shape_edge_budget(edges, tuple(starts), plan, node_count=len(nodes))
     return enrich_runtime_context(graph, nodes, edges, max_nodes=effective_node_budget)
 
 
@@ -62,6 +65,192 @@ def adaptive_weak_edge_limit(base_limit: int, weak_edge_ratio: float, relation_e
     if relation_entropy <= 0.2:
         return max(3, base_limit // 2)
     return max(4, int(base_limit * 0.75))
+
+
+def shape_edge_budget(edges: list[Edge], starts: tuple[str, ...], plan: ContextPlan, node_count: int) -> list[Edge]:
+    """Sparsify dense rendered edge fans from observed subgraph shape.
+
+    The node set is the recall surface; very dense packets usually become noisy
+    because repetitive relations such as imports/explains dominate the edge
+    section. This keeps start-adjacent evidence, preserves every present
+    relation with a sqrt-sized floor, then fills the remaining edge budget by
+    traversal priority.
+    """
+    if plan.query_class not in {"blast_radius", "subsystem_summary"}:
+        return edges
+    if node_count <= 0 or not edges:
+        return edges
+
+    density = len(edges) / max(1, node_count)
+    if density <= 2.0:
+        return edges
+
+    target_density = 1.0 + (1.0 / math.sqrt(density))
+    target_edges = max(node_count, int(round(node_count * target_density)))
+    if target_edges >= len(edges):
+        return edges
+
+    start_set = set(starts)
+    relation_counts: dict[str, int] = {}
+    for edge in edges:
+        relation_counts[edge.type] = relation_counts.get(edge.type, 0) + 1
+
+    relation_floors = {
+        relation: max(1, int(math.sqrt(count)))
+        for relation, count in relation_counts.items()
+    }
+    relation_kept = {relation: 0 for relation in relation_counts}
+    kept: list[Edge] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(edge: Edge) -> None:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen:
+            return
+        kept.append(edge)
+        seen.add(key)
+        relation_kept[edge.type] = relation_kept.get(edge.type, 0) + 1
+
+    ranked = sorted(edges, key=lambda edge: _edge_shape_rank(edge, start_set, plan))
+
+    for edge in ranked:
+        if edge.source in start_set or edge.target in start_set:
+            add(edge)
+            if len(kept) >= target_edges:
+                return kept
+
+    for edge in ranked:
+        if relation_kept.get(edge.type, 0) < relation_floors.get(edge.type, 0):
+            add(edge)
+            if len(kept) >= target_edges:
+                return kept
+
+    for edge in ranked:
+        add(edge)
+        if len(kept) >= target_edges:
+            break
+    return kept
+
+
+def _edge_shape_rank(edge: Edge, starts: set[str], plan: ContextPlan) -> tuple[int, int, int, str, str, str]:
+    start_priority = 0 if edge.source in starts or edge.target in starts else 1
+    relation = relation_rank(edge.type, traversal_policy(plan.query_class))
+    return (start_priority, *relation, edge.source, edge.target, edge.type)
+
+
+def reserve_start_evidence(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    max_nodes: int | None,
+    reserve_limit: int = 16,
+) -> tuple[set[str], list[Edge]]:
+    """Keep first-order structural evidence for selected anchors.
+
+    Dense blast-radius neighborhoods can fill the node budget with high-degree
+    callers before keeping a selected file's children, a symbol's parent file,
+    or an immediate callee. Those neighbors are load-bearing context for the
+    selected anchor, so reserve a small deterministic slice for them.
+    """
+    if plan.query_class != "blast_radius" or plan.hops <= 0:
+        return nodes, edges
+
+    start_set = set(starts)
+    candidates: list[tuple[tuple[int, int, str], str, Edge]] = []
+    for edge in graph.edges:
+        if not edge.active:
+            continue
+        neighbor: str | None = None
+        if edge.type == "contains" and edge.source in start_set:
+            neighbor = edge.target
+        elif edge.type == "contains" and edge.target in start_set:
+            neighbor = edge.source
+        elif edge.type in STRUCTURAL_RELATIONS and edge.source in start_set:
+            neighbor = edge.target
+        if not neighbor or neighbor not in graph.nodes or not graph.nodes[neighbor].active:
+            continue
+        candidates.append((relation_rank(edge.type, traversal_policy(plan.query_class)), neighbor, edge))
+
+    test_support_nodes = reserve_test_support_files(graph, starts)
+
+    if not candidates and not test_support_nodes:
+        return nodes, edges
+
+    out_nodes = set(nodes)
+    ranked_candidates = sorted(
+        candidates,
+        key=lambda item: (
+            _start_evidence_priority(item[2], start_set),
+            *item[0],
+            item[1],
+            item[2].source,
+            item[2].target,
+            item[2].type,
+        ),
+    )
+    protected = start_set | set(test_support_nodes) | {neighbor for _rank, neighbor, _edge in ranked_candidates[:reserve_limit]}
+    for _rank, neighbor, _edge in ranked_candidates[:reserve_limit]:
+        if neighbor in out_nodes:
+            continue
+        if max_nodes is not None and len(out_nodes) >= max_nodes:
+            removable = _least_valuable_context_node(graph, out_nodes, protected=protected)
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(neighbor)
+    for node_id in test_support_nodes:
+        if node_id in out_nodes:
+            continue
+        if max_nodes is not None and len(out_nodes) >= max_nodes:
+            removable = _least_valuable_context_node(graph, out_nodes, protected=protected)
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(node_id)
+
+    seen = {(edge.source, edge.target, edge.type) for edge in edges}
+    out_edges = [edge for edge in edges if edge.source in out_nodes and edge.target in out_nodes]
+    for _rank, _neighbor, edge in ranked_candidates[:reserve_limit]:
+        key = (edge.source, edge.target, edge.type)
+        if key not in seen and edge.source in out_nodes and edge.target in out_nodes:
+            out_edges.append(edge)
+            seen.add(key)
+    return out_nodes, out_edges
+
+
+def _start_evidence_priority(edge: Edge, starts: set[str]) -> int:
+    if edge.type == "contains" and edge.target in starts:
+        return 0
+    if edge.type != "contains" and edge.source in starts:
+        return 1
+    if edge.type == "contains" and edge.source in starts:
+        return 2
+    return 3
+
+
+def reserve_test_support_files(graph: Graph, starts: tuple[str, ...], limit: int = 4) -> tuple[str, ...]:
+    support_names = {"__init__.py", "compat.py", "conftest.py"}
+    start_dirs = {
+        node.path.replace("\\", "/").rsplit("/", 1)[0]
+        for start in starts
+        if (node := graph.nodes.get(start)) is not None
+        and node.path
+        and (node.path.replace("\\", "/").startswith("tests/") or "/tests/" in node.path.replace("\\", "/"))
+    }
+    if not start_dirs:
+        return ()
+    out: list[str] = []
+    for node_id, node in sorted(graph.nodes.items()):
+        if not node.active or not node.path:
+            continue
+        path = node.path.replace("\\", "/")
+        if path.rsplit("/", 1)[0] in start_dirs and path.rsplit("/", 1)[-1] in support_names:
+            out.append(node_id)
+            if len(out) >= limit:
+                break
+    return tuple(out)
 
 
 def prune_doc_concept_noise(
@@ -111,7 +300,7 @@ def prune_doc_concept_noise(
     keep = set(structural)
     keep.update(node_id for _score, node_id in sorted(doc_like, reverse=True)[:doc_limit])
     keep.update(node_id for _score, node_id in sorted(concepts, reverse=True)[:concept_limit])
-    keep = reserve_structural_neighbors(graph, keep, structural, max_nodes or plan.node_budget)
+    keep = reserve_structural_neighbors(graph, keep, structural, max_nodes or plan.node_budget, protected=start_set)
     pruned_edges = [edge for edge in edges if edge.source in keep and edge.target in keep]
     pruned_edges = include_reserved_structural_edges(graph, keep, pruned_edges)
     return keep, pruned_edges
@@ -123,6 +312,7 @@ def reserve_structural_neighbors(
     structural: set[str],
     max_nodes: int | None,
     reserve_limit: int = 12,
+    protected: set[str] | None = None,
 ) -> set[str]:
     if not structural:
         return keep
@@ -145,9 +335,10 @@ def reserve_structural_neighbors(
         return keep
 
     out = set(keep)
+    protected_nodes = protected or set()
     for node_id in reserved:
         if max_nodes is not None and len(out) >= max_nodes:
-            removable = _least_valuable_doc_node(graph, out)
+            removable = _least_valuable_doc_node(graph, out, protected=protected_nodes)
             if removable is None:
                 break
             out.remove(removable)
@@ -173,14 +364,39 @@ def _is_structural_node(graph: Graph, node_id: str) -> bool:
     return bool(node and node.active and node.kind not in NON_STRUCTURAL_KINDS)
 
 
-def _least_valuable_doc_node(graph: Graph, nodes: set[str]) -> str | None:
+def _least_valuable_doc_node(graph: Graph, nodes: set[str], *, protected: set[str] | None = None) -> str | None:
+    protected_nodes = protected or set()
     for node_id in sorted(nodes):
+        if node_id in protected_nodes:
+            continue
         node = graph.nodes.get(node_id)
         if node and node.kind == "concept":
             return node_id
     for node_id in sorted(nodes):
+        if node_id in protected_nodes:
+            continue
         node = graph.nodes.get(node_id)
         if node and node.kind in NON_STRUCTURAL_KINDS:
+            return node_id
+    return None
+
+
+def _least_valuable_context_node(graph: Graph, nodes: set[str], *, protected: set[str] | None = None) -> str | None:
+    protected_nodes = protected or set()
+    for kind_group in (
+        {"concept"},
+        NON_STRUCTURAL_KINDS,
+        {"field"},
+        {"function", "method"},
+    ):
+        for node_id in sorted(nodes):
+            if node_id in protected_nodes:
+                continue
+            node = graph.nodes.get(node_id)
+            if node and node.kind in kind_group:
+                return node_id
+    for node_id in sorted(nodes):
+        if node_id not in protected_nodes:
             return node_id
     return None
 
@@ -224,6 +440,8 @@ def retrieve_context(
     if max_nodes is None:
         plan = apply_shape_budget(graph, plan, query)
     candidate_limit = max(plan.anchor_limit, plan.anchor_limit * 3 if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit)
+    if query_class == "direct_lookup" and len(plan_terms(query)) == 1:
+        candidate_limit = max(candidate_limit, 24)
     matches = search_nodes(
         graph,
         query,
@@ -232,7 +450,11 @@ def retrieve_context(
         personalize=True,
         scopes=scopes,
     )
-    effective_anchor_limit = _adaptive_anchor_limit(matches, plan, query) if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit
+    effective_anchor_limit = (
+        _adaptive_anchor_limit(matches, plan, query)
+        if query_class in STRUCTURAL_QUERY_CLASSES or query_class == "direct_lookup"
+        else plan.anchor_limit
+    )
     selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class)
     starts = tuple(match.node.id for match in selected_matches)
     if not starts:
@@ -288,6 +510,17 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
         return min(limit, 2)
 
     if term_count == 1:
+        if plan.query_class == "direct_lookup":
+            plateau = [
+                match for match in matches[:24]
+                if top.score > 0
+                and match.score / top.score >= 0.45
+                and match.node.kind in {"function", "method", "class", "struct", "field", "python", "rust", "go", "java", "typescript", "javascript"}
+            ]
+            if len(plateau) >= 4:
+                return min(16, max(plan.anchor_limit, len(plateau)))
+            return plan.anchor_limit
+
         if top.node.kind in {"function", "method"}:
             top_stem = _node_stem(top.node.path)
             same_stem = sum(1 for match in matches[:6] if _node_stem(match.node.path) == top_stem)
@@ -297,11 +530,17 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
             if same_stem >= 4:
                 return min(limit, 4)
             if len(matches) >= 2 and top.score / max(matches[1].score, 1e-9) >= 1.5 and top5_ratio < 0.75:
+                if plan.query_class == "blast_radius":
+                    return min(limit, 2)
                 return min(limit, 1)
             if len(matches) >= 3 and matches[2].score / top.score >= 0.98 and top3_distinct <= 2:
                 return min(limit, 3)
             if top3_distinct >= 3 and top5_ratio >= 0.75:
                 return min(limit, 5)
+            if any(_is_file_like_anchor(match.node) for match in matches[:6]):
+                return min(limit, 6)
+            if plan.query_class == "blast_radius":
+                return min(limit, 3)
             return min(limit, 2 if top.score < 20 else 1)
 
         if top.node.kind == "python":
@@ -327,6 +566,25 @@ def _node_stem(path: str | None) -> str:
     if not path:
         return ""
     return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _is_file_like_anchor(node: object) -> bool:
+    return getattr(node, "kind", "") in {
+        "file",
+        "python",
+        "typescript",
+        "javascript",
+        "rust",
+        "go",
+        "java",
+        "c",
+        "cpp",
+        "header",
+        "markdown",
+        "rst",
+        "html",
+        "text",
+    }
 
 
 def select_anchor_matches(matches: tuple[Match, ...], anchor_limit: int, query_class: str) -> tuple[Match, ...]:

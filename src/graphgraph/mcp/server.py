@@ -51,7 +51,7 @@ TOOLS = [
                 "starts": {"type": "array", "items": {"type": "string"}, "description": "Anchor node IDs."},
                 "paths": {"type": "array", "items": {"type": "string"}},
                 "tags": {"type": "array", "items": {"type": "string"}},
-                "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: measured by query class."},
+                "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: dynamic by query class and graph shape."},
                 "packet": {
                     "type": "string",
                     "description": "Override packet format (e.g. lowlevel, sql, hybrid, semantic_arrow, gg_max, gg_max_hybrid, gg_lex, gg_lex_hybrid, svo, doc_summary).",
@@ -76,7 +76,7 @@ TOOLS = [
                 "packet": {"type": "string", "description": "Optional packet override."},
                 "hops": {"type": "integer", "description": "Override traversal radius. Default: measured by query class."},
                 "anchor_limit": {"type": "integer", "description": "Max anchor nodes before expansion. Default: adaptive by query class."},
-                "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: measured by query class."},
+                "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: dynamic by query class and graph shape."},
                 "scopes": {"type": "array", "items": {"type": "string"}, "description": "Optional scope/path prefixes to constrain retrieval."},
                 "show_anchors": {"type": "boolean", "description": "Include ranked anchors before packet."},
             },

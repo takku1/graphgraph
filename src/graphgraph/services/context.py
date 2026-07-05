@@ -9,7 +9,7 @@ from ..io import find_graph_path, find_lessons_path, find_policies_path, load_an
 from ..packets import render_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
 from ..policies import render_policy_packet, select_policies
-from ..retrieval import expand_context, retrieve_context
+from ..retrieval import apply_shape_budget, expand_context, retrieve_context
 from ..validate import validate_packet
 
 
@@ -41,6 +41,8 @@ def render_final_packet(
 
     graph = load_any(resolved_graph_path)
     plan = plan_context(query_class, query_text, max_nodes=max_nodes, packet=packet)
+    if max_nodes is None:
+        plan = apply_shape_budget(graph, plan, query_text)
     policies = load_policies(resolved_policies_path) if resolved_policies_path else []
     query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)
 
@@ -224,6 +226,8 @@ def render_query_context(
     resolved_graph_path = graph_path or find_graph_path()
     graph = load_any(resolved_graph_path)
     plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
+    if max_nodes is None:
+        plan = apply_shape_budget(graph, plan, query)
     result = retrieve_context(
         graph,
         query,
@@ -242,6 +246,8 @@ def render_query_context(
         plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, result.nodes, result.edges))
     else:
         plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops, packet=packet)
+        if max_nodes is None:
+            plan = apply_shape_budget(graph, plan, query)
 
     cache = TopologicalKVCache()
     cache_key = compute_cache_key(

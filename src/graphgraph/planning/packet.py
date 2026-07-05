@@ -7,19 +7,19 @@ from .types import PacketChoice, SubgraphStats
 def choose_packet(query_class: str, query: str = "") -> PacketChoice:
     """Return the empirically measured optimal packet strategy per query class."""
     if query_class == "direct_lookup":
-        return PacketChoice(1, "gg_max_hybrid", "1-hop direct lookups: gg_max_hybrid provides inline evidence")
+        return PacketChoice(1, "gg_max", "1-hop direct lookups: gg_max is the measured token floor")
     if query_class == "reverse_lookup":
-        return PacketChoice(1, "gg_max_hybrid", "1-hop reverse lookups: gg_max_hybrid provides inline evidence")
+        return PacketChoice(1, "gg_max", "1-hop reverse lookups: gg_max is the measured token floor")
     if query_class == "multi_hop_path":
-        return PacketChoice(2, "gg_max_hybrid", "path queries need 2-hop topology; gg_max_hybrid provides inline evidence")
+        return PacketChoice(2, "gg_max", "path queries need 2-hop topology; gg_max is the measured token floor")
     if query_class == "blast_radius":
-        return PacketChoice(2, "gg_max_hybrid", "blast-radius needs 2-hop topology; gg_max_hybrid provides inline evidence")
+        return PacketChoice(2, "gg_max", "blast-radius needs 2-hop topology; gg_max is the measured token floor")
     if is_doc_query(query_class, query):
         return PacketChoice(1, "doc_summary", "documentation summaries need grounded snippets more than topology")
     if query_class == "subsystem_summary":
-        return PacketChoice(1, "gg_max_hybrid", "subsystem summaries: gg_max_hybrid provides inline evidence")
+        return PacketChoice(1, "gg_max", "subsystem summaries: gg_max is the measured token floor")
     if query_class == "spreading_activation":
-        return PacketChoice(2, "gg_max_hybrid", "spreading activation leverages 2-step energy propagation; gg_max_hybrid provides inline evidence")
+        return PacketChoice(2, "gg_max", "spreading activation leverages 2-step energy propagation; gg_max is the measured token floor")
     if query_class == "negative_query":
         return PacketChoice(0, "semantic_arrow", "negative queries need anchor evidence without pulling unrelated edges")
     return PacketChoice(2, "gg_max_hybrid", "unknown query class: conservative 2-hop gg_max_hybrid")

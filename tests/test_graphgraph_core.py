@@ -79,7 +79,7 @@ from graphgraph.retrieval import (
     search_nodes,
     tokenize,
 )
-from graphgraph.retrieval.context import apply_shape_budget
+from graphgraph.retrieval.context import apply_shape_budget, prune_doc_concept_noise, shape_edge_budget
 from graphgraph.retrieval.models import Match
 from graphgraph.services import render_final_packet, render_query_context, render_source_snippets
 from graphgraph.services.context import resolve_start_nodes
@@ -417,18 +417,18 @@ N1,N2,1,0.9
         self.assertIn("applied_policy", edge_types)
 
     def test_choose_packet_empirical_alignment(self) -> None:
-        # Empirical data: structural packets with edges → gg_max_hybrid provides inline evidence.
-        self.assertEqual(choose_packet("direct_lookup").packet, "gg_max_hybrid")
+        # Empirical data: structural packets with edges → gg_max is the token floor.
+        self.assertEqual(choose_packet("direct_lookup").packet, "gg_max")
         self.assertEqual(choose_packet("direct_lookup").hops, 1)
-        self.assertEqual(choose_packet("reverse_lookup").packet, "gg_max_hybrid")
+        self.assertEqual(choose_packet("reverse_lookup").packet, "gg_max")
         self.assertEqual(choose_packet("reverse_lookup").hops, 1)
-        # blast_radius / multi_hop → gg_max_hybrid 2-hop
+        # blast_radius / multi_hop → gg_max 2-hop
         self.assertEqual(choose_packet("blast_radius").hops, 2)
-        self.assertEqual(choose_packet("blast_radius").packet, "gg_max_hybrid")
+        self.assertEqual(choose_packet("blast_radius").packet, "gg_max")
         self.assertEqual(choose_packet("multi_hop_path").hops, 2)
-        self.assertEqual(choose_packet("multi_hop_path").packet, "gg_max_hybrid")
-        # summary → gg_max_hybrid unless it is explicitly documentation-oriented.
-        self.assertEqual(choose_packet("subsystem_summary").packet, "gg_max_hybrid")
+        self.assertEqual(choose_packet("multi_hop_path").packet, "gg_max")
+        # summary → gg_max unless it is explicitly documentation-oriented.
+        self.assertEqual(choose_packet("subsystem_summary").packet, "gg_max")
         self.assertEqual(choose_packet("subsystem_summary", "README installation usage").packet, "doc_summary")
         self.assertEqual(choose_packet("doc_summary").packet, "doc_summary")
         # negative/absence probes avoid pulling unrelated edges.
@@ -442,7 +442,7 @@ N1,N2,1,0.9
         direct = plan_context("direct_lookup", "what does AuthService call")
         self.assertEqual(direct.hops, 1)
         self.assertEqual(direct.direction, "out")
-        self.assertEqual(direct.packet, "gg_max_hybrid")
+        self.assertEqual(direct.packet, "gg_max")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
         self.assertIn("context_plan_v2", direct.planner_version)
@@ -485,7 +485,7 @@ N1,N2,1,0.9
         )
         summary_stats = compute_subgraph_stats(summary_graph, {"A", "B"}, summary_graph.edges)
         summary_plan = refine_plan_for_subgraph(plan_context("subsystem_summary", "auth subsystem"), summary_stats)
-        self.assertEqual(summary_plan.packet, "gg_max_hybrid")
+        self.assertEqual(summary_plan.packet, "gg_max")
 
     def test_calibrated_token_surface_preserves_packet_cliff(self) -> None:
         from graphgraph.planning import estimate_packet_tokens
@@ -588,6 +588,96 @@ N1,N2,1,0.9
         blast_plan = apply_shape_budget(graph, plan_context("blast_radius"), "")
         self.assertEqual(blast_plan.node_budget, 120)
         self.assertNotIn("shape_budget", blast_plan.planner_version)
+
+    def test_subsystem_pruning_preserves_doc_like_start_anchors(self) -> None:
+        graph = Graph(
+            nodes={
+                "C": Node("C", "Alpha Tensor", "concept"),
+                "S": Node("S", "Service", "function", "src/service.py"),
+                "D": Node("D", "Doc", "section", "README.md"),
+                **{f"N{i}": Node(f"N{i}", f"N{i}", "function", f"src/n{i}.py") for i in range(8)},
+            },
+            edges=[
+                Edge("S", f"N{i}", "calls") for i in range(8)
+            ],
+        )
+        plan = plan_context("subsystem_summary", "alpha tensor")
+        nodes, edges = prune_doc_concept_noise(
+            graph,
+            {"C", "S", "D"},
+            [],
+            ("C", "S"),
+            plan,
+            max_nodes=3,
+        )
+        self.assertIn("C", nodes)
+
+    def test_single_token_file_queries_prefer_exact_basename_stem(self) -> None:
+        graph = Graph(
+            nodes={
+                "setup_py": Node("setup_py", "setup.py", "python", "setup.py"),
+                "setup_func": Node("setup_func", "setup", "function", "doc/conf.py"),
+            },
+            edges=[],
+        )
+        matches = search_nodes(graph, "setup", limit=2)
+        self.assertEqual(matches[0].node.id, "setup_py")
+        self.assertIn("basename_stem_exact", matches[0].reasons)
+
+    def test_direct_lookup_widens_ambiguous_single_token_plateau(self) -> None:
+        graph = Graph(
+            nodes={f"F{i}": Node(f"F{i}", "cache", "function", f"src/m{i}.py") for i in range(10)},
+            edges=[],
+        )
+        result = retrieve_context(graph, "cache", "direct_lookup", hops=1)
+        self.assertGreaterEqual(len(result.starts), 10)
+
+    def test_blast_radius_reserves_immediate_anchor_callee_under_budget_pressure(self) -> None:
+        graph = Graph(
+            nodes={
+                "route": Node("route", "route", "function", "src/app.py"),
+                "pop": Node("pop", "pop", "function", "src/ctx.py"),
+                **{f"T{i}": Node(f"T{i}", f"test_{i}", "function", f"tests/test_{i}.py") for i in range(150)},
+            },
+            edges=[
+                Edge("route", "pop", "calls", confidence=0.9),
+                *[Edge(f"T{i}", "route", "calls", confidence=1.0) for i in range(150)],
+            ],
+        )
+        result = retrieve_context(graph, "route", "blast_radius", hops=2, max_nodes=40)
+        self.assertIn("pop", result.nodes)
+
+    def test_blast_radius_reserves_test_support_files_for_test_hubs(self) -> None:
+        graph = Graph(
+            nodes={
+                "TestRequests": Node("TestRequests", "TestRequests", "class", "tests/test_requests.py"),
+                "test_requests_py": Node("test_requests_py", "test_requests.py", "python", "tests/test_requests.py"),
+                "tests_init": Node("tests_init", "__init__.py", "python", "tests/__init__.py"),
+                "tests_compat": Node("tests_compat", "compat.py", "python", "tests/compat.py"),
+                **{f"T{i}": Node(f"T{i}", f"test_{i}", "function", f"tests/test_requests.py") for i in range(80)},
+            },
+            edges=[
+                Edge("test_requests_py", "TestRequests", "contains"),
+                *[Edge("TestRequests", f"T{i}", "contains") for i in range(80)],
+            ],
+        )
+        result = retrieve_context(graph, "test requests", "blast_radius", hops=2, max_nodes=30)
+        self.assertIn("test_requests_py", result.nodes)
+        self.assertIn("tests_init", result.nodes)
+        self.assertIn("tests_compat", result.nodes)
+
+    def test_shape_edge_budget_reduces_dense_fanout_but_keeps_start_edges(self) -> None:
+        edges = [
+            Edge("A", "B", "calls"),
+            *[Edge(f"N{i}", f"M{i}", "imports") for i in range(120)],
+            *[Edge(f"D{i}", f"C{i}", "explains") for i in range(80)],
+        ]
+        plan = plan_context("blast_radius", "dense")
+        shaped = shape_edge_budget(edges, ("A",), plan, node_count=40)
+        self.assertLess(len(shaped), len(edges))
+        self.assertIn(("A", "B", "calls"), {(edge.source, edge.target, edge.type) for edge in shaped})
+        self.assertTrue(any(edge.type == "imports" for edge in shaped))
+        self.assertTrue(any(edge.type == "explains" for edge in shaped))
 
     def test_graph_metrics_summary_and_comparison(self) -> None:
         left = sample_graph()
@@ -882,14 +972,14 @@ N1,N2,1,0.9
         assert response is not None
         text = response["result"]["content"][0]["text"]
         self.assertIn('"hops": 2', text)
-        self.assertIn('"packet": "gg_max_hybrid"', text)
+        self.assertIn('"packet": "gg_max"', text)
 
     def test_mcp_plan_context_direct_lookup(self) -> None:
         response = dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "plan_context", "arguments": {"query_class": "direct_lookup"}}})
         assert response is not None
         text = response["result"]["content"][0]["text"]
         data = json.loads(text)
-        self.assertEqual(data["packet"], "gg_max_hybrid")
+        self.assertEqual(data["packet"], "gg_max")
         self.assertEqual(data["hops"], 1)
 
     def test_mcp_describe_formats(self) -> None:
@@ -1807,6 +1897,29 @@ N1,N2,1,0.9
         self.assertIn("TokenStore", packet)
         self.assertIn("[e]", packet)
 
+    def test_render_final_packet_uses_shape_budget_without_explicit_cap(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "A", "function"),
+                **{f"B{i}": Node(f"B{i}", f"B{i}", "function") for i in range(100)},
+            },
+            edges=[Edge("A", f"B{i}", "calls") for i in range(100)],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(graph, graph_path)
+            packet = render_final_packet(
+                starts=["A"],
+                query_class="multi_hop_path",
+                graph_path=graph_path,
+                cache_namespace="test_shape_final",
+            )
+        lines = packet.splitlines()
+        node_start = lines.index("[n]") + 1
+        edge_start = lines.index("[e]")
+        node_rows = [line for line in lines[node_start:edge_start] if not line.startswith("# ")]
+        self.assertEqual(len(node_rows), 70)
+
     def test_mcp_build_graph_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2570,6 +2683,112 @@ N1,N2,1,0.9
         self.assertIn("Error: No graph nodes matched the requested starts", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
+    def test_local_context_validate_snippets_smoke_without_provider_keys(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        for name in (
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "PREFERRED_PROVIDER",
+            "OPENAI_BASE_URL",
+            "RUN_OPENAI_REASONING_EVAL",
+            "RUN_GEMINI_REASONING_EVAL",
+        ):
+            env.pop(name, None)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "app.py").write_text(
+                "class AlphaService:\n"
+                "    def call_beta(self):\n"
+                "        return beta()\n\n"
+                "def beta():\n"
+                "    return 'ok'\n",
+                encoding="utf-8",
+            )
+
+            context_proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "graphgraph",
+                    "context",
+                    "AlphaService call_beta beta",
+                    "--query-class",
+                    "direct_lookup",
+                    "--scan-max-nodes",
+                    "100",
+                    "--show-stats",
+                ],
+                cwd=tmp,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(context_proc.returncode, 0, context_proc.stderr)
+            self.assertIn("[n]", context_proc.stdout)
+            self.assertIn("GraphGraph context built:", context_proc.stderr)
+            self.assertNotIn("API Key", context_proc.stdout + context_proc.stderr)
+
+            validate_proc = subprocess.run(
+                [sys.executable, "-m", "graphgraph", "validate"],
+                cwd=tmp,
+                input=context_proc.stdout,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(validate_proc.returncode, 0, validate_proc.stdout + validate_proc.stderr)
+            self.assertIn("PASS", validate_proc.stdout)
+
+            snippet_proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "graphgraph",
+                    "snippets",
+                    "--starts",
+                    "AlphaService",
+                    "--max-lines",
+                    "12",
+                ],
+                cwd=tmp,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(snippet_proc.returncode, 0, snippet_proc.stderr)
+            self.assertIn("class AlphaService", snippet_proc.stdout)
+
+    def test_doctor_marks_provider_keys_optional(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        for name in ("OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            env.pop(name, None)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            gg_dir = tmp / ".graphgraph"
+            gg_dir.mkdir()
+            save_graph(sample_graph(), gg_dir / "graph.json")
+            proc = subprocess.run(
+                [sys.executable, "-m", "graphgraph", "doctor"],
+                cwd=tmp,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("[Optional External Benchmark Credentials]", proc.stdout)
+        self.assertIn("Local GraphGraph scan/query/packet workflows do not require provider API keys.", proc.stdout)
+        self.assertIn("OpenAI API Key: Not configured (OK; external OpenAI benchmarks will be skipped)", proc.stdout)
+        self.assertNotIn("OpenAI API Key: Not found", proc.stdout)
+
     def test_cmd_install_project(self) -> None:
         import os
 
@@ -2601,6 +2820,8 @@ N1,N2,1,0.9
                 skill_content = skill_md.read_text(encoding="utf-8")
                 self.assertIn("name: graphgraph", skill_content)
                 self.assertIn("query_context", skill_content)
+                self.assertIn("| `direct_lookup` | Specific file/symbol details | 1 | `gg_max` | measured token floor |", skill_content)
+                self.assertNotIn("| `direct_lookup` | Specific file/symbol details | 1 | `gg_max_hybrid`", skill_content)
 
                 # Check complete Codex plugin bundle and marketplace.json
                 plugin_json = Path("plugins") / "graphgraph" / ".codex-plugin" / "plugin.json"
@@ -2620,7 +2841,9 @@ N1,N2,1,0.9
 
                 plugin_skill = Path("plugins") / "graphgraph" / "skills" / "graphgraph" / "SKILL.md"
                 self.assertTrue(plugin_skill.exists())
-                self.assertIn("name: graphgraph", plugin_skill.read_text(encoding="utf-8"))
+                plugin_skill_content = plugin_skill.read_text(encoding="utf-8")
+                self.assertIn("name: graphgraph", plugin_skill_content)
+                self.assertIn("| `direct_lookup` | Specific file/symbol details | 1 | `gg_max` | measured token floor |", plugin_skill_content)
 
                 marketplace_json = Path(".agents") / "plugins" / "marketplace.json"
                 self.assertTrue(marketplace_json.exists())

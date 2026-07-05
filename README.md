@@ -99,9 +99,17 @@ uv run --project C:\path\to\graphgraph graphgraph-mcp
 
 ---
 
-## Secure API Key Storage (Windows Credentials Manager)
+## Optional External Benchmark API Keys
 
-To run LLM answer benchmarks or query tasks, you need access to OpenAI or Gemini API keys. `graphgraph` supports reading keys securely from the Windows Credential Manager via the `keyring` library (with automatic fallback to environment variables).
+Normal `graphgraph` CLI, skill, and MCP workflows are local. They scan the
+workspace, compile graph packets, validate those packets, and let the active AI
+assistant use them as context. No OpenAI, Gemini, or other provider API key is
+required for that path.
+
+API keys are only needed when you explicitly run optional external model-answer
+benchmarks. For those benchmark scripts, `graphgraph` supports reading keys
+securely from the Windows Credential Manager via the `keyring` library (with
+automatic fallback to environment variables).
 
 ### How to set up credentials:
 
@@ -270,7 +278,9 @@ Get-Content packet.txt | graphgraph validate
 
 ## Diagnostics
 
-Verify that your system toolchain, Python environment, optional dependencies, API key credentials, compiled graph data, and MCP integrations are fully operational:
+Verify that your system toolchain, Python environment, optional dependencies,
+compiled graph data, local runtime probes, optional benchmark credentials, and
+MCP integrations are operational:
 
 ```powershell
 graphgraph doctor

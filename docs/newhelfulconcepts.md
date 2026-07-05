@@ -50,19 +50,20 @@ The current production rule is:
 1. prefer the cheapest packet that still preserves required evidence,
 2. keep structural edges explicit,
 3. add prose only when the graph packet is not enough on its own,
-4. require validation before model execution,
-5. measure live accuracy separately from token cost.
+4. require validation before a packet is trusted as assistant context,
+5. measure external model accuracy separately from token cost when the user
+   explicitly asks for provider-backed benchmarking.
 
 This is a conservative rule. It is not a universal theorem about LLMs or graph
 representations.
 
 ## Open Questions
 
-- whether lexicalized node handles beat numeric IDs once live model scoring is
-  available,
+- whether lexicalized node handles beat numeric IDs once external model scoring
+  is explicitly run,
 - whether a sparse/dense dynamic context mode should be query-class specific,
-- whether `gg_max_hybrid` should be promoted for doc-heavy prompts once live
-  answer quality is measured,
+- whether `gg_max_hybrid` should be promoted for doc-heavy prompts once
+  external answer quality is measured,
 - whether any packet format should change default behavior before live scoring
   exists.
 

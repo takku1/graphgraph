@@ -12,16 +12,19 @@ of the following are true:
 - it keeps mechanical validation green,
 - it does not regress answerability on the saved real-project corpus,
 - it has a clear token-cost explanation,
-- live model scoring has been run if the change is intended to affect model
-  quality rather than only retrieval shape.
+- live model scoring has been run if, and only if, the change is intended to
+  make a claim about external model answer quality rather than local retrieval
+  shape.
 
 ## Current Status
 
 - frontier traversal is now passing the saved benchmark suite,
 - packet validation is stable for `gg_max`, `semantic_arrow`, and
   `gg_max_hybrid`,
-- live reasoning scoring is still blocked locally because no model API key is
-  available in environment or credential store.
+- normal GraphGraph skill/MCP/CLI use is local and does not require provider
+  API keys,
+- external model-answer scoring is optional and should be run only when the
+  user explicitly wants paid provider benchmarking.
 
 ## Claims That Still Need Evidence
 

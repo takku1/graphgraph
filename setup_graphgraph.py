@@ -14,8 +14,8 @@ def run_cmd(args, cwd=None, check=True):
 
 def main():
     parser = argparse.ArgumentParser(description="Bootstrap and configure GraphGraph setup.")
-    parser.add_argument("--openai-key", help="OpenAI API key to store in Windows Credential Manager.")
-    parser.add_argument("--gemini-key", help="Gemini API key to store in Windows Credential Manager.")
+    parser.add_argument("--openai-key", help="Optional OpenAI API key to store for external model benchmarks.")
+    parser.add_argument("--gemini-key", help="Optional Gemini API key to store for external model benchmarks.")
     parser.add_argument("--non-interactive", action="store_true", help="Run without asking for input.")
     args = parser.parse_args()
 
@@ -58,13 +58,15 @@ def main():
     else:
         run_cmd([pip_exe, "install", "-e", "."], cwd=repo_dir)
 
-    # 5. Configure API Credentials in Windows Credential Manager / Keyring
+    # 5. Optionally configure external benchmark API credentials in keyring.
+    # Normal GraphGraph scan/query/packet/MCP workflows do not need provider keys.
     openai_key = args.openai_key
     gemini_key = args.gemini_key
 
     if not args.non_interactive and not (openai_key or gemini_key):
-        print("\n--- Credential Setup ---")
-        use_keyring = input("Would you like to store API keys in Windows Credential Manager? (y/n) [n]: ").strip().lower() == 'y'
+        print("\n--- Optional External Benchmark Credential Setup ---")
+        print("GraphGraph local skill/MCP/CLI use does not require provider API keys.")
+        use_keyring = input("Store optional API keys for external model benchmarks? (y/n) [n]: ").strip().lower() == 'y'
         if use_keyring:
             o_key = input("Enter OpenAI API Key (leave empty to skip): ").strip()
             if o_key:
@@ -75,10 +77,10 @@ def main():
 
     # Save to keyring using python inside the venv
     if openai_key:
-        print("Storing OpenAI API Key secure credential...")
+        print("Storing optional OpenAI benchmark credential...")
         run_cmd([python_exe, "-c", f"import keyring; keyring.set_password('OpenAI', 'API_KEY', {repr(openai_key)})"])
     if gemini_key:
-        print("Storing Gemini API Key secure credential...")
+        print("Storing optional Gemini benchmark credential...")
         run_cmd([python_exe, "-c", f"import keyring; keyring.set_password('Gemini', 'API_KEY', {repr(gemini_key)})"])
 
     # 6. Configure Claude Desktop MCP Settings

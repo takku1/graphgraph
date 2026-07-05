@@ -25,13 +25,14 @@ Upon cloning this repository, the custom workspace skill located at [.agents/ski
 
 ## For Humans
 
-Run the interactive setup tool to set up the package, configure your MCP server settings, and optionally save your LLM provider keys in the Windows Credential Manager:
+Run the interactive setup tool to set up the package and configure MCP server settings:
 
 ```powershell
 python setup_graphgraph.py
 ```
 
-Follow the prompts to enter API keys if you want them securely stored under Windows Credential Manager for running LLM verification benchmarks.
+Provider API keys are not needed for normal GraphGraph skill/tool use. They are
+only for optional external model verification benchmarks.
 
 ---
 
@@ -40,7 +41,7 @@ Follow the prompts to enter API keys if you want them securely stored under Wind
 Once the setup script finishes, verify the environment and explore:
 
 1. **Run Doctor Diagnostics**:
-   Verify everything is configured correctly (dependencies, API keys, MCP integration):
+   Verify local dependencies, graph files, runtime probes, optional benchmark credentials, and MCP integration:
    ```powershell
    graphgraph doctor
    ```

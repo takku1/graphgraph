@@ -202,6 +202,14 @@ def write(rows: list[dict[str, object]]) -> None:
         for query_class in sorted({row["query_class"] for row in summary_rows if row["project"] == project}):
             candidates = [row for row in summary_rows if row["project"] == project and row["query_class"] == query_class]
             winner_rows.append(min(candidates, key=lambda row: (float(row["avg_tokens"]), str(row["packet"]))))
+    structural_exceptions = [
+        row for row in winner_rows
+        if row["packet"] not in {"gg_max", "semantic_arrow"} and float(row["avg_edges"]) > 0.0
+    ]
+    semantic_edge_wins = [
+        row for row in winner_rows
+        if row["packet"] == "semantic_arrow" and float(row["avg_edges"]) > 0.0
+    ]
 
     by_packet: dict[str, list[dict[str, object]]] = {}
     for row in summary_rows:
@@ -284,9 +292,31 @@ def write(rows: list[dict[str, object]]) -> None:
         "## Operational Read",
         "",
         "- The lowest-token winner here is the current real-project packet floor for identical graph evidence.",
-        "- On this bounded real-project run, `gg_max` dominates every non-empty subgraph.",
-        "- `semantic_arrow` only wins for zero-edge packets, where its lack of relation/node-map header matters.",
-        "- The current production default should be `semantic_arrow` for `edges == 0`, `gg_max` for structural packets with edges, and a separate live-model fallback only if `gg_max` comprehension fails.",
+    ])
+    if structural_exceptions:
+        exception_text = ", ".join(
+            f"{row['project']}/{row['query_class']} -> `{row['packet']}`"
+            for row in structural_exceptions[:12]
+        )
+        suffix = "" if len(structural_exceptions) <= 12 else f", plus {len(structural_exceptions) - 12} more"
+        lines.append(
+            "- `gg_max` is the broad structural floor on this run, but non-`gg_max` structural winners exist: "
+            f"{exception_text}{suffix}."
+        )
+    else:
+        lines.append("- On this bounded real-project run, `gg_max` dominates every non-empty structural packet.")
+    if semantic_edge_wins:
+        edge_text = ", ".join(
+            f"{row['project']}/{row['query_class']} edges={float(row['avg_edges']):.1f}"
+            for row in semantic_edge_wins[:12]
+        )
+        suffix = "" if len(semantic_edge_wins) <= 12 else f", plus {len(semantic_edge_wins) - 12} more"
+        lines.append(f"- `semantic_arrow` also wins some non-empty low-edge packets: {edge_text}{suffix}.")
+    else:
+        lines.append("- `semantic_arrow` only wins empty or near-empty packets where its compact header matters.")
+    lines.extend([
+        "- Treat `semantic_arrow` for empty/low-edge packets and `gg_max` for most structural packets as the default candidate policy; inspect listed exceptions before hard-coding a universal rule.",
+        "- Live-model comprehension remains a separate fallback gate, not part of this local packet floor measurement.",
         "",
         f"CSV: `{RESULTS_CSV.relative_to(ROOT)}`",
     ])

@@ -21,6 +21,7 @@ from ..planning import (
     recommend_node_budget,
     refine_plan_for_subgraph,
 )
+from ..retrieval import apply_shape_budget
 from ..services import render_final_packet, render_query_context, render_source_snippets, render_stable_skeleton
 from ..services.context import resolve_start_nodes
 from ..services.native import build_project_status, graph_shape, render_native_context, scan_validated_graph
@@ -86,9 +87,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     try:
         import keyring
-        print("  keyring: Installed (OK)")
+        print("  keyring: Installed (OK - optional external benchmark credential storage available)")
     except ImportError:
-        print("  keyring: Missing (WARN - Windows Credential Manager integration disabled)")
+        print("  keyring: Missing (OK - only needed for optional external benchmark credentials)")
 
     try:
         import tiktoken  # noqa: F401
@@ -96,35 +97,38 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     except ImportError:
         print("  tiktoken: Missing (WARN - using approximate token count)")
         
-    # 3. Secure Credential Checks
-    print("\n[Secure Credentials]")
+    # 3. Optional provider credentials. GraphGraph's local skill/MCP/CLI
+    # workflow does not need these; they only matter for paid external model
+    # benchmark scripts.
+    print("\n[Optional External Benchmark Credentials]")
+    print("  Local GraphGraph scan/query/packet workflows do not require provider API keys.")
     try:
         import keyring
         openai_key = keyring.get_password("OpenAI", "API_KEY")
         if openai_key:
             masked = openai_key[:7] + "..." + openai_key[-4:] if len(openai_key) > 10 else "..."
-            print(f"  OpenAI API Key: Found in Credential Manager ({masked})")
+            print(f"  OpenAI API Key: Found for optional benchmarks ({masked})")
         else:
             env_key = os.environ.get("OPENAI_API_KEY")
             if env_key:
                 masked = env_key[:7] + "..." + env_key[-4:] if len(env_key) > 10 else "..."
-                print(f"  OpenAI API Key: Found in environment ({masked})")
+                print(f"  OpenAI API Key: Found in environment for optional benchmarks ({masked})")
             else:
-                print("  OpenAI API Key: Not found in Credential Manager or environment")
+                print("  OpenAI API Key: Not configured (OK; external OpenAI benchmarks will be skipped)")
                 
         gemini_key = keyring.get_password("Gemini", "API_KEY")
         if gemini_key:
             masked = gemini_key[:7] + "..." + gemini_key[-4:] if len(gemini_key) > 10 else "..."
-            print(f"  Gemini API Key: Found in Credential Manager ({masked})")
+            print(f"  Gemini API Key: Found for optional benchmarks ({masked})")
         else:
             env_key = os.environ.get("GEMINI_API_KEY")
             if env_key:
                 masked = env_key[:7] + "..." + env_key[-4:] if len(env_key) > 10 else "..."
-                print(f"  Gemini API Key: Found in environment ({masked})")
+                print(f"  Gemini API Key: Found in environment for optional benchmarks ({masked})")
             else:
-                print("  Gemini API Key: Not found in Credential Manager or environment")
+                print("  Gemini API Key: Not configured (OK; external Gemini benchmarks will be skipped)")
     except Exception as e:
-        print(f"  Credential lookup error: {e}")
+        print(f"  Credential lookup skipped/failed (OK for local GraphGraph use): {e}")
         
     # 4. Local Graph File Checks
     print("\n[Graph Files]")
@@ -222,6 +226,8 @@ def cmd_render(args: argparse.Namespace) -> None:
     graph = load_any(graph_path)
     starts = resolve_start_nodes(graph, args.starts)
     plan = plan_context(args.query_class, max_nodes=args.max_nodes)
+    if args.max_nodes is None:
+        plan = apply_shape_budget(graph, plan, getattr(args, "query", ""))
     nodes, edges = graph.expand(starts, hops=plan.hops, max_nodes=plan.node_budget, direction=plan.direction)
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
     cache = TopologicalKVCache()
@@ -866,9 +872,9 @@ def cmd_install(args: argparse.Namespace) -> None:
         "## Query Classes\n\n"
         "| Query Class | Description / Example Question | Hops | Format | Reason |\n"
         "| :--- | :--- | :---: | :--- | :--- |\n"
-        "| `direct_lookup` | Specific file/symbol details | 1 | `gg_max_hybrid` | inline source facts |\n"
-        "| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg_max_hybrid` | reverse evidence |\n"
-        "| `subsystem_summary` | High-level status or architecture area | 1 | `gg_max_hybrid` | balanced summary |\n"
+        "| `direct_lookup` | Specific file/symbol details | 1 | `gg_max` | measured token floor |\n"
+        "| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg_max` | measured token floor |\n"
+        "| `subsystem_summary` | High-level status or architecture area | 1 | `gg_max` | measured token floor |\n"
         "| `blast_radius` | What changes if this is modified? | 2 | `gg_max` | topology-first |\n"
         "| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |\n"
         "| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |\n"

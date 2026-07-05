@@ -73,10 +73,10 @@ The adaptive planner chooses per query class. Use `query_context` or
 `graphgraph context` as the default agent entry point so anchors are discovered
 from the natural-language query before packet rendering:
 
-- direct/reverse: usually `1hop gg_max_hybrid`
-- path/blast: usually `2hop gg_max_hybrid`
-- summary: `gg_max_hybrid` for structural summaries or
-  `doc_summary` when grounded prose/facts dominate
+- direct/reverse: usually `1hop gg_max`
+- path/blast: usually `2hop gg_max`
+- summary: `gg_max` for structural summaries or `doc_summary` when grounded
+  docs/facts dominate
 - zero-edge packets: usually `semantic_arrow`
 
 ## Constraint Policies

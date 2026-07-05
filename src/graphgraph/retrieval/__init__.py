@@ -1,6 +1,6 @@
 from ..planning import default_anchor_limit, default_node_budget, retrieval_node_budget
 from .budgeting import budget_edges, enrich_runtime_context
-from .context import expand_context, retrieve_context
+from .context import apply_shape_budget, expand_context, retrieve_context
 from .models import Match, RetrievalResult
 from .search import search_nodes
 from .text import identifier_terms, node_search_text, tokenize
@@ -8,6 +8,7 @@ from .text import identifier_terms, node_search_text, tokenize
 __all__ = [
     "Match",
     "RetrievalResult",
+    "apply_shape_budget",
     "budget_edges",
     "default_anchor_limit",
     "default_node_budget",

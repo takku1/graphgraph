@@ -22,6 +22,7 @@ class SearchIndexRow:
     path_name_terms: set[str]
     path_name_sequence: tuple[str, ...]
     path_name_exact_sequence: tuple[str, ...]
+    path_stem: str
 
 
 def search_nodes(
@@ -133,6 +134,13 @@ def search_nodes(
                 matched_terms.add(term)
 
         if score > 0.0:
+            if (
+                len(terms) == 1
+                and terms[0] == row.path_stem
+                and node.kind in {"file", "python", "typescript", "javascript", "rust", "go", "java", "markdown", "rst", "html", "text"}
+            ):
+                score += 12.0
+                reasons.append("basename_stem_exact")
             if len(query_terms) >= 2:
                 if terms == label_term_sequence or terms == label_exact_sequence:
                     score += 36.0
@@ -276,6 +284,7 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
         haystack = node_search_text(node)
         norm_path = node.path.replace("\\", "/") if node.path else ""
         path_name = norm_path.rsplit("/", 1)[-1] if norm_path else ""
+        path_stem = path_name.rsplit(".", 1)[0].lower() if path_name else ""
         # Include ALL intermediate directory segments in haystack so that
         # queries like "featherwaight" find src/featherwaight/cli.py even
         # when only the basename ("cli.py") was previously indexed.
@@ -299,6 +308,7 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
                 path_name_terms=set(path_name_sequence) | path_dir_terms,
                 path_name_sequence=path_name_sequence,
                 path_name_exact_sequence=_exact_identifier_sequence(path_name, path_name_sequence),
+                path_stem=path_stem,
             )
         )
     cached = tuple(rows)

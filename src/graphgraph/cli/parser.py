@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--graph")
     render.add_argument("--query-class", required=True)
     render.add_argument("--starts", nargs="+", required=True)
-    render.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: measured by query class.")
+    render.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     render.set_defaults(func=cmd_render)
 
     final = sub.add_parser("final")
@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--path", action="append", default=[])
     final.add_argument("--tag", action="append", default=[])
     final.add_argument("--stable-skeleton", action="store_true", help="Compile a stable, PageRank-based skeleton of top architectural nodes to use as a static prompt cache prefix.")
-    final.add_argument("--max-nodes", type=int, default=None, help="Expanded node budget. Default: measured by query class; stable skeleton uses 100.")
+    final.add_argument("--max-nodes", type=int, default=None, help="Expanded node budget. Default: dynamic by query class and graph shape; stable skeleton uses 100.")
     final.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     final.set_defaults(func=cmd_final)
 
@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     query.add_argument("--hops", type=int)
     query.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
-    query.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: measured by query class.")
+    query.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     query.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
     query.add_argument("--show-anchors", action="store_true")
     query.set_defaults(func=cmd_query)
@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--query-class", default="subsystem_summary")
     context.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     context.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
-    context.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: measured by query class.")
+    context.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     context.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
     context.add_argument("--skip-dirs", nargs="*", metavar="DIR", help="Additional directory names to skip during auto-build.")
     context.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs", help="Alias: extra directory names to exclude during auto-build.")
@@ -165,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile.add_argument("--query", default="", help="Optional query text for doc/query budget heuristics.")
     profile.set_defaults(func=cmd_profile)
 
-    doctor = sub.add_parser("doctor", help="Run system diagnostics and verify environment, tools, credentials, and MCP configs.")
+    doctor = sub.add_parser("doctor", help="Run local diagnostics for graph files, CLI runtime, dependencies, optional benchmark credentials, and MCP configs.")
     doctor.set_defaults(func=cmd_doctor)
 
     cache_cmd = sub.add_parser("cache", help="Inspect or clear the topological KV packet cache.")
