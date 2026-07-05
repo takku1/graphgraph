@@ -2855,6 +2855,72 @@ N1,N2,1,0.9
             finally:
                 os.chdir(orig_cwd)
 
+    def test_cmd_install_claude_code_project(self) -> None:
+        import os
+
+        from graphgraph.cli.commands import cmd_install
+
+        class DummyArgs:
+            project = True
+            platform = "claude-code"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orig_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                cmd_install(DummyArgs())
+
+                # Project-scoped .mcp.json pinned to this checkout via uv --project
+                mcp_json = Path(".mcp.json")
+                self.assertTrue(mcp_json.exists())
+                mcp_data = json.loads(mcp_json.read_text(encoding="utf-8"))
+                server = mcp_data["mcpServers"]["graphgraph"]
+                self.assertEqual(server["command"], "uv")
+                self.assertIn("--project", server["args"])
+                self.assertEqual(server["args"][-1], "graphgraph-mcp")
+
+                # Claude Code skill file
+                skill_md = Path(".claude") / "skills" / "graphgraph" / "SKILL.md"
+                self.assertTrue(skill_md.exists())
+                skill_content = skill_md.read_text(encoding="utf-8")
+                self.assertIn("name: graphgraph", skill_content)
+                self.assertIn("Claude Code", skill_content)
+                self.assertIn("query_context", skill_content)
+
+                # CLAUDE.md rule injection
+                claude_md = Path("CLAUDE.md")
+                self.assertTrue(claude_md.exists())
+                claude_content = claude_md.read_text(encoding="utf-8")
+                self.assertIn("# GraphGraph Workspace Rules", claude_content)
+                self.assertIn("graphgraph/query_context", claude_content)
+
+                # Codex plugin should NOT be written for a claude-code-only install
+                self.assertFalse((Path("plugins") / "graphgraph").exists())
+            finally:
+                os.chdir(orig_cwd)
+
+    def test_cmd_install_claude_code_idempotent(self) -> None:
+        """Re-running install must not duplicate the injected CLAUDE.md rule block."""
+        import os
+
+        from graphgraph.cli.commands import cmd_install
+
+        class DummyArgs:
+            project = True
+            platform = "claude-code"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orig_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+                cmd_install(DummyArgs())
+                cmd_install(DummyArgs())
+
+                claude_content = Path("CLAUDE.md").read_text(encoding="utf-8")
+                self.assertEqual(claude_content.count("# GraphGraph Workspace Rules"), 1)
+            finally:
+                os.chdir(orig_cwd)
+
     def test_imported_symbol_sources(self) -> None:
         from graphgraph.scanner.frontends import _imported_symbol_sources
         

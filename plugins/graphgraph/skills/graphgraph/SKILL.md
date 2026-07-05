@@ -5,7 +5,7 @@ description: Use GraphGraph for codebase context retrieval: one-step graph build
 
 # GraphGraph Operational Contract
 
-GraphGraph is installed for native codebase context retrieval in Codex, Antigravity, and CLI workflows. Use it to orient on code structure before broad source searches.
+GraphGraph is installed for native codebase context retrieval across coding agents (Codex, Gemini/Antigravity, Claude Code, Cursor, and other MCP/CLI-capable clients) and CLI workflows. Use it to orient on code structure before broad source searches.
 
 > [!IMPORTANT]
 > **STEP 0 -- CHECK TOOL AVAILABILITY FIRST**
