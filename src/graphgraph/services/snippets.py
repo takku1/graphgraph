@@ -36,7 +36,7 @@ def render_source_snippets(
         node = graph.nodes.get(node_id)
         if node is None:
             continue
-        path = _resolve_source_path(root, node)
+        path = _resolve_source_path(graph, root, node)
         if path is None:
             blocks.append(f"## {node.label} ({node_id})\n\nNo readable source path for node.")
             continue
@@ -69,10 +69,55 @@ def _graph_root(graph_path: Path) -> Path:
     return Path.cwd().resolve()
 
 
-def _resolve_source_path(root: Path, node: Node) -> Path | None:
+def _resolve_source_path(graph: Graph, root: Path, node: Node) -> Path | None:
     if not node.path:
         return None
     raw = Path(node.path)
+    candidates = [raw] if raw.is_absolute() else [root / raw, Path.cwd() / raw]
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not raw.is_absolute() and not (_is_relative_to(resolved, root) or _is_relative_to(resolved, Path.cwd().resolve())):
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    fallback = _resolve_descendant_source_path(graph, root, node)
+    if fallback is not None:
+        return fallback
+    return None
+
+
+def _resolve_descendant_source_path(graph: Graph, root: Path, node: Node) -> Path | None:
+    if not node.path:
+        return None
+    prefix = node.path.replace("\\", "/").strip("/")
+    if not prefix:
+        return None
+    prefix = prefix.rstrip("/") + "/"
+    candidates: list[tuple[int, int, int, str, Path]] = []
+    for other in graph.nodes.values():
+        if not other.active or not other.path:
+            continue
+        other_path = other.path.replace("\\", "/").strip("/")
+        if not other_path.startswith(prefix):
+            continue
+        resolved = _resolve_direct_path(root, other.path)
+        if resolved is None:
+            continue
+        rel = other_path[len(prefix) :]
+        basename = Path(other_path).name.casefold()
+        priority = 0 if basename.startswith("index.") else 1 if basename.startswith("main.") else 2
+        candidates.append((priority, rel.count("/"), len(other_path), other_path, resolved))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][4]
+
+
+def _resolve_direct_path(root: Path, raw_path: str) -> Path | None:
+    raw = Path(raw_path)
     candidates = [raw] if raw.is_absolute() else [root / raw, Path.cwd() / raw]
     for candidate in candidates:
         try:

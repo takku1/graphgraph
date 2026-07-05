@@ -1619,6 +1619,27 @@ N1,N2,1,0.9
             self.assertIn("5 |     token = helper()", out)
             self.assertNotIn("1 | def helper", out)
 
+    def test_render_source_snippets_resolves_package_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg = root / "examples" / "multi-router"
+            pkg.mkdir(parents=True)
+            child = pkg / "index.js"
+            child.write_text("function bootstrap() {\n  return true;\n}\n", encoding="utf-8")
+
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir()
+            graph = Graph(nodes={
+                "P": Node("P", "multi-router", "package", "examples/multi-router"),
+                "F": Node("F", "bootstrap", "function", "examples/multi-router/index.js", summary="L1"),
+            })
+            save_graph(graph, graph_path)
+
+            out = render_source_snippets(starts=["P"], graph_path=graph_path, context_lines=0, max_lines=4)
+            self.assertIn("## multi-router (P)", out)
+            self.assertIn("examples/multi-router/index.js:1", out)
+            self.assertIn("1 | function bootstrap()", out)
+
     def test_mcp_source_snippets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
