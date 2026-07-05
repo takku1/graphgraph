@@ -256,21 +256,36 @@ efficiency still needs doc/concept pruning work.
 `benchmarks/context_graph/search_hot_path_benchmark.py` measures repeated
 lexical search against the current live graph. PageRank is now cached and
 persisted in JSON graph saves, and node lexical tokenization is cached per
-loaded graph.
+loaded graph. It now also isolates bare process-startup cost (fresh
+subprocess, 5 rounds each) from in-process graph load and search, so a single
+CLI invocation's latency budget can be attributed correctly.
 
 Current live `graphgraph` result:
 
 | Metric | Value |
 | --- | ---: |
 | Queries per round | 4 |
-| Cold round seconds | 0.283 |
+| `import graphgraph` median (fresh subprocess) | 0.131s |
+| `graphgraph --help` median (full CLI cold start) | 0.152s |
+| Graph load (in-process, one read) | 0.123s |
+| Cold round seconds | 0.348 |
 | Cached rounds | 5 |
-| Cached total seconds | 0.837 |
-| Cached seconds/query | 0.0418 |
+| Cached total seconds | 0.766 |
+| Cached seconds/query | 0.0383 |
 
 Finding: repeated search against a loaded graph is now fast enough for agent
-loops on this project shape. The remaining first-query cost is mostly graph
-load plus one lexical index build.
+loops on this project shape. `python -X importtime -c "import graphgraph"`
+shows the package's own imports cost only ~62ms of cumulative time (dominated
+by ordinary stdlib costs: dataclasses, inspect, json, hashlib, pathlib) --
+tree-sitter-language-pack is not eagerly imported at package top level. The
+remaining ~90ms of bare-subprocess `import graphgraph` time is Python
+interpreter/site startup, identical for any Python process. `graphgraph
+--help` costs a further ~20ms on top for argparse subcommand setup, as
+expected. So for a single CLI invocation, the latency budget is roughly:
+~130ms fixed interpreter+import startup, ~120ms graph load, then query time
+(tens of ms). Startup and load dominate a single-shot CLI call; repeated
+in-process queries (the MCP server path) pay startup/load once and then run
+at the ~38ms/query cached rate above.
 
 ## Live Query Noise
 
