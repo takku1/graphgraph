@@ -7,7 +7,17 @@ import tempfile
 from pathlib import Path
 
 from .core import Edge, Graph, Node, Policy
+from .storage_backends import (
+    load_duckdb,
+    load_msgpack,
+    load_sqlite,
+    save_duckdb,
+    save_msgpack,
+    save_sqlite,
+)
 from .validate import ValidationResult, validate_graph_json
+
+_BACKEND_SUFFIXES = {".sqlite", ".duckdb", ".msgpack"}
 
 
 def _label_to_id(lbl: str) -> str:
@@ -85,8 +95,18 @@ def _float_or(value: object, default: float) -> float:
 
 
 def save_graph(graph: Graph, path: Path) -> None:
-    if path.suffix.lower() == ".gg":
+    suffix = path.suffix.lower()
+    if suffix == ".gg":
         save_gg(graph, path)
+        return
+    if suffix == ".sqlite":
+        save_sqlite(graph, path)
+        return
+    if suffix == ".duckdb":
+        save_duckdb(graph, path)
+        return
+    if suffix == ".msgpack":
+        save_msgpack(graph, path)
         return
     path.write_text(graph_to_json(graph) + "\n", encoding="utf-8")
 
@@ -136,7 +156,8 @@ def graph_to_json(graph: Graph) -> str:
 
 
 def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
-    if path.suffix.lower() == ".gg":
+    suffix = path.suffix.lower()
+    if suffix == ".gg":
         save_gg(graph, path)
         return ValidationResult(True, "gg", len(graph.nodes), len(graph.edges))
 
@@ -148,6 +169,10 @@ def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
             + "; ".join(result.errors[:5])
             + (f"; ... {len(result.errors) - 5} more" if len(result.errors) > 5 else "")
         )
+
+    if suffix in _BACKEND_SUFFIXES:
+        save_graph(graph, path)
+        return result
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -325,12 +350,18 @@ def load_csv_edges(path: Path) -> Graph:
 
 
 def load_any(path: Path) -> Graph:
-    """Load a graph from any supported format: .gg, .json, .csv, .tsv."""
+    """Load a graph from any supported format: .gg, .json, .csv, .tsv, .sqlite, .duckdb, .msgpack."""
     suffix = path.suffix.lower()
     if suffix == ".gg":
         return load_gg(path)
     if suffix in (".csv", ".tsv"):
         return load_csv_edges(path)
+    if suffix == ".sqlite":
+        return load_sqlite(path)
+    if suffix == ".duckdb":
+        return load_duckdb(path)
+    if suffix == ".msgpack":
+        return load_msgpack(path)
     return load_graph(path)
 
 

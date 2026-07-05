@@ -2390,6 +2390,49 @@ N1,N2,1,0.9
             g2 = load_any(path)
             self.assertEqual(len(g.nodes), len(g2.nodes))
 
+    # --- alternative storage backend roundtrip tests ---
+
+    def _assert_roundtrip(self, suffix: str) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            g = sample_graph()
+            g.pagerank()  # populate the pagerank cache so we exercise that path too
+            path = Path(tmp) / f"graph{suffix}"
+            save_graph(g, path)
+            self.assertTrue(path.exists())
+            g2 = load_any(path)
+            self.assertEqual(set(g.nodes), set(g2.nodes))
+            for node_id, node in g.nodes.items():
+                node2 = g2.nodes[node_id]
+                self.assertEqual(node.label, node2.label)
+                self.assertEqual(node.kind, node2.kind)
+                self.assertEqual(node.path, node2.path)
+                self.assertEqual(node.facts, node2.facts)
+            self.assertEqual(len(g.edges), len(g2.edges))
+            self.assertEqual({e.type for e in g.edges}, {e.type for e in g2.edges})
+            self.assertEqual(g.metadata, g2.metadata)
+
+    def test_sqlite_roundtrip(self) -> None:
+        self._assert_roundtrip(".sqlite")
+
+    def test_duckdb_roundtrip(self) -> None:
+        self._assert_roundtrip(".duckdb")
+
+    def test_msgpack_roundtrip(self) -> None:
+        self._assert_roundtrip(".msgpack")
+
+    def test_save_validated_graph_routes_backend_suffixes(self) -> None:
+        from graphgraph.io import save_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            g = sample_graph()
+            for suffix in (".sqlite", ".duckdb", ".msgpack"):
+                path = Path(tmp) / f"g{suffix}"
+                result = save_validated_graph(g, path)
+                self.assertTrue(result.ok)
+                self.assertTrue(path.exists())
+                g2 = load_any(path)
+                self.assertEqual(set(g.nodes), set(g2.nodes))
+
     # --- CSV ingest tests ---
 
     def test_load_csv_edges_basic(self) -> None:
