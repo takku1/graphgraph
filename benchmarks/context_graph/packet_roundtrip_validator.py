@@ -158,6 +158,7 @@ def parse_gg_max(text: str) -> tuple[set[str], set[tuple[str, str, str]]]:
     edges: set[tuple[str, str, str]] = set()
 
     section = None
+    current_rel_id = ""
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if line in {"[r]", "[n]", "[e]"}:
@@ -177,8 +178,20 @@ def parse_gg_max(text: str) -> tuple[set[str], set[tuple[str, str, str]]]:
                 label = parts[1].strip().split()[0]
                 node_idx_to_label[parts[0].strip()] = label
         elif section == "[e]":
+            if line.endswith(":") and len(line.split()) == 1:
+                current_rel_id = line[:-1].strip()
+                continue
             parts = line.split()
-            if len(parts) >= 3:
+            if len(parts) >= 2 and current_rel_id:
+                src_idx, tgt_idx = parts[:2]
+                rel_id = current_rel_id
+                src_label = node_idx_to_label.get(src_idx)
+                tgt_label = node_idx_to_label.get(tgt_idx)
+                src_id = label_to_id(src_label) if src_label else src_idx
+                tgt_id = label_to_id(tgt_label) if tgt_label else tgt_idx
+                rel = relations.get(rel_id, rel_id)
+                edges.add((src_id, tgt_id, rel))
+            elif len(parts) >= 3:
                 src_idx, tgt_idx, rel_id = parts[:3]
                 src_label = node_idx_to_label.get(src_idx)
                 tgt_label = node_idx_to_label.get(tgt_idx)

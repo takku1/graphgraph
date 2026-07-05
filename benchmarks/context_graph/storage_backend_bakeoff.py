@@ -1,4 +1,4 @@
-"""Real-repo storage backend bake-off: JSON vs .gg vs sqlite vs duckdb vs msgpack.
+"""Real-repo storage backend bake-off: JSON baseline vs native .gg.
 
 Scans each project in `local_corpus.py` exactly once, then for every
 candidate storage format: saves it (recording file size + save time), loads
@@ -12,6 +12,7 @@ Usage:
     python benchmarks/context_graph/storage_backend_bakeoff.py
     BAKEOFF_TIER=small_medium python benchmarks/context_graph/storage_backend_bakeoff.py
     BAKEOFF_PROJECTS=flask;requests python benchmarks/context_graph/storage_backend_bakeoff.py
+    BAKEOFF_FORCE=1 BAKEOFF_PROJECTS=flask python benchmarks/context_graph/storage_backend_bakeoff.py
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import json
 import os
 import sys
 import time
+import csv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -45,7 +47,7 @@ GRAPHS = OUT / "graphs"
 RESULTS_CSV = OUT / "storage_backend_bakeoff.csv"
 SUMMARY_MD = OUT / "storage_backend_bakeoff.md"
 
-FORMATS = (".json", ".gg", ".sqlite", ".duckdb", ".msgpack")
+FORMATS = (".json", ".gg")
 
 SKIP_DIRS = (
     ".git", ".graphgraph", ".mypy_cache", ".pytest_cache", ".ruff_cache",
@@ -58,6 +60,12 @@ LARGE_MAX_NODES = int(os.environ.get("BAKEOFF_LARGE_MAX_NODES", str(local_corpus
 QUERY_ROUNDS_COLD = 1
 QUERY_ROUNDS_CACHED = 3
 MAX_TASKS_PER_PROJECT = 5
+FIELDS = [
+    "project", "tier", "format", "status", "error", "source_nodes", "source_edges", "scan_ms",
+    "file_bytes", "save_ms", "load_ms", "cold_query_round_ms", "cached_query_ms_per_query",
+    "tokens_last_round", "loaded_nodes", "loaded_edges",
+    "node_fidelity", "edge_fidelity", "metadata_fidelity", "full_fidelity",
+]
 
 
 def corpus() -> list[tuple[Path, str]]:
@@ -67,6 +75,16 @@ def corpus() -> list[tuple[Path, str]]:
     if only_projects:
         wanted = {name.strip() for name in only_projects.split(";") if name.strip()}
         tiered = [(p, tier) for p, tier in tiered if p.name in wanted]
+        present = {p.name for p, _tier in tiered}
+        for name in sorted(wanted - present):
+            for root, tier in (
+                (local_corpus.AIPROJECTS_ROOT, "small_medium"),
+                (local_corpus.RESOURCES_ROOT, "small_medium"),
+            ):
+                path = root / name
+                if path.exists():
+                    tiered.append((path, tier))
+                    break
     if only_tier:
         tiered = [(p, tier) for p, tier in tiered if tier == only_tier]
     return tiered
@@ -98,7 +116,7 @@ def time_queries(graph: Graph, tasks: list[cras.Task], *, rounds: int) -> tuple[
     return total, tokens
 
 
-def bench_format(graph: Graph, tasks: list[cras.Task], project_name: str, fmt: str) -> dict[str, object]:
+def bench_format(graph: Graph, canonical: Graph, tasks: list[cras.Task], project_name: str, fmt: str) -> dict[str, object]:
     path = GRAPHS / f"{safe_name(project_name)}{fmt}"
     if path.exists():
         path.unlink()
@@ -118,6 +136,9 @@ def bench_format(graph: Graph, tasks: list[cras.Task], project_name: str, fmt: s
     except Exception as exc:  # pragma: no cover - benchmark diagnostics
         return {"format": fmt, "status": "load_error", "error": f"{type(exc).__name__}: {exc}"}
     load_ms = (time.perf_counter() - load_start) * 1000
+    node_fidelity = loaded.nodes == canonical.nodes
+    edge_fidelity = loaded.edges == canonical.edges
+    metadata_fidelity = loaded.metadata == canonical.metadata
 
     cold_s, _ = time_queries(loaded, tasks, rounds=QUERY_ROUNDS_COLD)
     cached_s, tokens = time_queries(loaded, tasks, rounds=QUERY_ROUNDS_CACHED)
@@ -135,6 +156,10 @@ def bench_format(graph: Graph, tasks: list[cras.Task], project_name: str, fmt: s
         "tokens_last_round": tokens,
         "loaded_nodes": len(loaded.nodes),
         "loaded_edges": len(loaded.edges),
+        "node_fidelity": node_fidelity,
+        "edge_fidelity": edge_fidelity,
+        "metadata_fidelity": metadata_fidelity,
+        "full_fidelity": node_fidelity and edge_fidelity and metadata_fidelity,
     }
 
 
@@ -146,43 +171,58 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     GRAPHS.mkdir(parents=True, exist_ok=True)
 
-    rows: list[dict[str, object]] = []
+    rows: list[dict[str, object]] = read_existing_rows()
+    force = os.environ.get("BAKEOFF_FORCE") == "1"
     for path, tier in corpus():
         project = path.name
+        if not force and project_complete(rows, project):
+            print(f"Skipping {project}; complete rows already present (set BAKEOFF_FORCE=1 to rerun).", flush=True)
+            continue
         print(f"Scanning {project} ({tier})...", flush=True)
         scan_start = time.perf_counter()
         try:
             graph = scan_project(path, tier)
         except Exception as exc:  # pragma: no cover - benchmark diagnostics
             rows.append({"project": project, "tier": tier, "format": "-", "status": "scan_error", "error": f"{type(exc).__name__}: {exc}"})
+            write(rows)
             continue
         scan_ms = (time.perf_counter() - scan_start) * 1000
         tasks = make_query_tasks(graph)
         print(f"  {len(graph.nodes)} nodes, {len(graph.edges)} edges, {len(tasks)} tasks, scan={scan_ms:.0f}ms")
+        canonical_path = GRAPHS / f"{safe_name(project)}.canonical.json"
+        save_graph(graph, canonical_path)
+        canonical = load_any(canonical_path)
 
         for fmt in FORMATS:
             print(f"  format {fmt}...", flush=True)
-            row = bench_format(graph, tasks, project, fmt)
+            row = bench_format(graph, canonical, tasks, project, fmt)
             row.update({"project": project, "tier": tier, "scan_ms": round(scan_ms, 1), "source_nodes": len(graph.nodes), "source_edges": len(graph.edges)})
             rows.append(row)
+        write(rows)
 
     write(rows)
     print(SUMMARY_MD.read_text(encoding="utf-8"))
 
 
-def write(rows: list[dict[str, object]]) -> None:
-    import csv
+def read_existing_rows() -> list[dict[str, object]]:
+    if not RESULTS_CSV.exists():
+        return []
+    with RESULTS_CSV.open(newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
 
-    fields = [
-        "project", "tier", "format", "status", "error", "source_nodes", "source_edges", "scan_ms",
-        "file_bytes", "save_ms", "load_ms", "cold_query_round_ms", "cached_query_ms_per_query",
-        "tokens_last_round", "loaded_nodes", "loaded_edges",
-    ]
+
+def project_complete(rows: list[dict[str, object]], project: str) -> bool:
+    project_rows = [row for row in rows if row.get("project") == project and row.get("status") == "ok"]
+    formats = {row.get("format") for row in project_rows}
+    return set(FORMATS).issubset(formats)
+
+
+def write(rows: list[dict[str, object]]) -> None:
     with RESULTS_CSV.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer = csv.DictWriter(fh, fieldnames=FIELDS)
         writer.writeheader()
         for row in rows:
-            writer.writerow({field: row.get(field, "") for field in fields})
+            writer.writerow({field: row.get(field, "") for field in FIELDS})
 
     ok_rows = [row for row in rows if row.get("status") == "ok"]
     by_format: dict[str, list[dict[str, object]]] = {}
@@ -214,14 +254,32 @@ def write(rows: list[dict[str, object]]) -> None:
         "",
         "## By Project x Format",
         "",
-        "| Project | Tier | Format | File bytes | Save ms | Load ms | Cached ms/query |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        "| Project | Tier | Format | Full fidelity | File bytes | Save ms | Load ms | Cached ms/query |",
+        "| --- | --- | --- | :---: | ---: | ---: | ---: | ---: |",
     ])
     for row in sorted(ok_rows, key=lambda r: (str(r["project"]), str(r["format"]))):
         lines.append(
-            f"| {row['project']} | {row['tier']} | `{row['format']}` | {row['file_bytes']} | "
+            f"| {row['project']} | {row['tier']} | `{row['format']}` | "
+            f"{'yes' if row.get('full_fidelity') else 'no'} | {row['file_bytes']} | "
             f"{row['save_ms']} | {row['load_ms']} | {row['cached_query_ms_per_query']} |"
         )
+
+    fidelity_failures = [row for row in ok_rows if not row.get("full_fidelity")]
+    if fidelity_failures:
+        lines.extend([
+            "",
+            "## Fidelity Failures",
+            "",
+            "| Project | Tier | Format | Nodes | Edges | Metadata |",
+            "| --- | --- | --- | :---: | :---: | :---: |",
+        ])
+        for row in fidelity_failures:
+            lines.append(
+                f"| {row['project']} | {row['tier']} | `{row['format']}` | "
+                f"{'ok' if row.get('node_fidelity') else 'lossy'} | "
+                f"{'ok' if row.get('edge_fidelity') else 'lossy'} | "
+                f"{'ok' if row.get('metadata_fidelity') else 'lossy'} |"
+            )
 
     failures = [row for row in rows if row.get("status") not in {"ok"}]
     if failures:
@@ -241,6 +299,7 @@ def write(rows: list[dict[str, object]]) -> None:
         "",
         "- `save_ms`/`load_ms` isolate storage-format cost only; `scan_ms` (per-project, see CSV) is separate and identical across formats since the graph is scanned once and reused.",
         "- `cached_query_ms_per_query` measures repeated retrieval against one already-loaded graph, so it reflects the loaded in-memory representation's query-friendliness, not disk I/O.",
+        "- `full_fidelity` means nodes, edges, and metadata round-trip exactly. Lossy formats can be useful packet/debug formats but should not be promoted as the persisted graph store.",
         f"- CSV: `{RESULTS_CSV.relative_to(ROOT)}`",
     ])
     SUMMARY_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")

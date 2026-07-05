@@ -47,17 +47,17 @@ def search_nodes(
     if personalize:
         personalization = {}
         for row in rows:
-            node_id = row.node_id
+            node_id_case = row.node.id
             score = 0.0
             for term in terms:
-                if term == node_id:
+                if term == row.node_id:
                     score += 8.0
                 if term == row.label:
                     score += 4.0
                 elif term in row.label_terms:
                     score += 2.0
             if score > 0:
-                personalization[node_id] = score
+                personalization[node_id_case] = score
         pagerank_scores = graph.personalized_pagerank(personalization)
     else:
         pagerank_scores = graph.pagerank()
@@ -208,17 +208,12 @@ def search_nodes(
     return tuple(matches[:limit])
 
 
-def _row_in_scope(row: SearchIndexRow, scopes: tuple[str, ...]) -> bool:
-    if not scopes:
+def _row_in_scope(row: SearchIndexRow, normalized_scopes: list[tuple[str, str]]) -> bool:
+    if not normalized_scopes:
         return True
-    values = (row.node.scope, row.node.path, row.node.source)
-    for value in values:
-        if not value:
-            continue
-        normalized = value.replace("\\", "/").strip("/")
-        for raw_scope in scopes:
-            scope = raw_scope.replace("\\", "/").strip("/")
-            if normalized == scope or normalized.startswith(scope + "/"):
+    for norm_val in row.node.normalized_scope_values:
+        for prefix, prefix_slash in normalized_scopes:
+            if norm_val == prefix or norm_val.startswith(prefix_slash):
                 return True
     return False
 
@@ -228,10 +223,17 @@ def _candidate_rows(graph: Graph, terms: tuple[str, ...], scopes: tuple[str, ...
     if not terms:
         return ()
     if scopes:
-        scoped = tuple(row for row in rows if _row_in_scope(row, scopes))
+        normalized_scopes = []
+        for scope in scopes:
+            norm = scope.replace("\\", "/").strip("/")
+            normalized_scopes.append((norm, norm + "/"))
+        scoped = tuple(row for row in rows if _row_in_scope(row, normalized_scopes))
         if not scoped:
             return ()
         rows = scoped
+        valid_ids = {row.node.id for row in rows}
+    else:
+        valid_ids = None
 
     by_term = _search_token_index(graph)
     candidate_ids: set[str] = set()
@@ -239,7 +241,12 @@ def _candidate_rows(graph: Graph, terms: tuple[str, ...], scopes: tuple[str, ...
         candidate_ids.update(by_term.get(term, ()))
     if not candidate_ids:
         return rows
-    return tuple(row for row in rows if row.node.id in candidate_ids)
+
+    rows_by_id = _search_index_by_id(graph)
+    if valid_ids is not None:
+        return tuple(rows_by_id[nid] for nid in candidate_ids if nid in valid_ids)
+    else:
+        return tuple(rows_by_id[nid] for nid in candidate_ids if nid in rows_by_id)
 
 
 def _search_token_index(graph: Graph) -> dict[str, tuple[str, ...]]:
@@ -316,9 +323,21 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
     return cached
 
 
+def _search_index_by_id(graph: Graph) -> dict[str, SearchIndexRow]:
+    key = _search_index_key(graph)
+    if graph._search_index_by_id_cache and graph._search_index_by_id_cache[0] == key:
+        return graph._search_index_by_id_cache[1]  # type: ignore[return-value]
+
+    rows = _search_index(graph)
+    by_id = {row.node.id: row for row in rows}
+    graph._search_index_by_id_cache = (key, by_id)
+    return by_id
+
+
 def _search_index_key(graph: Graph) -> tuple[object, ...]:
     return (
-        tuple(sorted((nid, id(node)) for nid, node in graph.nodes.items())),
+        id(graph),
+        graph.structural_signature(),
         graph.metadata.get("git_dirty", ""),
         graph.metadata.get("git_high_churn", ""),
     )

@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .core import Edge, Graph
 from .io import load_any
 from .packets import render_packet
 from .planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
@@ -28,6 +29,9 @@ class EvalResult:
     returned_nodes: int
     returned_edges: int
     token_estimate: int
+    mrr: float = 0.0
+    ndcg_at_5: float = 0.0
+    ndcg_at_10: float = 0.0
 
 
 def load_eval_tasks(path: Path) -> list[EvalTask]:
@@ -84,6 +88,26 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
         returned_ids = set(retrieved.nodes)
         returned_node_keys = returned_ids | returned_labels | returned_paths | returned_label_stems | returned_path_stems
         returned_edges = {(edge.source, edge.target, edge.type) for edge in retrieved.edges}
+
+        # Rank retrieved nodes by subgraph PageRank for rank-aware metrics
+        ranked_nodes = rank_nodes_by_subgraph_pagerank(graph, retrieved.nodes, retrieved.edges)
+        
+        # Map expected node names/paths to resolved node IDs in ranked_nodes
+        expected_ids = set()
+        for item in task.expected_nodes:
+            norm_item = _norm_node_key(item)
+            for nid in retrieved.nodes:
+                node = graph.nodes.get(nid)
+                if node:
+                    if _norm_node_key(nid) == norm_item or _norm_node_key(node.label) == norm_item or _norm_node_key(node.path) == norm_item:
+                        expected_ids.add(nid)
+                    elif node.path and (node.path.replace("\\", "/").endswith("/" + item) or node.path.replace("\\", "/").endswith("/" + item.replace("\\", "/"))):
+                        expected_ids.add(nid)
+
+        mrr_val = reciprocal_rank(ranked_nodes, expected_ids)
+        ndcg_5 = ndcg_at_k(ranked_nodes, expected_ids, 5)
+        ndcg_10 = ndcg_at_k(ranked_nodes, expected_ids, 10)
+
         results.append(EvalResult(
             query=task.query,
             query_class=task.query_class,
@@ -92,8 +116,47 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
             returned_nodes=len(retrieved.nodes),
             returned_edges=len(retrieved.edges),
             token_estimate=estimate_tokens(packet),
+            mrr=round(mrr_val, 4),
+            ndcg_at_5=round(ndcg_5, 4),
+            ndcg_at_10=round(ndcg_10, 4),
         ))
     return results
+
+
+def reciprocal_rank(ranked_list: list[str], expected_nodes: set[str]) -> float:
+    for idx, node_id in enumerate(ranked_list, start=1):
+        if node_id in expected_nodes:
+            return 1.0 / idx
+    return 0.0
+
+
+def ndcg_at_k(ranked_list: list[str], expected_nodes: set[str], k: int) -> float:
+    import math
+    k = min(len(ranked_list), k)
+    if k <= 0 or not expected_nodes:
+        return 0.0
+    dcg = sum(
+        1.0 / math.log2(idx + 1)
+        for idx, node_id in enumerate(ranked_list[:k], start=1)
+        if node_id in expected_nodes
+    )
+    idcg = sum(
+        1.0 / math.log2(idx + 1)
+        for idx in range(1, min(k, len(expected_nodes)) + 1)
+    )
+    return dcg / idcg if idcg > 0.0 else 0.0
+
+
+def rank_nodes_by_subgraph_pagerank(graph: Graph, retrieved_nodes: set[str], retrieved_edges: list[Edge]) -> list[str]:
+    active_nodes = {nid: graph.nodes[nid] for nid in retrieved_nodes if nid in graph.nodes}
+    if not active_nodes:
+        return []
+    subgraph = Graph(
+        nodes=active_nodes,
+        edges=retrieved_edges,
+    )
+    pr = subgraph.pagerank(damping=0.85, max_iter=20, use_cache=False)
+    return sorted(retrieved_nodes, key=lambda nid: pr.get(nid, 0.0), reverse=True)
 
 
 def estimate_tokens(text: str) -> int:

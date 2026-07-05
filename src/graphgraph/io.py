@@ -8,16 +8,13 @@ from pathlib import Path
 
 from .core import Edge, Graph, Node, Policy
 from .storage_backends import (
-    load_duckdb,
-    load_msgpack,
-    load_sqlite,
-    save_duckdb,
-    save_msgpack,
-    save_sqlite,
+    is_binary_gg,
+    load_graph_binary,
+    save_graph_binary,
 )
-from .validate import ValidationResult, validate_graph_json
+from .validate import ValidationResult, validate_graph_json, validate_graph_object
 
-_BACKEND_SUFFIXES = {".sqlite", ".duckdb", ".msgpack"}
+_BINARY_GRAPH_SUFFIXES = {".gg", ".ggb"}
 
 
 def _label_to_id(lbl: str) -> str:
@@ -96,17 +93,8 @@ def _float_or(value: object, default: float) -> float:
 
 def save_graph(graph: Graph, path: Path) -> None:
     suffix = path.suffix.lower()
-    if suffix == ".gg":
+    if suffix in _BINARY_GRAPH_SUFFIXES:
         save_gg(graph, path)
-        return
-    if suffix == ".sqlite":
-        save_sqlite(graph, path)
-        return
-    if suffix == ".duckdb":
-        save_duckdb(graph, path)
-        return
-    if suffix == ".msgpack":
-        save_msgpack(graph, path)
         return
     path.write_text(graph_to_json(graph) + "\n", encoding="utf-8")
 
@@ -157,10 +145,6 @@ def graph_to_json(graph: Graph) -> str:
 
 def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
     suffix = path.suffix.lower()
-    if suffix == ".gg":
-        save_gg(graph, path)
-        return ValidationResult(True, "gg", len(graph.nodes), len(graph.edges))
-
     payload = graph_to_json(graph)
     result = validate_graph_json(payload)
     if not result.ok:
@@ -170,9 +154,9 @@ def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
             + (f"; ... {len(result.errors) - 5} more" if len(result.errors) > 5 else "")
         )
 
-    if suffix in _BACKEND_SUFFIXES:
+    if suffix in _BINARY_GRAPH_SUFFIXES:
         save_graph(graph, path)
-        return result
+        return validate_graph_object(graph, format_name="graph.gg")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -191,7 +175,18 @@ def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
 
 
 def load_gg(path: Path) -> Graph:
-    """Load a native .gg adjacency-list file.
+    """Load a native .gg graph file.
+
+    New `.gg` files are full-fidelity GraphGraph binary stores. Legacy text
+    adjacency `.gg` files are still accepted for compatibility.
+    """
+    if is_binary_gg(path):
+        return load_graph_binary(path)
+    return load_gg_text(path)
+
+
+def load_gg_text(path: Path) -> Graph:
+    """Load a legacy .gg adjacency-list file.
 
     Format (self-describing, zero LLM schema overhead):
         gg/1
@@ -269,11 +264,12 @@ def load_gg(path: Path) -> Graph:
 
 
 def save_gg(graph: Graph, path: Path) -> None:
-    """Save a Graph as a native .gg adjacency-list file.
+    """Save a Graph as the native full-fidelity binary .gg store."""
+    save_graph_binary(graph, path)
 
-    Token-optimal for LLM ingest: self-describing format, no schema needed,
-    outgoing edges co-located with each node for attention locality.
-    """
+
+def save_gg_text(graph: Graph, path: Path) -> None:
+    """Save a Graph as a legacy human-readable .gg adjacency-list file."""
     outgoing: dict[str, list[Edge]] = {}
     for edge in graph.edges:
         outgoing.setdefault(edge.source, []).append(edge)
@@ -350,19 +346,20 @@ def load_csv_edges(path: Path) -> Graph:
 
 
 def load_any(path: Path) -> Graph:
-    """Load a graph from any supported format: .gg, .json, .csv, .tsv, .sqlite, .duckdb, .msgpack."""
+    """Load a graph from any supported format: .gg, .ggb, .json, .csv, .tsv."""
     suffix = path.suffix.lower()
-    if suffix == ".gg":
+    if suffix in _BINARY_GRAPH_SUFFIXES:
         return load_gg(path)
     if suffix in (".csv", ".tsv"):
         return load_csv_edges(path)
-    if suffix == ".sqlite":
-        return load_sqlite(path)
-    if suffix == ".duckdb":
-        return load_duckdb(path)
-    if suffix == ".msgpack":
-        return load_msgpack(path)
     return load_graph(path)
+
+
+def validate_graph_file(path: Path) -> ValidationResult:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return validate_graph_json(path.read_text(encoding="utf-8"))
+    return validate_graph_object(load_any(path), format_name=f"graph{suffix or '_file'}")
 
 
 def merge_graphify(base: Graph, overlay: Graph) -> Graph:
@@ -434,6 +431,7 @@ def merge_graphify(base: Graph, overlay: Graph) -> Graph:
 
 _NATIVE_GRAPH_CANDIDATES = [
     ".graphgraph/graph.gg",
+    ".graphgraph/graph.ggb",
     ".graphgraph/graph.json",
 ]
 
@@ -478,7 +476,7 @@ def find_graph_path(workspace_root: Path = Path("."), *, include_external: bool 
             return c
     raise FileNotFoundError(
         "Could not find a native GraphGraph file in default paths: "
-        f"{[str(c) for c in candidates]}. Run `graphgraph scan --output .graphgraph/graph.json` "
+        f"{[str(c) for c in candidates]}. Run `graphgraph scan --output .graphgraph/graph.gg` "
         "or specify a graph path explicitly. External graphs must be passed to `graphgraph ingest --input ...`."
     )
 

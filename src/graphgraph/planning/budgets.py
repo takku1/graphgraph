@@ -65,7 +65,7 @@ def default_anchor_limit(query: str, query_class: str) -> int:
     if query_class in {"direct_lookup", "reverse_lookup"}:
         return max(3, min(6, term_count + 1))
     if is_doc_query(query_class, query):
-        return 3
+        return 6
     if query_class == "subsystem_summary":
         return max(6, min(16, term_count * 3))
     if query_class == "blast_radius":
@@ -82,7 +82,7 @@ def retrieval_node_budget(query: str, query_class: str, max_nodes: int | None) -
         return default_node_budget(query_class, query)
     if query_class != "subsystem_summary":
         return max_nodes
-    summary_budget = max(16, min(24, len(plan_terms(query)) * 5))
+    summary_budget = max(16, min(32, len(plan_terms(query)) * 8))
     return min(max_nodes, summary_budget)
 
 

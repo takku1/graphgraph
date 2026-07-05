@@ -54,11 +54,13 @@ def identifier_terms(token: str) -> tuple[str, ...]:
         return ()
 
     parts: list[str] = [lowered]
-    for piece in re.split(r"[_\-.\\/]+", raw):
+    for piece in raw.split("_"):
         if not piece:
             continue
-        parts.append(piece.lower())
-        parts.extend(CAMEL_BOUNDARY.sub(" ", piece).lower().split())
+        piece_lowered = piece.lower()
+        parts.append(piece_lowered)
+        if piece_lowered != piece:
+            parts.extend(CAMEL_BOUNDARY.sub(" ", piece).lower().split())
     return tuple(dict.fromkeys(part for part in parts if len(part) >= 2))
 
 

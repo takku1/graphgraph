@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -8,8 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from graphgraph import (
     Edge,
@@ -61,6 +58,7 @@ from graphgraph.metrics import compare_graphs, summarize_graph
 from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
 from graphgraph.packets import (
     render_doc_summary,
+    render_packet,
     render_gg_max,
     render_lowlevel,
     render_semantic_arrow,
@@ -90,10 +88,6 @@ from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
 from graphgraph.traversal import relation_rank, traversal_policy
 from graphgraph.validate import validate_any, validate_graph_json
-
-
-def _optional_available(module_name: str) -> bool:
-    return importlib.util.find_spec(module_name) is not None
 
 
 def sample_graph() -> Graph:
@@ -221,7 +215,8 @@ class GraphGraphCoreTest(unittest.TestCase):
         nodes, edges = graph.expand(["N1"], hops=1)
         packet = render_gg_max(graph, nodes, edges)
         self.assertNotIn("1.0", packet) # weight omitted
-        self.assertIn("1 2 1", packet.split("[e]")[1].strip()) # 3 parts: src tgt rel_id
+        self.assertIn("1:", packet.split("[e]")[1]) # relation opcode group
+        self.assertIn("1 2", packet.split("[e]")[1]) # endpoint row under opcode
         result = validate_packet(packet)
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(result.format, "gg_max")
@@ -331,6 +326,42 @@ N1,N2,1,0.9
         result2 = retrieve_context(graph, "audit log", "spreading_activation", hops=2, max_nodes=5)
         self.assertIn("N3", result2.nodes)
         self.assertIn("N1", result2.nodes)
+
+    def test_spreading_activation_filters_stale_cached_nodes(self) -> None:
+        graph = sample_graph()
+        from graphgraph.retrieval.activation import spreading_activation
+
+        nodes, edges = spreading_activation(
+            graph,
+            ["N1"],
+            max_nodes=5,
+            previous_activation={"ghost_node_from_old_scan": 100.0, "N2": 0.25},
+        )
+        self.assertNotIn("ghost_node_from_old_scan", nodes)
+        self.assertTrue(nodes <= set(graph.nodes))
+        self.assertTrue(all(edge.source in nodes and edge.target in nodes for edge in edges))
+
+    def test_packet_renderers_skip_dangling_nodes_and_edges(self) -> None:
+        graph = sample_graph()
+        nodes = {"N1", "N2", "ghost_node_from_old_scan"}
+        edges = [Edge("N1", "N2", "reads"), Edge("N2", "ghost_node_from_old_scan", "reads")]
+        modes = [
+            "lowlevel",
+            "sql",
+            "hybrid",
+            "semantic_arrow",
+            "gg_max",
+            "gg_max_hybrid",
+            "gg_lex",
+            "gg_lex_hybrid",
+            "svo",
+            "doc_summary",
+            "tensor",
+        ]
+        for mode in modes:
+            with self.subTest(mode=mode):
+                packet = render_packet(graph, nodes, edges, mode)
+                self.assertNotIn("ghost_node_from_old_scan", packet)
 
     def test_adaptive_anchor_limit_handles_symbol_plateaus(self) -> None:
         from graphgraph.retrieval.context import _adaptive_anchor_limit
@@ -1621,7 +1652,7 @@ N1,N2,1,0.9
         self.assertIn("C", result.nodes)
 
     def test_subsystem_summary_uses_compact_node_budget(self) -> None:
-        self.assertEqual(default_anchor_limit("README installation usage", "subsystem_summary"), 3)
+        self.assertEqual(default_anchor_limit("README installation usage", "subsystem_summary"), 6)
         self.assertEqual(default_anchor_limit("search", "blast_radius"), 6)
         self.assertEqual(default_anchor_limit("auth service", "blast_radius"), 6)
         self.assertEqual(default_anchor_limit("compiler expression rules", "blast_radius"), 5)
@@ -1631,7 +1662,7 @@ N1,N2,1,0.9
         self.assertEqual(retrieval_node_budget("auth service", "blast_radius", None), 120)
         self.assertEqual(retrieval_node_budget("matrix subsystem", "subsystem_summary", None), 120)
         self.assertEqual(retrieval_node_budget("missing auth service", "negative_query", None), 1)
-        self.assertEqual(retrieval_node_budget("matrix transpose orthogonal symmetric square vector rules", "subsystem_summary", 40), 24)
+        self.assertEqual(retrieval_node_budget("matrix transpose orthogonal symmetric square vector rules", "subsystem_summary", 40), 32)
         self.assertEqual(retrieval_node_budget("README installation usage", "subsystem_summary", 40), 12)
         self.assertEqual(retrieval_node_budget("README installation usage", "doc_summary", 40), 12)
         self.assertEqual(retrieval_node_budget("auth service", "blast_radius", 40), 40)
@@ -2354,30 +2385,50 @@ N1,N2,1,0.9
 
     # --- .gg roundtrip tests ---
 
-    def test_save_load_gg_roundtrip(self) -> None:
+    def test_save_load_gg_roundtrip_preserves_graph_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            g = sample_graph()
             path = Path(tmp) / "graph.gg"
-            save_gg(g, path)
-            g2 = load_gg(path)
-            self.assertEqual(set(n.label for n in g.nodes.values()),
-                             set(n.label for n in g2.nodes.values()))
-            self.assertEqual(len(g.edges), len(g2.edges))
-            edge_types = {e.type for e in g2.edges}
-            self.assertIn("reads", edge_types)
-            self.assertIn("writes", edge_types)
-
-    def test_save_gg_omits_weight_when_one(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            g = Graph(
-                nodes={"A": Node("A", "Alpha", "file", "a.py"), "B": Node("B", "Beta", "file", "b.py")},
-                edges=[Edge("A", "B", "imports", 1.0)],
+            graph = Graph(
+                nodes={
+                    "N1": Node(
+                        "N1",
+                        "AuthService",
+                        "service",
+                        "server/auth.py",
+                        summary="L10 authenticates users",
+                        facts=("uses constant-time compare",),
+                        scope="server",
+                        parent="P1",
+                        source="scanner",
+                        confidence=0.95,
+                        created_at="2026-07-05T00:00:00Z",
+                        updated_at="2026-07-05T01:00:00Z",
+                    ),
+                    "N2": Node("N2", "TokenStore", "data", "server/tokens.py", active=False),
+                },
+                edges=[
+                    Edge(
+                        "N1",
+                        "N2",
+                        "reads",
+                        weight=0.75,
+                        confidence=0.8,
+                        provenance="ast",
+                        evidence="AuthService.reads(TokenStore)",
+                        source_location="server/auth.py:12",
+                        valid_from="2026-07-05T00:00:00Z",
+                    )
+                ],
+                metadata={"project": "sample"},
             )
-            path = Path(tmp) / "g.gg"
-            save_gg(g, path)
-            content = path.read_text(encoding="utf-8")
-            self.assertNotIn("1.0", content)
-            self.assertIn("imports Beta", content)
+
+            save_graph(graph, path)
+            loaded = load_any(path)
+
+            self.assertEqual(loaded.nodes["N1"], graph.nodes["N1"])
+            self.assertEqual(loaded.nodes["N2"], graph.nodes["N2"])
+            self.assertEqual(loaded.edges, graph.edges)
+            self.assertEqual(loaded.metadata["project"], "sample")
 
     def test_load_gg_preserves_kind(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2397,57 +2448,44 @@ N1,N2,1,0.9
             g2 = load_any(path)
             self.assertEqual(len(g.nodes), len(g2.nodes))
 
-    # --- alternative storage backend roundtrip tests ---
+    def test_reciprocal_rank_and_ndcg(self) -> None:
+        from graphgraph.eval import reciprocal_rank, ndcg_at_k
+        ranked = ["A", "B", "C", "D", "E"]
+        expected = {"C", "E"}
+        
+        # First expected node is at rank 3 -> RR = 1/3
+        self.assertAlmostEqual(reciprocal_rank(ranked, expected), 0.3333333333333333)
+        self.assertEqual(reciprocal_rank(ranked, {"X"}), 0.0)
+        
+        # NDCG@5: DCG@5 = 1/log2(3+1) + 1/log2(5+1) = 0.5 + 0.38685 = 0.88685
+        # IDCG@5: expected size is 2, so ideal is ranks 1, 2: 1/log2(1+1) + 1/log2(2+1) = 1.0 + 0.6309 = 1.6309
+        # NDCG = 0.88685 / 1.6309 = 0.54378
+        self.assertAlmostEqual(ndcg_at_k(ranked, expected, 5), 0.5437798, places=4)
+        self.assertEqual(ndcg_at_k(ranked, expected, 0), 0.0)
+        self.assertEqual(ndcg_at_k(ranked, set(), 5), 0.0)
 
-    def _assert_roundtrip(self, suffix: str) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            g = sample_graph()
-            g.pagerank()  # populate the pagerank cache so we exercise that path too
-            path = Path(tmp) / f"graph{suffix}"
-            save_graph(g, path)
-            self.assertTrue(path.exists())
-            g2 = load_any(path)
-            self.assertEqual(set(g.nodes), set(g2.nodes))
-            for node_id, node in g.nodes.items():
-                node2 = g2.nodes[node_id]
-                self.assertEqual(node.label, node2.label)
-                self.assertEqual(node.kind, node2.kind)
-                self.assertEqual(node.path, node2.path)
-                self.assertEqual(node.facts, node2.facts)
-            self.assertEqual(len(g.edges), len(g2.edges))
-            self.assertEqual({e.type for e in g.edges}, {e.type for e in g2.edges})
-            self.assertEqual(g.metadata, g2.metadata)
-
-    def test_sqlite_roundtrip(self) -> None:
-        self._assert_roundtrip(".sqlite")
-
-    def test_duckdb_roundtrip(self) -> None:
-        pytest.importorskip("duckdb")
-        pytest.importorskip("pyarrow")
-        self._assert_roundtrip(".duckdb")
-
-    def test_msgpack_roundtrip(self) -> None:
-        pytest.importorskip("msgpack")
-        self._assert_roundtrip(".msgpack")
+    def test_rank_nodes_by_subgraph_pagerank(self) -> None:
+        from graphgraph.eval import rank_nodes_by_subgraph_pagerank
+        g = sample_graph()
+        # g has N1 -> N2 -> N3
+        retrieved_nodes = {"N1", "N2", "N3"}
+        retrieved_edges = g.edges
+        ranked = rank_nodes_by_subgraph_pagerank(g, retrieved_nodes, retrieved_edges)
+        self.assertEqual(set(ranked), retrieved_nodes)
+        self.assertEqual(len(ranked), 3)
 
     def test_save_validated_graph_routes_backend_suffixes(self) -> None:
         from graphgraph.io import save_validated_graph
 
-        suffixes = [".sqlite"]
-        if _optional_available("duckdb") and _optional_available("pyarrow"):
-            suffixes.append(".duckdb")
-        if _optional_available("msgpack"):
-            suffixes.append(".msgpack")
-
         with tempfile.TemporaryDirectory() as tmp:
             g = sample_graph()
-            for suffix in suffixes:
-                path = Path(tmp) / f"g{suffix}"
-                result = save_validated_graph(g, path)
-                self.assertTrue(result.ok)
-                self.assertTrue(path.exists())
-                g2 = load_any(path)
-                self.assertEqual(set(g.nodes), set(g2.nodes))
+            path = Path(tmp) / "g.gg"
+            result = save_validated_graph(g, path)
+            self.assertTrue(result.ok)
+            self.assertEqual(result.format, "graph.gg")
+            self.assertTrue(path.exists())
+            g2 = load_any(path)
+            self.assertEqual(set(g.nodes), set(g2.nodes))
 
     # --- CSV ingest tests ---
 

@@ -1,262 +1,337 @@
-"""Alternative persisted storage backends for a scanned Graph.
+"""GraphGraph native binary storage.
 
-These are candidates being benchmarked against the default JSON/`.gg` formats
-in `io.py` (see `benchmarks/context_graph/storage_backend_bakeoff.py` and
-`docs/empirical-findings.md`). Each backend provides `save_x(graph, path)` /
-`load_x(path) -> Graph`, matching the shape of `io.save_graph`/`io.load_any`
-so `io.py` can dispatch to them by file suffix without any change to `core.py`.
+The promoted ``.gg`` store is a full-fidelity binary format for scanned
+GraphGraph graphs. It is dictionary-coded, sequential to load, and intentionally
+does not carry generic object-map overhead from JSON/msgpack/SQL rows.
 
-`duckdb` and `msgpack` are optional dependencies (extras group
-`storage-bakeoff` in pyproject.toml); `sqlite3` is stdlib.
+Legacy text ``.gg`` adjacency files are still readable through ``io.load_gg``;
+new ``.gg`` writes use this binary format.
 """
 
 from __future__ import annotations
 
-import json
-import sqlite3
+import struct
 from pathlib import Path
 
 from .core import Edge, Graph, Node
 
-_NODE_COLUMNS = (
-    "id", "label", "kind", "path", "summary", "facts", "scope", "parent",
-    "source", "confidence", "active", "created_at", "updated_at",
-)
-_EDGE_COLUMNS = (
-    "source", "target", "type", "weight", "confidence", "provenance",
-    "evidence", "source_location", "valid_from", "valid_to", "active",
-)
-
-_SCHEMA_STATEMENTS = (
-    """CREATE TABLE nodes (
-        id TEXT PRIMARY KEY, label TEXT, kind TEXT, path TEXT, summary TEXT,
-        facts TEXT, scope TEXT, parent TEXT, source TEXT, confidence REAL,
-        active INTEGER, created_at TEXT, updated_at TEXT
-    )""",
-    """CREATE TABLE edges (
-        source TEXT, target TEXT, type TEXT, weight REAL, confidence REAL,
-        provenance TEXT, evidence TEXT, source_location TEXT, valid_from TEXT,
-        valid_to TEXT, active INTEGER
-    )""",
-    "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)",
-    "CREATE INDEX idx_edges_source ON edges(source)",
-    "CREATE INDEX idx_edges_target ON edges(target)",
-)
-
-_PAGERANK_KEY = "__pagerank__"
+_PAGERANK_ALGORITHM = "pagerank"
+_GGB_MAGIC = b"GGB3"
+_GGB_HEADER = struct.Struct("<4sIIIIII")
+_GGB_NODE_RECORD = struct.Struct("<" + "I" * 12 + "dB")
+_GGB_EDGE_RECORD = struct.Struct("<" + "I" * 8 + "ddB")
+_PAIR_RECORD = struct.Struct("<II")
+_PAGERANK_HEADER = struct.Struct("<IdII")
+_PAGERANK_SCORE_RECORD = struct.Struct("<Id")
 
 
-def _node_row(node: Node) -> tuple:
-    return (
-        node.id, node.label, node.kind, node.path, node.summary,
-        json.dumps(list(node.facts)), node.scope, node.parent, node.source,
-        node.confidence, int(node.active), node.created_at, node.updated_at,
-    )
+def is_binary_gg(path: Path) -> bool:
+    try:
+        return path.read_bytes()[:4] in {_GGB_MAGIC, b"GGB2"}
+    except OSError:
+        return False
 
 
-def _edge_row(edge: Edge) -> tuple:
-    return (
-        edge.source, edge.target, edge.type, edge.weight, edge.confidence,
-        edge.provenance, edge.evidence, edge.source_location, edge.valid_from,
-        edge.valid_to, int(edge.active),
-    )
+def _put_string(strings: dict[str, int], value: str) -> int:
+    value = value or ""
+    idx = strings.get(value)
+    if idx is None:
+        idx = len(strings)
+        strings[value] = idx
+    return idx
 
 
-def _node_from_row(row: tuple) -> Node:
-    (id_, label, kind, path, summary, facts_json, scope, parent, source,
-     confidence, active, created_at, updated_at) = row
-    return Node(
-        id=id_, label=label, kind=kind, path=path or "", summary=summary or "",
-        facts=tuple(json.loads(facts_json)) if facts_json else (),
-        scope=scope or "", parent=parent or "", source=source or "",
-        confidence=float(confidence), active=bool(active),
-        created_at=created_at or "", updated_at=updated_at or "",
-    )
+def _read_u32(data: bytes, offset: int) -> tuple[int, int]:
+    return struct.unpack_from("<I", data, offset)[0], offset + 4
 
 
-def _edge_from_row(row: tuple) -> Edge:
-    (source, target, type_, weight, confidence, provenance, evidence,
-     source_location, valid_from, valid_to, active) = row
-    return Edge(
-        source=source, target=target, type=type_, weight=float(weight),
-        confidence=float(confidence), provenance=provenance or "extracted",
-        evidence=evidence or "", source_location=source_location or "",
-        valid_from=valid_from or "", valid_to=valid_to or "", active=bool(active),
-    )
-
-
-def _graph_from_rows(
-    node_rows: list[tuple], edge_rows: list[tuple], metadata_rows: list[tuple]
-) -> Graph:
-    nodes = {row[0]: _node_from_row(row) for row in node_rows}
-    edges = [_edge_from_row(row) for row in edge_rows]
-    metadata: dict[str, str] = {}
-    pagerank_payload = None
-    for key, value in metadata_rows:
-        if key == _PAGERANK_KEY:
-            pagerank_payload = json.loads(value)
-        else:
-            metadata[key] = value
-    graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
-    if isinstance(pagerank_payload, dict):
-        graph.seed_pagerank_cache(pagerank_payload)
-    return graph
-
-
-# --- SQLite (stdlib) --------------------------------------------------------
-
-def save_sqlite(graph: Graph, path: Path) -> None:
+def save_graph_binary(graph: Graph, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
-    con = sqlite3.connect(str(path))
-    try:
-        for stmt in _SCHEMA_STATEMENTS:
-            con.execute(stmt)
-        con.executemany(
-            f"INSERT INTO nodes VALUES ({','.join('?' * len(_NODE_COLUMNS))})",
-            [_node_row(n) for n in graph.nodes.values()],
-        )
-        con.executemany(
-            f"INSERT INTO edges VALUES ({','.join('?' * len(_EDGE_COLUMNS))})",
-            [_edge_row(e) for e in graph.edges],
-        )
-        metadata_rows = list(graph.metadata.items())
-        metadata_rows.append((_PAGERANK_KEY, json.dumps(graph.pagerank_cache_payload())))
-        con.executemany("INSERT INTO metadata VALUES (?, ?)", metadata_rows)
-        con.commit()
-    finally:
-        con.close()
+    strings: dict[str, int] = {}
 
-
-def load_sqlite(path: Path) -> Graph:
-    con = sqlite3.connect(str(path))
-    try:
-        node_rows = con.execute(f"SELECT {','.join(_NODE_COLUMNS)} FROM nodes").fetchall()
-        edge_rows = con.execute(f"SELECT {','.join(_EDGE_COLUMNS)} FROM edges").fetchall()
-        metadata_rows = con.execute("SELECT key, value FROM metadata").fetchall()
-    finally:
-        con.close()
-    return _graph_from_rows(node_rows, edge_rows, metadata_rows)
-
-
-# --- DuckDB (optional extra) -------------------------------------------------
-
-def _arrow_table(columns: tuple[str, ...], rows: list[tuple]) -> "pa.Table":
-    import pyarrow as pa
-
-    transposed = list(zip(*rows)) if rows else [() for _ in columns]
-    return pa.table(dict(zip(columns, transposed)))
-
-
-def save_duckdb(graph: Graph, path: Path) -> None:
-    # duckdb.executemany() has severe per-call overhead (seconds per few thousand
-    # rows even on an in-memory DB); bulk-loading via an Arrow table and
-    # `INSERT ... SELECT * FROM <arrow_var>` (DuckDB's replacement-scan path) is
-    # ~150x faster and is the documented way to bulk-load DuckDB from Python.
-    import duckdb
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
-    con = duckdb.connect(str(path))
-    try:
-        for stmt in _SCHEMA_STATEMENTS:
-            con.execute(stmt)
-
-        nodes_arrow = _arrow_table(_NODE_COLUMNS, [_node_row(n) for n in graph.nodes.values()])
-        con.execute("INSERT INTO nodes SELECT * FROM nodes_arrow")
-
-        edges_arrow = _arrow_table(_EDGE_COLUMNS, [_edge_row(e) for e in graph.edges])
-        con.execute("INSERT INTO edges SELECT * FROM edges_arrow")
-
-        metadata_rows = list(graph.metadata.items())
-        metadata_rows.append((_PAGERANK_KEY, json.dumps(graph.pagerank_cache_payload())))
-        metadata_arrow = _arrow_table(("key", "value"), metadata_rows)
-        con.execute("INSERT INTO metadata SELECT * FROM metadata_arrow")
-    finally:
-        con.close()
-
-
-def load_duckdb(path: Path) -> Graph:
-    import duckdb
-
-    con = duckdb.connect(str(path))
-    try:
-        node_rows = con.execute(f"SELECT {','.join(_NODE_COLUMNS)} FROM nodes").fetchall()
-        edge_rows = con.execute(f"SELECT {','.join(_EDGE_COLUMNS)} FROM edges").fetchall()
-        metadata_rows = con.execute("SELECT key, value FROM metadata").fetchall()
-    finally:
-        con.close()
-    return _graph_from_rows(node_rows, edge_rows, metadata_rows)
-
-
-# --- msgpack (optional extra) -------------------------------------------------
-
-def _graph_to_dict(graph: Graph) -> dict:
-    return {
-        "nodes": [
-            {
-                "id": node.id, "label": node.label, "kind": node.kind,
-                "path": node.path, "summary": node.summary, "facts": list(node.facts),
-                "scope": node.scope, "parent": node.parent, "source": node.source,
-                "confidence": node.confidence, "active": node.active,
-                "created_at": node.created_at, "updated_at": node.updated_at,
-            }
-            for node in graph.nodes.values()
-        ],
-        "edges": [
-            {
-                "source": edge.source, "target": edge.target, "type": edge.type,
-                "weight": edge.weight, "confidence": edge.confidence,
-                "provenance": edge.provenance, "evidence": edge.evidence,
-                "source_location": edge.source_location, "valid_from": edge.valid_from,
-                "valid_to": edge.valid_to, "active": edge.active,
-            }
-            for edge in graph.edges
-        ],
-        "metadata": dict(graph.metadata),
-        "centrality": {"pagerank": graph.pagerank_cache_payload()},
-    }
-
-
-def _graph_from_dict(data: dict) -> Graph:
-    nodes = {
-        item["id"]: Node(
-            id=item["id"], label=item["label"], kind=item["kind"], path=item["path"],
-            summary=item["summary"], facts=tuple(item.get("facts") or []),
-            scope=item["scope"], parent=item["parent"], source=item["source"],
-            confidence=float(item["confidence"]), active=bool(item["active"]),
-            created_at=item["created_at"], updated_at=item["updated_at"],
-        )
-        for item in data["nodes"]
-    }
-    edges = [
-        Edge(
-            source=item["source"], target=item["target"], type=item["type"],
-            weight=float(item["weight"]), confidence=float(item["confidence"]),
-            provenance=item["provenance"], evidence=item["evidence"],
-            source_location=item["source_location"], valid_from=item["valid_from"],
-            valid_to=item["valid_to"], active=bool(item["active"]),
-        )
-        for item in data["edges"]
+    metadata_rows = [
+        (_put_string(strings, str(key)), _put_string(strings, str(value)))
+        for key, value in sorted(graph.metadata.items())
     ]
-    graph = Graph(nodes=nodes, edges=edges, metadata=dict(data.get("metadata") or {}))
-    pagerank_payload = (data.get("centrality") or {}).get("pagerank")
-    if isinstance(pagerank_payload, dict):
-        graph.seed_pagerank_cache(pagerank_payload)
+
+    pagerank = graph.pagerank_cache_payload()
+    pagerank_signature = _put_string(strings, str(pagerank.get("signature", "")))
+    pagerank_tol = _put_string(strings, str(pagerank.get("tol", 1e-4)))
+    pagerank_scores = []
+    raw_scores = pagerank.get("scores")
+    if isinstance(raw_scores, dict):
+        pagerank_scores = [
+            (_put_string(strings, str(node_id)), float(score))
+            for node_id, score in sorted(raw_scores.items())
+        ]
+
+    fact_refs: list[int] = []
+    node_rows = []
+    for node in graph.nodes.values():
+        fact_start = len(fact_refs)
+        for fact in node.facts:
+            fact_refs.append(_put_string(strings, fact))
+        node_rows.append((
+            _put_string(strings, node.id),
+            _put_string(strings, node.label),
+            _put_string(strings, node.kind),
+            _put_string(strings, node.path),
+            _put_string(strings, node.summary),
+            fact_start,
+            len(node.facts),
+            _put_string(strings, node.scope),
+            _put_string(strings, node.parent),
+            _put_string(strings, node.source),
+            _put_string(strings, node.created_at),
+            _put_string(strings, node.updated_at),
+            float(node.confidence),
+            1 if node.active else 0,
+        ))
+
+    edge_rows = [
+        (
+            _put_string(strings, edge.source),
+            _put_string(strings, edge.target),
+            _put_string(strings, edge.type),
+            _put_string(strings, edge.provenance),
+            _put_string(strings, edge.evidence),
+            _put_string(strings, edge.source_location),
+            _put_string(strings, edge.valid_from),
+            _put_string(strings, edge.valid_to),
+            float(edge.weight),
+            float(edge.confidence),
+            1 if edge.active else 0,
+        )
+        for edge in graph.edges
+    ]
+
+    dictionary = sorted(strings, key=strings.__getitem__)
+    with path.open("wb") as fh:
+        fh.write(_GGB_HEADER.pack(
+            _GGB_MAGIC,
+            len(dictionary),
+            len(node_rows),
+            len(edge_rows),
+            len(metadata_rows),
+            len(fact_refs),
+            len(pagerank_scores),
+        ))
+        fh.write(_PAGERANK_HEADER.pack(
+            pagerank_signature,
+            float(pagerank.get("damping", 0.85)),
+            int(pagerank.get("max_iter", 20)),
+            pagerank_tol,
+        ))
+        for value in dictionary:
+            raw = value.encode("utf-8")
+            fh.write(struct.pack("<I", len(raw)))
+            fh.write(raw)
+        for key_idx, value_idx in metadata_rows:
+            fh.write(_PAIR_RECORD.pack(key_idx, value_idx))
+        for fact_idx in fact_refs:
+            fh.write(struct.pack("<I", fact_idx))
+        for row in node_rows:
+            fh.write(_GGB_NODE_RECORD.pack(*row))
+        for row in edge_rows:
+            fh.write(_GGB_EDGE_RECORD.pack(*row))
+        for node_idx, score in pagerank_scores:
+            fh.write(_PAGERANK_SCORE_RECORD.pack(node_idx, score))
+
+
+def load_graph_binary(path: Path) -> Graph:
+    data = path.read_bytes()
+    magic = data[:4]
+    if magic == b"GGB2":
+        return _load_ggb2(data)
+    if magic != _GGB_MAGIC:
+        raise ValueError(f"unsupported .gg binary magic/version: {magic!r}")
+
+    offset = 0
+    (
+        _magic,
+        string_count,
+        node_count,
+        edge_count,
+        metadata_count,
+        fact_ref_count,
+        pagerank_count,
+    ) = _GGB_HEADER.unpack_from(data, offset)
+    offset += _GGB_HEADER.size
+    pagerank_signature, pagerank_damping, pagerank_max_iter, pagerank_tol = _PAGERANK_HEADER.unpack_from(data, offset)
+    offset += _PAGERANK_HEADER.size
+
+    strings, offset = _read_strings(data, offset, string_count)
+
+    def s(idx: int) -> str:
+        return strings[idx] if 0 <= idx < len(strings) else ""
+
+    metadata: dict[str, str] = {}
+    for _ in range(metadata_count):
+        key_idx, value_idx = _PAIR_RECORD.unpack_from(data, offset)
+        offset += _PAIR_RECORD.size
+        metadata[s(key_idx)] = s(value_idx)
+
+    fact_refs = []
+    for _ in range(fact_ref_count):
+        fact_idx, offset = _read_u32(data, offset)
+        fact_refs.append(fact_idx)
+
+    nodes: dict[str, Node] = {}
+    for _ in range(node_count):
+        record = _GGB_NODE_RECORD.unpack_from(data, offset)
+        offset += _GGB_NODE_RECORD.size
+        (
+            id_,
+            label,
+            kind,
+            node_path,
+            summary,
+            fact_start,
+            fact_count,
+            scope,
+            parent,
+            source,
+            created_at,
+            updated_at,
+            confidence,
+            active,
+        ) = record
+        facts = tuple(s(fact_refs[i]) for i in range(fact_start, fact_start + fact_count))
+        node_id = s(id_)
+        nodes[node_id] = Node(
+            id=node_id,
+            label=s(label),
+            kind=s(kind) or "unknown",
+            path=s(node_path),
+            summary=s(summary),
+            facts=facts,
+            scope=s(scope),
+            parent=s(parent),
+            source=s(source),
+            confidence=float(confidence),
+            active=bool(active),
+            created_at=s(created_at),
+            updated_at=s(updated_at),
+        )
+
+    edges: list[Edge] = []
+    for _ in range(edge_count):
+        source, target, type_, provenance, evidence, source_location, valid_from, valid_to, weight, confidence, active = (
+            _GGB_EDGE_RECORD.unpack_from(data, offset)
+        )
+        offset += _GGB_EDGE_RECORD.size
+        edges.append(Edge(
+            source=s(source),
+            target=s(target),
+            type=s(type_) or "dependency",
+            weight=float(weight),
+            confidence=float(confidence),
+            provenance=s(provenance) or "extracted",
+            evidence=s(evidence),
+            source_location=s(source_location),
+            valid_from=s(valid_from),
+            valid_to=s(valid_to),
+            active=bool(active),
+        ))
+
+    pagerank_scores = {}
+    for _ in range(pagerank_count):
+        node_idx, score = _PAGERANK_SCORE_RECORD.unpack_from(data, offset)
+        offset += _PAGERANK_SCORE_RECORD.size
+        pagerank_scores[s(node_idx)] = float(score)
+
+    graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
+    if pagerank_scores:
+        graph.seed_pagerank_cache({
+            "algorithm": _PAGERANK_ALGORITHM,
+            "version": 1,
+            "damping": pagerank_damping,
+            "max_iter": pagerank_max_iter,
+            "tol": float(s(pagerank_tol) or 1e-4),
+            "signature": s(pagerank_signature),
+            "scores": pagerank_scores,
+        })
     return graph
 
 
-def save_msgpack(graph: Graph, path: Path) -> None:
-    import msgpack
+def _read_strings(data: bytes, offset: int, string_count: int) -> tuple[list[str], int]:
+    strings: list[str] = []
+    for _ in range(string_count):
+        size, offset = _read_u32(data, offset)
+        strings.append(data[offset: offset + size].decode("utf-8"))
+        offset += size
+    return strings, offset
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(msgpack.packb(_graph_to_dict(graph), use_bin_type=True))
 
+def _load_ggb2(data: bytes) -> Graph:
+    # Backward compatibility for the brief .ggb/GGB2 bake-off candidate.
+    import json
 
-def load_msgpack(path: Path) -> Graph:
-    import msgpack
+    header = struct.Struct("<4sIII")
+    node_record = struct.Struct("<" + "I" * 9 + "dB")
+    edge_record = _GGB_EDGE_RECORD
 
-    data = msgpack.unpackb(path.read_bytes(), raw=False)
-    return _graph_from_dict(data)
+    offset = header.size
+    string_count, node_count, edge_count = header.unpack_from(data, 0)[1:]
+    metadata_len, offset = _read_u32(data, offset)
+    raw_metadata = json.loads(data[offset: offset + metadata_len].decode("utf-8")) if metadata_len else {}
+    offset += metadata_len
+    strings, offset = _read_strings(data, offset, string_count)
+
+    def s(idx: int) -> str:
+        return strings[idx] if 0 <= idx < len(strings) else ""
+
+    nodes: dict[str, Node] = {}
+    for _ in range(node_count):
+        record = node_record.unpack_from(data, offset)
+        offset += node_record.size
+        created_at, updated_at = struct.unpack_from("<II", data, offset)
+        offset += 8
+        id_, label, kind, node_path, summary, facts, scope, parent, source, confidence, active = record
+        node_id = s(id_)
+        nodes[node_id] = Node(
+            id=node_id,
+            label=s(label),
+            kind=s(kind) or "unknown",
+            path=s(node_path),
+            summary=s(summary),
+            facts=tuple(json.loads(s(facts))) if s(facts) else (),
+            scope=s(scope),
+            parent=s(parent),
+            source=s(source),
+            confidence=float(confidence),
+            active=bool(active),
+            created_at=s(created_at),
+            updated_at=s(updated_at),
+        )
+
+    edges: list[Edge] = []
+    for _ in range(edge_count):
+        source, target, type_, provenance, evidence, source_location, valid_from, valid_to, weight, confidence, active = (
+            edge_record.unpack_from(data, offset)
+        )
+        offset += edge_record.size
+        edges.append(Edge(
+            source=s(source),
+            target=s(target),
+            type=s(type_) or "dependency",
+            weight=float(weight),
+            confidence=float(confidence),
+            provenance=s(provenance) or "extracted",
+            evidence=s(evidence),
+            source_location=s(source_location),
+            valid_from=s(valid_from),
+            valid_to=s(valid_to),
+            active=bool(active),
+        ))
+
+    pagerank_payload = raw_metadata.pop("__pagerank__", None)
+    graph = Graph(nodes=nodes, edges=edges, metadata={str(k): str(v) for k, v in raw_metadata.items()})
+    if isinstance(pagerank_payload, str):
+        try:
+            payload = json.loads(pagerank_payload)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            graph.seed_pagerank_cache(payload)
+    return graph

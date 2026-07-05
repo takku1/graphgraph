@@ -21,7 +21,9 @@ def configure(repo_root: Path) -> dict:
         else:
             args[idx + 1] = root.as_posix()
     else:
-        args = ["run", "--project", root.as_posix(), "graphgraph-mcp"]
+        args = ["run", "--no-sync", "--project", root.as_posix(), "graphgraph-mcp"]
+    if "run" in args and "--no-sync" not in args:
+        args.insert(args.index("run") + 1, "--no-sync")
     if not args or args[-1] != "graphgraph-mcp":
         args.append("graphgraph-mcp")
 

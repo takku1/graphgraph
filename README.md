@@ -10,12 +10,12 @@ systems as import sources and comparison baselines.
 
 Current native pieces:
 
-- **Deterministic AST/Doc Scanning:** Builds topological dependency graphs in `.graphgraph/graph.json` with **Import-Guided Disambiguation** (resolves ambiguous callable definitions using local module import stems).
+- **Deterministic AST/Doc Scanning:** Builds topological dependency graphs in `.graphgraph/graph.gg` with **Import-Guided Disambiguation** (resolves ambiguous callable definitions using local module import stems).
 - **Personalized PageRank (PPR):** Context-contextual ranking of node relevance relative to search keyword anchors (teleportation vector matches lexical hits).
 - **Continuous KKT Budget Planning:** Dynamically calculates optimal node bounds using continuous Lagrangian/KKT stationarity, saving **14%+ tokens** with perfect answerability.
 - **Bellman MDP Traversal stopping:** Early-terminates spreading activation propagation when marginal relevance energy per token falls below `0.005`.
 - **Lessons Reflection Integration:** Injects past session reflections (`lessons.md`) directly into final prompt packets to ground the assistant.
-- **Native Adjacency Storage:** Compresses and persists compact subgraphs in `.gg` format.
+- **Native Binary Storage:** Compresses and persists full-fidelity graphs in `.gg` format.
 - **Agent Skill & Installer:** Streamlined registration via `graphgraph install` CLI utility.
 - **Repeatable Benchmarking:** In-tree integration checks (`promote_check.py`) evaluating recall, token calibration, and answerability limits.
 
@@ -217,13 +217,13 @@ The scanner builds a symbol-level graph. With Tree-sitter installed, `--depth sy
 
 ```powershell
 # Standard incremental scan
-graphgraph scan --directory . --depth symbols --output .graphgraph/graph.json
+graphgraph scan --directory . --depth symbols --output .graphgraph/graph.gg
 
 # Scan using Tree-sitter frontend
-graphgraph scan --directory . --depth symbols --frontend tree_sitter --output .graphgraph/graph.json
+graphgraph scan --directory . --depth symbols --frontend tree_sitter --output .graphgraph/graph.gg
 
 # Force a full rebuild (disable incremental updates)
-graphgraph scan --directory . --depth symbols --no-incremental --output .graphgraph/graph.json
+graphgraph scan --directory . --depth symbols --no-incremental --output .graphgraph/graph.gg
 ```
 
 ### 2. Retrieve Context & Render Packets
@@ -232,7 +232,7 @@ preferred agent workflow because GraphGraph discovers anchors before rendering
 the packet:
 
 ```powershell
-# One-step workflow: build/load .graphgraph/graph.json, discover anchors, render packet
+# One-step workflow: build/load .graphgraph/graph.gg, discover anchors, render packet
 graphgraph context "what is the blast radius of auth changes" --query-class blast_radius --show-stats
 
 # Query an existing graph directly and show the resolved anchors
@@ -250,7 +250,7 @@ Measure graph shape and inspect dynamic budget candidates without changing
 runtime defaults:
 
 ```powershell
-graphgraph profile --graph .graphgraph/graph.json
+graphgraph profile --graph .graphgraph/graph.gg
 ```
 
 ### 4. Summarize Project Status
@@ -267,8 +267,8 @@ graphgraph status --json
 ### 5. Exporters & Validators
 
 ```powershell
-# Export to compact .gg adjacency format
-graphgraph export --graph .graphgraph/graph.json --output .graphgraph/graph.gg
+# Export JSON or imported graph data to native binary .gg
+graphgraph export --graph graphify-out/graph.json --output .graphgraph/graph.gg
 
 # Validate a generated context packet
 Get-Content packet.txt | graphgraph validate
@@ -299,7 +299,7 @@ python benchmarks\context_graph\run_all.py
 
 ### Run Recall Evaluation
 ```powershell
-graphgraph eval --graph .graphgraph/graph.json --tasks benchmarks/context_graph/data/locus_tasks.json --max-nodes 40
+graphgraph eval --graph .graphgraph/graph.gg --tasks benchmarks/context_graph/data/locus_tasks.json --max-nodes 40
 ```
 
 ### Run Unit Tests
@@ -313,11 +313,11 @@ python -m unittest discover -s tests
 
 Import/align third-party graphs (e.g. from `graphify`) into the native context graph format:
 ```powershell
-graphgraph ingest --input graphify-out/graph.json --output .graphgraph/graph.json
+graphgraph ingest --input graphify-out/graph.json --output .graphgraph/graph.gg
 ```
 
 External graph directories are not default runtime sources. After import,
-run normal commands against the native `.graphgraph/graph.json` output.
+run normal commands against the native `.graphgraph/graph.gg` output.
 
 The unified graph contract is defined in [graph.schema.json](src/graphgraph/schema/graph.schema.json).
 

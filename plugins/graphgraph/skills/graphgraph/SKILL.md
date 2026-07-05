@@ -12,7 +12,7 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 > The `graphgraph/*` MCP tools only exist if a graphgraph MCP server is registered for *this* client. Many sessions (e.g. Claude Code without project `.mcp.json`) have **no** graphgraph MCP server even when Claude Desktop does. Before following any MCP step, confirm a tool named `graphgraph/query_context` (or similar) is actually available. **If it is not, silently switch to the CLI path below -- do NOT try to translate MCP tool names into CLI flags.** Run `graphgraph doctor` to see per-client MCP status.
 
 > **DEFAULT PATH**
-> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet. Leave `max_nodes` unset for normal use so GraphGraph can choose the dynamic query-class and graph-shape budget; pass an explicit cap only for repeatable tests or intentionally small packets.
+> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.gg` if missing, then returns a packet. Leave `max_nodes` unset for normal use so GraphGraph can choose the dynamic query-class and graph-shape budget; pass an explicit cap only for repeatable tests or intentionally small packets.
 
 > **BENCHMARK DISCIPLINE**
 > Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.
@@ -33,7 +33,7 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 | `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |
 | `final_packet` | Render a packet from known node IDs. |
 | `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |
-| `build_graph` | Build `.graphgraph/graph.json`; accepts `exclude_dirs`. |
+| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs`. |
 | `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |
 
 ## CLI Commands (the real subcommands)
@@ -53,7 +53,7 @@ Notes: `--starts` exists only on `final` and `render`. `context`/`query` take fr
 - Force rebuild: `graphgraph context "<query>" --rebuild --scan-max-nodes 5000 --show-stats`
 - Focus scope: `graphgraph context "<query>" --scope src/graphgraph/retrieval --query-class blast_radius`
 - Dynamic sizing: omit `--max-nodes` for production context packets; use `--scan-max-nodes` only to control how much of the repo is indexed.
-- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects `.graphgraph/graph.json`)
+- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects the native graph under `.graphgraph/`)
 - Validate a rendered packet from stdin: `graphgraph query "<query>" --packet gg_max | graphgraph validate`
 
 ## Query Classes

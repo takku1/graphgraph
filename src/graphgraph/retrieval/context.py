@@ -455,7 +455,7 @@ def retrieve_context(
         if query_class in STRUCTURAL_QUERY_CLASSES or query_class == "direct_lookup"
         else plan.anchor_limit
     )
-    selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class)
+    selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class, doc_intensity >= 0.35)
     starts = tuple(match.node.id for match in selected_matches)
     if not starts:
         return RetrievalResult(starts=(), matches=matches, nodes=set(), edges=[])
@@ -472,6 +472,7 @@ def retrieve_context(
         )
     else:
         nodes, edges = expand_context(graph, starts, plan, scopes=scopes)
+        nodes, edges = reserve_query_named_siblings(graph, nodes, edges, starts, query, plan)
     return RetrievalResult(starts=starts, matches=matches, nodes=nodes, edges=edges)
 
 
@@ -587,7 +588,24 @@ def _is_file_like_anchor(node: object) -> bool:
     }
 
 
-def select_anchor_matches(matches: tuple[Match, ...], anchor_limit: int, query_class: str) -> tuple[Match, ...]:
+def select_anchor_matches(
+    matches: tuple[Match, ...],
+    anchor_limit: int,
+    query_class: str,
+    doc_intent: bool = False,
+) -> tuple[Match, ...]:
+    if doc_intent:
+        doc_matches = [match for match in matches if match.node.kind in NON_STRUCTURAL_KINDS]
+        if doc_matches:
+            selected: list[Match] = []
+            seen: set[str] = set()
+            for match in doc_matches + list(matches):
+                if match.node.id in seen:
+                    continue
+                selected.append(match)
+                seen.add(match.node.id)
+                if len(selected) >= anchor_limit:
+                    return tuple(selected)
     if query_class not in STRUCTURAL_QUERY_CLASSES:
         return matches[:anchor_limit]
     structural = [match for match in matches if match.node.kind not in NON_STRUCTURAL_KINDS]
@@ -608,3 +626,97 @@ def select_anchor_matches(matches: tuple[Match, ...], anchor_limit: int, query_c
         if len(selected) >= anchor_limit:
             break
     return tuple(selected)
+
+
+def reserve_query_named_siblings(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    query: str,
+    plan: ContextPlan,
+    reserve_limit: int = 12,
+) -> tuple[set[str], list[Edge]]:
+    if plan.query_class not in {"blast_radius", "subsystem_summary"}:
+        return nodes, edges
+    query_terms = set(plan_terms(query))
+    if not query_terms:
+        return nodes, edges
+
+    start_set = set(starts)
+    start_paths = {
+        node.path.replace("\\", "/")
+        for start in starts
+        if (node := graph.nodes.get(start)) is not None and node.path
+    }
+    if not start_paths:
+        return nodes, edges
+
+    start_terms: set[str] = set()
+    for start in starts:
+        node = graph.nodes.get(start)
+        if node:
+            start_terms.update(plan_terms(node.label))
+
+    candidates: list[tuple[tuple[int, str, str], str]] = []
+    for node_id, node in graph.nodes.items():
+        if node_id in nodes or not node.active or not node.path:
+            continue
+        if node.path.replace("\\", "/") not in start_paths:
+            continue
+        if node.kind in NON_STRUCTURAL_KINDS or node.kind == "field":
+            continue
+        label_terms = set(plan_terms(node.label))
+        query_hits = _loose_term_hits(query_terms, label_terms)
+        sibling_hits = _loose_term_hits(start_terms, label_terms)
+        if query_hits == 0 and sibling_hits == 0:
+            continue
+        priority = (
+            0 if query_hits else 1,
+            -(query_hits * 10 + sibling_hits),
+            node.path,
+            node.label,
+        )
+        candidates.append((priority, node_id))
+
+    if not candidates:
+        return nodes, edges
+
+    out_nodes = set(nodes)
+    protected = start_set | {node_id for _priority, node_id in sorted(candidates)[:reserve_limit]}
+    max_nodes = plan.node_budget
+    for _priority, node_id in sorted(candidates)[:reserve_limit]:
+        if node_id in out_nodes:
+            continue
+        if max_nodes is not None and len(out_nodes) >= max_nodes:
+            removable = _least_valuable_context_node(graph, out_nodes, protected=protected)
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(node_id)
+
+    seen = {(edge.source, edge.target, edge.type) for edge in edges}
+    out_edges = [edge for edge in edges if edge.source in out_nodes and edge.target in out_nodes]
+    for edge in graph.edges:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen or not edge.active:
+            continue
+        if edge.source in out_nodes and edge.target in out_nodes and (
+            edge.source in protected or edge.target in protected or edge.type in {"contains", "implements"}
+        ):
+            out_edges.append(edge)
+            seen.add(key)
+    return out_nodes, out_edges
+
+
+def _loose_term_hits(needles: set[str], haystack: set[str]) -> int:
+    hits = 0
+    for needle in needles:
+        for term in haystack:
+            if needle == term:
+                hits += 1
+                break
+            if len(needle) >= 8 and len(term) >= 8 and needle[:8] == term[:8]:
+                hits += 1
+                break
+    return hits

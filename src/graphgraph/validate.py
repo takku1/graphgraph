@@ -100,6 +100,39 @@ def validate_graph_json(graph_json: str) -> ValidationResult:
     return ValidationResult(not errors, "graph_json", len(node_ids), edge_count, tuple(errors))
 
 
+def validate_graph_object(graph: object, *, format_name: str = "graph") -> ValidationResult:
+    """Validate a loaded Graph-like object regardless of on-disk encoding."""
+    errors: list[str] = []
+    nodes = getattr(graph, "nodes", None)
+    edges = getattr(graph, "edges", None)
+    if not isinstance(nodes, dict):
+        return ValidationResult(False, format_name, 0, 0, ("graph nodes must be a dict",))
+    if not isinstance(edges, list):
+        return ValidationResult(False, format_name, len(nodes), 0, ("graph edges must be a list",))
+
+    for node_id, node in nodes.items():
+        if not isinstance(node_id, str) or not node_id:
+            errors.append(f"bad node id: {node_id!r}")
+        if getattr(node, "id", node_id) != node_id:
+            errors.append(f"node key/id mismatch: {node_id}")
+
+    for index, edge in enumerate(edges):
+        source = getattr(edge, "source", "")
+        target = getattr(edge, "target", "")
+        edge_type = getattr(edge, "type", "")
+        if source not in nodes:
+            errors.append(f"edge source missing from nodes at index {index}: {source}")
+        if target not in nodes:
+            errors.append(f"edge target missing from nodes at index {index}: {target}")
+        if not edge_type:
+            errors.append(f"edge missing type at index {index}")
+        try:
+            float(getattr(edge, "weight", 1.0))
+        except (TypeError, ValueError):
+            errors.append(f"bad edge weight at index {index}: {getattr(edge, 'weight', None)}")
+    return ValidationResult(not errors, format_name, len(nodes), len(edges), tuple(errors))
+
+
 def looks_like_graph_json(text: str) -> bool:
     stripped = text.lstrip()
     if not stripped.startswith("{"):
@@ -157,9 +190,22 @@ def validate_gg_max(packet: str) -> ValidationResult:
         node_id, label = parts
         nodes[node_id] = label
 
+    current_rel_id = ""
     for line in nonempty_lines(edges_part):
+        if line.endswith(":") and len(line.split()) == 1:
+            current_rel_id = line[:-1].strip()
+            if current_rel_id not in relations and not current_rel_id.isalpha():
+                errors.append(f"edge relation missing from relation map: {current_rel_id}")
+            continue
         parts = [part.strip() for part in line.split()]
-        if len(parts) == 3:
+        if len(parts) == 2 and current_rel_id:
+            source, target = parts
+            rel_id = current_rel_id
+            weight = "1.0"
+        elif len(parts) == 3 and current_rel_id:
+            source, target, weight = parts
+            rel_id = current_rel_id
+        elif len(parts) == 3:
             source, target, rel_id = parts
             weight = "1.0"
         elif len(parts) == 4:

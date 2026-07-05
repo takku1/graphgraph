@@ -95,9 +95,16 @@ def make_path_tasks(project: str, graph: Graph, limit: int = 4) -> list[Frontier
         end = path[-1].target
         if (start, end) in seen or end == start:
             continue
-        seen.add((start, end))
         expected_edges = frozenset(edge_key(edge) for edge in path)
         expected_nodes = frozenset({start, *(edge.source for edge in path), *(edge.target for edge in path)})
+        
+        # Verify baseline answerability before including the task
+        nodes_ret, edges_ret = graph.expand([start, end], hops=2, max_nodes=80)
+        ret_edge_keys = {edge_key(e) for e in edges_ret}
+        if not (expected_nodes <= nodes_ret and expected_edges <= ret_edge_keys):
+            continue
+
+        seen.add((start, end))
         query = query_from_nodes(graph, (start, end))
         tasks.append(
             FrontierTask(
@@ -144,11 +151,18 @@ def make_hub_tasks(project: str, graph: Graph, limit: int = 4) -> list[FrontierT
         reverse=True,
     )
     tasks: list[FrontierTask] = []
-    for hub in hubs[:limit]:
+    for hub in hubs:
         query_terms = node_terms(graph, hub)
         best_edges = sorted(outgoing[hub], key=lambda edge: edge_score(graph, edge, query_terms), reverse=True)[:4]
         expected_edges = frozenset(edge_key(edge) for edge in best_edges)
         expected_nodes = frozenset({hub, *(edge.target for edge in best_edges)})
+        
+        # Verify baseline answerability before including the task
+        nodes_ret, edges_ret = graph.expand([hub], hops=1, max_nodes=32)
+        ret_edge_keys = {edge_key(e) for e in edges_ret}
+        if not (expected_nodes <= nodes_ret and expected_edges <= ret_edge_keys):
+            continue
+
         tasks.append(
             FrontierTask(
                 project=project,
@@ -161,6 +175,8 @@ def make_hub_tasks(project: str, graph: Graph, limit: int = 4) -> list[FrontierT
                 max_nodes=32,
             )
         )
+        if len(tasks) >= limit:
+            break
     return tasks
 
 

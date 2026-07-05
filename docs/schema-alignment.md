@@ -67,11 +67,12 @@ new native data around another tool's schema.
 Use:
 
 ```powershell
-python -m graphgraph ingest --input graphify-out/graph.json --output .graphgraph/graph.json
+python -m graphgraph ingest --input graphify-out/graph.json --output .graphgraph/graph.gg
 ```
 
 Do not rely on implicit discovery of external graph directories. The default
-graph lookup should prefer `.graphgraph/graph.gg` and `.graphgraph/graph.json`.
+graph lookup should prefer `.graphgraph/graph.gg`; `.graphgraph/graph.json`
+remains a compatibility/import path.
 Normal install, scan, context, query, and MCP workflows do not touch external
 graph tools or their generated output directories unless an explicit input path
 is supplied.

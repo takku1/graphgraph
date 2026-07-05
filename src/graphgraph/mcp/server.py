@@ -130,7 +130,7 @@ TOOLS = [
         "name": "build_graph",
         "description": (
             "Scan a directory (or ingest an existing graph JSON) and save a normalized graph "
-            "to .graphgraph/graph.json. Works on any codebase or documentation tree. "
+            "to .graphgraph/graph.gg. Works on any codebase or documentation tree. "
             "Detects import/dependency edges for Python, JS/TS, Go, Rust, Java, C#, C/C++, Ruby; "
             "link edges for Markdown, RST, and HTML. "
             "Optionally enable generic_mentions to extract weak 'references' edges from any text file. "
@@ -142,7 +142,7 @@ TOOLS = [
             "properties": {
                 "directory": {"type": "string", "description": "Directory to scan. Defaults to current working directory."},
                 "input_graph": {"type": "string", "description": "Path to an existing graph JSON (e.g. graphify output) to ingest instead of scanning."},
-                "output_path": {"type": "string", "description": "Where to save the graph. Defaults to .graphgraph/graph.json."},
+                "output_path": {"type": "string", "description": "Where to save the graph. Defaults to .graphgraph/graph.gg."},
                 "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 2000."},
                 "generic_mentions": {"type": "boolean", "description": "Also add weak 'references' edges for any file that mentions another file's name. Useful for docs-heavy repos. Default: false."},
                 "skip_dirs": {"type": "array", "items": {"type": "string"}, "description": "Extra directory names to exclude (beyond built-ins). E.g. ['spikes', 'test-inputs']."},
@@ -173,7 +173,7 @@ TOOLS = [
     {
         "name": "export_graph",
         "description": (
-            "Export the current graph to the native .gg adjacency-list format — "
+            "Export the current graph to the native binary .gg format — "
             "the token-optimal, self-describing format LLMs can read cold with zero schema overhead. "
             "Also the recommended format for LLM-generated context graphs."
         ),
@@ -234,7 +234,7 @@ FORMAT_TABLE = [
     {"format": "doc_summary", "schema_tokens": 2, "relative_tokens": "~0.6x", "description": "Grounded section/file notes with no topology. Best for README/docs/install/usage questions."},
     {"format": "hybrid", "schema_tokens": 5, "relative_tokens": "~2.3x", "description": "Markdown bullet lists. Readable but high token overhead."},
     {"format": "json", "schema_tokens": 0, "relative_tokens": "3.9-6.7x", "description": "Raw JSON. Never use as LLM wire format."},
-    {"format": ".gg file", "schema_tokens": 0, "relative_tokens": "~0.9x", "description": "Native adjacency-list storage format. Nodes then their edges co-located. LLMs can generate this directly."},
+    {"format": ".gg file", "schema_tokens": 0, "relative_tokens": "binary", "description": "Native full-fidelity binary storage format. Decode it before rendering an LLM packet."},
 ]
 
 
@@ -371,7 +371,7 @@ def handle_project_status(args: dict[str, Any]) -> str:
 
 def handle_build_graph(args: dict[str, Any]) -> str:
     input_graph_str = args.get("input_graph")
-    output_path_str = args.get("output_path") or ".graphgraph/graph.json"
+    output_path_str = args.get("output_path") or ".graphgraph/graph.gg"
     output_path = Path(output_path_str)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -6,12 +6,15 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
+    import tomli as tomllib
 
 from ..core import Graph
-from ..io import find_graph_path, load_any, save_validated_graph
+from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
 from ..scanner import scan_directory
-from ..validate import ValidationResult, validate_graph_json
+from ..validate import ValidationResult
 from .context import render_query_context
 
 
@@ -80,7 +83,7 @@ def scan_validated_graph(
 def ensure_native_graph(
     *,
     directory: Path = Path("."),
-    output_path: Path = Path(".graphgraph/graph.json"),
+    output_path: Path = Path(".graphgraph/graph.gg"),
     rebuild: bool = False,
     max_nodes: int = 2000,
     depth: str = "symbols",
@@ -97,8 +100,7 @@ def ensure_native_graph(
         try:
             if not graph_path.exists() and discover_existing:
                 graph_path = find_graph_path()
-            graph_text = graph_path.read_text(encoding="utf-8")
-            validation = validate_graph_json(graph_text)
+            validation = validate_graph_file(graph_path)
             if validation.ok:
                 return GraphBuildStatus(graph_path, load_any(graph_path), built=False)
         except FileNotFoundError:
@@ -144,8 +146,7 @@ def build_project_status(
 ) -> dict[str, object]:
     directory = directory.resolve()
     resolved_graph_path = graph_path or find_graph_path(directory)
-    graph_text = resolved_graph_path.read_text(encoding="utf-8")
-    validation = validate_graph_json(graph_text)
+    validation = validate_graph_file(resolved_graph_path)
     graph = load_any(resolved_graph_path)
     shape = graph_shape(graph)
     kind_counts: dict[str, int] = {}
@@ -316,7 +317,7 @@ def render_native_context(
     skip_dirs: tuple[str, ...] = (),
     show_anchors: bool = False,
 ) -> tuple[str, GraphBuildStatus]:
-    output_path = graph_path or Path(".graphgraph/graph.json")
+    output_path = graph_path or Path(".graphgraph/graph.gg")
     status = ensure_native_graph(
         directory=directory,
         output_path=output_path,

@@ -20,9 +20,13 @@ AIPROJECTS_ROOT = Path(r"C:\Users\dcarn\aiprojects")
 RESOURCES_ROOT = AIPROJECTS_ROOT / "resources"
 
 # Own projects: small/medium, fast to scan, no cap needed.
+#
+# contextminer is intentionally omitted from the default storage bake-off path:
+# it completed once for the current report, but it is large enough to make
+# iterative reruns feel stuck. Use BAKEOFF_PROJECTS=contextminer explicitly if
+# that shape is needed again.
 OWN_PROJECT_NAMES: tuple[str, ...] = (
     "graphgraph",
-    "contextminer",
     "chess",
     "slotmachine",
     "locus",

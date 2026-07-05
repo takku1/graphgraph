@@ -287,6 +287,39 @@ expected. So for a single CLI invocation, the latency budget is roughly:
 in-process queries (the MCP server path) pay startup/load once and then run
 at the ~38ms/query cached rate above.
 
+## Storage Backend Bake-Off
+
+The storage bake-off was stopped after 13 completed projects rather than
+running the whole corpus in one monolithic job. The completed set still covers
+small projects, medium projects, and heavier graph shapes:
+
+`chess`, `contextminer`, `express`, `flask`, `gamemechanic`, `graphgraph`,
+`graphify`, `langgraph`, `locus`, `redis`, `regex`, `requests`, `slotmachine`.
+
+Among full-fidelity persisted graph stores, the binary GraphGraph store is the
+measured winner. It was measured as `.ggb` during the bake-off and then promoted
+to the normalized `.gg` extension:
+
+| Format | Projects | Avg bytes | Avg save ms | Avg load ms |
+| --- | ---: | ---: | ---: | ---: |
+| binary `.gg` | 13 | 2,488,521 | 167.86 | 163.45 |
+| `.duckdb` | 13 | 5,295,498 | 550.47 | 249.14 |
+| `.msgpack` | 13 | 7,924,231 | 191.83 | 211.77 |
+| `.sqlite` | 13 | 8,496,994 | 300.31 | 210.17 |
+| `.json` | 13 | 12,350,763 | 500.86 | 248.75 |
+
+Finding: binary `.gg` is the smallest full-fidelity graph store, averaging about
+`20%` of JSON size across the completed corpus while saving and loading faster
+than JSON, SQLite, DuckDB, and usually msgpack. Query latency is not the
+promotion criterion because every backend deserializes into the same in-memory
+`Graph` dataclass before retrieval runs.
+
+The old human-readable text `.gg` adjacency format remains readable for
+backward compatibility, but new `.gg` writes use the full-fidelity binary store.
+
+Operational rule: default native scans should write `.graphgraph/graph.gg`;
+JSON and legacy text `.gg` should remain readable for compatibility.
+
 ## Live Query Noise
 
 `benchmarks/context_graph/live_query_noise.py` measures packet composition for
@@ -378,7 +411,7 @@ Finding: the Codex plugin, marketplace entry, bundled skill, and MCP launch
 configuration are locally coherent. `graphgraph install --project --platform
 codex` generates the repo-local plugin and writes `.mcp.json` with an absolute
 Windows checkout path so Codex starts the server from the repository root and
-finds `.graphgraph/graph.json`; `scripts/configure_codex_plugin.py` remains a
+finds `.graphgraph/graph.gg`; `scripts/configure_codex_plugin.py` remains a
 repair command for copied checkouts, and the integration check verifies that
 rewrite against a temporary repo copy.
 

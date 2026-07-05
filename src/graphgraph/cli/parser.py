@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     context = sub.add_parser("context", help="One-step native workflow: ensure a graph exists, then render query context.")
     context.add_argument("query", help="Natural-language query used to find graph anchors.")
     context.add_argument("--directory", "-d", help="Root directory to scan if a graph must be built (default: cwd).")
-    context.add_argument("--graph", help="Graph JSON path to read/write (default: .graphgraph/graph.json).")
+    context.add_argument("--graph", help="Graph path to read/write (default: .graphgraph/graph.gg).")
     context.add_argument("--rebuild", action="store_true", help="Force a graph rebuild before querying.")
     context.add_argument("--scan-max-nodes", type=int, default=2000, help="Max files/nodes collected during auto-build (default: 2000).")
     context.add_argument("--query-class", default="subsystem_summary")
@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan", help="Scan a directory and build a graph from import relationships.")
     scan.add_argument("--directory", "-d", help="Root directory to scan (default: cwd).")
-    scan.add_argument("--output", "-o", help="Output graph JSON path (default: .graphgraph/graph.json).")
+    scan.add_argument("--output", "-o", help="Output graph path (default: .graphgraph/graph.gg).")
     scan.add_argument("--max-nodes", type=int, default=2000, help="Max nodes to collect (default: 2000).")
     scan.add_argument("--generic-mentions", action="store_true", default=False,
                       help="Add weak 'references' edges for any file that mentions another file's stem name.")
@@ -128,12 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--no-incremental", action="store_false", dest="incremental", help="Disable incremental scanning.")
     scan.set_defaults(func=cmd_scan)
 
-    ingest = sub.add_parser("ingest", help="Ingest any graph format (.gg, .json, .csv, .tsv) into .graphgraph/graph.json.")
+    ingest = sub.add_parser("ingest", help="Ingest any graph format (.gg, .ggb, .json, .csv, .tsv) into .graphgraph/graph.gg.")
     ingest.add_argument("--input", "-i", help="Input file (.gg, .json, .csv, .tsv). Auto-detected if omitted.")
-    ingest.add_argument("--output", "-o", help="Output path (default: .graphgraph/graph.json).")
+    ingest.add_argument("--output", "-o", help="Output path (default: .graphgraph/graph.gg).")
     ingest.set_defaults(func=cmd_ingest)
 
-    export = sub.add_parser("export", help="Export current graph to native .gg adjacency-list format.")
+    export = sub.add_parser("export", help="Export current graph to native binary .gg format.")
     export.add_argument("--graph", help="Source graph path. Auto-detected if omitted.")
     export.add_argument("--output", "-o", help="Output .gg path (default: same dir as source).")
     export.set_defaults(func=cmd_export)

@@ -24,6 +24,19 @@ class Node:
     created_at: str = ""
     updated_at: str = ""
 
+    @property
+    def normalized_scope_values(self) -> tuple[str, ...]:
+        try:
+            return self._normalized_scope_values
+        except AttributeError:
+            vals = []
+            for val in (self.scope, self.path, self.source):
+                if val:
+                    vals.append(val.replace("\\", "/").strip("/"))
+            tup = tuple(vals)
+            object.__setattr__(self, "_normalized_scope_values", tup)
+            return tup
+
 
 @dataclass(frozen=True)
 class Edge:
@@ -38,6 +51,17 @@ class Edge:
     valid_from: str = ""
     valid_to: str = ""
     active: bool = True
+
+    @property
+    def traversal_val(self) -> float:
+        try:
+            return self._traversal_val
+        except AttributeError:
+            mult = traversal_strength(self.type)
+            conf = self.confidence * provenance_confidence(self.provenance)
+            val = self.weight * conf * mult
+            object.__setattr__(self, "_traversal_val", val)
+            return val
 
 
 @dataclass(frozen=True)
@@ -67,6 +91,7 @@ class Graph:
     _pagerank_cache: tuple[tuple[object, ...], dict[str, float]] | None = field(default=None, init=False, repr=False)
     _search_index_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
     _search_token_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
+    _search_index_by_id_cache: tuple[tuple[object, ...], dict[str, object]] | None = field(default=None, init=False, repr=False)
 
     def _edges_by_key(self, key_fn: Callable[[Edge], str]) -> dict[str, list[Edge]]:
         grouped: dict[str, list[Edge]] = {}
@@ -76,18 +101,38 @@ class Graph:
         return grouped
 
     def outgoing(self) -> dict[str, list[Edge]]:
-        return self._edges_by_key(lambda e: e.source)
+        cache = getattr(self, "_outgoing_cache_data", None)
+        if cache is not None:
+            cache_len, grouped = cache
+            if cache_len == len(self.edges):
+                return grouped
+        grouped = self._edges_by_key(lambda e: e.source)
+        self._outgoing_cache_data = (len(self.edges), grouped)
+        return grouped
 
     def incoming(self) -> dict[str, list[Edge]]:
-        return self._edges_by_key(lambda e: e.target)
+        cache = getattr(self, "_incoming_cache_data", None)
+        if cache is not None:
+            cache_len, grouped = cache
+            if cache_len == len(self.edges):
+                return grouped
+        grouped = self._edges_by_key(lambda e: e.target)
+        self._incoming_cache_data = (len(self.edges), grouped)
+        return grouped
 
     def degree(self) -> dict[str, int]:
+        cache = getattr(self, "_degree_cache_data", None)
+        if cache is not None:
+            cache_len, deg = cache
+            if cache_len == len(self.edges):
+                return deg
         deg: dict[str, int] = {}
         for edge in self.edges:
             if not edge.active:
                 continue
             deg[edge.source] = deg.get(edge.source, 0) + 1
             deg[edge.target] = deg.get(edge.target, 0) + 1
+        self._degree_cache_data = (len(self.edges), deg)
         return deg
 
     def pagerank(
@@ -99,7 +144,7 @@ class Graph:
     ) -> dict[str, float]:
         cache_key = self._pagerank_cache_key(damping, max_iter, tol) if use_cache else None
         if cache_key is not None and self._pagerank_cache and self._pagerank_cache[0] == cache_key:
-            return dict(self._pagerank_cache[1])
+            return self._pagerank_cache[1]
 
         active_nodes = [nid for nid, node in self.nodes.items() if node.active]
         N = len(active_nodes)
@@ -123,6 +168,19 @@ class Graph:
 
         dangling_nodes = [nid for nid in active_nodes if sum_out[nid] == 0.0]
 
+        # Precompute transitions
+        transitions = {}
+        for target_id in active_nodes:
+            incoming_edges = incoming.get(target_id, [])
+            valid_incoming = []
+            for edge in incoming_edges:
+                source_id = edge.source
+                if source_id in pr and sum_out[source_id] > 0.0:
+                    weight = edge.weight * traversal_strength(edge.type)
+                    factor = damping * (weight / sum_out[source_id])
+                    valid_incoming.append((source_id, factor))
+            transitions[target_id] = valid_incoming
+
         # Power iteration
         for _ in range(max_iter):
             next_pr = {nid: (1.0 - damping) / N for nid in active_nodes}
@@ -135,12 +193,8 @@ class Graph:
 
             # Distribute PR along active edges
             for target_id in active_nodes:
-                incoming_edges = incoming.get(target_id, [])
-                for edge in incoming_edges:
-                    source_id = edge.source
-                    if source_id in pr and sum_out[source_id] > 0.0:
-                        weight = edge.weight * traversal_strength(edge.type)
-                        next_pr[target_id] += damping * pr[source_id] * (weight / sum_out[source_id])
+                for source_id, factor in transitions[target_id]:
+                    next_pr[target_id] += pr[source_id] * factor
 
             # Check convergence
             err = sum(abs(next_pr[nid] - pr[nid]) for nid in active_nodes)
@@ -149,7 +203,7 @@ class Graph:
                 break
 
         if cache_key is not None:
-            self._pagerank_cache = (cache_key, dict(pr))
+            self._pagerank_cache = (cache_key, pr)
         return pr
 
     def personalized_pagerank(
@@ -192,6 +246,19 @@ class Graph:
 
         dangling_nodes = [nid for nid in active_nodes if sum_out[nid] == 0.0]
 
+        # Precompute transitions
+        transitions = {}
+        for target_id in active_nodes:
+            incoming_edges = incoming.get(target_id, [])
+            valid_incoming = []
+            for edge in incoming_edges:
+                source_id = edge.source
+                if source_id in pr and sum_out[source_id] > 0.0:
+                    weight = edge.weight * traversal_strength(edge.type)
+                    factor = damping * (weight / sum_out[source_id])
+                    valid_incoming.append((source_id, factor))
+            transitions[target_id] = valid_incoming
+
         for _ in range(max_iter):
             next_pr = {nid: (1.0 - damping) * p[nid] for nid in active_nodes}
 
@@ -201,12 +268,8 @@ class Graph:
                 next_pr[nid] += dangling_share * p[nid]
 
             for target_id in active_nodes:
-                incoming_edges = incoming.get(target_id, [])
-                for edge in incoming_edges:
-                    source_id = edge.source
-                    if source_id in pr and sum_out[source_id] > 0.0:
-                        weight = edge.weight * traversal_strength(edge.type)
-                        next_pr[target_id] += damping * pr[source_id] * (weight / sum_out[source_id])
+                for source_id, factor in transitions[target_id]:
+                    next_pr[target_id] += pr[source_id] * factor
 
             err = sum(abs(next_pr[nid] - pr[nid]) for nid in active_nodes)
             pr = next_pr
@@ -220,6 +283,12 @@ class Graph:
 
     def structural_signature(self) -> str:
         """Stable hash of active topology and ranking-relevant edge weights."""
+        cache = getattr(self, "_structural_sig_cache", None)
+        if cache is not None:
+            cache_len_nodes, cache_len_edges, sig = cache
+            if cache_len_nodes == len(self.nodes) and cache_len_edges == len(self.edges):
+                return sig
+
         payload = {
             "nodes": sorted(nid for nid, node in self.nodes.items() if node.active),
             "edges": sorted(
@@ -236,7 +305,9 @@ class Graph:
             ),
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        sig = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        self._structural_sig_cache = (len(self.nodes), len(self.edges), sig)
+        return sig
 
     def pagerank_cache_payload(self, damping: float = 0.85, max_iter: int = 20, tol: float = 1e-4) -> dict[str, object]:
         scores = self.pagerank(damping=damping, max_iter=max_iter, tol=tol)
@@ -282,9 +353,15 @@ class Graph:
         incoming = self.incoming()
         degrees = self.degree()
 
+        # Pre-normalize scopes
+        normalized_scopes = []
+        for scope in scopes:
+            norm = scope.replace("\\", "/").strip("/")
+            normalized_scopes.append((norm, norm + "/"))
+
         included: set[str] = {
             s for s in starts
-            if s in self.nodes and self.nodes[s].active and _node_in_scope(self.nodes[s], scopes)
+            if s in self.nodes and self.nodes[s].active and _node_in_scope(self.nodes[s], normalized_scopes)
         }
         seen_edges: set[tuple[str, str, str]] = set()
         edge_list: list[Edge] = []
@@ -314,11 +391,9 @@ class Graph:
                         neighbor not in included
                         and neighbor in self.nodes
                         and self.nodes[neighbor].active
-                        and _node_in_scope(self.nodes[neighbor], scopes)
+                        and _node_in_scope(self.nodes[neighbor], normalized_scopes)
                     ):
-                        mult = traversal_strength(edge.type)
-                        confidence = edge.confidence * provenance_confidence(edge.provenance)
-                        scores[neighbor] = scores.get(neighbor, 0.0) + edge.weight * confidence * mult * deg_penalty
+                        scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty
 
             if not scores:
                 for edge in new_edges:
@@ -350,8 +425,11 @@ class Graph:
         return included, edge_list
 
 
-def _node_in_scope(node: Node, scopes: tuple[str, ...]) -> bool:
-    if not scopes:
+def _node_in_scope(node: Node, normalized_scopes: list[tuple[str, str]]) -> bool:
+    if not normalized_scopes:
         return True
-    values = (node.scope, node.path, node.source)
-    return any(value == scope or value.startswith(scope.rstrip("/") + "/") for scope in scopes for value in values if value)
+    for norm_val in node.normalized_scope_values:
+        for prefix, prefix_slash in normalized_scopes:
+            if norm_val == prefix or norm_val.startswith(prefix_slash):
+                return True
+    return False

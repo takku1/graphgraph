@@ -120,13 +120,14 @@ def write_summary(path: Path, rows: list[dict[str, object]], graphs: dict[str, P
     lines.append("")
     lines.append("## Retrieval Eval")
     lines.append("")
-    lines.append("| Graph | Query | Node Recall | Edge Recall | Nodes | Edges | Token Estimate |")
-    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| Graph | Query | Node Recall | Edge Recall | MRR | NDCG@5 | NDCG@10 | Nodes | Edges | Token Estimate |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for row in rows:
         lines.append(
             f"| {row['graph']} | {row['query']} | {float(row['node_recall']):.3f} | "
-            f"{float(row['edge_recall']):.3f} | {row['returned_nodes']} | "
-            f"{row['returned_edges']} | {row['token_estimate']} |"
+            f"{float(row['edge_recall']):.3f} | {float(row.get('mrr', 0.0)):.3f} | "
+            f"{float(row.get('ndcg_at_5', 0.0)):.3f} | {float(row.get('ndcg_at_10', 0.0)):.3f} | "
+            f"{row['returned_nodes']} | {row['returned_edges']} | {row['token_estimate']} |"
         )
     failures = threshold_failures(rows)
     lines.append("")

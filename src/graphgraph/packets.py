@@ -7,6 +7,8 @@ DEFAULT_RELATION_ORDER = tuple(DEFAULT_RELATIONS)
 
 
 def render_lowlevel(graph: Graph, nodes: set[str], edges: list[Edge], relations: tuple[str, ...] = DEFAULT_RELATION_ORDER) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     relation_ids = _relation_ids(edges, relations)
     lines = ["<g>", "<r>"]
     for rel, rel_id in relation_ids.items():
@@ -26,6 +28,8 @@ def render_lowlevel(graph: Graph, nodes: set[str], edges: list[Edge], relations:
 
 
 def render_sql(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     # Use short integer handles as the node ``id`` so edge rows do not repeat the
     # full qualified node ids. Qualified ids can be long (e.g.
     # ``pkg_module_py__Class_method``); repeating them on every edge made this
@@ -52,6 +56,8 @@ def render_sql(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
 
 
 def render_hybrid(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     lines = ["# Context Packet", "", "Nodes:"]
     for node_id in sorted(nodes):
         node = graph.nodes[node_id]
@@ -65,6 +71,8 @@ def render_hybrid(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
 
 
 def render_semantic_arrow(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     lines = ["@nodes"]
     for node_id in sorted(nodes):
         node = graph.nodes[node_id]
@@ -83,6 +91,8 @@ def render_gg_max(
     relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
     hybrid: bool = False,
 ) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     relation_ids = _relation_ids(edges, relations)
     lines = ["[r]"]
     for rel, rel_id in relation_ids.items():
@@ -91,7 +101,6 @@ def render_gg_max(
     node_to_idx = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
     grouped = _group_nodes_by_subsystem(nodes, graph)
     for sub, sub_nodes in grouped:
-        lines.append(f"# subsystem: {sub}")
         for node_id in sub_nodes:
             idx = node_to_idx[node_id]
             node = graph.nodes[node_id]
@@ -111,14 +120,15 @@ def render_gg_max(
             else:
                 lines.append(f"{idx} {node.label}")
     lines.append("[e]")
-    for edge in edges:
-        rel_id = relation_ids.get(edge.type, edge.type)
-        src_idx = node_to_idx[edge.source]
-        tgt_idx = node_to_idx[edge.target]
-        if abs(edge.weight - 1.0) > 1e-9:
-            lines.append(f"{src_idx} {tgt_idx} {rel_id} {edge.weight:g}")
-        else:
-            lines.append(f"{src_idx} {tgt_idx} {rel_id}")
+    for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
+        lines.append(f"{rel_id}:")
+        for edge in rel_edges:
+            src_idx = node_to_idx[edge.source]
+            tgt_idx = node_to_idx[edge.target]
+            if abs(edge.weight - 1.0) > 1e-9:
+                lines.append(f"{src_idx} {tgt_idx} {edge.weight:g}")
+            else:
+                lines.append(f"{src_idx} {tgt_idx}")
     return "\n".join(lines)
 
 
@@ -131,6 +141,26 @@ def _relation_ids(edges: list[Edge], relations: tuple[str, ...]) -> dict[str, in
             seen.add(edge.type)
             ordered.append(edge.type)
     return {rel: i + 1 for i, rel in enumerate(ordered)}
+
+
+def _group_edges_by_relation(edges: list[Edge], relation_ids: dict[str, int]) -> list[tuple[str, list[Edge]]]:
+    groups: dict[str, list[Edge]] = {}
+    order: list[str] = []
+    for edge in edges:
+        rel_id = str(relation_ids.get(edge.type, edge.type))
+        if rel_id not in groups:
+            groups[rel_id] = []
+            order.append(rel_id)
+        groups[rel_id].append(edge)
+    return [(rel_id, groups[rel_id]) for rel_id in order]
+
+
+def _existing_nodes(graph: Graph, nodes: set[str]) -> set[str]:
+    return {node_id for node_id in nodes if node_id in graph.nodes}
+
+
+def _existing_edges(nodes: set[str], edges: list[Edge]) -> list[Edge]:
+    return [edge for edge in edges if edge.source in nodes and edge.target in nodes]
 
 
 def _subsystem_name(path: str) -> str:
@@ -182,7 +212,9 @@ def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     queries where the schema preamble of gg_max would cost more than the savings.
     Omits weight when 1.0 (implicit default).
     """
-    node_labels = {nid: graph.nodes[nid].label for nid in nodes if nid in graph.nodes}
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
+    node_labels = {nid: graph.nodes[nid].label for nid in nodes}
     lines = []
     for edge in edges:
         src = node_labels.get(edge.source, edge.source)
@@ -201,6 +233,7 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     usually the matched section/file labels plus short grounded facts, not every
     `section_of` or `discusses` edge around them.
     """
+    nodes = _existing_nodes(graph, nodes)
     lines = ["[d]"]
     for node_id in sorted(nodes, key=lambda nid: (graph.nodes[nid].path, graph.nodes[nid].label, nid)):
         node = graph.nodes[node_id]
@@ -220,6 +253,8 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
 
 
 def render_tensor_array(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     node_to_idx = {node_id: i for i, node_id in enumerate(sorted(nodes))}
     kinds = ["file", "module", "class", "function", "struct", "method", "concept", "section", "policy", "decision_trace"]
     kind_to_id = {k: i for i, k in enumerate(kinds)}
@@ -286,6 +321,8 @@ def render_gg_lex(
     relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
     hybrid: bool = False,
 ) -> str:
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
     relation_ids = _relation_ids(edges, relations)
     lines = ["[r]"]
     for rel, rel_id in relation_ids.items():
@@ -294,7 +331,6 @@ def render_gg_lex(
     node_to_id = _lexical_ids(nodes, graph)
     grouped = _group_nodes_by_subsystem(nodes, graph)
     for sub, sub_nodes in grouped:
-        lines.append(f"# subsystem: {sub}")
         for node_id in sub_nodes:
             node = graph.nodes[node_id]
             lex_id = node_to_id[node_id]
@@ -313,14 +349,15 @@ def render_gg_lex(
             else:
                 lines.append(f"{lex_id} {node.label}")
     lines.append("[e]")
-    for edge in edges:
-        rel_id = relation_ids.get(edge.type, edge.type)
-        src_id = node_to_id[edge.source]
-        tgt_id = node_to_id[edge.target]
-        if abs(edge.weight - 1.0) > 1e-9:
-            lines.append(f"{src_id} {tgt_id} {rel_id} {edge.weight:g}")
-        else:
-            lines.append(f"{src_id} {tgt_id} {rel_id}")
+    for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
+        lines.append(f"{rel_id}:")
+        for edge in rel_edges:
+            src_id = node_to_id[edge.source]
+            tgt_id = node_to_id[edge.target]
+            if abs(edge.weight - 1.0) > 1e-9:
+                lines.append(f"{src_id} {tgt_id} {edge.weight:g}")
+            else:
+                lines.append(f"{src_id} {tgt_id}")
     return "\n".join(lines)
 
 

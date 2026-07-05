@@ -10,7 +10,7 @@ from pathlib import Path
 from ..cache import TopologicalKVCache, compute_cache_key
 from ..eval import evaluate_graph, load_eval_tasks, results_to_json
 from ..frontends import available_frontends
-from ..io import find_graph_path, find_policies_path, load_any, save_gg, save_validated_graph
+from ..io import find_graph_path, find_policies_path, load_any, save_gg, save_validated_graph, validate_graph_file
 from ..metrics import compare_graphs
 from ..ontology import DEFAULT_RELATIONS
 from ..packets import render_packet
@@ -26,7 +26,7 @@ from ..services import render_final_packet, render_query_context, render_source_
 from ..services.context import resolve_start_nodes
 from ..services.native import build_project_status, graph_shape, render_native_context, scan_validated_graph
 from ..traversal import POLICIES, traversal_policy
-from ..validate import validate_any, validate_graph_json
+from ..validate import validate_any
 
 
 def cmd_plan(args: argparse.Namespace) -> None:
@@ -168,8 +168,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             print(f"    - Error loading graph: {e}")
     except FileNotFoundError:
         print("  Active Graph: No native graph file found in .graphgraph/")
-        print("    - Build one with: graphgraph scan --directory . --depth symbols --docs --output .graphgraph/graph.json")
-        print("    - Import external graphs explicitly with: graphgraph ingest --input <path> --output .graphgraph/graph.json")
+        print("    - Build one with: graphgraph scan --directory . --depth symbols --docs --output .graphgraph/graph.gg")
+        print("    - Import external graphs explicitly with: graphgraph ingest --input <path> --output .graphgraph/graph.gg")
 
 
     # 5. MCP Settings Verification (per client, not a single generic "OK").
@@ -409,7 +409,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
             graph_path = None
         if graph_path is not None:
             print(f"No packet supplied; auto-detected saved graph: {graph_path}")
-            result = validate_graph_json(graph_path.read_text(encoding="utf-8"))
+            result = validate_graph_file(graph_path)
             status = "PASS" if result.ok else "FAIL"
             print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
             for error in result.errors:
@@ -433,7 +433,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
 def cmd_validate_graph(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
-    result = validate_graph_json(graph_path.read_text(encoding="utf-8"))
+    result = validate_graph_file(graph_path)
     status = "PASS" if result.ok else "FAIL"
     print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
     for error in result.errors:
@@ -444,7 +444,7 @@ def cmd_validate_graph(args: argparse.Namespace) -> None:
 
 def cmd_scan(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
-    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.json")
+    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
     # Merge --skip-dirs and --exclude into a single list
     skip_dirs: list[str] = list(args.skip_dirs or [])
     exclude_dirs: list[str] = list(getattr(args, "exclude_dirs", None) or [])
@@ -532,7 +532,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             input_path = find_graph_path()
         except FileNotFoundError:
             raise FileNotFoundError("Could not find input graph. Specify --input explicitly.")
-    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.json")
+    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     graph = load_any(input_path)
     validation = save_validated_graph(graph, output_path)
@@ -648,7 +648,7 @@ def _mcp_server_config(project_root: Path | None) -> dict:
         root = project_root.resolve().as_posix()
         server = {
             "command": "uv",
-            "args": ["run", "--project", root, "graphgraph-mcp"],
+            "args": ["run", "--no-sync", "--project", root, "graphgraph-mcp"],
             "cwd": root,
             "startup_timeout_sec": 20,
             "tool_timeout_sec": 120,
@@ -787,7 +787,7 @@ def cmd_install(args: argparse.Namespace) -> None:
             "## Instinctive Tool Guide\n\n"
             "When the user asks codebase structure/dependency questions or says \"using graphgraph now to build context\":\n"
             "0. **Check MCP availability first:** The `graphgraph/*` MCP tools exist only if a graphgraph MCP server is registered for *this* client; many sessions have none even when Claude Desktop does. If those tools are not present, use the `graphgraph` CLI instead and do NOT map MCP tool names onto CLI flags (the CLI subcommands `context`/`query`/`final` have different options). `graphgraph doctor` shows per-client MCP status.\n"
-            "1. **Zero-Exploration Contract:** Immediately check if `.graphgraph/graph.json` exists in the workspace. "
+            "1. **Zero-Exploration Contract:** Immediately check if `.graphgraph/graph.gg` or another native graph exists in the workspace. "
             "If it does not exist, immediately run `graphgraph scan --depth symbols --docs` to generate it. "
             "Do NOT run custom shell listings or file-discovery loops.\n"
             "2. **Context Compilation -- preferred (no node IDs needed):** Call `graphgraph/query_context` with a "
@@ -796,7 +796,7 @@ def cmd_install(args: argparse.Namespace) -> None:
             "then `graphgraph/final_packet` with the confirmed IDs.\n"
             "4. **Zero-Hallucination Reasoning:** Rely *only* on the compressed topological packet returned by GraphGraph "
             "to understand the project structure, imports, and calls.\n"
-            "5. **No Direct Graph File Inspection:** NEVER read `.graphgraph/graph.json` directly. "
+            "5. **No Direct Graph File Inspection:** NEVER read `.graphgraph/graph.gg` directly; treat `.graphgraph/graph.json` as a compatibility/import file only. "
             "If you need to verify the graph, call `graphgraph/validate_packet` or trust the scanner output.\n\n"
             "### Available MCP Tools\n"
             "* **`graphgraph/query_context`**: **Preferred.** Natural-language query -> auto-discovered anchors -> graph packet. No node IDs needed.\n"
@@ -837,7 +837,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "> **STEP 0 -- CHECK TOOL AVAILABILITY FIRST**\n"
         "> The `graphgraph/*` MCP tools only exist if a graphgraph MCP server is registered for *this* client. Many sessions (e.g. Claude Code without project `.mcp.json`) have **no** graphgraph MCP server even when Claude Desktop does. Before following any MCP step, confirm a tool named `graphgraph/query_context` (or similar) is actually available. **If it is not, silently switch to the CLI path below -- do NOT try to translate MCP tool names into CLI flags.** Run `graphgraph doctor` to see per-client MCP status.\n\n"
         "> **DEFAULT PATH**\n"
-        "> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context \"<query>\" --query-class <class>`; it builds `.graphgraph/graph.json` if missing, then returns a packet. Leave `max_nodes` unset for normal use so GraphGraph can choose the dynamic query-class and graph-shape budget; pass an explicit cap only for repeatable tests or intentionally small packets.\n\n"
+        "> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context \"<query>\" --query-class <class>`; it builds `.graphgraph/graph.gg` if missing, then returns a packet. Leave `max_nodes` unset for normal use so GraphGraph can choose the dynamic query-class and graph-shape budget; pass an explicit cap only for repeatable tests or intentionally small packets.\n\n"
         "> **BENCHMARK DISCIPLINE**\n"
         "> Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.\n\n"
         "## Decision Rules\n\n"
@@ -853,7 +853,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "| `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |\n"
         "| `final_packet` | Render a packet from known node IDs. |\n"
         "| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |\n"
-        "| `build_graph` | Build `.graphgraph/graph.json`; accepts `exclude_dirs`. |\n"
+        "| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs`. |\n"
         "| `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |\n\n"
         "## CLI Commands (the real subcommands)\n\n"
         "The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands with **disjoint** options -- do not, e.g., pass `--starts` to `query` (it has no such flag). Use this map:\n\n"
@@ -868,7 +868,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "- Force rebuild: `graphgraph context \"<query>\" --rebuild --scan-max-nodes 5000 --show-stats`\n"
         "- Focus scope: `graphgraph context \"<query>\" --scope src/graphgraph/retrieval --query-class blast_radius`\n"
         "- Dynamic sizing: omit `--max-nodes` for production context packets; use `--scan-max-nodes` only to control how much of the repo is indexed.\n"
-        "- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects `.graphgraph/graph.json`)\n"
+        "- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects the native graph under `.graphgraph/`)\n"
         "- Validate a rendered packet from stdin: `graphgraph query \"<query>\" --packet gg_max | graphgraph validate`\n\n"
         "## Query Classes\n\n"
         "| Query Class | Description / Example Question | Hops | Format | Reason |\n"

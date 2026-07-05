@@ -46,7 +46,8 @@ def spreading_activation(
     # 1. Apply conversational decay to previous activation state
     if previous_activation:
         for node_id, score in previous_activation.items():
-            activation[node_id] = score * decay
+            if node_id in graph.nodes:
+                activation[node_id] = score * decay
 
     # 2. Inject query-start energy (injection = 1.0)
     for start in starts:
@@ -65,9 +66,9 @@ def spreading_activation(
 
             neighbors = []
             if node_id in outg:
-                neighbors.extend(e.target for e in outg[node_id] if e.active)
+                neighbors.extend(e.target for e in outg[node_id] if e.active and e.target in graph.nodes)
             if node_id in inc:
-                neighbors.extend(e.source for e in inc[node_id] if e.active)
+                neighbors.extend(e.source for e in inc[node_id] if e.active and e.source in graph.nodes)
 
             if neighbors:
                 # Distribute alpha fraction of current energy to neighbors
@@ -90,7 +91,7 @@ def spreading_activation(
 
     # 4. Sort and select the top max_nodes by score
     sorted_nodes = sorted(activation.items(), key=lambda x: x[1], reverse=True)
-    selected_nodes = {nid for nid, score in sorted_nodes[:max_nodes]}
+    selected_nodes = {nid for nid, score in sorted_nodes[:max_nodes] if nid in graph.nodes}
 
     # 5. Extract interconnecting edges
     selected_edges = []
@@ -100,7 +101,7 @@ def spreading_activation(
 
     # Save active state to cache for next turns
     # Filter to save only nodes with significant energy
-    save_state = {nid: score for nid, score in sorted_nodes[:200] if score > 0.05}
+    save_state = {nid: score for nid, score in sorted_nodes[:200] if score > 0.05 and nid in graph.nodes}
     ActivationStateCache().save(save_state)
 
     return selected_nodes, selected_edges
