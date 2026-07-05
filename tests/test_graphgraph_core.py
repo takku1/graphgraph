@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -7,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from graphgraph import (
     Edge,
@@ -87,6 +90,10 @@ from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
 from graphgraph.traversal import relation_rank, traversal_policy
 from graphgraph.validate import validate_any, validate_graph_json
+
+
+def _optional_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
 
 
 def sample_graph() -> Graph:
@@ -2415,17 +2422,26 @@ N1,N2,1,0.9
         self._assert_roundtrip(".sqlite")
 
     def test_duckdb_roundtrip(self) -> None:
+        pytest.importorskip("duckdb")
+        pytest.importorskip("pyarrow")
         self._assert_roundtrip(".duckdb")
 
     def test_msgpack_roundtrip(self) -> None:
+        pytest.importorskip("msgpack")
         self._assert_roundtrip(".msgpack")
 
     def test_save_validated_graph_routes_backend_suffixes(self) -> None:
         from graphgraph.io import save_validated_graph
 
+        suffixes = [".sqlite"]
+        if _optional_available("duckdb") and _optional_available("pyarrow"):
+            suffixes.append(".duckdb")
+        if _optional_available("msgpack"):
+            suffixes.append(".msgpack")
+
         with tempfile.TemporaryDirectory() as tmp:
             g = sample_graph()
-            for suffix in (".sqlite", ".duckdb", ".msgpack"):
+            for suffix in suffixes:
                 path = Path(tmp) / f"g{suffix}"
                 result = save_validated_graph(g, path)
                 self.assertTrue(result.ok)

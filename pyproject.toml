@@ -41,6 +41,7 @@ benchmark = [
 storage-bakeoff = [
     "duckdb>=0.10.0",
     "msgpack>=1.0.0",
+    "pyarrow>=14.0.0",
 ]
 
 [project.scripts]
