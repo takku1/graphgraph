@@ -6,6 +6,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from .manifest import compute_file_hash
+
 
 def compute_cache_key(anchors: list[str] | set[str], query_class: str, hops: int, packet_format: str) -> str:
     sorted_anchors = sorted(anchors)
@@ -16,9 +18,18 @@ def compute_cache_key(anchors: list[str] | set[str], query_class: str, hops: int
 class TopologicalKVCache:
     """LRU-evicting packet cache keyed by graph mtime + query fingerprint.
 
-    Entries are invalidated when the source graph file is modified. The cache
-    is bounded by max_entries (default 256); LRU eviction keeps frequently
-    reused prompts warm while preventing unbounded growth.
+    A graph rescan bumps the saved graph file's mtime even when the rescan is
+    incremental and touched files unrelated to a given cached packet. Rather
+    than evict every entry on every rescan, entries also record a content hash
+    per dependency path (from ``node.path`` on the nodes that made it into the
+    packet). When the graph mtime advances, an entry survives if every one of
+    its dependency paths still hashes the same on disk -- only entries whose
+    actual source files changed are evicted. Entries with no recorded paths
+    (or when a dependency path can't be resolved/hashed) fall back to the
+    original blanket mtime check.
+
+    The cache is bounded by max_entries (default 256); LRU eviction keeps
+    frequently reused prompts warm while preventing unbounded growth.
     """
 
     def __init__(self, cache_file_path: Path | None = None, max_entries: int = 256):
@@ -54,8 +65,10 @@ class TopologicalKVCache:
             return None
 
         entry = self.cache_data[key]
-        if graph_path.exists():
-            if graph_path.stat().st_mtime > entry.get("graph_mtime", 0.0):
+        if graph_path.exists() and graph_path.stat().st_mtime > entry.get("graph_mtime", 0.0):
+            if self._dependencies_unchanged(graph_path, entry):
+                entry["graph_mtime"] = graph_path.stat().st_mtime
+            else:
                 del self.cache_data[key]
                 self.save()
                 self._misses += 1
@@ -65,6 +78,17 @@ class TopologicalKVCache:
         self.cache_data.move_to_end(key)
         self._hits += 1
         return entry.get("packet")
+
+    def _dependencies_unchanged(self, graph_path: Path, entry: dict[str, Any]) -> bool:
+        path_hashes: dict[str, str] = entry.get("path_hashes") or {}
+        if not path_hashes:
+            return False
+        project_root = graph_path.parent.parent
+        for rel_path, stored_hash in path_hashes.items():
+            current_hash = compute_file_hash(project_root / rel_path)
+            if not current_hash or current_hash != stored_hash:
+                return False
+        return True
 
     def set(
         self,
@@ -76,11 +100,19 @@ class TopologicalKVCache:
         paths: list[str] | set[str] | tuple[str, ...] = (),
     ) -> None:
         mtime = graph_path.stat().st_mtime if graph_path.exists() else 0.0
+        unique_paths = sorted(path for path in set(paths) if path)
+        project_root = graph_path.parent.parent
+        path_hashes = {
+            rel_path: file_hash
+            for rel_path in unique_paths
+            if (file_hash := compute_file_hash(project_root / rel_path))
+        }
         self.cache_data[key] = {
             "graph_mtime": mtime,
             "packet": packet,
             "node_ids": sorted(set(node_ids)),
-            "paths": sorted(path for path in set(paths) if path),
+            "paths": unique_paths,
+            "path_hashes": path_hashes,
         }
         self.cache_data.move_to_end(key)
         while len(self.cache_data) > self.max_entries:

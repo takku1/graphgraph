@@ -2618,6 +2618,53 @@ N1,N2,1,0.9
             self.assertEqual(loaded.cache_data[key]["node_ids"], ["A", "B"])
             self.assertEqual(loaded.cache_data[key]["paths"], ["src/a.py"])
 
+    def _dependency_cache_fixture(self, tmp: Path) -> tuple[Path, "TopologicalKVCache"]:
+        from graphgraph.cache import TopologicalKVCache
+
+        (tmp / "src").mkdir()
+        (tmp / "src" / "a.py").write_text("A = 1\n", encoding="utf-8")
+        (tmp / "src" / "b.py").write_text("B = 1\n", encoding="utf-8")
+        graph_path = tmp / ".graphgraph" / "graph.json"
+        graph_path.parent.mkdir(parents=True, exist_ok=True)
+        graph_path.write_text("{}", encoding="utf-8")
+        cache = TopologicalKVCache(tmp / ".graphgraph" / "kv_cache.json")
+        return graph_path, cache
+
+    def test_kv_cache_survives_rescan_when_dependency_unchanged(self) -> None:
+        import time
+
+        from graphgraph.cache import compute_cache_key
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            graph_path, cache = self._dependency_cache_fixture(tmp)
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg_max")
+            cache.set(graph_path, key, "packet-for-a", node_ids={"A"}, paths={"src/a.py"})
+
+            # Rescan bumps the graph file's mtime (e.g. an incremental scan that
+            # only touched b.py), but a.py itself is untouched.
+            time.sleep(0.01)
+            graph_path.write_text('{"nodes": {"rescanned": true}}', encoding="utf-8")
+
+            self.assertEqual(cache.get(graph_path, key), "packet-for-a")
+
+    def test_kv_cache_evicts_when_dependency_changes(self) -> None:
+        import time
+
+        from graphgraph.cache import compute_cache_key
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            graph_path, cache = self._dependency_cache_fixture(tmp)
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg_max")
+            cache.set(graph_path, key, "packet-for-a", node_ids={"A"}, paths={"src/a.py"})
+
+            time.sleep(0.01)
+            (tmp / "src" / "a.py").write_text("A = 2  # changed\n", encoding="utf-8")
+            graph_path.write_text('{"nodes": {"rescanned": true}}', encoding="utf-8")
+
+            self.assertIsNone(cache.get(graph_path, key))
+
     def test_kv_cache_stats(self) -> None:
         from graphgraph.cache import TopologicalKVCache, compute_cache_key
 
