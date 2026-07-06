@@ -9,7 +9,7 @@
 ## Abstract
 Traditional Retrieval-Augmented Generation (RAG) models rely on flat, sequence-based lexical or semantic chunk search, which fails to capture structural relationships like Abstract Syntax Tree (AST) hierarchies and call graphs in large software repositories. Relational graph databases solve this structural representation problem but introduce severe CPU-bound pointer-chasing latency during multi-hop traversals and require network sockets, making them unsuitable for local, fast agent loops.
 
-We present **GraphGraph 2.0**, a serverless, local-first graph memory database and context planning engine for repository-scale LLM reasoning. GraphGraph 2.0 compiles a codebase into a static binary layout (.gg) and implements a unified pipeline: (1) information-gain-regularized budget allocation, (2) joint query-session Personalized PageRank with flat-index power iteration, (3) topologically-connected Tree Knapsack DP for optimal subgraph selection, and (4) compressed adjacency serialization that reduces token overhead by 70% compared to JSON. On structural queries across real repositories, GraphGraph achieves 100% evidence recall while using 53.7% fewer tokens than vector RAG baselines, with retrieval latency under 40ms for typical repository sizes.
+We present **GraphGraph 2.0**, a serverless, local-first graph memory database and context planning engine for repository-scale LLM reasoning. GraphGraph 2.0 compiles a codebase into a static binary layout (.gg) and implements a unified pipeline: (1) information-gain-regularized budget allocation, (2) joint query-session Personalized PageRank with flat-index power iteration, (3) topologically-connected Tree Knapsack DP for optimal subgraph selection, and (4) compressed adjacency serialization that reduces token overhead by 70% compared to JSON. On structural queries across real repositories, GraphGraph achieves 100% evidence recall while using 53.7% fewer tokens than vector RAG baselines, with warm-cache retrieval latency under 40ms for repositories up to 10,000 nodes.
 
 ---
 
@@ -289,6 +289,7 @@ GraphGraph 2.0 sits at the intersection of repository reasoning and prompt compr
 * **RepoCoder (Zhang et al., 2023):** Uses iterative retrieval during code generation. GraphGraph's turn-based decay model acts as a temporal cache to optimize these iterative loops.
 * **Microsoft GraphRAG (2024):** Constructs global entity-relationship clusters for global summarization. GraphGraph is designed for local, task-focused software engineering queries, emphasizing micro-second updates and token-efficient local subgraphs.
 * **LLMLingua (Jiang et al., 2023):** Prunes prompts based on token entropy. General compressors are graph-blind and frequently break syntax structures or omit crucial edge relations. GraphGraph prunes context topologically, ensuring structural coherence.
+* **Agent Memory Frameworks (e.g., Mem0, Graphiti):** These systems construct temporal knowledge graphs via LLM-driven entity-relation extraction, which incurs multi-second API latency and significant operational costs. GraphGraph 2.0 bypasses this bottleneck by computing AST and session updates locally in under 1ms via deterministic tree-sitter parsing and executing local in-memory traversals.
 
 ---
 
@@ -303,9 +304,9 @@ While GraphGraph 2.0 establishes a robust retrieval framework, several challenge
 
 ## 10. Conclusion
 
-GraphGraph 2.0 represents a highly optimized, local-first context engine for repository-scale LLM reasoning. By combining Joint Query-Session Personalized PageRank, Topologically-Connected Tree Knapsack Dynamic Programming, and Relation-Shaped Edge Budgeting, it provides a serverless context engine that reduces token overhead by 70% compared to verbose serialization formats (JSON, GraphML) and by 53.7% compared to flat vector RAG baselines. The engine executes traversals in under 40 milliseconds for typical repository sizes (10,000 nodes) and scales linearly to larger codebases, providing a rigorous topological foundation for agentic software engineering.
+Across all metrics, GraphGraph 2.0 establishes a new efficiency floor for repository-scale context retrieval: 70–76% token reduction versus verbose formats (JSON, GraphML), 53.7% reduction versus flat RAG baselines, 3–5x disk compression versus standard databases, and warm-cache query latency under 40ms for repositories up to 10,000 nodes, providing a rigorous topological foundation for agentic software engineering.
 
 ---
 
 ## Acknowledgments
-The author acknowledges the collaborative assistance of AI assistant Antigravity (Google DeepMind) during the mathematical refinement, debugging, and drafting stages of this manuscript.
+The author acknowledges the collaborative assistance of the AI assistant Antigravity (Google DeepMind) during the mathematical refinement, debugging, and drafting stages of this manuscript.
