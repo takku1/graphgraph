@@ -288,6 +288,35 @@ def render_tensor_array(graph: Graph, nodes: set[str], edges: list[Edge]) -> str
             rel_id = rel_to_id.get(edge.type)
             lines.append(f"[{src_idx}, {tgt_idx}, {rel_id}, {edge.weight:g}]")
             
+    # Calculate geodesic shortest path distance matrix (Spatial Bias Tensor)
+    import collections
+    adj = collections.defaultdict(set)
+    for edge in edges:
+        src_idx = node_to_idx.get(edge.source)
+        tgt_idx = node_to_idx.get(edge.target)
+        if src_idx is not None and tgt_idx is not None:
+            adj[src_idx].add(tgt_idx)
+            adj[tgt_idx].add(src_idx)
+            
+    n = len(node_to_idx)
+    shortest_paths = [[99] * n for _ in range(n)]
+    for i in range(n):
+        shortest_paths[i][i] = 0
+        queue = collections.deque([(i, 0)])
+        visited = {i}
+        while queue:
+            curr, dist = queue.popleft()
+            for neighbor in adj[curr]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    shortest_paths[i][neighbor] = dist + 1
+                    queue.append((neighbor, dist + 1))
+                    
+    lines.append("")
+    lines.append("@s")
+    for row in shortest_paths:
+        lines.append("[" + ",".join(str(val) for val in row) + "]")
+        
     return "\n".join(lines)
 
 

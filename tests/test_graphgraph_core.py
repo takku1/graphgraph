@@ -3384,6 +3384,24 @@ N1,N2,1,0.9
         matches = search_nodes(g, "AuthService", personalize=True)
         self.assertEqual(matches[0].node.id, "A")
 
+    def test_tensor_spatial_bias(self) -> None:
+        from graphgraph.packets import render_tensor_array
+        g = Graph(
+            nodes={
+                "A": Node("A", "AuthService", "service", "auth.py", active=True),
+                "B": Node("B", "TokenStore", "data", "tokens.py", active=True),
+                "C": Node("C", "AuditLog", "data", "audit.py", active=True),
+            },
+            edges=[
+                Edge("A", "B", "calls", 1.0),
+                Edge("B", "C", "calls", 1.0),
+            ]
+        )
+        res = render_tensor_array(g, {"A", "B", "C"}, g.edges)
+        self.assertIn("@s", res)
+        # Path distance A to C should be 2. Let's assert on distances.
+        self.assertIn("[0,1,2]", res) or self.assertIn("[2,1,0]", res)
+
 
 if __name__ == "__main__":
     unittest.main()

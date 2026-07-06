@@ -467,7 +467,30 @@ def retrieve_context(
         else plan.anchor_limit
     )
     selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class, doc_intensity >= 0.35)
-    starts = tuple(match.node.id for match in selected_matches)
+    starts_list = list(match.node.id for match in selected_matches)
+    
+    # Discover git-modified files (active session context / Ephemeral Session Layer)
+    import subprocess
+    try:
+        res = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
+        if res.returncode == 0:
+            modified_paths = []
+            for line in res.stdout.splitlines():
+                parts = line.strip().split(maxsplit=1)
+                if len(parts) == 2:
+                    _, file_path = parts
+                    file_path = file_path.replace("\\", "/")
+                    modified_paths.append(file_path)
+            
+            for path in modified_paths:
+                for node_id, node in graph.nodes.items():
+                    if node.active and (node.path.replace("\\", "/") == path or node.id == path):
+                        if node_id not in starts_list:
+                            starts_list.append(node_id)
+    except Exception:
+        pass
+
+    starts = tuple(starts_list[:12])
     if not starts:
         return RetrievalResult(starts=(), matches=matches, nodes=set(), edges=[])
 
