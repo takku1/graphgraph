@@ -51,7 +51,7 @@ graph TD
     Serializer ──► Injector["6. Prompt Injector (Legend Pre-Conditioning)"]
 ```
 
-1. **Query Router:** Classifies the query (e.g., `direct_lookup`, `blast_radius`, `subsystem_summary`) based on structural keywords and tokenizes it to extract lexical match terms.
+1. **Query Router:** Sanitizes the input query to strip upstream metadata noise (such as markdown code blocks, untrusted agent headers, and timestamp logs), classifies it (e.g., `direct_lookup`, `blast_radius`, `subsystem_summary`) based on structural keywords, and tokenizes it to extract clean lexical match terms.
 2. **Context Planner:** Runs during the *coarse query planning phase*. Solves an information-gain-regularized budget allocation problem to recommend a global target node budget $n^*$ based on high-level shape parameters.
 3. **Retriever:** Identifies starting points (anchors) via lexical matches, constructs a personalization seed vector, and runs Personalized PageRank (PPR) via flat-index power iteration. It integrates previous activation states using a turn-based temporal decay.
 4. **Edge Density Throttle:** Prunes weak, repetitive relationships in dense subgraphs using relation quotas to prevent edge token bloat.
