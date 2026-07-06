@@ -12,8 +12,8 @@ The intended stack is:
 
 1. **Source layer**: files, symbols, imports, AST-style containment, and docs.
 2. **Interpretation layer**: known algorithms, math concepts, runtime concepts,
-   and model-facing structures such as PageRank, tree knapsack DP, KKT
-   optimization, MCTS, and geodesic attention bias tensors.
+   and model-facing structures such as PageRank, tree knapsack DP, regularized
+   utility budgeting, MCTS, and geodesic attention bias tensors.
 3. **IR/execution layer**: call graph, control flow, data flow, type relations,
    and future CPG-style extraction.
 4. **Packet layer**: `gg_max`, `semantic_arrow`, `lowlevel`, `doc_summary`, and

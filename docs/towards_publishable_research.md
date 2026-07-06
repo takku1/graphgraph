@@ -20,12 +20,12 @@ The figure below illustrates the structural flow of a user query through the Gra
 
 ```mermaid
 graph TD
-    UserQuery["User Input Query"] ──► Router["1. Query Router (BM25 / Keyword Search)"]
-    Router ──► Planner["2. Context Planner (Anchor limits / Path Hops Selection)"]
-    Planner ──► Retriever["3. Retriever (Spreading Activation / Churn Boosting)"]
-    Retriever ──► Throttle["4. Edge Density Throttle (R_ne scaling)"]
-    Throttle ──► Serializer["5. Serializer (gg_lex Subsystem Grouping)"]
-    Serializer ──► LLM["6. LLM Context Window (Legend Pre-Conditioning)"]
+    UserQuery["User Input Query"] ──► Router["1. Query Router (Keyword/Class Detection)"]
+    Router ──► Planner["2. Context Planner (Coarse Regularized Budget Allocation)"]
+    Planner ──► Retriever["3. Retriever (QS-PPR & Turn Activation Decay)"]
+    Retriever ──► Throttle["4. Edge Density Throttle (Relation-Shaped Quotas)"]
+    Throttle ──► Serializer["5. Serializer (Tree Knapsack DP & Prompt Packing)"]
+    Serializer ──► Injector["6. Prompt Injector (Legend Pre-Conditioning)"]
 ```
 *(Note: For PDF-rendered paper submissions, this Mermaid diagram is exported and embedded as a vector SVG/PDF figure).*
 

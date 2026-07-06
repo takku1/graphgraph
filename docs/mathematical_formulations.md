@@ -24,12 +24,27 @@ Where:
 
 ---
 
-## 🎛️ 2. Continuous KKT Lagrangian Budget Planner
+## 🎛️ 2. Information-Gain-Regularized Budget Allocation
 
 Determines the optimal node budget $n^*$ to trade off marginal token expansion costs against context relevance.
 
-### Optimization Formulation:
-We solve for the stationary point $n^*$ under the continuous Karush-Kuhn-Tucker (KKT) conditions:
+### Regularized Utility Maximization Problem:
+We maximize the expected information gain $1 - e^{-\lambda n}$ minus a token cost penalty $\theta \cdot (\tau n)$, where $\theta > 0$ is a regularizing cost penalty (representing the shadow price of prompt tokens):
+
+$$\text{maximize } U(n) = (1 - e^{-\lambda n}) - \theta \cdot (\tau n)$$
+
+Where $\tau$ is the marginal token cost per node, and $\lambda$ is the query complexity parameter.
+
+### Stationarity & Optimal Solution:
+Taking the partial derivative of $U(n)$ with respect to $n$ and setting it to zero yields:
+
+$$U'(n) = \lambda e^{-\lambda n} - \theta \tau = 0 \implies \lambda e^{-\lambda n} = \theta \tau \implies e^{-\lambda n} = \frac{\theta \tau}{\lambda}$$
+
+Solving for $n$:
+
+$$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{\theta \tau} \right)$$
+
+Reparameterizing the regularizing penalty $\theta$ as $\alpha / \beta$ (where $\beta = 10000.0$ and $\alpha = 1.0$) gives the operational budget recommendations:
 
 $$n^* = \frac{1}{\lambda} \ln \left( \frac{\beta \cdot \lambda}{\alpha \cdot \tau} \right)$$
 
@@ -41,7 +56,7 @@ Where:
 * **$\tau$**: The marginal token cost per node derived from empirical edge density:
   $$\tau = 1.496 + 6.215 \cdot \text{adjusted\_edge\_density}$$
 * **$\beta$**: Target scaling multiplier ($10000.0$).
-* **$\alpha$**: Lagrangian multiplier ($1.0$).
+* **$\alpha$**: Regularization scaling factor ($1.0$).
 * **Bounds enforcement**: The raw $n^*$ is clipped against class-specific bounds:
   $$n_{\text{final}} = \min\left(B_{\text{upper}}, \max\left(B_{\text{lower}}, n^*\right)\right)$$
 

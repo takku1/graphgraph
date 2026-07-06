@@ -80,7 +80,7 @@ def test_doc_code_pairing_sort_order_is_stable_after_sort_key_refactor() -> None
     assert [pair.key for pair in coverage.paired_examples[:2]] == ["beta", "alpha"]
 
 
-def test_kkt_budget_density_denominator_is_positive_for_valid_shapes() -> None:
+def test_budget_density_denominator_is_positive_for_valid_shapes() -> None:
     shape = GraphShape(
         nodes=100,
         edges=0,

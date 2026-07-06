@@ -28,7 +28,7 @@ INTERPRETATION_CONCEPTS: tuple[InterpretationConcept, ...] = (
         label="Tree Knapsack Dynamic Programming",
         kind="algorithm",
         layer="budgeting",
-        aliases=("Tree Knapsack", "Knuth-style Tree Knapsack", "Knuth-Optimal Context Partitioning", "Dynamic Programming"),
+        aliases=("Tree Knapsack", "Topologically-Connected Tree Knapsack", "Connected Tree Knapsack", "Dynamic Programming"),
         facts=("layer:budgeting", "role:connected_context_partition", "math:dynamic_programming"),
     ),
     InterpretationConcept(
@@ -53,11 +53,11 @@ INTERPRETATION_CONCEPTS: tuple[InterpretationConcept, ...] = (
         facts=("layer:planning", "role:tree_search", "math:minimax_pruning"),
     ),
     InterpretationConcept(
-        label="KKT Optimization",
+        label="Regularized Utility Budgeting",
         kind="math_concept",
         layer="budgeting",
-        aliases=("KKT", "Karush-Kuhn-Tucker", "KKT optimization", "Lagrangian"),
-        facts=("layer:budgeting", "role:constrained_optimization", "math:kkt_conditions"),
+        aliases=("Regularized Utility", "Regularized Budget Heuristic", "Information-Gain Regularization", "budget allocation"),
+        facts=("layer:budgeting", "role:budget_allocation", "math:optimization"),
     ),
     InterpretationConcept(
         label="Bellman Optimality Equation",

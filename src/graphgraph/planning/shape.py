@@ -135,27 +135,33 @@ def recommend_node_budget(query_class: str, query: str, shape: GraphShape) -> Bu
     density = adjusted_edge_density(shape)
     tau = 1.496 + 6.215 * density
 
-    # 4. KKT Stationarity Solver: n* = (1 / lambda_) * ln((beta * lambda_) / (alpha * tau))
+    # 4. Coarse Planning: Regularized Budget Heuristic:
+    # Objective: Maximize expected information gain minus token cost:
+    # U(n) = (1 - exp(-lambda_ * n)) - theta * (tau * n)
+    # Taking the derivative and setting to zero yields the closed-form optimum:
+    # n* = (1 / lambda_) * ln(lambda_ / (theta * tau))
+    # Reparameterizing the penalty theta as alpha / beta (alpha=1.0, beta=10000.0)
+    # yields the operational formula: n* = (1 / lambda_) * ln((beta * lambda_) / (alpha * tau))
     beta = 10000.0
     alpha = 1.0
     ratio = max(1.1, (beta * lambda_) / (alpha * tau))
-    kkt_n = int(round((1.0 / lambda_) * math.log(ratio)))
+    budget_n = int(round((1.0 / lambda_) * math.log(ratio)))
 
     # 5. Enforce operational bounds
     lower_bound, upper_bound = context_node_bounds(query_class, shape)
-    recommended = min(upper_bound, max(lower_bound, kkt_n))
+    recommended = min(upper_bound, max(lower_bound, budget_n))
 
     # Broad evidence-gathering classes are recall-first: do not trim below default base
     if query_class in {"blast_radius", "subsystem_summary"}:
         recommended = max(base, recommended)
 
-    # If KKT optimization doesn't change budget, report as measured default
+    # If regularized budget heuristic doesn't change budget, report as measured default
     if recommended == base:
         mode = "measured_default"
         reason = "; ".join(reasons) if reasons else "keep measured default budget"
     else:
         mode = "candidate"
-        reason = f"KKT optimization: n*={kkt_n} (lambda={lambda_:.3f}, tau={tau:.3f})"
+        reason = f"Regularized budget: n*={budget_n} (lambda={lambda_:.3f}, tau={tau:.3f})"
         if reasons:
             reason = f"{reason}; " + "; ".join(reasons)
 

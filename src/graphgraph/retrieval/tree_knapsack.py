@@ -37,7 +37,7 @@ def build_bfs_tree(
                 
     return tree
 
-def knuth_dp_context_partition(
+def tree_knapsack_context_partition(
     graph: Graph,
     starts: Tuple[str, ...],
     candidates: Set[str],
@@ -48,6 +48,8 @@ def knuth_dp_context_partition(
     
     Values are node relevance scores (PPR/lexical).
     Weights are estimated token footprints bucketed into discrete sizes.
+    Ensures connectivity: a node is only selected if its parent in the BFS forest
+    is also selected, guaranteeing reachability back to anchor roots.
     """
     if not candidates:
         return set()

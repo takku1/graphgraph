@@ -68,12 +68,12 @@ def expand_context(
     nodes, edges = reserve_start_evidence(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
     nodes, edges = prune_doc_concept_noise(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
     
-    # Dynamic Programming Knuth-Optimal Context Partitioning
+    # Dynamic Programming Connected Tree Knapsack Context Partitioning
     if effective_node_budget is not None and len(nodes) > effective_node_budget:
         # Fast local BFS to propagate relevance scores from starts to candidates in O(nodes) time
         import collections
 
-        from .knuth_dp import knuth_dp_context_partition
+        from .tree_knapsack import tree_knapsack_context_partition
         node_values = {s: 1.0 for s in starts}
         outgoing = graph.outgoing()
         incoming = graph.incoming()
@@ -90,7 +90,7 @@ def expand_context(
                     queue.append(n)
                     
         token_budget = effective_node_budget * 80
-        dp_nodes = knuth_dp_context_partition(graph, tuple(starts), nodes, node_values, token_budget)
+        dp_nodes = tree_knapsack_context_partition(graph, tuple(starts), nodes, node_values, token_budget)
         if dp_nodes:
             nodes = dp_nodes
             edges = [e for e in edges if e.source in nodes and e.target in nodes]

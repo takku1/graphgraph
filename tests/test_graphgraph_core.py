@@ -3417,8 +3417,8 @@ N1,N2,1,0.9
         # Path distance A to C should be 2. Let's assert on distances.
         self.assertIn("[0,1,2]", res) or self.assertIn("[2,1,0]", res)
 
-    def test_knuth_dp_context_partition(self) -> None:
-        from graphgraph.retrieval.knuth_dp import knuth_dp_context_partition
+    def test_tree_knapsack_context_partition(self) -> None:
+        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
         g = Graph(
             nodes={
                 "A": Node("A", "A", "class", "a.py", active=True, facts=("f1",)),
@@ -3433,13 +3433,13 @@ N1,N2,1,0.9
         values = {"A": 10.0, "B": 5.0, "C": 8.0}
         
         # Test 1: Budget weight = 2 (approx 80 tokens). Fits A (w=1) + B (w=1). C (w=2) cannot fit with A.
-        selected = knuth_dp_context_partition(g, ("A",), {"A", "B", "C"}, values, 80)
+        selected = tree_knapsack_context_partition(g, ("A",), {"A", "B", "C"}, values, 80)
         self.assertIn("A", selected)
         self.assertIn("B", selected)
         self.assertNotIn("C", selected)
         
         # Test 2: Budget weight = 3 (approx 120 tokens). Fits A (w=1) + C (w=2) because 10+8=18 > A+B=15.
-        selected = knuth_dp_context_partition(g, ("A",), {"A", "B", "C"}, values, 120)
+        selected = tree_knapsack_context_partition(g, ("A",), {"A", "B", "C"}, values, 120)
         self.assertIn("A", selected)
         self.assertIn("C", selected)
         self.assertNotIn("B", selected)
