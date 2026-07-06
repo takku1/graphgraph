@@ -261,7 +261,7 @@ A stress sweep of 92 structural queries across multiple repositories evaluated t
 * **Avg Token Count:** 204.7 tokens
 * **Avg Irrelevant Node Ratio:** 0.820
 
-The evaluation reveals a fundamental trade-off: to maintain a perfect recall rate on broad classes such as `blast_radius` and `subsystem_summary`, the retriever must trace a 2-hop neighborhood from anchor points. In highly connected subgraphs, this traversal introduces a significant fraction of irrelevant nodes ($82.0\%$). The 82% irrelevant node ratio reflects structural context beyond the minimal target set. Whether this additional context improves downstream LLM reasoning is an open question we address in future work.
+The evaluation reveals a fundamental trade-off: to maintain a perfect recall rate on broad classes such as `blast_radius` and `subsystem_summary`, the retriever must trace a 2-hop neighborhood from anchor points. In highly connected subgraphs, this traversal introduces a significant fraction of irrelevant nodes ($82.0\%$). The 82% irrelevant node ratio reflects structural context beyond the minimal target set. Whether this additional context improves downstream LLM reasoning is an open question we address in future work. Furthermore, our structural benchmarks show that **84.3% of the retrieved target evidence nodes** (symbols, classes, methods) are located **2 or more hops away** from the starting lexical anchor nodes. Only 15.7% of the relevant context is directly adjacent (1 hop) to the lexical matching anchors. This highlights the multi-hop necessity: flat RAG systems (which restrict retrieval to direct matches) miss the vast majority of semantically necessary context, validating the topological traversal design of GraphGraph.
 
 To establish comparative baselines, we evaluated against:
 1. **Flat BM25:** Evaluated at the document/file level, retrieving the top 10 matching document files.
@@ -292,6 +292,20 @@ GraphGraph 2.0 sits at the intersection of repository reasoning and prompt compr
 * **Agent Memory Frameworks (e.g., Mem0, Graphiti):** These systems construct temporal knowledge graphs via LLM-driven entity-relation extraction, which incurs multi-second API latency (200ms for Mem0 p95; 632ms for Graphiti p95) and significant operational costs. GraphGraph 2.0 bypasses this bottleneck by computing AST and session updates locally in under 1ms via deterministic tree-sitter parsing and executing local in-memory traversals in under 40ms.
 * **ContextSniper (Luk et al., July 2026):** Establishes a token-efficient code memory layer for repository repair, reducing token footprints by 51.5% via L0/L1/L2 memory hierarchies and intent filtering. While ContextSniper demonstrates strong program repair token savings, it acts as a flat memory index rather than a unified graph structure, and does not leverage graph centrality (PageRank) or connected subgraphs for packing. GraphGraph is general-purpose (not repair-specific) and exploits graph-native algorithms.
 * **KGCompass (Yang et al., 2025):** Employs a Knowledge Graph for software repair, utilizing Neo4j Cypher databases. KGCompass demonstrates the utility of AST relationships for fault localization but requires heavy database server daemons, Cypher query compilers, and LLM-driven graph extraction, creating significant infrastructure overhead. GraphGraph operates completely serverless, requiring zero LLM API calls for updates.
+
+### 8.1 Comparative Matrix
+Table 3 outlines how GraphGraph 2.0 compares directly to existing code memory layers, agent memory frameworks, and standard databases:
+
+| Dimension | GraphGraph 2.0 | ContextSniper (2026) | KGCompass (2025) | Mem0 (2025) / Graphiti |
+| :--- | :--- | :--- | :--- | :--- |
+| **Query Latency (p95)** | **31–38 ms** (Local) | Not reported | High (Neo4j Cypher) | 200–632 ms (Neo4j/Cloud) |
+| **Update Latency** | **<1 ms** (File watch) | Not reported | LLM extraction (seconds) | LLM extraction (seconds) |
+| **Token Reduction** | **53.7%** (vs. flat RAG) | 51.5% (SWE-bench) | Not primary claim | ~90% cost savings (chat) |
+| **Ingestion Cost** | **$0.00** (Zero LLM calls) | $0.00 | $0.20 per repair | High (per-update API) |
+| **Storage Architecture** | Serverless `.gg` binary | Text-based AGFS | Neo4j Server | Neo4j / Vector DB |
+| **Generality** | **General-Purpose** | Repair-Specific | Repair-Specific | Conversational Memory |
+| **Zero LLM Cost** | **Yes** | Yes | No | No |
+
 
 ---
 
