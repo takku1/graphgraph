@@ -64,23 +64,15 @@ def search_nodes(
                 
         # Discover git-modified files and change counts (Session Layer)
         import math
-        import subprocess
+
+        from .git_utils import get_git_modified_files
         session_weights = {}
         try:
-            res = subprocess.run(["git", "diff", "--numstat"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
-            if res.returncode == 0:
-                for line in res.stdout.splitlines():
-                    parts = line.strip().split()
-                    if len(parts) >= 3:
-                        added_str, deleted_str, file_path = parts[0], parts[1], parts[2]
-                        added = int(added_str) if added_str.isdigit() else 0
-                        deleted = int(deleted_str) if deleted_str.isdigit() else 0
-                        change_count = added + deleted
-                        file_path = file_path.replace("\\", "/")
-                        
-                        for node_id, node in graph.nodes.items():
-                            if node.active and (node.path.replace("\\", "/") == file_path or node.id == file_path):
-                                session_weights[node_id] = math.log2(change_count + 2) * 2.0
+            modified_paths = get_git_modified_files()
+            for path, change_count in modified_paths.items():
+                for node_id, node in graph.nodes.items():
+                    if node.active and (node.path.replace("\\", "/") == path or node.id == path):
+                        session_weights[node_id] = math.log2(change_count + 2) * 2.0
         except Exception:
             pass
             

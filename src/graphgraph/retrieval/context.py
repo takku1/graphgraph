@@ -66,6 +66,34 @@ def expand_context(
     edges = budget_edges(edges, max_nodes=effective_node_budget, weak_limit=weak_limit)
     nodes, edges = reserve_start_evidence(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
     nodes, edges = prune_doc_concept_noise(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
+    
+    # Dynamic Programming Knuth-Optimal Context Partitioning
+    if effective_node_budget is not None and len(nodes) > effective_node_budget:
+        # Fast local BFS to propagate relevance scores from starts to candidates in O(nodes) time
+        import collections
+
+        from .knuth_dp import knuth_dp_context_partition
+        node_values = {s: 1.0 for s in starts}
+        outgoing = graph.outgoing()
+        incoming = graph.incoming()
+        queue = collections.deque(starts)
+        visited = set(starts)
+        while queue:
+            curr = queue.popleft()
+            val = node_values.get(curr, 1.0)
+            neighbors = [e.target for e in outgoing.get(curr, [])] + [e.source for e in incoming.get(curr, [])]
+            for n in neighbors:
+                if n in nodes and n not in visited:
+                    visited.add(n)
+                    node_values[n] = val * 0.85
+                    queue.append(n)
+                    
+        token_budget = effective_node_budget * 80
+        dp_nodes = knuth_dp_context_partition(graph, tuple(starts), nodes, node_values, token_budget)
+        if dp_nodes:
+            nodes = dp_nodes
+            edges = [e for e in edges if e.source in nodes and e.target in nodes]
+
     edges = shape_edge_budget(edges, tuple(starts), plan, node_count=len(nodes))
     return enrich_runtime_context(graph, nodes, edges, max_nodes=effective_node_budget)
 
@@ -470,23 +498,14 @@ def retrieve_context(
     starts_list = list(match.node.id for match in selected_matches)
     
     # Discover git-modified files (active session context / Ephemeral Session Layer)
-    import subprocess
+    from .git_utils import get_git_modified_files
     try:
-        res = subprocess.run(["git", "status", "--porcelain"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2)
-        if res.returncode == 0:
-            modified_paths = []
-            for line in res.stdout.splitlines():
-                parts = line.strip().split(maxsplit=1)
-                if len(parts) == 2:
-                    _, file_path = parts
-                    file_path = file_path.replace("\\", "/")
-                    modified_paths.append(file_path)
-            
-            for path in modified_paths:
-                for node_id, node in graph.nodes.items():
-                    if node.active and (node.path.replace("\\", "/") == path or node.id == path):
-                        if node_id not in starts_list:
-                            starts_list.append(node_id)
+        modified_paths = get_git_modified_files()
+        for path in modified_paths:
+            for node_id, node in graph.nodes.items():
+                if node.active and (node.path.replace("\\", "/") == path or node.id == path):
+                    if node_id not in starts_list:
+                        starts_list.append(node_id)
     except Exception:
         pass
 

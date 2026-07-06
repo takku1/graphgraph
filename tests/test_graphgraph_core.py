@@ -3402,6 +3402,33 @@ N1,N2,1,0.9
         # Path distance A to C should be 2. Let's assert on distances.
         self.assertIn("[0,1,2]", res) or self.assertIn("[2,1,0]", res)
 
+    def test_knuth_dp_context_partition(self) -> None:
+        from graphgraph.retrieval.knuth_dp import knuth_dp_context_partition
+        g = Graph(
+            nodes={
+                "A": Node("A", "A", "class", "a.py", active=True, facts=("f1",)),
+                "B": Node("B", "B", "class", "b.py", active=True, facts=("f1",)),
+                "C": Node("C", "C", "class", "c.py", active=True, facts=("f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8")),
+            },
+            edges=[
+                Edge("A", "B", "calls", 1.0),
+                Edge("A", "C", "calls", 1.0),
+            ]
+        )
+        values = {"A": 10.0, "B": 5.0, "C": 8.0}
+        
+        # Test 1: Budget weight = 2 (approx 80 tokens). Fits A (w=1) + B (w=1). C (w=2) cannot fit with A.
+        selected = knuth_dp_context_partition(g, ("A",), {"A", "B", "C"}, values, 80)
+        self.assertIn("A", selected)
+        self.assertIn("B", selected)
+        self.assertNotIn("C", selected)
+        
+        # Test 2: Budget weight = 3 (approx 120 tokens). Fits A (w=1) + C (w=2) because 10+8=18 > A+B=15.
+        selected = knuth_dp_context_partition(g, ("A",), {"A", "B", "C"}, values, 120)
+        self.assertIn("A", selected)
+        self.assertIn("C", selected)
+        self.assertNotIn("B", selected)
+
 
 if __name__ == "__main__":
     unittest.main()
