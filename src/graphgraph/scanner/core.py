@@ -179,7 +179,7 @@ def scan_directory(
             label=f.name,
             kind=EXT_KIND.get(f.suffix.lower(), "file"),
             path=rel,
-            facts=facts,
+            facts=tuple(facts),
         )
 
     # Module hierarchy: add directory nodes and contains edges for every file
