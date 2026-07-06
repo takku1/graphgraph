@@ -3384,66 +3384,6 @@ N1,N2,1,0.9
         matches = search_nodes(g, "AuthService", personalize=True)
         self.assertEqual(matches[0].node.id, "A")
 
-    def test_web_search_parser(self) -> None:
-        from graphgraph.retrieval.web import parse_duckduckgo_lite
-        mock_html = """
-        <table>
-        <tr class="result-row">
-            <td class="result-link">
-                <a href="/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget_page&amp;kh=-1">Target Title</a>
-            </td>
-        </tr>
-        <tr>
-            <td class="result-snippet">
-                This is a snippet containing description text.
-            </td>
-        </tr>
-        </table>
-        """
-        results = parse_duckduckgo_lite(mock_html, limit=1)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["title"], "Target Title")
-        self.assertEqual(results[0]["url"], "https://example.com/target_page")
-        self.assertEqual(results[0]["snippet"], "This is a snippet containing description text.")
-
-    def test_render_query_context_web_search(self) -> None:
-        from unittest.mock import patch
-
-        from graphgraph.services.context import render_query_context
-        
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp) / "graph.gg"
-            g = Graph(
-                nodes={
-                    "A": Node("A", "AuthService", "service", "auth.py", active=True),
-                },
-                edges=[]
-            )
-            from graphgraph.io import save_gg
-            save_gg(g, tmp_path)
-            
-            mock_results = [{"title": "WebDoc", "url": "https://web.doc", "snippet": "External OAuth details."}]
-            with patch("graphgraph.retrieval.web.search_web", return_value=mock_results):
-                res = render_query_context(
-                    query="AuthService",
-                    graph_path=tmp_path,
-                    web_search=True,
-                    packet="gg_max_hybrid",
-                )
-                self.assertIn("WebDoc", res)
-                self.assertIn("https://web.doc", res)
-                self.assertIn("External OAuth details", res)
-
-    def test_cli_web_search_args(self) -> None:
-        from graphgraph.cli.parser import build_parser
-        parser = build_parser()
-        
-        args = parser.parse_args(["query", "my query", "--web-search"])
-        self.assertTrue(args.web_search)
-        
-        args = parser.parse_args(["context", "my query", "--web-search"])
-        self.assertTrue(args.web_search)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,7 +79,6 @@ TOOLS = [
                 "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: dynamic by query class and graph shape."},
                 "scopes": {"type": "array", "items": {"type": "string"}, "description": "Optional scope/path prefixes to constrain retrieval."},
                 "show_anchors": {"type": "boolean", "description": "Include ranked anchors before packet."},
-                "web_search": {"type": "boolean", "description": "Enable web search integration to fetch external documentation snippets."},
             },
             "required": ["query"],
         },
@@ -345,7 +344,6 @@ def build_query_context(args: dict[str, Any]) -> str:
         show_anchors=bool(args.get("show_anchors")),
         cache_namespace="mcp_query",
         json_anchors=True,
-        web_search=bool(args.get("web_search")),
     )
 
 

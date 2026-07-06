@@ -293,7 +293,6 @@ def cmd_query(args: argparse.Namespace) -> None:
         scopes=tuple(args.scope),
         show_anchors=args.show_anchors,
         cache_namespace="cli_query",
-        web_search=args.web_search,
     )
     print(output)
 
@@ -327,7 +326,6 @@ def cmd_context(args: argparse.Namespace) -> None:
         scopes=tuple(args.scope),
         skip_dirs=all_skip,
         show_anchors=args.show_anchors,
-        web_search=args.web_search,
     )
     if args.show_stats:
         shape = graph_shape(status.graph)

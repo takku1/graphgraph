@@ -64,7 +64,6 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     query.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
     query.add_argument("--show-anchors", action="store_true")
-    query.add_argument("--web-search", action="store_true", help="Enable anonymous web search integration to inject external documentation.")
     query.set_defaults(func=cmd_query)
 
     context = sub.add_parser("context", help="One-step native workflow: ensure a graph exists, then render query context.")
@@ -82,7 +81,6 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs", help="Alias: extra directory names to exclude during auto-build.")
     context.add_argument("--show-anchors", action="store_true")
     context.add_argument("--show-stats", action="store_true", help="Print graph load/build shape metrics to stderr.")
-    context.add_argument("--web-search", action="store_true", help="Enable anonymous web search integration to inject external documentation.")
     context.set_defaults(func=cmd_context)
 
     snippets = sub.add_parser("snippets", help="Render bounded source excerpts for selected graph node IDs, labels, or paths.")
