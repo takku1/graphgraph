@@ -355,4 +355,6 @@ def estimate_gg_max_tokens(nodes: int, shape: GraphShape) -> int:
 
 def adjusted_edge_density(shape: GraphShape) -> float:
     noise_factor = 1.0 + 0.30 * shape.weak_edge_ratio + 0.20 * shape.doc_node_ratio
-    return max(0.05, shape.edge_density * noise_factor)
+    raw_density = shape.edge_density * noise_factor
+    # Local density is capped at 1.5 by the Edge Density Throttle at runtime
+    return max(0.05, min(1.5, raw_density))

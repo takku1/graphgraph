@@ -269,6 +269,17 @@ To establish comparative baselines, we evaluated against:
 
 Both baselines achieve an average of **42.1% symbol recall** while consuming **8,900 tokens**. The high token consumption is a consequence of retrieving full raw text chunks (including body code, raw developer comments, and docstrings). In contrast, GraphGraph's structural representation (which strips raw body text in favor of AST headers and dependency schema) compresses the unbounded representation to 7,351 tokens, and the dynamic planner further optimizes this to **4,120 tokens** (achieving **53.7% token savings** over the flat baselines) while maintaining **100% evidence recall** on structural queries. We acknowledge that stronger vector RAG configurations (utilizing larger embedding models, optimized chunk overlaps, or hybrid sparse-dense retrievers) may narrow this gap, but GraphGraph's structural compression remains highly effective for target AST representation.
 
+### 7.6 Live Case Study: Flask Repository
+To evaluate GraphGraph 2.0's real-time planning and retrieval performance on an active open-source codebase, we scanned and queried the **Flask** repository (Flask 3.2.0.dev).
+
+* **Codebase Topology:** The scan compiles Flask into a graph containing $4,574$ nodes and $21,306$ edges, representing a highly connected codebase with a raw global edge density of $4.658$ edges per node.
+* **Dynamic Density Capping & Budget Allocation:** At runtime, the Edge Density Throttle caps local retrieved density at $1.5$ to prevent token inflation. By incorporating this threshold, the planner's dynamic marginal cost estimator computes:
+  $$\tau = 1.496 + 6.215 \cdot \min(4.658, 1.5) = 10.82 \text{ tokens per node}$$
+  This avoids the severe overestimation ($\tau \approx 30.43$ tokens) that would occur if using raw global density. For an architectural query (`"Blueprint routing design"`, complexity $\lambda = 0.035$ for `subsystem_summary`), the regularized budget allocator calculates:
+  $$n^* = \frac{1}{0.035} \ln \left( \frac{0.035}{10^{-4} \cdot 10.82} \right) \approx 99.4 \text{ nodes}$$
+  Clipped against the class-specific bounds $[48, 120]$, this sets a target envelope of **99 nodes**.
+* **Traversals and Pruning:** Running the query through the MCP server takes **31 milliseconds** (warm-cache) and retrieves **51 nodes and 66 edges** (fitting well under the 99-node limit). The Edge Density Throttle successfully prunes weak relation types (e.g., source code mentions) to constrain the local retrieved density to $66/51 \approx 1.29$ edges per node. The multi-tier ontology correctly crosses from documentation entries (`My First Blueprint`) to core AST implementations (`blueprints.py`, `Scaffold` class) via `explains` edges, preserving reachability back to anchors.
+
 ---
 
 ## 8. Related Work
