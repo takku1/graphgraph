@@ -222,61 +222,64 @@ class Graph:
         if N == 0:
             return {}
 
+        nid_to_idx = {nid: i for i, nid in enumerate(active_nodes)}
+
         # Normalize personalization vector
-        p = {nid: 0.0 for nid in active_nodes}
         total_p = sum(personalization.get(nid, 0.0) for nid in active_nodes)
         if total_p > 0:
-            for nid in active_nodes:
-                p[nid] = personalization.get(nid, 0.0) / total_p
+            p_arr = [personalization.get(nid, 0.0) / total_p for nid in active_nodes]
         else:
-            for nid in active_nodes:
-                p[nid] = 1.0 / N
+            p_arr = [1.0 / N] * N
 
-        pr = dict(p)
+        pr_arr = list(p_arr)
 
         outgoing = self.outgoing()
         incoming = self.incoming()
-        sum_out = {}
-        for nid in active_nodes:
+        
+        sum_out_arr = [0.0] * N
+        for i, nid in enumerate(active_nodes):
             s = 0.0
             for edge in outgoing.get(nid, []):
-                if edge.target in pr:
+                if edge.target in nid_to_idx:
                     s += edge.weight * traversal_strength(edge.type)
-            sum_out[nid] = s
+            sum_out_arr[i] = s
 
-        dangling_nodes = [nid for nid in active_nodes if sum_out[nid] == 0.0]
+        dangling_indices = [i for i, val in enumerate(sum_out_arr) if val == 0.0]
 
-        # Precompute transitions
-        transitions = {}
-        for target_id in active_nodes:
+        # Precompute transitions using integer indices
+        transitions_arr = [[] for _ in range(N)]
+        for i, target_id in enumerate(active_nodes):
             incoming_edges = incoming.get(target_id, [])
             valid_incoming = []
             for edge in incoming_edges:
                 source_id = edge.source
-                if source_id in pr and sum_out[source_id] > 0.0:
+                src_idx = nid_to_idx.get(source_id)
+                if src_idx is not None and sum_out_arr[src_idx] > 0.0:
                     weight = edge.weight * traversal_strength(edge.type)
-                    factor = damping * (weight / sum_out[source_id])
-                    valid_incoming.append((source_id, factor))
-            transitions[target_id] = valid_incoming
+                    factor = damping * (weight / sum_out_arr[src_idx])
+                    valid_incoming.append((src_idx, factor))
+            transitions_arr[i] = valid_incoming
+
+        one_minus_damping = 1.0 - damping
 
         for _ in range(max_iter):
-            next_pr = {nid: (1.0 - damping) * p[nid] for nid in active_nodes}
+            next_pr_arr = [one_minus_damping * p_val for p_val in p_arr]
 
-            dangling_sum = sum(pr[nid] for nid in dangling_nodes)
+            dangling_sum = sum(pr_arr[idx] for idx in dangling_indices)
             dangling_share = damping * dangling_sum
-            for nid in active_nodes:
-                next_pr[nid] += dangling_share * p[nid]
+            for i in range(N):
+                next_pr_arr[i] += dangling_share * p_arr[i]
 
-            for target_id in active_nodes:
-                for source_id, factor in transitions[target_id]:
-                    next_pr[target_id] += pr[source_id] * factor
+            for i in range(N):
+                for src_idx, factor in transitions_arr[i]:
+                    next_pr_arr[i] += pr_arr[src_idx] * factor
 
-            err = sum(abs(next_pr[nid] - pr[nid]) for nid in active_nodes)
-            pr = next_pr
+            err = sum(abs(next_val - curr_val) for next_val, curr_val in zip(next_pr_arr, pr_arr))
+            pr_arr = next_pr_arr
             if err < tol:
                 break
 
-        return pr
+        return {nid: pr_arr[i] for i, nid in enumerate(active_nodes)}
 
     def _pagerank_cache_key(self, damping: float, max_iter: int, tol: float) -> tuple[object, ...]:
         return damping, max_iter, tol, self.structural_signature()
