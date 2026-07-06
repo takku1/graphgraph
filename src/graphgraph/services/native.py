@@ -303,19 +303,20 @@ def _runtime_notes(probes: list[dict[str, object]]) -> list[str]:
 
 
 def render_native_context(
-    *,
-    query: str,
-    query_class: str = "subsystem_summary",
-    directory: Path = Path("."),
-    graph_path: Path | None = None,
-    rebuild: bool = False,
-    max_nodes: int | None = None,
-    scan_max_nodes: int = 2000,
-    packet: str | None = None,
-    anchor_limit: int | None = None,
-    scopes: tuple[str, ...] = (),
-    skip_dirs: tuple[str, ...] = (),
-    show_anchors: bool = False,
+	*,
+	query: str,
+	query_class: str = "subsystem_summary",
+	directory: Path = Path("."),
+	graph_path: Path | None = None,
+	rebuild: bool = False,
+	max_nodes: int | None = None,
+	scan_max_nodes: int = 2000,
+	packet: str | None = None,
+	anchor_limit: int | None = None,
+	scopes: tuple[str, ...] = (),
+	skip_dirs: tuple[str, ...] = (),
+	show_anchors: bool = False,
+	web_search: bool = False,
 ) -> tuple[str, GraphBuildStatus]:
     output_path = graph_path or Path(".graphgraph/graph.gg")
     status = ensure_native_graph(
@@ -336,5 +337,6 @@ def render_native_context(
         scopes=scopes,
         show_anchors=show_anchors,
         cache_namespace="cli_context",
+        web_search=web_search,
     )
     return packet_text, status

@@ -3433,6 +3433,16 @@ N1,N2,1,0.9
                 self.assertIn("https://web.doc", res)
                 self.assertIn("External OAuth details", res)
 
+    def test_cli_web_search_args(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        parser = build_parser()
+        
+        args = parser.parse_args(["query", "my query", "--web-search"])
+        self.assertTrue(args.web_search)
+        
+        args = parser.parse_args(["context", "my query", "--web-search"])
+        self.assertTrue(args.web_search)
+
 
 if __name__ == "__main__":
     unittest.main()
