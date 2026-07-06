@@ -345,6 +345,7 @@ class Graph:
         max_nodes: int | None = None,
         scopes: tuple[str, ...] = (),
         direction: str = "both",
+        decay_hubs: bool = False,
     ) -> tuple[set[str], list[Edge]]:
         if direction not in {"both", "out", "in"}:
             raise ValueError(f"unknown traversal direction: {direction}")
@@ -366,14 +367,17 @@ class Graph:
         seen_edges: set[tuple[str, str, str]] = set()
         edge_list: list[Edge] = []
         frontier = set(included)
+        node_energies: dict[str, float] = {s: 100.0 for s in included}
 
         for _ in range(hops):
             new_edges: list[Edge] = []
             scores: dict[str, float] = {}
+            next_energies: dict[str, float] = {}
 
             for nid in frontier:
                 deg = degrees.get(nid, 1)
                 deg_penalty = 1.0 / math.sqrt(max(1, deg))
+                current_energy = node_energies.get(nid, 100.0)
 
                 if direction == "out":
                     candidate_edges = outgoing.get(nid, [])
@@ -393,7 +397,16 @@ class Graph:
                         and self.nodes[neighbor].active
                         and _node_in_scope(self.nodes[neighbor], normalized_scopes)
                     ):
-                        scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty
+                        if decay_hubs:
+                            resistance = 1.0 / max(1e-9, edge.traversal_val)
+                            degree_drain = 1.0 + math.log10(max(1, deg))
+                            decay = resistance * degree_drain * 25.0
+                            new_energy = current_energy - decay
+                            if new_energy > 0:
+                                next_energies[neighbor] = max(next_energies.get(neighbor, 0.0), new_energy)
+                                scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty * (new_energy / 100.0)
+                        else:
+                            scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty
 
             if not scores:
                 for edge in new_edges:
@@ -410,6 +423,8 @@ class Graph:
                 ranked = ranked[:available]
 
             next_set = set(ranked)
+            for neighbor in next_set:
+                node_energies[neighbor] = max(node_energies.get(neighbor, 0.0), next_energies.get(neighbor, 0.0))
             all_included = included | next_set
 
             for edge in new_edges:

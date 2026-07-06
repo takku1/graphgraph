@@ -35,6 +35,7 @@ def expand_context(
         max_nodes=plan.node_budget,
         scopes=scopes,
         direction=plan.direction,
+        decay_hubs=(plan.query_class in {"blast_radius", "subsystem_summary"}),
     )
     edges = [
         edge for edge in edges
@@ -49,6 +50,16 @@ def expand_context(
         if density > 1.5:
             scale = max(0.4, min(1.0, 1.5 / density))
             effective_node_budget = max(25, int(plan.node_budget * scale))
+
+        # Cohesion-guided budget trim:
+        # If the subgraph has high cohesion (tightly coupled module), we can reduce budget to save tokens.
+        unique_undirected_edges = {(min(e.source, e.target), max(e.source, e.target)) for e in edges if e.source in nodes and e.target in nodes}
+        n = len(nodes)
+        possible_edges = n * (n - 1) // 2 if n > 1 else 0
+        cohesion = len(unique_undirected_edges) / possible_edges if possible_edges > 0 else 0.0
+        if cohesion > 0.40:
+            cohesion_scale = max(0.6, min(1.0, 1.0 - (cohesion - 0.4) * 0.67))
+            effective_node_budget = max(20, int((effective_node_budget or plan.node_budget) * cohesion_scale))
 
     stats = compute_subgraph_stats(graph, nodes, edges)
     weak_limit = adaptive_weak_edge_limit(plan.weak_edge_limit, stats.weak_edge_ratio, stats.relation_entropy, stats.edges)

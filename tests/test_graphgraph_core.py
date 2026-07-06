@@ -1006,6 +1006,59 @@ N1,N2,1,0.9
         self.assertEqual(nodes, {"N1"})
         self.assertEqual(edges, [])
 
+    def test_graph_expansion_with_energy_decay(self) -> None:
+        nodes = {
+            "A": Node("A", "A"),
+            "B": Node("B", "B"),
+            "C": Node("C", "C"),
+            "H": Node("H", "H"),
+            "D": Node("D", "D"),
+        }
+        for i in range(50):
+            nodes[f"Dummy{i}"] = Node(f"Dummy{i}", f"Dummy{i}")
+        
+        edges = [
+            Edge("A", "B", "calls", weight=1.0),
+            Edge("B", "C", "calls", weight=1.0),
+            Edge("A", "H", "calls", weight=1.0),
+            Edge("H", "D", "calls", weight=1.0),
+        ]
+        for i in range(50):
+            edges.append(Edge("H", f"Dummy{i}", "calls", weight=1.0))
+            
+        graph = Graph(nodes=nodes, edges=edges)
+        ret_nodes, ret_edges = graph.expand(["A"], hops=2, max_nodes=100, decay_hubs=True)
+        
+        self.assertIn("B", ret_nodes)
+        self.assertIn("C", ret_nodes)
+        self.assertIn("H", ret_nodes)
+        self.assertNotIn("D", ret_nodes)
+
+    def test_cohesion_guided_budget_trimming(self) -> None:
+        from graphgraph.retrieval.context import expand_context
+        from graphgraph.planning.types import ContextPlan
+        
+        nodes = {f"N{i}": Node(f"N{i}", f"N{i}") for i in range(12)}
+        edges = []
+        for i in range(12):
+            for j in range(i + 1, 12):
+                edges.append(Edge(f"N{i}", f"N{j}", "calls", weight=1.0))
+                
+        graph = Graph(nodes=nodes, edges=edges)
+        plan = ContextPlan(
+            query_class="blast_radius",
+            hops=2,
+            direction="both",
+            packet="gg_max",
+            node_budget=100,
+            anchor_limit=6,
+            weak_edge_limit=15,
+            min_confidence=0.0,
+            reason="test"
+        )
+        
+        ret_nodes, ret_edges = expand_context(graph, ("N0",), plan)
+        self.assertLessEqual(len(ret_nodes), 60)
 
     def test_default_path_resolution(self) -> None:
         from graphgraph.io import find_external_graph_path, find_graph_path, find_policies_path
