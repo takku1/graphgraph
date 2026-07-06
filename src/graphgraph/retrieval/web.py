@@ -19,7 +19,7 @@ def search_web(query: str, limit: int = 3) -> list[WebSearchResult]:
     """
     try:
         encoded_query = urllib.parse.urlencode({"q": query})
-        url = f"https://lite.duckduckgo.com/lite/"
+        url = "https://lite.duckduckgo.com/lite/"
         data = encoded_query.encode("utf-8")
         
         # DuckDuckGo Lite requires a browser-like User-Agent to prevent bot blockages

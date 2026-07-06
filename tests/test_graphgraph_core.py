@@ -1035,8 +1035,8 @@ N1,N2,1,0.9
         self.assertNotIn("D", ret_nodes)
 
     def test_cohesion_guided_budget_trimming(self) -> None:
-        from graphgraph.retrieval.context import expand_context
         from graphgraph.planning.types import ContextPlan
+        from graphgraph.retrieval.context import expand_context
         
         nodes = {f"N{i}": Node(f"N{i}", f"N{i}") for i in range(12)}
         edges = []
@@ -3408,6 +3408,7 @@ N1,N2,1,0.9
 
     def test_render_query_context_web_search(self) -> None:
         from unittest.mock import patch
+
         from graphgraph.services.context import render_query_context
         
         with tempfile.TemporaryDirectory() as tmp:

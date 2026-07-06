@@ -245,8 +245,8 @@ def render_query_context(
 
     if web_search:
         try:
+            from ..core import Edge, Node
             from ..retrieval.web import search_web
-            from ..core import Node, Edge
             web_results = search_web(query, limit=3)
             for idx, res in enumerate(web_results):
                 web_id = f"web_search__{idx}"
