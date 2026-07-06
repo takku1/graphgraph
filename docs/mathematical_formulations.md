@@ -29,24 +29,20 @@ Where:
 Determines the optimal node budget $n^*$ to trade off marginal token expansion costs against context relevance.
 
 ### Regularized Utility Maximization Problem:
-We maximize the expected information gain $1 - e^{-\lambda n}$ minus a token cost penalty $\theta \cdot (\tau n)$, where $\theta > 0$ is a regularizing cost penalty (representing the shadow price of prompt tokens):
+We maximize the expected information gain $1 - e^{-\lambda n}$ minus a token cost penalty $c \cdot (\tau n)$, where $c = 10^{-4}$ is the empirically tuned token penalty cost:
 
-$$\text{maximize } U(n) = (1 - e^{-\lambda n}) - \theta \cdot (\tau n)$$
+$$\text{maximize } U(n) = (1 - e^{-\lambda n}) - c \cdot (\tau n)$$
 
 Where $\tau$ is the marginal token cost per node, and $\lambda$ is the query complexity parameter.
 
 ### Stationarity & Optimal Solution:
-Taking the partial derivative of $U(n)$ with respect to $n$ and setting it to zero yields:
+Taking the derivative of $U(n)$ with respect to $n$ and setting it to zero yields:
 
-$$U'(n) = \lambda e^{-\lambda n} - \theta \tau = 0 \implies \lambda e^{-\lambda n} = \theta \tau \implies e^{-\lambda n} = \frac{\theta \tau}{\lambda}$$
+$$U'(n) = \lambda e^{-\lambda n} - c \tau = 0 \implies \lambda e^{-\lambda n} = c \tau \implies e^{-\lambda n} = \frac{c \tau}{\lambda}$$
 
-Solving for $n$:
+Solving for $n$ gives the operational budget recommendations:
 
-$$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{\theta \tau} \right)$$
-
-Reparameterizing the regularizing penalty $\theta$ as $\alpha / \beta$ (where $\beta = 10000.0$ and $\alpha = 1.0$) gives the operational budget recommendations:
-
-$$n^* = \frac{1}{\lambda} \ln \left( \frac{\beta \cdot \lambda}{\alpha \cdot \tau} \right)$$
+$$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{c \cdot \tau} \right)$$
 
 Where:
 * **$\lambda$**: The complexity constant mapping target evidence distribution per query class:
@@ -55,8 +51,7 @@ Where:
   * `blast_radius` / `subsystem_summary` $\rightarrow \lambda = 0.035$ (distributed targets)
 * **$\tau$**: The marginal token cost per node derived from empirical edge density:
   $$\tau = 1.496 + 6.215 \cdot \text{adjusted\_edge\_density}$$
-* **$\beta$**: Target scaling multiplier ($10000.0$).
-* **$\alpha$**: Regularization scaling factor ($1.0$).
+* **$c$**: Empirical token penalty cost ($10^{-4}$).
 * **Bounds enforcement**: The raw $n^*$ is clipped against class-specific bounds:
   $$n_{\text{final}} = \min\left(B_{\text{upper}}, \max\left(B_{\text{lower}}, n^*\right)\right)$$
 

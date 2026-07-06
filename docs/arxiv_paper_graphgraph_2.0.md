@@ -1,6 +1,6 @@
 # GraphGraph 2.0: A Serverless, Token-Efficient Context Graph Engine for Repository-Scale LLM Reasoning
 
-**Authors:** Dillon Carney (Independent Researcher) and AI Co-Author (Antigravity)  
+**Author:** Dillon Carney (Independent Researcher)  
 **Date:** July 2026  
 **Status:** Working draft for systems track submission  
 
@@ -114,24 +114,20 @@ GraphGraph 2.0 uses a two-stage budgeting and selection pipeline to manage token
 ### 4.1 Coarse Planning: Information-Gain-Regularized Budget Allocation
 The planner determines the global target node budget $n^*$ during the *coarse query planning phase* by solving a continuous regularized optimization problem. We formulate a **regularized utility function** that balances expected information recall against token cost:
 
-$$\text{maximize } U(n) = (1 - e^{-\lambda n}) - \theta \cdot (\tau n)$$
+$$\text{maximize } U(n) = (1 - e^{-\lambda n}) - c \cdot (\tau n)$$
 
 Where:
 * $1 - e^{-\lambda n}$ represents the expected information gain (recall) of retrieving $n$ nodes under query complexity $\lambda > 0$.
 * $\tau n$ is the estimated token footprint of the retrieved set, where $\tau$ is the marginal token cost per node.
-* $\theta > 0$ is a regularization penalty factor representing the shadow price of prompt tokens.
+* $c = 10^{-4}$ is the empirically tuned token penalty cost.
 
 Taking the derivative of $U(n)$ with respect to $n$ and setting it to zero yields:
 
-$$U'(n) = \lambda e^{-\lambda n} - \theta \tau = 0 \implies e^{-\lambda n} = \frac{\theta \tau}{\lambda}$$
+$$U'(n) = \lambda e^{-\lambda n} - c \tau = 0 \implies e^{-\lambda n} = \frac{c \tau}{\lambda}$$
 
-Solving for $n$:
+Solving for $n$ gives the operational budget formula:
 
-$$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{\theta \tau} \right)$$
-
-Reparameterizing the regularizing penalty $\theta$ as $\alpha / \beta$ (where $\beta = 10000.0$ and $\alpha = 1.0$) gives the operational budget formula:
-
-$$n^* = \frac{1}{\lambda} \ln \left( \frac{\beta \cdot \lambda}{\alpha \cdot \tau} \right)$$
+$$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{c \cdot \tau} \right)$$
 
 Where:
 * $\lambda$ is the complexity constant mapping target evidence distribution per query class (e.g., $0.08$ for focused `direct_lookup`, $0.035$ for distributed `blast_radius`).
@@ -297,3 +293,8 @@ While GraphGraph 2.0 establishes a robust retrieval framework, several challenge
 ## 10. Conclusion
 
 GraphGraph 2.0 represents a highly optimized, local-first context engine for repository-scale LLM reasoning. By combining Joint Query-Session Personalized PageRank, Topologically-Connected Tree Knapsack Dynamic Programming, and Relation-Shaped Edge Budgeting, it provides a serverless context engine that reduces token overhead by 70% compared to verbose serialization formats (JSON, GraphML) and by 53.7% compared to flat vector RAG baselines. The engine executes traversals in under 40 milliseconds for typical repository sizes (10,000 nodes) and scales linearly to larger codebases, providing a rigorous topological foundation for agentic software engineering.
+
+---
+
+## Acknowledgments
+The author acknowledges the collaborative assistance of AI assistant Antigravity (Google DeepMind) during the mathematical refinement, debugging, and drafting stages of this manuscript.

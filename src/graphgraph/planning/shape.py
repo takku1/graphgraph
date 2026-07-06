@@ -137,14 +137,12 @@ def recommend_node_budget(query_class: str, query: str, shape: GraphShape) -> Bu
 
     # 4. Coarse Planning: Regularized Budget Heuristic:
     # Objective: Maximize expected information gain minus token cost:
-    # U(n) = (1 - exp(-lambda_ * n)) - theta * (tau * n)
+    # U(n) = (1 - exp(-lambda_ * n)) - c * (tau * n)
     # Taking the derivative and setting to zero yields the closed-form optimum:
-    # n* = (1 / lambda_) * ln(lambda_ / (theta * tau))
-    # Reparameterizing the penalty theta as alpha / beta (alpha=1.0, beta=10000.0)
-    # yields the operational formula: n* = (1 / lambda_) * ln((beta * lambda_) / (alpha * tau))
-    beta = 10000.0
-    alpha = 1.0
-    ratio = max(1.1, (beta * lambda_) / (alpha * tau))
+    # n* = (1 / lambda_) * ln(lambda_ / (c * tau))
+    # where c = 10^-4 is the empirically tuned token penalty cost.
+    c = 1e-4
+    ratio = max(1.1, lambda_ / (c * tau))
     budget_n = int(round((1.0 / lambda_) * math.log(ratio)))
 
     # 5. Enforce operational bounds
