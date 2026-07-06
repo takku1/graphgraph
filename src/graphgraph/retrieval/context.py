@@ -1,7 +1,21 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, replace
+
+_NOISE_PATTERNS = [
+    re.compile(r"```[\s\S]*?```"),                          # markdown code blocks
+    re.compile(r"Sender\s*\(untrusted metadata\)\s*:\s*", re.IGNORECASE),  # untrusted sender prefix
+    re.compile(r"\[[\w\s:\-]+UTC\]\s*", re.IGNORECASE),     # timestamp logs
+]
+
+def sanitize_query(query: str) -> str:
+    """Strip upstream system noise and logs to preserve pure query search intent."""
+    text = query or ""
+    for pat in _NOISE_PATTERNS:
+        text = pat.sub("", text)
+    return text.strip()
 
 from ..concepts.doccode import doc_code_bias
 from ..graph.core import Edge, Graph
@@ -473,6 +487,7 @@ def retrieve_context(
     max_nodes: int | None = None,
     scopes: tuple[str, ...] = (),
 ) -> RetrievalResult:
+    query = sanitize_query(query)
     doc_intensity = doc_intensity_score(query_class, query)
     graph_bias = doc_code_bias(graph)
     doc_intensity *= 0.75 + graph_bias * 0.5

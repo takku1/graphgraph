@@ -2005,6 +2005,17 @@ N1,N2,1,0.9
         self.assertIn("D", result.nodes)
         self.assertTrue(any(edge.type == "used_input" for edge in result.edges))
 
+    def test_retrieve_context_sanitizes_query_noise(self) -> None:
+        from graphgraph.retrieval.context import sanitize_query
+        raw_query = """
+[Fri 2026-07-06 14:00 UTC] Sender (untrusted metadata): ```python
+def dummy(): pass
+```
+Find the AuthService implementation.
+"""
+        clean = sanitize_query(raw_query)
+        self.assertEqual(clean, "Find the AuthService implementation.")
+
     def test_final_packet_applies_retrieval_policy(self) -> None:
         graph = Graph(
             nodes={
