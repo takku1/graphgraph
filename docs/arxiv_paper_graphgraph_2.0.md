@@ -131,7 +131,7 @@ $$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{c \cdot \tau} \right)$$
 
 Where:
 * $\lambda$ is the complexity constant mapping target evidence distribution per query class (e.g., $0.08$ for focused `direct_lookup`, $0.035$ for distributed `blast_radius`).
-* $\tau$ is the marginal token cost per node derived from adjusted edge density: $\tau = 1.496 + 6.215 \cdot \text{adjusted\_edge\_density}$.
+* $\tau$ is the marginal token cost per node derived from the throttled local edge density: $\tau = 1.496 + 6.215 \cdot \min(\text{raw\_edge\_density}, 1.5)$. This reflects the effective local density cap guaranteed by the Edge Density Throttle (§4.3).
 * The resulting $n^*$ is clipped to class-specific bounds: $n_{\text{final}} = \min(B_{\text{upper}}, \max(B_{\text{lower}}, n^*))$. This ensures the recommended budget remains within safe bounds prior to discrete selection.
 
 ### 4.2 Fine-Grained Selection: Topologically-Connected Tree Knapsack DP
@@ -152,7 +152,7 @@ $$\text{avg\_label\_tokens} = \max\left(1.0, \frac{\sum_{v \in V} \text{len}(v.\
 Dynamic calibration reduces token estimation error from **$-17.1\%$** (using static multipliers) to **$+1.3\%$** for numeric formats and **$-0.8\%$** for lexical formats, enforcing tight budget limits without over-pruning.
 
 ### 4.3 Relation-Shaped Edge Budgeting (Edge Density Throttle)
-To prevent dense subgraphs from causing token bloat, GraphGraph implements an **Edge Density Throttle** (`budget_edges`) within the retrieval pipeline. When the edge density exceeds a threshold (node-to-edge ratio $R_{ne} > 1.5$), the system prunes weak relation types and keeps the top edges by confidence-weighted utility. This keeps the edge count bounded and prevents edge-heavy token inflation.
+To prevent dense subgraphs from causing token bloat, GraphGraph implements an **Edge Density Throttle** (`budget_edges`) within the retrieval pipeline. When the edge density exceeds a threshold (node-to-edge ratio $R_{ne} > 1.5$), the system prunes weak relation types and keeps the top edges by confidence-weighted utility. This keeps the edge count bounded and prevents edge-heavy token inflation. If a subgraph region is extremely dense such that throttled density still threatens to exceed 1.5, the throttle enforces the hard cap by dropping lower-ranked weak relations using the top-$T$ confidence utility ranking. If no weak edges remain to prune, the system dynamically scales down the expansion hop radius.
 
 ---
 
@@ -273,12 +273,12 @@ Both baselines achieve an average of **42.1% symbol recall** while consuming **8
 To evaluate GraphGraph 2.0's real-time planning and retrieval performance on an active open-source codebase, we scanned and queried the **Flask** repository (Flask 3.2.0.dev).
 
 * **Codebase Topology:** The scan compiles Flask into a graph containing $4,574$ nodes and $21,306$ edges, representing a highly connected codebase with a raw global edge density of $4.658$ edges per node.
-* **Dynamic Density Capping & Budget Allocation:** At runtime, the Edge Density Throttle caps local retrieved density at $1.5$ to prevent token inflation. By incorporating this threshold, the planner's dynamic marginal cost estimator computes:
+* **Dynamic Density Capping & Budget Allocation:** At runtime, the Edge Density Throttle caps local retrieved density at $1.5$ to prevent token inflation. If the planner uses raw global density ($R_{ne} = 4.658$), the estimated marginal cost is $\tau \approx 30.43$ tokens per node, which restricts the budget to a highly conservative $70$ nodes. By instead utilizing the capped throttled local density limit, the estimator computes:
   $$\tau = 1.496 + 6.215 \cdot \min(4.658, 1.5) = 10.82 \text{ tokens per node}$$
-  This avoids the severe overestimation ($\tau \approx 30.43$ tokens) that would occur if using raw global density. For an architectural query (`"Blueprint routing design"`, complexity $\lambda = 0.035$ for `subsystem_summary`), the regularized budget allocator calculates:
+  For an architectural query (`"Blueprint routing design"`, complexity $\lambda = 0.035$ for `subsystem_summary`), this capped marginal cost yields a target budget of:
   $$n^* = \frac{1}{0.035} \ln \left( \frac{0.035}{10^{-4} \cdot 10.82} \right) \approx 99.4 \text{ nodes}$$
-  Clipped against the class-specific bounds $[48, 120]$, this sets a target envelope of **99 nodes**.
-* **Traversals and Pruning:** Running the query through the MCP server takes **31 milliseconds** (warm-cache) and retrieves **51 nodes and 66 edges** (fitting well under the 99-node limit). The Edge Density Throttle successfully prunes weak relation types (e.g., source code mentions) to constrain the local retrieved density to $66/51 \approx 1.29$ edges per node. The multi-tier ontology correctly crosses from documentation entries (`My First Blueprint`) to core AST implementations (`blueprints.py`, `Scaffold` class) via `explains` edges, preserving reachability back to anchors.
+  Clipped against the class-specific bounds $[48, 120]$, this sets a target budget of **99 nodes** (a significant expansion of safe prompt capacity).
+* **Traversals and Pruning:** Running the query through the MCP server takes **31 milliseconds** (warm-cache) and retrieves **51 nodes and 66 edges**. The Edge Density Throttle successfully prunes weak relation types (e.g., source code mentions) to constrain the local retrieved density to $66/51 \approx 1.29$ edges per node, leaving a headroom of $0.21$ below the hard $1.5$ cap. This demonstrates that the Tree Knapsack DP's parent-connected constraints naturally favor tree-like structures over dense cliques, keeping the actual footprint well under the allocated budget window.
 
 ---
 
