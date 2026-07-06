@@ -222,6 +222,7 @@ def render_query_context(
     show_anchors: bool = False,
     cache_namespace: str = "query",
     json_anchors: bool = False,
+    web_search: bool = False,
 ) -> str:
     resolved_graph_path = graph_path or find_graph_path()
     graph = load_any(resolved_graph_path)
@@ -242,6 +243,38 @@ def render_query_context(
             return json.dumps({"anchors": [], "packet": "", "message": "No matching graph anchors found for query."})
         return "No matching graph anchors found for query."
 
+    if web_search:
+        try:
+            from ..retrieval.web import search_web
+            from ..core import Node, Edge
+            web_results = search_web(query, limit=3)
+            for idx, res in enumerate(web_results):
+                web_id = f"web_search__{idx}"
+                temp_node = Node(
+                    id=web_id,
+                    label=res["title"],
+                    kind="concept",
+                    path=f"web:{idx}",
+                    summary=res["snippet"][:200],
+                    source=res["url"],
+                    facts=[f"URL: {res['url']}", f"Snippet: {res['snippet']}"],
+                    active=True
+                )
+                graph.nodes[web_id] = temp_node
+                result.nodes.add(web_id)
+                if result.starts:
+                    temp_edge = Edge(
+                        source=web_id,
+                        target=result.starts[0],
+                        type="discusses",
+                        confidence=0.9,
+                        provenance="web_search"
+                    )
+                    graph.edges.append(temp_edge)
+                    result.edges.append(temp_edge)
+        except Exception:
+            pass
+
     if packet is None:
         plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, result.nodes, result.edges))
     else:
@@ -256,7 +289,7 @@ def render_query_context(
         plan.hops,
         (
             f"{cache_namespace}|{plan.planner_version}|{anchor_limit}|{max_nodes}|"
-            f"{plan.node_budget}|{plan.direction}|{scopes}|{plan.packet}|{show_anchors}|{json_anchors}"
+            f"{plan.node_budget}|{plan.direction}|{scopes}|{plan.packet}|{show_anchors}|{json_anchors}|{web_search}"
         ),
     )
     cached_packet = cache.get(resolved_graph_path, cache_key)
