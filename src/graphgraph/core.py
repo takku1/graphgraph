@@ -284,9 +284,15 @@ class Graph:
     def structural_signature(self) -> str:
         """Stable hash of active topology and ranking-relevant edge weights."""
         cache = getattr(self, "_structural_sig_cache", None)
+        fingerprint = (
+            len(self.nodes),
+            len(self.edges),
+            sum(hash(nid) for nid in self.nodes),
+            sum(hash(e.source) ^ hash(e.target) ^ hash(e.type) for e in self.edges)
+        )
         if cache is not None:
-            cache_len_nodes, cache_len_edges, sig = cache
-            if cache_len_nodes == len(self.nodes) and cache_len_edges == len(self.edges):
+            cache_fingerprint, sig = cache
+            if cache_fingerprint == fingerprint:
                 return sig
 
         payload = {
@@ -306,7 +312,7 @@ class Graph:
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         sig = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-        self._structural_sig_cache = (len(self.nodes), len(self.edges), sig)
+        self._structural_sig_cache = (fingerprint, sig)
         return sig
 
     def pagerank_cache_payload(self, damping: float = 0.85, max_iter: int = 20, tol: float = 1e-4) -> dict[str, object]:
