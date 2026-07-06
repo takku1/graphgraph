@@ -40,7 +40,12 @@ class Extractor(Protocol):
     name: str
     confidence: float
 
-    def extract_symbols(self, files: list[SourceFile], max_total_symbols: int) -> ExtractionResult:
+    def extract_symbols(
+        self,
+        files: list[SourceFile],
+        max_total_symbols: int,
+        context_nodes: dict[str, Node] | None = None,
+    ) -> ExtractionResult:
         ...
 
 
@@ -48,9 +53,14 @@ class RegexExtractor:
     name = "regex"
     confidence = 0.75
 
-    def extract_symbols(self, files: list[SourceFile], max_total_symbols: int) -> ExtractionResult:
+    def extract_symbols(
+        self,
+        files: list[SourceFile],
+        max_total_symbols: int,
+        context_nodes: dict[str, Node] | None = None,
+    ) -> ExtractionResult:
         tuples = [(f.path, f.rel, f.file_node_id, f.text) for f in files]
-        nodes, edges = extract_symbols(tuples, max_total_symbols=max_total_symbols)
+        nodes, edges = extract_symbols(tuples, max_total_symbols=max_total_symbols, context_nodes=context_nodes)
         return ExtractionResult(nodes=nodes, edges=edges, frontend=self.name)
 
 
@@ -58,12 +68,22 @@ class TreeSitterExtractor:
     name = "tree_sitter"
     confidence = 0.95
 
-    def extract_symbols(self, files: list[SourceFile], max_total_symbols: int) -> ExtractionResult:
-        nodes: dict[str, Node] = {}
+    def extract_symbols(
+        self,
+        files: list[SourceFile],
+        max_total_symbols: int,
+        context_nodes: dict[str, Node] | None = None,
+    ) -> ExtractionResult:
+        context_ids = set((context_nodes or {}).keys())
+        nodes: dict[str, Node] = dict(context_nodes or {})
         edges: list[Edge] = []
         defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]] = []
         name_to_symbols: dict[str, list[str]] = {}
         total = 0
+
+        for node_id, node in nodes.items():
+            if _is_context_symbol(node):
+                name_to_symbols.setdefault(node.label, []).append(node_id)
 
         for source in files:
             parser = _parser_for_suffix(source.path.suffix.lower())
@@ -109,7 +129,8 @@ class TreeSitterExtractor:
         _add_returns(defs_by_file, nodes, name_to_symbols, edges)
         _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
         _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
-        return ExtractionResult(nodes=nodes, edges=_dedupe_edges(edges), frontend=self.name)
+        new_nodes = {node_id: node for node_id, node in nodes.items() if node_id not in context_ids}
+        return ExtractionResult(nodes=new_nodes, edges=_dedupe_edges(edges), frontend=self.name)
 
 
 def tree_sitter_available() -> bool:
@@ -690,6 +711,10 @@ def _imported_symbol_names(suffix: str, text: str) -> set[str]:
 
 def _identifier(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value))
+
+
+def _is_context_symbol(node: Node) -> bool:
+    return node.kind not in {"file", "python", "package", "concept", "section", "unknown"} and bool(node.path)
 
 
 _CALL_NODE_TYPES = {

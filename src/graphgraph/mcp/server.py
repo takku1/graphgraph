@@ -376,7 +376,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if input_graph_str:
-        graph = load_any(Path(input_graph_str))
+        graph = load_any(Path(input_graph_str), normalize_external_refs=True)
         validation = save_validated_graph(graph, output_path)
         return json.dumps({
             "action": "ingested",

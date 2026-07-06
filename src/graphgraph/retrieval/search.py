@@ -7,6 +7,8 @@ from ..core import Graph, Node
 from .models import Match
 from .text import node_search_text, tokenize
 
+DEPENDENCY_QUERY_TERMS = {"dependency", "dependencies", "external", "import", "imports", "module", "package", "vendor"}
+
 
 @dataclass(frozen=True)
 class SearchIndexRow:
@@ -39,6 +41,7 @@ def search_nodes(
         return ()
     query_terms = set(terms)
     test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
+    dependency_query = bool(query_terms & DEPENDENCY_QUERY_TERMS)
 
     degree = graph.degree()
     rows = _candidate_rows(graph, terms, scopes)
@@ -112,7 +115,8 @@ def search_nodes(
                 score += 3.0
                 reasons.append(f"path:{term}")
                 matched_terms.add(term)
-            if node.kind and term == node.kind.lower() and term not in {"concept", "section", "file", "function", "method", "class"}:
+            is_kind_match = (node.kind and term == node.kind.lower()) or (node.kind == "external" and term in DEPENDENCY_QUERY_TERMS)
+            if is_kind_match and term not in {"concept", "section", "file", "function", "method", "class"}:
                 score += 2.0
                 reasons.append(f"kind:{term}")
                 matched_terms.add(term)
@@ -170,6 +174,17 @@ def search_nodes(
             if node.kind == "concept" and doc_intensity < 0.5:
                 score *= 0.45
                 reasons.append("concept_status_penalty")
+            external_exact = node.kind == "external" and _external_exact_match(node, terms)
+            if node.kind == "external":
+                if external_exact and (dependency_query or len(terms) == 1):
+                    score *= 0.9
+                    reasons.append("external_dependency_exact")
+                elif external_exact:
+                    score *= 0.65
+                    reasons.append("external_dependency_penalty")
+                else:
+                    score *= 0.25
+                    reasons.append("external_unresolved_penalty")
 
             n_scores = len(pagerank_scores)
             pr_val = pagerank_scores.get(node.id, 0.0)
@@ -178,12 +193,16 @@ def search_nodes(
                 is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
                 if not is_doc_node:
                     pr_boost *= (1.0 - doc_intensity * 0.85)
+                if node.kind == "external" and not (external_exact and dependency_query):
+                    pr_boost *= 0.25
                 score += min(pr_boost, 8.0)
             else:
                 deg_boost = min(degree.get(node.id, 0), 25) * 0.05
                 is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
                 if not is_doc_node:
                     deg_boost *= (1.0 - doc_intensity * 0.85)
+                if node.kind == "external" and not (external_exact and dependency_query):
+                    deg_boost *= 0.25
                 score += deg_boost
 
             # --- GIT TEMPORAL GRAVITY ---
@@ -280,6 +299,12 @@ def _is_test_node(node: Node) -> bool:
         or label.startswith("test_")
         or label.endswith("_test")
     )
+
+
+def _external_exact_match(node: Node, terms: tuple[str, ...]) -> bool:
+    label = node.label.lower()
+    node_id = node.id.lower()
+    return any(term == label or term == node_id for term in terms)
 
 
 def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:

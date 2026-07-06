@@ -534,7 +534,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
             raise FileNotFoundError("Could not find input graph. Specify --input explicitly.")
     output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    graph = load_any(input_path)
+    graph = load_any(input_path, normalize_external_refs=True)
     validation = save_validated_graph(graph, output_path)
     print(
         f"Ingested {len(graph.nodes)} nodes, {len(graph.edges)} edges from {input_path} -> {output_path} "

@@ -68,6 +68,7 @@ class TopologicalKVCache:
         if graph_path.exists() and graph_path.stat().st_mtime > entry.get("graph_mtime", 0.0):
             if self._dependencies_unchanged(graph_path, entry):
                 entry["graph_mtime"] = graph_path.stat().st_mtime
+                self.save()
             else:
                 del self.cache_data[key]
                 self.save()

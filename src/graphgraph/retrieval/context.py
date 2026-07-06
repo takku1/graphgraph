@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from ..core import Edge, Graph
 from ..doccode import doc_code_bias
@@ -489,16 +489,7 @@ def apply_shape_budget(graph: Graph, plan: ContextPlan, query: str) -> ContextPl
 
 
 def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query: str) -> int:
-    """Pick a smaller anchor fanout when the search scores make the answer shape obvious.
-
-    The production default of 6 is still the upper bound for short structural queries,
-    but saved benchmark traces show three recurring patterns:
-    - concept/section heads usually need one extra anchor to pull the code node;
-    - single-token symbol queries split into either a strong singleton or a wide plateau;
-    - file-like python/markdown/class anchors are often self-sufficient.
-
-    The goal is to reduce anchor noise without touching the downstream expansion budget.
-    """
+    """Pick anchor fanout from the continuous score shape, not threshold ladders."""
     if not matches:
         return plan.anchor_limit
 
@@ -512,55 +503,83 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
 
     if term_count == 1:
         if plan.query_class == "direct_lookup":
-            plateau = [
-                match for match in matches[:24]
+            plateau_count = sum(
+                1
+                for match in matches[:24]
                 if top.score > 0
                 and match.score / top.score >= 0.45
                 and match.node.kind in {"function", "method", "class", "struct", "field", "python", "rust", "go", "java", "typescript", "javascript"}
-            ]
-            if len(plateau) >= 4:
-                return min(16, max(plan.anchor_limit, len(plateau)))
+            )
+            if plateau_count >= 4:
+                return min(16, max(plan.anchor_limit, plateau_count))
             return plan.anchor_limit
 
         if top.node.kind in {"function", "method"}:
-            top_stem = _node_stem(top.node.path)
-            same_stem = sum(1 for match in matches[:6] if _node_stem(match.node.path) == top_stem)
-            top3_distinct = len({_node_stem(match.node.path) for match in matches[:3]})
-            top5_ratio = matches[4].score / top.score if len(matches) >= 5 and top.score > 0 else 0.0
-
-            if same_stem >= 4:
-                return min(limit, 4)
-            if len(matches) >= 2 and top.score / max(matches[1].score, 1e-9) >= 1.5 and top5_ratio < 0.75:
-                if plan.query_class == "blast_radius":
-                    return min(limit, 2)
-                return min(limit, 1)
-            if len(matches) >= 3 and matches[2].score / top.score >= 0.98 and top3_distinct <= 2:
-                return min(limit, 3)
-            if top3_distinct >= 3 and top5_ratio >= 0.75:
-                return min(limit, 5)
+            shape = _anchor_score_shape(matches, window=min(8, max(3, limit)))
+            if shape.same_stem_mass >= 0.72:
+                return min(limit, max(2, round(1 + 3 * shape.same_stem_mass)))
+            ambiguity = 0.20 * shape.entropy + 0.42 * shape.path_diversity + 0.10 * shape.plateau_mass
+            confidence = 0.30 * shape.top_mass + 0.35 * shape.score_gap
+            shaped = 1 + round((limit - 1) * max(0.0, ambiguity - confidence))
             if any(_is_file_like_anchor(match.node) for match in matches[:6]):
-                return min(limit, 6)
+                shaped = max(shaped, min(limit, 5))
             if plan.query_class == "blast_radius":
-                return min(limit, 3)
-            return min(limit, 2 if top.score < 20 else 1)
+                shaped = max(shaped, 2)
+            return max(1, min(limit, shaped))
 
         if top.node.kind == "python":
-            return min(limit, 1 if top.score >= 90 else 2)
+            shape = _anchor_score_shape(matches, window=min(5, limit))
+            return min(limit, 1 + round(1.5 * shape.entropy))
 
         if top.node.kind in {"class", "markdown", "java", "header", "source"}:
             return min(limit, 1)
 
     if term_count >= 2:
         if top.node.kind == "python":
-            return min(limit, 1 if top.score >= 90 else 2)
+            shape = _anchor_score_shape(matches, window=min(5, limit))
+            return min(limit, 1 + round(1.5 * shape.entropy))
         if top.node.kind in {"class", "markdown", "java"}:
             return min(limit, 1)
 
-    if len(matches) >= 3 and matches[2].score / top.score >= 0.98:
-        return min(limit, 3)
-    if len(matches) >= 5 and matches[4].score / top.score >= 0.80:
-        return min(limit, 5)
-    return limit
+    shape = _anchor_score_shape(matches, window=min(8, limit))
+    shaped = 1 + round(limit * (0.55 * shape.entropy + 0.45 * shape.plateau_mass))
+    return max(1, min(limit, shaped))
+
+
+@dataclass(frozen=True)
+class AnchorScoreShape:
+    top_mass: float
+    score_gap: float
+    entropy: float
+    plateau_mass: float
+    path_diversity: float
+    same_stem_mass: float
+
+
+def _anchor_score_shape(matches: tuple[Match, ...], *, window: int) -> AnchorScoreShape:
+    sample = tuple(match for match in matches[:max(1, window)] if match.score > 0)
+    if not sample:
+        return AnchorScoreShape(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    scores = [match.score for match in sample]
+    total = sum(scores) or 1.0
+    probs = [score / total for score in scores]
+    entropy = -sum(p * math.log(p) for p in probs if p > 0) / math.log(len(probs)) if len(probs) > 1 else 0.0
+    top = scores[0]
+    second = scores[1] if len(scores) > 1 else 0.0
+    score_gap = max(0.0, min(1.0, (top - second) / max(top, 1e-9)))
+    plateau_mass = sum(score for score in scores if score / max(top, 1e-9) >= 0.75) / total
+    stems = [_node_stem(match.node.path) for match in sample]
+    path_diversity = len(set(stems)) / max(1, len(stems))
+    top_stem = stems[0]
+    same_stem_mass = sum(score for score, stem in zip(scores, stems) if stem == top_stem) / total
+    return AnchorScoreShape(
+        top_mass=probs[0],
+        score_gap=score_gap,
+        entropy=max(0.0, min(1.0, entropy)),
+        plateau_mass=max(0.0, min(1.0, plateau_mass)),
+        path_diversity=max(0.0, min(1.0, path_diversity)),
+        same_stem_mass=max(0.0, min(1.0, same_stem_mass)),
+    )
 
 
 def _node_stem(path: str | None) -> str:

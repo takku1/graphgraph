@@ -21,7 +21,7 @@ def _label_to_id(lbl: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", lbl)
 
 
-def load_graph(path: Path) -> Graph:
+def load_graph(path: Path, *, normalize_external_refs: bool = False) -> Graph:
     data = json.loads(path.read_text(encoding="utf-8"))
     nodes = {
         item["id"]: Node(
@@ -59,6 +59,10 @@ def load_graph(path: Path) -> Graph:
         for item in edges_data
     ]
     metadata = {str(k): str(v) for k, v in (data.get("metadata") or {}).items()}
+    if normalize_external_refs:
+        added = _add_external_reference_nodes(nodes, edges)
+        if added:
+            metadata["external_reference_nodes"] = str(added)
     graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
     centrality = data.get("centrality") or {}
     if isinstance(centrality, dict):
@@ -66,6 +70,23 @@ def load_graph(path: Path) -> Graph:
         if isinstance(pagerank_payload, dict):
             graph.seed_pagerank_cache(pagerank_payload)
     return graph
+
+
+def _add_external_reference_nodes(nodes: dict[str, Node], edges: list[Edge]) -> int:
+    added = 0
+    for edge in edges:
+        for endpoint in (edge.source, edge.target):
+            if endpoint in nodes:
+                continue
+            nodes[endpoint] = Node(
+                id=endpoint,
+                label=endpoint,
+                kind="external",
+                facts=("external:unresolved",),
+                confidence=0.35,
+            )
+            added += 1
+    return added
 
 
 def load_policies(path: Path) -> list[Policy]:
@@ -345,14 +366,14 @@ def load_csv_edges(path: Path) -> Graph:
     return Graph(nodes=nodes, edges=edges)
 
 
-def load_any(path: Path) -> Graph:
+def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
     """Load a graph from any supported format: .gg, .ggb, .json, .csv, .tsv."""
     suffix = path.suffix.lower()
     if suffix in _BINARY_GRAPH_SUFFIXES:
         return load_gg(path)
     if suffix in (".csv", ".tsv"):
         return load_csv_edges(path)
-    return load_graph(path)
+    return load_graph(path, normalize_external_refs=normalize_external_refs)
 
 
 def validate_graph_file(path: Path) -> ValidationResult:

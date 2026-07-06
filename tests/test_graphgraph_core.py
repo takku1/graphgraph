@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from graphgraph import (
@@ -58,9 +59,9 @@ from graphgraph.metrics import compare_graphs, summarize_graph
 from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
 from graphgraph.packets import (
     render_doc_summary,
-    render_packet,
     render_gg_max,
     render_lowlevel,
+    render_packet,
     render_semantic_arrow,
     render_sql,
     render_svo,
@@ -88,6 +89,9 @@ from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
 from graphgraph.traversal import relation_rank, traversal_policy
 from graphgraph.validate import validate_any, validate_graph_json
+
+if TYPE_CHECKING:
+    from graphgraph.cache import TopologicalKVCache
 
 
 def sample_graph() -> Graph:
@@ -692,7 +696,7 @@ N1,N2,1,0.9
                 "test_requests_py": Node("test_requests_py", "test_requests.py", "python", "tests/test_requests.py"),
                 "tests_init": Node("tests_init", "__init__.py", "python", "tests/__init__.py"),
                 "tests_compat": Node("tests_compat", "compat.py", "python", "tests/compat.py"),
-                **{f"T{i}": Node(f"T{i}", f"test_{i}", "function", f"tests/test_requests.py") for i in range(80)},
+                **{f"T{i}": Node(f"T{i}", f"test_{i}", "function", "tests/test_requests.py") for i in range(80)},
             },
             edges=[
                 Edge("test_requests_py", "TestRequests", "contains"),
@@ -955,6 +959,36 @@ N1,N2,1,0.9
             self.assertEqual(data["nodes"][0]["kind"], "code")
             self.assertEqual(data["nodes"][0]["summary"], "summary text")
             self.assertEqual(data["edges"][0]["type"], "calls")
+
+    def test_load_graph_can_materialize_external_reference_nodes_for_ingest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graphify.json"
+            path.write_text(
+                json.dumps({
+                    "nodes": [{"id": "requests_init", "label": "__init__.py", "file_type": "code"}],
+                    "edges": [
+                        {
+                            "source": "requests_init",
+                            "target": "urllib3",
+                            "relation": "imports",
+                            "confidence": "EXTRACTED",
+                        }
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            raw = load_any(path)
+            raw_result = validate_graph_json(graph_to_json(raw))
+            self.assertFalse(raw_result.ok)
+
+            normalized = load_any(path, normalize_external_refs=True)
+            self.assertIn("urllib3", normalized.nodes)
+            self.assertEqual(normalized.nodes["urllib3"].kind, "external")
+            self.assertIn("external:unresolved", normalized.nodes["urllib3"].facts)
+            self.assertEqual(normalized.metadata["external_reference_nodes"], "1")
+            normalized_result = validate_graph_json(graph_to_json(normalized))
+            self.assertTrue(normalized_result.ok, normalized_result.errors)
 
     def test_graph_expansion_ignores_inactive_context(self) -> None:
         graph = Graph(
@@ -1288,6 +1322,25 @@ N1,N2,1,0.9
         )
         self.assertEqual(search_nodes(graph, "scan directory", limit=2)[0].node.id, "SRC")
         self.assertEqual(search_nodes(graph, "test scan directory", limit=2)[0].node.id, "TEST")
+
+    def test_search_nodes_penalizes_external_nodes_unless_intent_gate_matches(self) -> None:
+        graph = Graph(
+            nodes={
+                "LOCAL": Node("LOCAL", "urllib3_client", "function", "src/client.py"),
+                "EXT": Node("EXT", "urllib3", "external"),
+            }
+        )
+        # Broad query: local code should win over external node because of the external_unresolved_penalty/external_dependency_penalty
+        matches = search_nodes(graph, "urllib3 client", limit=2)
+        self.assertEqual(matches[0].node.id, "LOCAL")
+
+        # Query targeting the dependency with a single term: both are exact, but external has a smaller penalty and is direct match
+        matches_single = search_nodes(graph, "urllib3", limit=2)
+        self.assertEqual(matches_single[0].node.id, "EXT")
+
+        # Query with explicit dependency/import keywords: intent gate opens for external node
+        matches_dep = search_nodes(graph, "urllib3 dependency", limit=2)
+        self.assertEqual(matches_dep[0].node.id, "EXT")
 
     def test_search_nodes_respects_scope(self) -> None:
         graph = Graph(
@@ -1798,6 +1851,21 @@ N1,N2,1,0.9
         kept = budget_edges(edges, max_nodes=20)
         self.assertEqual(len([e for e in kept if e.type == "references"]), 10)
         self.assertEqual(len([e for e in kept if e.type == "calls"]), 3)
+
+    def test_budget_edges_shapes_mixed_weak_relations_by_utility(self) -> None:
+        edges = [Edge("N1", f"R{i}", "references", confidence=0.9, provenance="regex_reference") for i in range(30)]
+        edges += [Edge("N1", f"L{i}", "links", confidence=0.4, provenance="ambiguous") for i in range(30)]
+        edges += [Edge("N1", f"M{i}", "mentions", confidence=0.3, provenance="semantic_llm") for i in range(30)]
+        edges += [Edge("N1", "Core", "calls", confidence=1.0, provenance="tree_sitter")]
+
+        kept = budget_edges(edges, max_nodes=20)
+        kept_counts = {relation: len([edge for edge in kept if edge.type == relation]) for relation in {"references", "links", "mentions", "calls"}}
+
+        self.assertLess(sum(count for relation, count in kept_counts.items() if relation != "calls"), 30)
+        self.assertGreater(kept_counts["references"], kept_counts["links"])
+        self.assertGreaterEqual(kept_counts["links"], 1)
+        self.assertGreaterEqual(kept_counts["mentions"], 1)
+        self.assertEqual(kept_counts["calls"], 1)
 
     def test_relation_ontology_drives_traversal_and_weak_budgeting(self) -> None:
         self.assertEqual(relation_spec("calls").family, "execution")
@@ -2449,7 +2517,7 @@ N1,N2,1,0.9
             self.assertEqual(len(g.nodes), len(g2.nodes))
 
     def test_reciprocal_rank_and_ndcg(self) -> None:
-        from graphgraph.eval import reciprocal_rank, ndcg_at_k
+        from graphgraph.eval import ndcg_at_k, reciprocal_rank
         ranked = ["A", "B", "C", "D", "E"]
         expected = {"C", "E"}
         
@@ -2615,6 +2683,125 @@ N1,N2,1,0.9
             self.assertIn("a.py", node_labels)
             self.assertIn("b.py", node_labels)
             self.assertIn("c.py", node_labels)
+
+    def test_incremental_scan_drops_stale_cross_file_symbol_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a_file = root / "a.py"
+            b_file = root / "b.py"
+            a_file.write_text(
+                "from b import foo\n\n"
+                "def use_foo():\n"
+                "    return foo()\n",
+                encoding="utf-8",
+            )
+            b_file.write_text(
+                "def foo():\n"
+                "    return 1\n",
+                encoding="utf-8",
+            )
+
+            gg_dir = root / ".graphgraph"
+            gg_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = gg_dir / "graph.json"
+            manifest_path = gg_dir / "manifest.json"
+
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+                previous_graph_path=None,
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+            old_target_ids = {
+                nid
+                for nid, node in graph.nodes.items()
+                if node.path == "b.py" and node.label == "foo"
+            }
+            self.assertEqual(len(old_target_ids), 1)
+            old_target_id = next(iter(old_target_ids))
+            self.assertTrue(any(edge.target == old_target_id for edge in graph.edges))
+
+            b_file.write_text(
+                "def bar():\n"
+                "    return 2\n",
+                encoding="utf-8",
+            )
+
+            graph2 = scan_directory(
+                root,
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+
+            self.assertNotIn(old_target_id, graph2.nodes)
+            self.assertFalse(any(edge.source == old_target_id or edge.target == old_target_id for edge in graph2.edges))
+            self.assertTrue(any(node.path == "b.py" and node.label == "bar" for node in graph2.nodes.values()))
+            result = validate_graph_json(graph_to_json(graph2))
+            self.assertTrue(result.ok, result.errors)
+
+    def test_incremental_scan_links_dirty_file_to_restored_symbol_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a_file = root / "a.py"
+            b_file = root / "b.py"
+            a_file.write_text(
+                "def use_foo():\n"
+                "    return 0\n",
+                encoding="utf-8",
+            )
+            b_file.write_text(
+                "def foo():\n"
+                "    return 1\n",
+                encoding="utf-8",
+            )
+
+            gg_dir = root / ".graphgraph"
+            gg_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = gg_dir / "graph.json"
+            manifest_path = gg_dir / "manifest.json"
+
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+                previous_graph_path=None,
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+            target_id = next(
+                nid
+                for nid, node in graph.nodes.items()
+                if node.path == "b.py" and node.label == "foo"
+            )
+
+            a_file.write_text(
+                "from b import foo\n\n"
+                "def use_foo():\n"
+                "    return foo()\n",
+                encoding="utf-8",
+            )
+
+            graph2 = scan_directory(
+                root,
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+
+            self.assertIn(target_id, graph2.nodes)
+            self.assertTrue(any(edge.target == target_id and edge.type == "calls" for edge in graph2.edges))
+            self.assertTrue(any(edge.target == target_id and edge.type == "references" for edge in graph2.edges))
+            result = validate_graph_json(graph_to_json(graph2))
+            self.assertTrue(result.ok, result.errors)
 
     def test_kv_cache(self) -> None:
         import time

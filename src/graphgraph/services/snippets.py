@@ -7,7 +7,6 @@ from ..core import Graph, Node
 from ..io import find_graph_path, load_any
 from .context import resolve_start_nodes
 
-
 LINE_RE = re.compile(r"\bL(\d+)\b")
 
 

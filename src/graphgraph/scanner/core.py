@@ -124,6 +124,7 @@ def scan_directory(
             dirty_files.append((f, rel, current_hash))
 
     active_rels = {f.relative_to(root).as_posix() for f in files}
+    dirty_rels = {rel for _f, rel, _fhash in dirty_files}
 
     # Helper to determine owning file path of any node ID (for edge mapping)
     def find_file_for_node(node_id: str) -> str | None:
@@ -135,24 +136,27 @@ def scan_directory(
                 return rel
         return None
 
-    # Load skipped nodes and edges
+    skipped_edges: list[tuple[str, str, str, Edge | None]] = []
+    context_symbol_nodes: dict[str, Node] = {}
+
+    # Load skipped nodes. Do not restore nodes owned by files that will be
+    # rescanned below; those symbols must come from the current source text.
     for f, rel, fhash in skipped_files:
         info = manifest.get_file_info(rel)
         for nid in info.get("nodes", []):
             if nid in previous_graph.nodes:
-                nodes[nid] = previous_graph.nodes[nid]
+                previous_node = previous_graph.nodes[nid]
+                if previous_node.path not in dirty_rels:
+                    nodes[nid] = previous_node
+                    if _context_symbol_node(previous_node):
+                        context_symbol_nodes[nid] = previous_node
         for src, tgt, etype in info.get("edges", []):
             matching_edge = None
             for pe in previous_graph.edges:
                 if pe.source == src and pe.target == tgt and pe.type == etype:
                     matching_edge = pe
                     break
-            if matching_edge:
-                edges.append(matching_edge)
-                seen.add((src, tgt))
-            else:
-                edges.append(Edge(source=src, target=tgt, type=etype))
-                seen.add((src, tgt))
+            skipped_edges.append((src, tgt, etype, matching_edge))
 
     # Create file nodes for dirty files
     for f, rel, fhash in dirty_files:
@@ -242,7 +246,11 @@ def scan_directory(
 
         if source_files:
             max_syms = max(500, max_nodes * 5)
-            extraction = select_extractor(frontend).extract_symbols(source_files, max_total_symbols=max_syms)
+            extraction = select_extractor(frontend).extract_symbols(
+                source_files,
+                max_total_symbols=max_syms,
+                context_nodes=context_symbol_nodes,
+            )
             metadata["frontend"] = extraction.frontend
             nodes.update(extraction.nodes)
             existing = {(e.source, e.target, e.type) for e in edges}
@@ -277,6 +285,20 @@ def scan_directory(
                 if key not in existing:
                     existing.add(key)
                     edges.append(e)
+
+    existing_edges = {(e.source, e.target, e.type) for e in edges}
+    for src, tgt, etype, matching_edge in skipped_edges:
+        if src not in nodes or tgt not in nodes:
+            continue
+        key = (src, tgt, etype)
+        if key in existing_edges:
+            continue
+        existing_edges.add(key)
+        seen.add((src, tgt))
+        if matching_edge:
+            edges.append(matching_edge)
+        else:
+            edges.append(Edge(source=src, target=tgt, type=etype))
 
     # Update manifest for the scanned (dirty) files
     if manifest:
@@ -367,3 +389,7 @@ def _symbol_aliases(node: Node) -> tuple[str, ...]:
             if candidate and candidate not in aliases:
                 aliases.append(candidate)
     return tuple(aliases)
+
+
+def _context_symbol_node(node: Node) -> bool:
+    return node.kind not in {"file", "python", "package", "concept", "section", "unknown"} and bool(node.path)

@@ -86,19 +86,27 @@ _LEAN_DEF = re.compile(
 
 # ── identifier reference pattern (used for call detection) ───────────────────
 
-def _call_pattern(names: list[str]) -> re.Pattern[str] | None:
+def _limited_name_alternation(names: list[str], *, word_boundaries: bool) -> str | None:
     if not names:
         return None
     escaped = sorted(set(names), key=len, reverse=True)
-    pat = "|".join(r"\b" + re.escape(n) + r"\b" for n in escaped[:MAX_REFERENCE_PATTERN_NAMES])
+    terms = [re.escape(n) for n in escaped[:MAX_REFERENCE_PATTERN_NAMES]]
+    if word_boundaries:
+        terms = [r"\b" + term + r"\b" for term in terms]
+    return "|".join(terms)
+
+
+def _call_pattern(names: list[str]) -> re.Pattern[str] | None:
+    pat = _limited_name_alternation(names, word_boundaries=True)
+    if pat is None:
+        return None
     return re.compile(pat)
 
 
 def _callsite_pattern(names: list[str]) -> re.Pattern[str] | None:
-    if not names:
+    pat = _limited_name_alternation(names, word_boundaries=False)
+    if pat is None:
         return None
-    escaped = sorted(set(names), key=len, reverse=True)
-    pat = "|".join(re.escape(n) for n in escaped[:MAX_REFERENCE_PATTERN_NAMES])
     # Match function calls, optionally qualified (e.g., module.func())
     # Use a negative lookbehind to allow a preceding dot for qualified names.
     return re.compile(r"(?<!\.)\b(" + pat + r")\b\s*(?:!|::)?\s*\(")
@@ -140,15 +148,16 @@ def _defs_py_ast(text: str) -> list[SymbolDef]:
             defs.append(SymbolDef(node.name, "class", node.lineno, node.col_offset))
             self.generic_visit(node)
 
-        def visit_FunctionDef(self, node: ast.FunctionDef):
+        def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef):
             kind = "method" if isinstance(getattr(node, "parent", None), ast.ClassDef) else "function"
             defs.append(SymbolDef(node.name, kind, node.lineno, node.col_offset))
             self.generic_visit(node)
 
+        def visit_FunctionDef(self, node: ast.FunctionDef):
+            self._visit_function(node)
+
         def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-            kind = "method" if isinstance(getattr(node, "parent", None), ast.ClassDef) else "function"
-            defs.append(SymbolDef(node.name, kind, node.lineno, node.col_offset))
-            self.generic_visit(node)
+            self._visit_function(node)
 
     Visitor().visit(tree)
     return defs
@@ -272,6 +281,7 @@ _CALLABLE_KINDS = frozenset({"function", "method"})
 def extract_symbols(
     files: list[tuple[Path, str, str, str]],  # (path, rel_posix, file_node_id, text)
     max_total_symbols: int = 5000,
+    context_nodes: dict[str, Node] | None = None,
 ) -> tuple[dict[str, Node], list[Edge]]:
     """Extract symbol nodes and edges from a list of (path, rel, file_node_id, text) tuples.
 
@@ -285,8 +295,16 @@ def extract_symbols(
     name_to_symbols: dict[str, list[str]] = {}
     symbol_to_file: dict[str, str] = {}
     symbol_nodes: dict[str, Node] = {}
+    all_symbol_nodes: dict[str, Node] = dict(context_nodes or {})
     symbol_edges: list[Edge] = []
     total = 0
+
+    for node_id, node in (context_nodes or {}).items():
+        if not _is_context_symbol(node):
+            continue
+        symbol_to_file[node_id] = _file_node_id_for_path(node.path)
+        if node.label not in _NOISE_NAMES and len(node.label) > 2:
+            name_to_symbols.setdefault(node.label, []).append(node_id)
 
     for path, rel, file_nid, text in files:
         suffix = path.suffix.lower()
@@ -328,6 +346,7 @@ def extract_symbols(
                 summary=f"L{d.line}",
                 facts=tuple(facts),
             )
+            all_symbol_nodes[sym_id] = symbol_nodes[sym_id]
             symbol_edges.append(Edge(source=file_nid, target=sym_id, type="contains", weight=1.0, confidence=0.8, provenance="regex_ast"))
             symbol_to_file[sym_id] = file_nid
             if d.name not in _NOISE_NAMES and len(d.name) > 2:
@@ -351,7 +370,7 @@ def extract_symbols(
     callable_names = [
         name
         for name, ids in name_to_symbols.items()
-        if len(ids) == 1 and symbol_nodes[ids[0]].kind in _CALLABLE_KINDS
+        if len(ids) == 1 and all_symbol_nodes[ids[0]].kind in _CALLABLE_KINDS
     ]
     callsite_pat = _callsite_pattern(callable_names)
     if callsite_pat:
@@ -394,3 +413,11 @@ def extract_symbols(
             deduped.append(e)
 
     return symbol_nodes, deduped
+
+
+def _is_context_symbol(node: Node) -> bool:
+    return node.kind not in {"file", "python", "package", "concept", "section", "unknown"} and bool(node.path)
+
+
+def _file_node_id_for_path(path: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]", "_", path)

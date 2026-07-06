@@ -100,25 +100,25 @@ class Graph:
                 grouped.setdefault(key_fn(edge), []).append(edge)
         return grouped
 
-    def outgoing(self) -> dict[str, list[Edge]]:
-        cache = getattr(self, "_outgoing_cache_data", None)
+    def _cached_edges_by_key(
+        self,
+        cache_attr: str,
+        key_fn: Callable[[Edge], str],
+    ) -> dict[str, list[Edge]]:
+        cache = getattr(self, cache_attr, None)
         if cache is not None:
             cache_len, grouped = cache
             if cache_len == len(self.edges):
                 return grouped
-        grouped = self._edges_by_key(lambda e: e.source)
-        self._outgoing_cache_data = (len(self.edges), grouped)
+        grouped = self._edges_by_key(key_fn)
+        setattr(self, cache_attr, (len(self.edges), grouped))
         return grouped
 
+    def outgoing(self) -> dict[str, list[Edge]]:
+        return self._cached_edges_by_key("_outgoing_cache_data", lambda e: e.source)
+
     def incoming(self) -> dict[str, list[Edge]]:
-        cache = getattr(self, "_incoming_cache_data", None)
-        if cache is not None:
-            cache_len, grouped = cache
-            if cache_len == len(self.edges):
-                return grouped
-        grouped = self._edges_by_key(lambda e: e.target)
-        self._incoming_cache_data = (len(self.edges), grouped)
-        return grouped
+        return self._cached_edges_by_key("_incoming_cache_data", lambda e: e.target)
 
     def degree(self) -> dict[str, int]:
         cache = getattr(self, "_degree_cache_data", None)

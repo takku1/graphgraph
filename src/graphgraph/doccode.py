@@ -241,11 +241,15 @@ class DictBucket:
 
 
 def _pairing_sort_key(pairing: DocCodePairing) -> tuple[int, str]:
-    return (-len(pairing.doc_nodes) - len(pairing.code_nodes), pairing.key)
+    return (_paired_node_count(pairing), pairing.key)
 
 
 def _component_sort_key(pairing: DocCodeComponentPairing) -> tuple[int, str]:
-    return (-len(pairing.doc_nodes) - len(pairing.code_nodes), pairing.component)
+    return (_paired_node_count(pairing), pairing.component)
+
+
+def _paired_node_count(pairing: DocCodePairing | DocCodeComponentPairing) -> int:
+    return -len(pairing.doc_nodes) - len(pairing.code_nodes)
 
 
 def _active_components(graph: Graph) -> list[tuple[str, ...]]:
