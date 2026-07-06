@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from ..core import Graph, Node
+from ..graph.core import Graph, Node
 from .models import Match
 from .text import node_search_text, tokenize
 

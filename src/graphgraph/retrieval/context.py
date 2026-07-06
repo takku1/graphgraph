@@ -3,13 +3,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
-from ..core import Edge, Graph
-from ..doccode import doc_code_bias
-from ..ontology import provenance_confidence
+from ..concepts.doccode import doc_code_bias
+from ..graph.core import Edge, Graph
+from ..graph.ontology import provenance_confidence
+from ..graph.traversal import relation_rank, traversal_policy
 from ..planning import ContextPlan, compute_subgraph_stats, plan_context
 from ..planning.budgets import doc_intensity_score, plan_terms
 from ..planning.shape import profile_graph_shape, recommend_node_budget
-from ..traversal import relation_rank, traversal_policy
 from .budgeting import budget_edges, enrich_runtime_context
 from .models import Match, RetrievalResult
 from .search import search_nodes
@@ -19,6 +19,7 @@ NON_STRUCTURAL_KINDS = {"concept", "section", "markdown", "rst", "html", "text"}
 STRUCTURAL_RELATIONS = {
     "calls", "imports", "imports_from", "reads", "writes", "uses", "implements",
     "tests", "configures", "returns", "defines", "data_flow", "control_flow",
+    "formalizes", "implements_algorithm",
 }
 
 
@@ -591,8 +592,14 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
         if top.node.kind == "python":
             shape = _anchor_score_shape(matches, window=min(5, limit))
             return min(limit, 1 + round(1.5 * shape.entropy))
-        if top.node.kind in {"class", "markdown", "java"}:
+        if top.node.kind in {"markdown"}:
             return min(limit, 1)
+        if top.node.kind in {"class", "java", "typescript", "javascript", "source", "header"}:
+            if _is_high_confidence_exact_anchor(top):
+                return min(limit, 1)
+            shape = _anchor_score_shape(matches, window=min(8, limit))
+            shaped = 1 + round(limit * (0.55 * shape.entropy + 0.45 * shape.plateau_mass))
+            return max(2, min(limit, shaped))
 
     shape = _anchor_score_shape(matches, window=min(8, limit))
     shaped = 1 + round(limit * (0.55 * shape.entropy + 0.45 * shape.plateau_mass))
@@ -658,6 +665,13 @@ def _is_file_like_anchor(node: object) -> bool:
         "html",
         "text",
     }
+
+
+def _is_high_confidence_exact_anchor(match: Match) -> bool:
+    return any(
+        reason in {"label_exact_terms", "label_all_terms", "basename_exact_terms", "basename_all_terms"}
+        for reason in match.reasons
+    )
 
 
 def select_anchor_matches(

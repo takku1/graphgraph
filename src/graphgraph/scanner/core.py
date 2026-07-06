@@ -3,8 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from ..core import Edge, Graph, Node
-from ..terms import term_key
+from ..concepts import link_source_interpretation_concepts
+from ..concepts.terms import term_key
+from ..graph.core import Edge, Graph, Node
 from .doc import DocumentInput, extract_document_context
 from .files import DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
 from .frontends import SourceFile, select_extractor
@@ -285,6 +286,23 @@ def scan_directory(
                 if key not in existing:
                     existing.add(key)
                     edges.append(e)
+
+    interpretation_nodes: dict[str, Node] = {}
+    interpretation_edges: list[Edge] = []
+    for node in tuple(nodes.values()):
+        if node.kind in {"concept", "section", "markdown", "rst", "html", "text", "unknown"}:
+            continue
+        found_nodes, found_edges = link_source_interpretation_concepts(node, source_location=node.path)
+        interpretation_nodes.update(found_nodes)
+        interpretation_edges.extend(found_edges)
+    if interpretation_nodes or interpretation_edges:
+        nodes.update(interpretation_nodes)
+        existing = {(e.source, e.target, e.type) for e in edges}
+        for e in interpretation_edges:
+            key = (e.source, e.target, e.type)
+            if key not in existing:
+                existing.add(key)
+                edges.append(e)
 
     existing_edges = {(e.source, e.target, e.type) for e in edges}
     for src, tgt, etype, matching_edge in skipped_edges:

@@ -3,9 +3,9 @@ from __future__ import annotations
 import math
 from collections import Counter
 
-from ..core import Edge, Graph
-from ..ontology import is_weak_relation, provenance_confidence, traversal_strength
-from ..policies import path_matches
+from ..graph.core import Edge, Graph
+from ..graph.ontology import is_weak_relation, provenance_confidence, traversal_strength
+from ..planning.policies import path_matches
 
 DEFAULT_EDGE_TYPE_LIMITS = {
     "references": 16,

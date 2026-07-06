@@ -58,7 +58,7 @@ def inventory() -> list[ScriptStatus]:
         ROOT / "docs" / "empirical-findings.md",
         ROOT / "docs" / "adaptive-planning-math.md",
         ROOT / "docs" / "towards_publishable_research.md",
-        ROOT / "docs" / "rigorusframing.md",
+        ROOT / "docs" / "rigorous-framing.md",
     ])
 
     rows: list[ScriptStatus] = []

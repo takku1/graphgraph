@@ -79,6 +79,22 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
     context.add_argument("--skip-dirs", nargs="*", metavar="DIR", help="Additional directory names to skip during auto-build.")
     context.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs", help="Alias: extra directory names to exclude during auto-build.")
+    context.add_argument("--include", nargs="*", metavar="DIR",
+                         help="Directory names to keep even though a default skip rule would drop them.")
+    context.add_argument("--depth", choices=["files", "symbols"], default="symbols",
+                         help="'files': one node per file. 'symbols' (default): adds function/class/struct nodes.")
+    context.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto",
+                         help="Symbol extraction frontend for --depth symbols.")
+    context.add_argument("--docs", action="store_true", default=True,
+                         help="Extract document sections and concept nodes during auto-build (default: true).")
+    context.add_argument("--no-docs", action="store_false", dest="docs",
+                         help="Disable document section/concept extraction during auto-build.")
+    context.add_argument("--generic-mentions", action="store_true", default=False,
+                         help="Add weak references edges for files that mention another file's stem.")
+    context.add_argument("--incremental", action="store_true", default=True,
+                         help="Use hash-based incremental scanner during auto-build (default: true).")
+    context.add_argument("--no-incremental", action="store_false", dest="incremental",
+                         help="Disable incremental scanning during auto-build.")
     context.add_argument("--show-anchors", action="store_true")
     context.add_argument("--show-stats", action="store_true", help="Print graph load/build shape metrics to stderr.")
     context.set_defaults(func=cmd_context)

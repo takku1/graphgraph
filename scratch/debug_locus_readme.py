@@ -1,11 +1,12 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path("src").resolve()))
-from graphgraph.io import load_any
-from graphgraph.retrieval.search import search_nodes
-from graphgraph.retrieval.context import select_anchor_matches, NON_STRUCTURAL_KINDS
-from graphgraph.planning.budgets import doc_intensity_score
 from graphgraph.doccode import doc_code_bias
+from graphgraph.io import load_any
+from graphgraph.planning.budgets import doc_intensity_score
+from graphgraph.retrieval.context import select_anchor_matches
+from graphgraph.retrieval.search import search_nodes
 
 graph = load_any(Path("benchmarks/context_graph/out/locus/locus-native.json"))
 query = "locus README installation usage"

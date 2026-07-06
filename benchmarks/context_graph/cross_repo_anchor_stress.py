@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from graphgraph.core import Edge, Graph, Node  # noqa: E402
 from graphgraph.eval import estimate_tokens  # noqa: E402
@@ -19,30 +21,13 @@ from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph  # noqa: E402
 from graphgraph.retrieval import retrieve_context  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
+from benchmarks.context_graph.local_corpus import RESOURCES_ROOT, own_project_paths, small_medium_paths  # noqa: E402
 
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "cross_repo_anchor"
 GRAPHS = OUT / "graphs"
 RESULTS_CSV = OUT / "cross_repo_anchor_stress.csv"
 SUMMARY_MD = OUT / "cross_repo_anchor_stress.md"
-
-DEFAULT_PROJECT_PATHS = (
-    r"C:\Users\dcarn\aiprojects\graphgraph",
-    r"C:\Users\dcarn\aiprojects\contextminer",
-    r"C:\Users\dcarn\aiprojects\chess",
-    r"C:\Users\dcarn\aiprojects\slotmachine",
-    r"C:\Users\dcarn\aiprojects\resources\requests",
-    r"C:\Users\dcarn\aiprojects\resources\flask",
-    r"C:\Users\dcarn\aiprojects\resources\regex",
-    r"C:\Users\dcarn\aiprojects\resources\z3",
-)
-LOCAL_PROJECT_PATHS = (
-    r"C:\Users\dcarn\aiprojects\graphgraph",
-    r"C:\Users\dcarn\aiprojects\contextminer",
-    r"C:\Users\dcarn\aiprojects\chess",
-    r"C:\Users\dcarn\aiprojects\slotmachine",
-)
-RESOURCES_ROOT = Path(r"C:\Users\dcarn\aiprojects\resources")
 
 GENERIC_LABELS = {
     "__call__",
@@ -135,8 +120,8 @@ def project_paths() -> list[Path]:
     if os.environ.get("CROSS_REPO_SUITE") == "expanded":
         resources = sorted(RESOURCES_ROOT.iterdir()) if RESOURCES_ROOT.exists() else ()
         resource_paths = [path for path in resources if path.is_dir()]
-        return [Path(item) for item in LOCAL_PROJECT_PATHS] + resource_paths
-    return [Path(item) for item in DEFAULT_PROJECT_PATHS]
+        return own_project_paths() + resource_paths
+    return small_medium_paths()
 
 
 def main() -> None:

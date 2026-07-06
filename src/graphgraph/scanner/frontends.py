@@ -8,9 +8,21 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Protocol
 
-from ..core import Edge, Node
-from ..operations import _dedupe_edges
+from ..graph.core import Edge, Node
+from ..graph.operations import _dedupe_edges
 from .ast import extract_symbols
+
+__all__ = [
+    "FrontendCapability",
+    "SourceFile",
+    "ExtractionResult",
+    "Extractor",
+    "RegexExtractor",
+    "TreeSitterExtractor",
+    "tree_sitter_available",
+    "available_frontends",
+    "select_extractor",
+]
 
 
 @dataclass(frozen=True)
@@ -570,9 +582,11 @@ def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
     """
     sources: dict[str, str] = {}
     if suffix == ".py":
-        for m in re.finditer(r"^from\s+([\w.]+)\s+import\s+(.+)$", text, re.MULTILINE):
+        pattern = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(?:\(([^)]+)\)|([^\n#]+))", re.MULTILINE)
+        for m in pattern.finditer(text):
             module_name = m.group(1).split(".")[-1]
-            for part in m.group(2).split(","):
+            imported_part = m.group(2) or m.group(3) or ""
+            for part in imported_part.split(","):
                 name = part.strip().split(" as ", 1)[0].strip()
                 if _identifier(name):
                     sources[name] = module_name
@@ -695,8 +709,10 @@ def _imported_symbol_names(suffix: str, text: str) -> set[str]:
             if _identifier(tail) and tail not in {"self", "super", "crate"}:
                 names.add(tail)
     elif suffix == ".py":
-        for m in re.finditer(r"^from\s+[\w.]+\s+import\s+(.+)$", text, re.MULTILINE):
-            for part in m.group(1).split(","):
+        pattern = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(?:\(([^)]+)\)|([^\n#]+))", re.MULTILINE)
+        for m in pattern.finditer(text):
+            imported_part = m.group(2) or m.group(3) or ""
+            for part in imported_part.split(","):
                 name = part.strip().split(" as ", 1)[0].strip()
                 if _identifier(name):
                     names.add(name)

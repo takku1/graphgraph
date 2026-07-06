@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -131,10 +132,9 @@ def scan_project(path: Path) -> dict:
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     
-    roots = [
-        Path(r"C:\Users\dcarn\aiprojects"),
-        Path(r"C:\Users\dcarn\aiprojects\resources")
-    ]
+    projects_root = Path(os.environ.get("AIPROJECTS_ROOT", Path.home() / "aiprojects"))
+    resources_root = Path(os.environ.get("RESOURCES_ROOT", projects_root / "resources"))
+    roots = [projects_root, resources_root]
     
     project_paths = []
     seen_paths = set()

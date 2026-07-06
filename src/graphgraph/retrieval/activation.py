@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..core import Edge, Graph
+from ..graph.core import Edge, Graph
 
 
 class ActivationStateCache:

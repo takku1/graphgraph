@@ -33,7 +33,7 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 | `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |
 | `final_packet` | Render a packet from known node IDs. |
 | `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |
-| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs`. |
+| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs` and `include_dirs`. |
 | `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |
 
 ## CLI Commands (the real subcommands)

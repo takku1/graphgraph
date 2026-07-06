@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from graphgraph.core import Edge, Graph  # noqa: E402
 from graphgraph.eval import estimate_tokens  # noqa: E402
@@ -18,23 +20,13 @@ from graphgraph.io import save_graph  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
 from graphgraph.validate import validate_packet  # noqa: E402
+from benchmarks.context_graph.local_corpus import small_medium_paths  # noqa: E402
 
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 RESULTS_CSV = OUT / "real_project_packet_balance.csv"
 SUMMARY_MD = OUT / "real_project_packet_balance.md"
 GRAPHS_DIR = OUT / "graphs"
-
-DEFAULT_PROJECT_PATHS = (
-    r"C:\Users\dcarn\aiprojects\graphgraph",
-    r"C:\Users\dcarn\aiprojects\contextminer",
-    r"C:\Users\dcarn\aiprojects\chess",
-    r"C:\Users\dcarn\aiprojects\slotmachine",
-    r"C:\Users\dcarn\aiprojects\resources\requests",
-    r"C:\Users\dcarn\aiprojects\resources\flask",
-    r"C:\Users\dcarn\aiprojects\resources\regex",
-    r"C:\Users\dcarn\aiprojects\resources\redis",
-)
 
 SKIP_DIRS = (
     ".git",
@@ -75,7 +67,7 @@ def project_paths() -> list[Path]:
     raw = os.environ.get("REAL_PROJECT_PATHS")
     if raw:
         return [Path(item.strip()) for item in raw.split(";") if item.strip()]
-    return [Path(item) for item in DEFAULT_PROJECT_PATHS]
+    return small_medium_paths()
 
 
 def make_tasks(graph: Graph) -> list[Task]:

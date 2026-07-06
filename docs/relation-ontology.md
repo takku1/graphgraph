@@ -2,7 +2,8 @@
 
 Typed edges are the difference between a context graph and a noisy shape.
 
-`graphgraph` keeps relation semantics in `src/graphgraph/ontology.py`. Each
+`graphgraph` keeps relation semantics in `src/graphgraph/graph/ontology.py`.
+The compatibility import `graphgraph.ontology` remains available. Each
 relation has:
 
 - `family`
@@ -34,6 +35,9 @@ Do not treat all relations equally:
   signals.
 - `contains` is hierarchical and useful, but it can dominate packets if not
   budgeted.
+- `formalizes` and `implements_algorithm` are interpretation-layer signals.
+  They connect docs and source symbols to known algorithm/math/runtime concepts
+  without treating every generic document concept as weight-bearing.
 - `references`, `links`, `similar_to`, and unknown imported relations are weak
   retrieval hints.
 - `contradicts` and `supports` are logic/evidence relations and should affect

@@ -4,9 +4,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..core import Edge, Node
-from ..operations import _dedupe_edges
-from ..terms import canonical_concept_label, concept_id, normalize_label, term_key
+from ..concepts import link_interpretation_concepts
+from ..concepts.terms import canonical_concept_label, concept_id, normalize_label, term_key
+from ..graph.core import Edge, Node
+from ..graph.operations import _dedupe_edges
 
 _MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _RST_HEADING = re.compile(r"^(.+)\n([=\-~^\"#*+])\2{2,}\s*$", re.MULTILINE)
@@ -71,6 +72,15 @@ def extract_document_context(
             ))
 
             body = doc.text[start:end]
+            interpretation_nodes, interpretation_edges = link_interpretation_concepts(
+                section_id,
+                title + "\n" + body,
+                source=str(doc.path),
+                source_location=doc.rel,
+            )
+            nodes.update(interpretation_nodes)
+            edges.extend(interpretation_edges)
+
             body_keys: set[str] = set()
             for concept in _concepts(title + "\n" + body):
                 key = term_key(concept)
@@ -146,6 +156,14 @@ def extract_document_context(
                 confidence=0.65,
             )
             edges.append(Edge(section_id, doc.file_node_id, "section_of", confidence=0.65, provenance="doc_coarse"))
+            interpretation_nodes, interpretation_edges = link_interpretation_concepts(
+                section_id,
+                doc.text,
+                source=str(doc.path),
+                source_location=doc.rel,
+            )
+            nodes.update(interpretation_nodes)
+            edges.extend(interpretation_edges)
             for concept in _concepts(doc.text)[:max_concepts_per_doc]:
                 cid = concept_id(concept)
                 nodes.setdefault(cid, Node(cid, canonical_concept_label(concept), "concept", summary="document concept", confidence=0.6))

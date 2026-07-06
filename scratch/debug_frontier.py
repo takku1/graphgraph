@@ -1,9 +1,9 @@
 import sys
-import math
 from pathlib import Path
+
 sys.path.insert(0, str(Path("src").resolve()))
 from graphgraph.io import load_any
-from graphgraph.ontology import traversal_strength, provenance_confidence
+from graphgraph.ontology import provenance_confidence, traversal_strength
 
 graph = load_any(Path("benchmarks/context_graph/out/real_projects/graphs/herbie.json"))
 node_id = "www_doc_html"

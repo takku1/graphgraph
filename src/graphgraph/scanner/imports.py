@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..core import Edge
+from ..graph.core import Edge
 from .files import PARSEABLE_SUFFIXES
 
-_PY_FROM = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+([^\n#]+)", re.MULTILINE)
+_PY_FROM = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(?:\(([^)]+)\)|([^\n#]+))", re.MULTILINE)
 _PY_BARE = re.compile(r"^\s*import\s+([^\n#]+)", re.MULTILINE)
 _JS_ES = re.compile(r'(?:import|from)\s+["\'](\.[^"\']+)["\']')
 _JS_REQ = re.compile(r'require\s*\(\s*["\'](\.[^"\']+)["\']\s*\)')
@@ -65,7 +65,8 @@ def add_file_edges(
 
         if suffix == ".py":
             for match in _PY_FROM.finditer(text):
-                add_edge(src_id, _resolve_py(match.group(1), path, root, file_map, imported=match.group(2)))
+                imported_part = match.group(2) or match.group(3) or ""
+                add_edge(src_id, _resolve_py(match.group(1), path, root, file_map, imported=imported_part))
             for match in _PY_BARE.finditer(text):
                 for module in _python_import_modules(match.group(1)):
                     add_edge(src_id, _resolve_py(module, path, root, file_map))

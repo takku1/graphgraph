@@ -4,7 +4,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 
-from ..core import Graph
+from ..graph.core import Graph
 from .budgets import default_node_budget, is_doc_query
 
 SOURCE_KINDS = {"python", "typescript", "javascript", "rust", "go", "java", "c", "cpp", "header", "lean"}

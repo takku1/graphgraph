@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..traversal import traversal_policy
+from ..graph.traversal import traversal_policy
 from .budgets import default_anchor_limit, retrieval_node_budget
 from .packet import choose_packet, choose_packet_for_subgraph
 from .types import ContextPlan, PacketChoice, SubgraphStats

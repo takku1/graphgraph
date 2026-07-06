@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .core import Edge, Graph
+from .graph.core import Edge, Graph
 from .io import load_any
 from .packets import render_packet
 from .planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats

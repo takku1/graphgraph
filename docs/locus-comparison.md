@@ -2,7 +2,7 @@
 
 Date: 2026-06-26
 
-Target repo: `C:\Users\dcarn\aiprojects\locus`
+Target repo: local `locus` checkout configured for the benchmark run.
 
 Command used for the current benchmark:
 

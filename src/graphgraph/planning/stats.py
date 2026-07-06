@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..core import Edge, Graph
+from ..graph.core import Edge, Graph
 from .types import SubgraphStats
 
 WEAK_RELATIONS = {"references", "links", "mentions", "discusses", "section_of"}

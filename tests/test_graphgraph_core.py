@@ -2114,6 +2114,21 @@ N1,N2,1,0.9
             self.assertIn((app_id, db_id), edge_pairs)
             self.assertIn((app_id, utils_id), edge_pairs)
 
+    def test_scanner_detects_python_multiline_parenthesized_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text(
+                "from db import (\n    connect,\n    disconnect as close\n)\n",
+                encoding="utf-8"
+            )
+            (root / "db.py").write_text("def connect(): pass\ndef disconnect(): pass\n", encoding="utf-8")
+            graph = scan_directory(root)
+            self.assertEqual(len(graph.nodes), 2)
+            edge_pairs = {(e.source, e.target) for e in graph.edges}
+            app_id = next(nid for nid, n in graph.nodes.items() if n.label == "app.py")
+            db_id = next(nid for nid, n in graph.nodes.items() if n.label == "db.py")
+            self.assertIn((app_id, db_id), edge_pairs)
+
     def test_scanner_detects_python_relative_imports_and_hierarchy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

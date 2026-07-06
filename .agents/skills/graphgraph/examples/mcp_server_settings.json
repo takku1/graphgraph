@@ -2,16 +2,16 @@
   "claude_desktop": {
     "mcpServers": {
       "graphgraph": {
-        "command": "C:/Users/dcarn/aiprojects/graphgraph/.venv/Scripts/graphgraph-mcp.exe",
-        "args": []
+        "command": "uv",
+        "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"]
       }
     }
   },
   "cursor": {
     "mcpServers": {
       "graphgraph": {
-        "command": "C:/Users/dcarn/aiprojects/graphgraph/.venv/Scripts/graphgraph-mcp.exe",
-        "args": [],
+        "command": "uv",
+        "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"],
         "type": "stdio"
       }
     }

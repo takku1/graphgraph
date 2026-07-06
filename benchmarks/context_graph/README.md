@@ -176,12 +176,11 @@ To rebuild and write fresh project-local caches too:
 python benchmarks\context_graph\cross_project_live_shape.py --refresh-project-graph
 ```
 
-Projects in `C:\Users\dcarn\aiprojects` and
-`C:\Users\dcarn\aiprojects\resources` should be run explicitly so their scan
-cost and graph shape stay attributable to that project:
+Projects outside this checkout should be run explicitly so their scan cost and
+graph shape stay attributable to that project:
 
 ```powershell
-python benchmarks\context_graph\cross_project_live_shape.py --repo C:\Users\dcarn\aiprojects\resources\lean4 --max-nodes 2200
+python benchmarks\context_graph\cross_project_live_shape.py --repo <path-to-project> --max-nodes 2200
 ```
 
 The current architecture recommendation is summarized in:
@@ -510,7 +509,7 @@ python benchmarks\context_graph\locus_benchmark.py
 Optional controls:
 
 ```powershell
-$env:LOCUS_REPO="C:\Users\dcarn\aiprojects\locus"
+$env:LOCUS_REPO="<path-to-locus>"
 $env:LOCUS_REBUILD="1"
 $env:LOCUS_FRONTEND="tree_sitter"
 $env:LOCUS_MAX_NODES="1200"
@@ -540,7 +539,7 @@ uv run --with tree-sitter --with tree-sitter-language-pack python benchmarks\con
 Optional controls:
 
 ```powershell
-$env:AIPROJECTS_ROOT="C:\Users\dcarn\aiprojects"
+$env:AIPROJECTS_ROOT="<path-to-projects-root>"
 $env:LOCAL_PROJECTS="activation,chess,contextminer,ebaypostingautomation,slotmachine,tuya-ble-scanner"
 ```
 
@@ -577,7 +576,7 @@ python benchmarks\context_graph\cross_repo_anchor_stress.py
 Optional project override:
 
 ```powershell
-$env:CROSS_REPO_PATHS="C:\Users\dcarn\aiprojects\graphgraph;C:\Users\dcarn\aiprojects\resources\requests"
+$env:CROSS_REPO_PATHS="<path-to-graphgraph>;<path-to-requests>"
 ```
 
 Outputs:

@@ -91,10 +91,10 @@ If you are using `uv` and want to execute the CLI or MCP server directly without
 
 ```powershell
 # Run the scanner via uv run
-uv run --project C:\path\to\graphgraph graphgraph scan --directory .
+uv run --project <path-to-graphgraph> graphgraph scan --directory .
 
 # Run the MCP server via uv run
-uv run --project C:\path\to\graphgraph graphgraph-mcp
+uv run --project <path-to-graphgraph> graphgraph-mcp
 ```
 
 ---
@@ -151,11 +151,11 @@ Add the following to your Cursor MCP settings (`Settings > Features > MCP > Add 
 
 - **Name**: `graphgraph`
 - **Type**: `stdio`
-- **Command / Args Option (Recommended - Local Virtualenv)**:
-  - **Command**: `C:/Users/dcarn/aiprojects/graphgraph/.venv/Scripts/graphgraph-mcp.exe`
-- **Command / Args Option (Alternative - `uv run` mode)**:
+- **Command / Args Option (Recommended - `uv run` mode)**:
   - **Command**: `uv`
-  - **Args**: `run --project C:/Users/dcarn/aiprojects/graphgraph graphgraph-mcp`
+  - **Args**: `run --project <path-to-graphgraph> graphgraph-mcp`
+- **Command / Args Option (Alternative - Local Virtualenv)**:
+  - **Command**: `<path-to-graphgraph>/.venv/Scripts/graphgraph-mcp.exe`
 
 ### 2. Claude Desktop Configuration
 Add the following to your `claude_desktop_config.json` (typically located at `%APPDATA%\Claude\claude_desktop_config.json`):
@@ -164,8 +164,8 @@ Add the following to your `claude_desktop_config.json` (typically located at `%A
 {
   "mcpServers": {
     "graphgraph": {
-      "command": "C:/Users/dcarn/aiprojects/graphgraph/.venv/Scripts/graphgraph-mcp.exe",
-      "args": []
+      "command": "uv",
+      "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"]
     }
   }
 }
@@ -193,7 +193,7 @@ graphgraph install --project --platform codex
 To make the repo marketplace visible to Codex:
 
 ```powershell
-codex plugin marketplace add C:\Users\dcarn\aiprojects\graphgraph
+codex plugin marketplace add <path-to-graphgraph>
 codex plugin add graphgraph@graphgraph-local
 ```
 
@@ -304,7 +304,7 @@ graphgraph eval --graph .graphgraph/graph.gg --tasks benchmarks/context_graph/da
 
 ### Run Unit Tests
 ```powershell
-python -m unittest discover -s tests
+python -m pytest
 ```
 
 ---
@@ -328,7 +328,10 @@ For deep-dives into the design and architectures:
 - `docs/llm-native-context-graph.md`
 - `docs/runtime-context-graph.md`
 - `docs/relation-ontology.md`
+- `docs/source-layout.md`
+- `docs/interpretation-layer.md`
 - `docs/frontend-ir-strategy.md`
 - `docs/empirical-findings.md`
 - `docs/schema-alignment.md`
 - `docs/integration-surfaces.md`
+- `docs/graphgraph-vs-graphify.md`

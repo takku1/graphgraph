@@ -14,10 +14,11 @@ without the whole bake-off stalling on multi-thousand-file math libraries.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-AIPROJECTS_ROOT = Path(r"C:\Users\dcarn\aiprojects")
-RESOURCES_ROOT = AIPROJECTS_ROOT / "resources"
+AIPROJECTS_ROOT = Path(os.environ.get("AIPROJECTS_ROOT", Path.home() / "aiprojects"))
+RESOURCES_ROOT = Path(os.environ.get("RESOURCES_ROOT", AIPROJECTS_ROOT / "resources"))
 
 # Own projects: small/medium, fast to scan, no cap needed.
 #

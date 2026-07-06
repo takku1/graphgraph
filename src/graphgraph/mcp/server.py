@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from ..frontends import available_frontends
+from ..graph.ontology import DEFAULT_RELATIONS
+from ..graph.traversal import POLICIES, traversal_policy
 from ..io import find_graph_path, load_any, save_gg, save_validated_graph
-from ..ontology import DEFAULT_RELATIONS
+from ..packets.validation import validate_packet
 from ..planning import plan_context
 from ..retrieval import search_nodes
 from ..services import render_final_packet, render_query_context, render_source_snippets
 from ..services.native import build_project_status, scan_validated_graph
-from ..traversal import POLICIES, traversal_policy
-from ..validate import validate_packet
 
 SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
 
@@ -147,6 +147,7 @@ TOOLS = [
                 "generic_mentions": {"type": "boolean", "description": "Also add weak 'references' edges for any file that mentions another file's name. Useful for docs-heavy repos. Default: false."},
                 "skip_dirs": {"type": "array", "items": {"type": "string"}, "description": "Extra directory names to exclude (beyond built-ins). E.g. ['spikes', 'test-inputs']."},
                 "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "Alias for skip_dirs — extra directory names to exclude. Merged with skip_dirs if both supplied."},
+                "include_dirs": {"type": "array", "items": {"type": "string"}, "description": "Directory names to keep even though a default skip rule would drop them. E.g. ['build', 'out']."},
                 "depth": {"type": "string", "enum": ["files", "symbols"], "description": "'files' (default): one node per file. 'symbols': adds native function/class/struct nodes with call/reference edges."},
                 "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"], "description": "Symbol extraction frontend for depth=symbols. auto prefers Tree-sitter when available."},
                 "docs": {"type": "boolean", "description": "Extract document sections and concept nodes from Markdown/RST/HTML/text."},
@@ -392,6 +393,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     generic_mentions = bool(args.get("generic_mentions", False))
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
     exclude_dirs = [str(d) for d in args.get("exclude_dirs") or []]
+    include_dirs = [str(d) for d in args.get("include_dirs") or []]
     # Merge exclude_dirs into skip_dirs (exclude_dirs is an intuitive alias)
     all_skip = skip_dirs + [d for d in exclude_dirs if d not in skip_dirs]
     depth = str(args.get("depth") or "files")
@@ -405,6 +407,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         skip_dirs=tuple(all_skip),
+        include_dirs=tuple(include_dirs),
         depth=depth,
         frontend=frontend,
         docs=docs,

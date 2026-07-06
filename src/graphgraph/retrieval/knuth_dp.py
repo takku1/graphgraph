@@ -1,7 +1,7 @@
 import math
 from typing import Dict, List, Set, Tuple
 
-from ..core import Graph
+from ..graph.core import Graph
 
 
 def build_bfs_tree(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from .core import Edge, Graph
-from .ontology import DEFAULT_RELATIONS
+from ..graph.core import Edge, Graph
+from ..graph.ontology import DEFAULT_RELATIONS
 
 DEFAULT_RELATION_ORDER = tuple(DEFAULT_RELATIONS)
 

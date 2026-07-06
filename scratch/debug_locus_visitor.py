@@ -1,9 +1,9 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path("src").resolve()))
 from graphgraph.io import load_any
-from graphgraph.retrieval.context import retrieve_context
-from graphgraph.planning import choose_packet, choose_packet_for_subgraph, plan_context
+from graphgraph.planning import choose_packet, plan_context
 
 graph = load_any(Path("benchmarks/context_graph/out/locus/locus-native.json"))
 query = "symbolic expression visitor condition visitor"

@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def run_cmd(args, cwd=None, check=True):
     print(f"Executing: {' '.join(args)}")
     return subprocess.run(args, cwd=cwd, check=check, capture_output=True, text=True)
@@ -121,7 +122,7 @@ def main():
     # 7. Print verify command
     print("\n--- Installation Verification ---")
     try:
-        res = run_cmd([cli_exe, "--help"])
+        run_cmd([cli_exe, "--help"])
         print("Verification Succeeded! CLI help output verified.")
     except Exception as e:
         print(f"Warning: CLI verification failed: {e}")

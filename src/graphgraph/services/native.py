@@ -11,10 +11,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
     import tomli as tomllib
 
-from ..core import Graph
+from ..graph.core import Graph
 from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
+from ..packets.validation import ValidationResult
 from ..scanner import scan_directory
-from ..validate import ValidationResult
 from .context import render_query_context
 
 
@@ -90,6 +90,7 @@ def ensure_native_graph(
     frontend: str = "auto",
     docs: bool = True,
     skip_dirs: tuple[str, ...] = (),
+    include_dirs: tuple[str, ...] = (),
     generic_mentions: bool = False,
     incremental: bool = True,
     discover_existing: bool = True,
@@ -112,6 +113,7 @@ def ensure_native_graph(
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         skip_dirs=skip_dirs,
+        include_dirs=include_dirs,
         depth=depth,
         frontend=frontend,
         docs=docs,
@@ -315,6 +317,12 @@ def render_native_context(
     anchor_limit: int | None = None,
     scopes: tuple[str, ...] = (),
     skip_dirs: tuple[str, ...] = (),
+    include_dirs: tuple[str, ...] = (),
+    depth: str = "symbols",
+    frontend: str = "auto",
+    docs: bool = True,
+    generic_mentions: bool = False,
+    incremental: bool = True,
     show_anchors: bool = False,
 ) -> tuple[str, GraphBuildStatus]:
     output_path = graph_path or Path(".graphgraph/graph.gg")
@@ -324,6 +332,12 @@ def render_native_context(
         rebuild=rebuild,
         max_nodes=scan_max_nodes,
         skip_dirs=skip_dirs,
+        include_dirs=include_dirs,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        generic_mentions=generic_mentions,
+        incremental=incremental,
         discover_existing=graph_path is None,
     )
     packet_text = render_query_context(

@@ -14,11 +14,25 @@ The current answer is not a universal winner. The measured shape is:
 
 ## Docs
 
+Current operational docs:
+
 - [Empirical Findings](empirical-findings.md)
 - [Architecture](architecture.md)
 - [Adaptive Planning Math](adaptive-planning-math.md)
 - [LLM Connection Strategy](llm-connection-strategy.md)
 - [Integration Surfaces](integration-surfaces.md)
+- [Schema Alignment](schema-alignment.md)
+- [Relation Ontology](relation-ontology.md)
+- [Source Layout](source-layout.md)
+- [Interpretation Layer](interpretation-layer.md)
+- [Runtime Context Graph](runtime-context-graph.md)
+- [GraphGraph vs Graphify](graphgraph-vs-graphify.md)
+
+Research and planning notes:
+
+- [High-Level Ideas](high-level-ideas.md)
+- [Rigorous Framing](rigorous-framing.md)
+- [New Helpful Concepts](new-helpful-concepts.md)
 
 ## Benchmarks
 
@@ -37,6 +51,5 @@ Key generated reports:
 ## Tests
 
 ```powershell
-$env:PYTHONPATH="src"
-python -m unittest discover -s tests
+python -m pytest
 ```

@@ -55,7 +55,7 @@ class Row:
 
 
 def main() -> None:
-    base = Path(os.environ.get("AIPROJECTS_ROOT", r"C:\Users\dcarn\aiprojects"))
+    base = Path(os.environ.get("AIPROJECTS_ROOT", Path.home() / "aiprojects"))
     projects = tuple(p.strip() for p in os.environ.get("LOCAL_PROJECTS", ",".join(DEFAULT_PROJECTS)).split(",") if p.strip())
     max_nodes = int(os.environ.get("LOCAL_PROJECT_MAX_NODES", "800"))
     frontend = os.environ.get("LOCAL_PROJECT_FRONTEND", "auto")

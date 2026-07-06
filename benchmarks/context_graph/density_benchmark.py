@@ -358,7 +358,8 @@ def main() -> None:
     all_rows: list[dict] = []
 
     # ── locus (Rust codebase) ─────────────────────────────────────────────────
-    locus_root = Path(os.environ.get("LOCUS_REPO", r"C:\Users\dcarn\aiprojects\locus"))
+    default_projects_root = Path(os.environ.get("AIPROJECTS_ROOT", Path.home() / "aiprojects"))
+    locus_root = Path(os.environ.get("LOCUS_REPO", default_projects_root / "locus"))
     if locus_root.exists():
         print(f"[locus] loading graphs from {locus_root}...")
         graphs = ensure_locus_graph(locus_root)
@@ -382,7 +383,7 @@ def main() -> None:
     print(f"  {len(self_rows)} format×query measurements")
 
     # ── contextminer (Python codebase) ───────────────────────────────────────
-    cm_root = Path(os.environ.get("CM_REPO", r"C:\Users\dcarn\aiprojects\contextminer"))
+    cm_root = Path(os.environ.get("CM_REPO", default_projects_root / "contextminer"))
     if cm_root.exists():
         cm_out = OUT / "contextminer"
         cm_out.mkdir(parents=True, exist_ok=True)

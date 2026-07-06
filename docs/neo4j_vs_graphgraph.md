@@ -1,6 +1,6 @@
 # Architectural Comparison: GraphGraph vs. Neo4j
 
-We analyzed the core storage, layout, and traversal design patterns of **Neo4j** (derived from its codebase in [neo4j](file:///C:/Users/dcarn/aiprojects/resources/neo4j) and native store specs) and compared them to **GraphGraph**'s database engine.
+We analyzed the core storage, layout, and traversal design patterns of **Neo4j** (derived from a local Neo4j checkout and native store specs) and compared them to **GraphGraph**'s database engine.
 
 ---
 

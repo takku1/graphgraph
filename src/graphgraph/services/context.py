@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..cache import TopologicalKVCache, compute_cache_key
-from ..core import Graph, Query
+from ..graph.core import Graph, Query
 from ..io import find_graph_path, find_lessons_path, find_policies_path, load_any, load_policies
 from ..packets import render_packet
+from ..packets.validation import validate_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
-from ..policies import render_policy_packet, select_policies
+from ..planning.policies import render_policy_packet, select_policies
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context
-from ..validate import validate_packet
+from ..runtime.cache import TopologicalKVCache, compute_cache_key
 
 
 def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg_max") -> str:
@@ -49,7 +49,7 @@ def render_final_packet(
     resolved_starts = resolve_start_nodes(graph, starts)
     if not resolved_starts:
         # Build a helpful diagnostic: search the graph for candidates
-        from .._findnodes import suggest_node_ids
+        from ..findnodes import suggest_node_ids
         suggestions = suggest_node_ids(graph, starts, limit=6)
         hint = ""
         if suggestions:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..core import Graph, Node
+from ..graph.core import Graph, Node
 from ..io import find_graph_path, load_any
 from .context import resolve_start_nodes
 

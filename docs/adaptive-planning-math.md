@@ -1,6 +1,6 @@
 # Adaptive Planning Math
 
-This page consolidates the rough `mathpush.md` and `peacewise.md` notes into
+This page consolidates the rough `mathpush.md` and `piecewise.md` notes into
 the current production-oriented model.
 
 The core idea is that graphgraph is not trying to output a graph. It is trying
@@ -27,7 +27,7 @@ The runtime implementation currently separates this into:
 - traversal planning in `src/graphgraph/planning/`
 - retrieval execution in `src/graphgraph/retrieval/`
 - final packet composition in `src/graphgraph/services/context.py`
-- packet rendering in `src/graphgraph/packets.py`
+- packet rendering in `src/graphgraph/packets/renderers.py`
 
 ## Objective
 

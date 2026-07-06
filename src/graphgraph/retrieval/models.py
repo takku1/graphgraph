@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..core import Edge, Node
+from ..graph.core import Edge, Node
 
 
 @dataclass(frozen=True)

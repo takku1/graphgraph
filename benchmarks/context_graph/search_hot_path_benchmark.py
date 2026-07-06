@@ -44,7 +44,7 @@ def time_subprocess_startup(args: list[str], *, rounds: int = 5) -> dict[str, fl
     This is the "bare interpreter + import" cost: process spawn, importing the
     graphgraph package (and, for the CLI variant, argparse setup), with no
     graph file touched at all. It answers "how much of first-query latency is
-    just starting the process" (hgihlevelideas.md roadmap item 2), separate
+    just starting the process" (high-level-ideas.md roadmap item 2), separate
     from `time_search`'s in-process graph load + query cost above.
     """
     samples = []

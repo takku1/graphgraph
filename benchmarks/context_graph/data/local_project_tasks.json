@@ -7,9 +7,14 @@
         "expected_nodes": ["VideoSlotWithFreeGamesSession", "VideoSlotWithFreeGamesSessionHandling"]
       },
       {
-        "query": "symbols combinations analyzer random number generator",
+        "query": "symbols combinations analyzer",
         "query_class": "blast_radius",
-        "expected_nodes": ["SymbolsCombinationsAnalyzer", "PseudorandomNumberGenerator"]
+        "expected_nodes": ["SymbolsCombinationsAnalyzer"]
+      },
+      {
+        "query": "random number generator",
+        "query_class": "blast_radius",
+        "expected_nodes": ["PseudorandomNumberGenerator", "SecureRandomNumberGenerator"]
       }
     ],
     "chess": [
@@ -36,7 +41,7 @@
         "expected_nodes": ["mcp_server.py", "mcp_server_miner.py", "dynamic_artifact_statuses"]
       },
       {
-        "query": "README mining tasks agents",
+        "query": "Contextminer Tasks AGENTS MCP Servers",
         "query_class": "doc_summary",
         "expected_nodes": ["AGENTS.md", "TASKS.md"]
       },
