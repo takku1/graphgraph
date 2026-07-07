@@ -106,3 +106,16 @@ def test_budget_density_denominator_is_positive_for_valid_shapes() -> None:
     assert density >= 0.05
     assert tau > 0.0
     assert recommendation.recommended_budget is not None
+
+    # Pin the actual numeric values the closed-form n* used, not just their sign/existence:
+    # noise_factor=1.0+0.30*0(weak_edge_ratio)+0.20*0.1(doc_node_ratio)=1.02; raw_density=0.0
+    # -> clamped to the 0.05 floor since raw_density*noise_factor==0.0.
+    assert density == 0.05
+    assert abs(tau - 1.80675) < 1e-9
+    # lambda_ = 0.08 * 1.25 (nodes<=500) = 0.10
+    # n* = (1/0.10) * ln(max(1.1, 0.10/(1e-4*1.80675))) = 63
+    assert recommendation.recommended_budget == 63
+    assert recommendation.mode == "candidate"
+    assert recommendation.reason == (
+        "Regularized budget: n*=63 (lambda=0.100, tau=1.807); small graph direct/reverse lookup"
+    )

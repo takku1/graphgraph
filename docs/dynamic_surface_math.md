@@ -62,8 +62,12 @@ And $B_{\text{min}} = 25$ is the absolute safety floor to prevent excessive prun
 
 ## 3. Caching and Prefix Alignment
 
-Because Spreading Activation propagates energy smoothly from the query anchors, the resulting node ranking is highly stable. The top-ranked nodes remain consistent between consecutive steps, which preserves the prefix of the output:
+Spreading Activation's smooth energy propagation (§1) gives locally stable top-ranked nodes *for the query it was run on* — consecutive turns of the same conversation tend to keep the same top nodes near the top:
 
 $$\text{Prefix}(S) \approx \text{Prefix}(S_{\text{prior}})$$
 
-This mathematical stability ensures that the **PageRank-based prompt cache prefix (`render_stable_skeleton`)** aligns with the active query subgraphs, locking in **90%+ prompt prefix caching savings** across long developer conversation threads.
+This is a property of Mechanism B (spreading activation) only; it says nothing about the separately-branched Personalized PageRank retrieval path (Mechanism A), since the two are selected by an exclusive branch and never combined (see `docs/arxiv_paper_graphgraph_2.0.md` §3).
+
+The system's actual prompt-prefix-caching aid, **`render_stable_skeleton`** (`src/graphgraph/services/context.py`), is unrelated to either retrieval mechanism above: it renders the top-N nodes by **plain, unpersonalized, query-independent PageRank** (`graph.pagerank()`), so the same prefix is produced regardless of the current query or conversation turn. That query-independence — not spreading activation's stability — is what makes the prefix cacheable.
+
+We do not currently have a benchmark measuring the resulting prompt-prefix cache hit rate against an LLM provider's prefix-caching discount, so no percentage savings figure is claimed here. If this is worth quantifying, it needs a dedicated benchmark comparing rendered-packet prefixes across consecutive queries against a real provider's cache-hit accounting.

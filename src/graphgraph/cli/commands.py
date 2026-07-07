@@ -214,8 +214,37 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         desktop_cfg,
         "run: graphgraph install --platform claude-desktop",
     )
+    codex_project = _report_mcp_client(
+        "Codex plugin (project ./plugins/graphgraph/.mcp.json)",
+        Path("plugins/graphgraph/.mcp.json"),
+        "run: graphgraph install --project --platform codex",
+    )
+    cursor_project = _report_mcp_client(
+        "Cursor (project ./.cursor/mcp.json)",
+        Path(".cursor/mcp.json"),
+        "run: graphgraph install --project --platform cursor",
+    )
+    cursor_global = _report_mcp_client(
+        "Cursor (user ~/.cursor/mcp.json)",
+        home / ".cursor" / "mcp.json",
+        "run: graphgraph install --platform cursor",
+    )
+    gemini_project = _report_mcp_client(
+        "Gemini/Antigravity (project ./.gemini/settings.json)",
+        Path(".gemini/settings.json"),
+        "run: graphgraph install --project --platform gemini",
+    )
+    gemini_global = _report_mcp_client(
+        "Gemini/Antigravity (user ~/.gemini/settings.json)",
+        home / ".gemini" / "settings.json",
+        "run: graphgraph install --platform gemini",
+    )
 
-    if not (code_global or code_project or desktop):
+    if not (
+        code_global or code_project or desktop
+        or codex_project or cursor_project or cursor_global
+        or gemini_project or gemini_global
+    ):
         print("  [!] No client has the graphgraph MCP server registered.")
         print("      In a Claude Code session, MCP tools will be unavailable; use the `graphgraph` CLI instead.")
 
@@ -329,6 +358,7 @@ def cmd_context(args: argparse.Namespace) -> None:
         depth=args.depth,
         frontend=args.frontend,
         docs=args.docs,
+        history=args.history,
         generic_mentions=args.generic_mentions,
         incremental=args.incremental,
         show_anchors=args.show_anchors,
@@ -467,6 +497,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
         depth=args.depth,
         frontend=args.frontend,
         docs=args.docs,
+        history=args.history,
         incremental=args.incremental,
     )
     graph = status.graph

@@ -36,6 +36,8 @@ tmp/
 
 # Machine-specific MCP registration written by `graphgraph install` (absolute paths)
 .mcp.json
+.cursor/mcp.json
+.gemini/settings.json
 
 # Misc
 *.db

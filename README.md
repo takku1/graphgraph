@@ -50,7 +50,9 @@ only the semantic text needed for the query.
 
 ## Installation & Setup
 
-You can install `graphgraph` using `uv` (recommended) or `pipx`.
+You can install `graphgraph` using `uv` (recommended) or `pipx`. This is the
+single quickstart path for every supported client (Claude Code, Codex, Cursor,
+Gemini/Antigravity, and Claude Desktop) — three steps, then verify.
 
 ### Step 1 — Install the package:
 
@@ -63,31 +65,36 @@ pipx install .
 pip install -e .  # Developer editable installation only
 ```
 
-### Step 2 — Register the skill with your AI assistant:
+### Step 2 — Register with your AI assistant:
 
-Run the installer command:
 ```powershell
-# Register the skill globally for your user profile
+# Register the skill + MCP server globally for your user profile
 graphgraph install
 
-# To install the assistant skill into the current repository instead of your user profile:
+# Or install into the current repository instead of your user profile:
 graphgraph install --project
 
-# To target a specific platform (choices: codex, claude, cursor, gemini,
-# antigravity, agy, all). Codex writes a repo-local MCP plugin; Claude writes
-# Claude Desktop MCP config on global installs; Gemini/Antigravity/AGY write
-# assistant skill rules under the existing Gemini-style skill path.
+# Target a specific platform (choices: codex, claude, cursor, gemini,
+# antigravity, agy, all — "all" is the default). Each platform gets a working
+# MCP server registration (portable, no absolute paths baked in) plus, where
+# applicable, a skill/rules file:
 graphgraph install --project --platform codex
-
-# Keep the existing Gemini / Antigravity / AGY skill path explicit:
-graphgraph install --platform gemini
-graphgraph install --platform antigravity
-graphgraph install --platform agy
+graphgraph install --project --platform cursor
+graphgraph install --project --platform gemini    # also covers antigravity / agy
+graphgraph install --platform claude-desktop       # global-only; Claude Desktop has no project scope
 ```
 
-### 2. Zero-Install / Agent Tool Execution (NPX-style)
+### Step 3 — Verify:
 
-If you are using `uv` and want to execute the CLI or MCP server directly without activating a virtual environment (similar to Node's `npx` / `npx -y` workflow), you can run:
+```powershell
+graphgraph doctor
+```
+
+This reports MCP registration status for every client above, plus environment/dependency health. If a client shows "not configured," it prints the exact `graphgraph install` command to fix it.
+
+### Alternative: run without installing (`uv run`, NPX-style)
+
+If you're using `uv` and want to execute the CLI or MCP server directly without activating a virtual environment (similar to Node's `npx` / `npx -y` workflow):
 
 ```powershell
 # Run the scanner via uv run
@@ -99,55 +106,12 @@ uv run --project <path-to-graphgraph> graphgraph-mcp
 
 ---
 
-## Optional External Benchmark API Keys
+## Manual MCP Configuration (fallback / advanced)
 
-Normal `graphgraph` CLI, skill, and MCP workflows are local. They scan the
-workspace, compile graph packets, validate those packets, and let the active AI
-assistant use them as context. No OpenAI, Gemini, or other provider API key is
-required for that path.
+`graphgraph install` (above) is the recommended path and covers Claude Code, Claude Desktop, Codex, Cursor, and Gemini/Antigravity. Use the snippets below only if you need to hand-edit a config, or you're using a client `graphgraph install` doesn't cover yet.
 
-API keys are only needed when you explicitly run optional external model-answer
-benchmarks. For those benchmark scripts, `graphgraph` supports reading keys
-securely from the Windows Credential Manager via the `keyring` library (with
-automatic fallback to environment variables).
-
-### How to set up credentials:
-
-#### Option A: Set via Python CLI (Fastest)
-Run the following commands in your terminal to securely store your keys:
-```powershell
-# Store OpenAI API key
-python -c "import keyring; keyring.set_password('OpenAI', 'API_KEY', 'your-openai-api-key')"
-
-# Store Gemini API key
-python -c "import keyring; keyring.set_password('Gemini', 'API_KEY', 'your-gemini-api-key')"
-```
-
-#### Option B: Set via Windows GUI
-1. Open the **Start Menu** and search for **Credential Manager**.
-2. Click on **Windows Credentials**.
-3. Click **Add a generic credential**.
-4. Set the fields:
-   - **Internet or network address**: `OpenAI` or `Gemini`
-   - **User name**: `API_KEY`
-   - **Password**: `your-api-key-here`
-5. Click **OK**.
-
-#### Option C: Fallback Environment Variables
-If `keyring` is not installed or keys are not found in the Credential Manager, `graphgraph` will fall back to reading:
-```powershell
-$env:OPENAI_API_KEY="your-openai-key"
-$env:GEMINI_API_KEY="your-gemini-key"
-```
-
----
-
-## MCP Server Configuration
-
-You can expose `graphgraph` to AI agents (like Cursor or Claude Desktop) as a Model Context Protocol (MCP) server.
-
-### 1. Cursor Configuration
-Add the following to your Cursor MCP settings (`Settings > Features > MCP > Add New MCP Server`):
+### Cursor
+`graphgraph install --platform cursor` already writes `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global) for you. To hand-edit instead (`Settings > Features > MCP > Add New MCP Server`):
 
 - **Name**: `graphgraph`
 - **Type**: `stdio`
@@ -157,8 +121,8 @@ Add the following to your Cursor MCP settings (`Settings > Features > MCP > Add 
 - **Command / Args Option (Alternative - Local Virtualenv)**:
   - **Command**: `<path-to-graphgraph>/.venv/Scripts/graphgraph-mcp.exe`
 
-### 2. Claude Desktop Configuration
-Add the following to your `claude_desktop_config.json` (typically located at `%APPDATA%\Claude\claude_desktop_config.json`):
+### Claude Desktop
+`graphgraph install --platform claude-desktop` already does this for you. To hand-edit `claude_desktop_config.json` instead (typically `%APPDATA%\Claude\claude_desktop_config.json`):
 
 ```json
 {
@@ -171,7 +135,7 @@ Add the following to your `claude_desktop_config.json` (typically located at `%A
 }
 ```
 
-### 3. Codex Plugin / Skill / MCP Configuration
+### Codex Plugin / Skill / MCP Configuration
 
 `graphgraph` also ships a repo-local Codex plugin wrapper in
 `plugins/graphgraph`. This does not replace the existing OpenAI or Gemini
@@ -181,7 +145,8 @@ The plugin bundles:
 
 - `.codex-plugin/plugin.json`,
 - a Codex skill for structural codebase retrieval workflows,
-- an MCP server config that launches `graphgraph-mcp` with `uv run`,
+- a portable MCP server config (`{"command": "graphgraph-mcp"}` — no absolute
+  paths, works from any clone once the package is installed),
 - a repo marketplace entry at `.agents/plugins/marketplace.json`.
 
 Generate or refresh the repo-local Codex plugin with:
@@ -200,11 +165,11 @@ codex plugin add graphgraph@graphgraph-local
 Then start a new Codex thread and ask for `@graphgraph`, or ask a structural
 codebase question and let Codex invoke the bundled skill/MCP server.
 
-`graphgraph install --project --platform codex` writes
-`plugins/graphgraph/.mcp.json` so `cwd` and the `uv --project` path point at
-the current checkout. `python scripts\configure_codex_plugin.py --repo-root
-<checkout>` is still available as a repair command after copying the repo to
-another machine or path.
+If you'd rather pin the plugin to an uninstalled dev checkout (`uv run
+--project <path> graphgraph-mcp` instead of relying on the installed
+`graphgraph-mcp` console script), `python scripts\configure_codex_plugin.py
+--repo-root <checkout>` rewrites `plugins/graphgraph/.mcp.json` into that
+pinned form — an optional dev-mode convenience, not a required repair step.
 
 ---
 
@@ -284,6 +249,49 @@ MCP integrations are operational:
 
 ```powershell
 graphgraph doctor
+```
+
+---
+
+## Optional External Benchmark API Keys
+
+Normal `graphgraph` CLI, skill, and MCP workflows are local. They scan the
+workspace, compile graph packets, validate those packets, and let the active AI
+assistant use them as context. No OpenAI, Gemini, or other provider API key is
+required for that path.
+
+API keys are only needed when you explicitly run optional external model-answer
+benchmarks (below). For those benchmark scripts, `graphgraph` supports reading keys
+securely from the Windows Credential Manager via the `keyring` library (with
+automatic fallback to environment variables).
+
+### How to set up credentials:
+
+#### Option A: Set via Python CLI (Fastest)
+Run the following commands in your terminal to securely store your keys:
+```powershell
+# Store OpenAI API key
+python -c "import keyring; keyring.set_password('OpenAI', 'API_KEY', 'your-openai-api-key')"
+
+# Store Gemini API key
+python -c "import keyring; keyring.set_password('Gemini', 'API_KEY', 'your-gemini-api-key')"
+```
+
+#### Option B: Set via Windows GUI
+1. Open the **Start Menu** and search for **Credential Manager**.
+2. Click on **Windows Credentials**.
+3. Click **Add a generic credential**.
+4. Set the fields:
+   - **Internet or network address**: `OpenAI` or `Gemini`
+   - **User name**: `API_KEY`
+   - **Password**: `your-api-key-here`
+5. Click **OK**.
+
+#### Option C: Fallback Environment Variables
+If `keyring` is not installed or keys are not found in the Credential Manager, `graphgraph` will fall back to reading:
+```powershell
+$env:OPENAI_API_KEY="your-openai-key"
+$env:GEMINI_API_KEY="your-gemini-key"
 ```
 
 ---

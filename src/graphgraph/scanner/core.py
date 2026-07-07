@@ -8,6 +8,7 @@ from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph, Node
 from .doc import DocumentInput, extract_document_context
 from .files import DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
+from .history import extract_commit_history
 from .frontends import SourceFile, select_extractor
 from .imports import add_file_edges
 
@@ -60,6 +61,8 @@ def scan_directory(
     depth: str = "files",
     frontend: str = "auto",
     docs: bool = False,
+    history: bool = False,
+    max_history_commits: int = 300,
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
     include: list[str] | None = None,
@@ -228,6 +231,7 @@ def scan_directory(
         "scan_depth": depth,
         "frontend": "files",
         "docs": str(bool(docs)).lower(),
+        "history": str(bool(history)).lower(),
         "git_dirty": ",".join(dirty_git),
         "git_high_churn": ",".join(rel for rel, churn in churn_git.items() if churn >= 5),
     }
@@ -287,10 +291,21 @@ def scan_directory(
                     existing.add(key)
                     edges.append(e)
 
+    if history:
+        history_nodes, history_edges = extract_commit_history(root, file_map, max_commits=max_history_commits)
+        if history_nodes or history_edges:
+            nodes.update(history_nodes)
+            existing = {(e.source, e.target, e.type) for e in edges}
+            for e in history_edges:
+                key = (e.source, e.target, e.type)
+                if key not in existing:
+                    existing.add(key)
+                    edges.append(e)
+
     interpretation_nodes: dict[str, Node] = {}
     interpretation_edges: list[Edge] = []
     for node in tuple(nodes.values()):
-        if node.kind in {"concept", "section", "markdown", "rst", "html", "text", "unknown"}:
+        if node.kind in {"concept", "section", "markdown", "rst", "html", "text", "unknown", "commit"}:
             continue
         found_nodes, found_edges = link_source_interpretation_concepts(node, source_location=node.path)
         interpretation_nodes.update(found_nodes)

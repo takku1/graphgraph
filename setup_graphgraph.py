@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import json
-import os
 import platform
 import shutil
 import subprocess
@@ -43,12 +41,10 @@ def main():
     if platform.system() == "Windows":
         pip_exe = str(venv_dir / "Scripts" / "pip.exe")
         python_exe = str(venv_dir / "Scripts" / "python.exe")
-        mcp_exe = str(venv_dir / "Scripts" / "graphgraph-mcp.exe")
         cli_exe = str(venv_dir / "Scripts" / "graphgraph.exe")
     else:
         pip_exe = str(venv_dir / "bin" / "pip")
         python_exe = str(venv_dir / "bin" / "python")
-        mcp_exe = str(venv_dir / "bin" / "graphgraph-mcp")
         cli_exe = str(venv_dir / "bin" / "graphgraph")
 
     # 4. Install package in editable mode
@@ -84,40 +80,23 @@ def main():
         print("Storing optional Gemini benchmark credential...")
         run_cmd([python_exe, "-c", f"import keyring; keyring.set_password('Gemini', 'API_KEY', {repr(gemini_key)})"])
 
-    # 6. Configure Claude Desktop MCP Settings
-    if platform.system() == "Windows":
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            claude_config_dir = Path(appdata) / "Claude"
-            claude_config_path = claude_config_dir / "claude_desktop_config.json"
-            
-            print(f"Configuring Claude Desktop MCP at: {claude_config_path}")
-            claude_config_dir.mkdir(parents=True, exist_ok=True)
-            
-            config_data = {}
-            if claude_config_path.exists():
-                try:
-                    with open(claude_config_path, "r", encoding="utf-8") as f:
-                        config_data = json.load(f)
-                except Exception as e:
-                    print(f"Warning: Failed to parse existing Claude config: {e}")
+    # 6. Register with AI assistant platforms via the CLI's own `install` command.
+    # This configures Claude Code (project scope), the Codex plugin (portable
+    # .mcp.json), Cursor (project scope), and Gemini/Antigravity (project
+    # scope) in one shot, using the freshly-installed graphgraph console script.
+    print("\n--- Registering AI assistant integrations ---")
+    try:
+        run_cmd([cli_exe, "install", "--project", "--platform", "all"], cwd=repo_dir, check=False)
+    except Exception as e:
+        print(f"Warning: project-scoped 'graphgraph install' failed: {e}")
 
-            if "mcpServers" not in config_data:
-                config_data["mcpServers"] = {}
-
-            # Use forward slashes for Windows paths in JSON configs to avoid escape issues
-            mcp_exe_normalized = mcp_exe.replace("\\", "/")
-            config_data["mcpServers"]["graphgraph"] = {
-                "command": mcp_exe_normalized,
-                "args": []
-            }
-
-            try:
-                with open(claude_config_path, "w", encoding="utf-8") as f:
-                    json.dump(config_data, f, indent=2)
-                print("Claude Desktop config updated successfully.")
-            except Exception as e:
-                print(f"Error: Failed to write Claude config: {e}")
+    # Claude Desktop is a global-only app -- the project-scoped call above
+    # intentionally skips it (mirrors install.py's own `not args.project`
+    # guard), so register it separately.
+    try:
+        run_cmd([cli_exe, "install", "--platform", "claude-desktop"], check=False)
+    except Exception as e:
+        print(f"Warning: 'graphgraph install --platform claude-desktop' failed: {e}")
 
     # 7. Print verify command
     print("\n--- Installation Verification ---")
@@ -127,9 +106,8 @@ def main():
     except Exception as e:
         print(f"Warning: CLI verification failed: {e}")
 
-    cursor_cmd = mcp_exe.replace("\\", "/")
     print("\nSetup finished successfully!")
-    print(f"To configure Cursor, use Command: {cursor_cmd}")
+    print(f"Run '{cli_exe} doctor' to see per-client MCP registration status.")
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -345,6 +346,45 @@ N1,N2,1,0.9
         self.assertTrue(nodes <= set(graph.nodes))
         self.assertTrue(all(edge.source in nodes and edge.target in nodes for edge in edges))
 
+    def test_spreading_activation_numeric_alpha_and_steps(self) -> None:
+        graph = sample_graph()
+        from graphgraph.retrieval.activation import ActivationStateCache, spreading_activation
+
+        cache = ActivationStateCache()
+        if cache.cache_path.exists():
+            try:
+                cache.cache_path.unlink()
+            except Exception:
+                pass
+
+        spreading_activation(graph, ["N1"], max_nodes=10)
+        state = cache.load()
+
+        # alpha=0.6, decay=0.6, steps=2 defaults:
+        #   step0: N1=1.0 (injection) spreads 0.6*1.0/1 to N2 => N2=0.6
+        #   step1: N1 receives 0.6*0.6/2 back from N2 (N1,N3 neighbors of N2) => N1=1.18
+        #          N2 receives another 0.6*1.0/1 from N1 => N2=1.2
+        #          N3 receives 0.6*0.6/2 from N2 => N3=0.18
+        self.assertAlmostEqual(state["N1"], 1.18, places=6)
+        self.assertAlmostEqual(state["N2"], 1.2, places=6)
+        self.assertAlmostEqual(state["N3"], 0.18, places=6)
+
+    def test_spreading_activation_numeric_decay_isolated(self) -> None:
+        from graphgraph.retrieval.activation import ActivationStateCache, spreading_activation
+
+        graph = Graph(nodes={"A": Node("A", "A", "service", "a.py")}, edges=[])
+        cache = ActivationStateCache()
+        if cache.cache_path.exists():
+            try:
+                cache.cache_path.unlink()
+            except Exception:
+                pass
+
+        # No new injection (empty starts); only decay of prior-turn activation.
+        spreading_activation(graph, [], max_nodes=10, previous_activation={"A": 1.0})
+        state = cache.load()
+        self.assertAlmostEqual(state["A"], 0.6, places=6)  # 1.0 * decay(0.6)
+
     def test_packet_renderers_skip_dangling_nodes_and_edges(self) -> None:
         graph = sample_graph()
         nodes = {"N1", "N2", "ghost_node_from_old_scan"}
@@ -562,6 +602,35 @@ N1,N2,1,0.9
         self.assertEqual(blast_recommendation.base_budget, 120)
         self.assertEqual(blast_recommendation.recommended_budget, blast_recommendation.base_budget)
         self.assertEqual(blast_recommendation.mode, "measured_default")
+
+    def test_recommend_node_budget_multi_hop_path_matches_closed_form(self) -> None:
+        graph = Graph(
+            nodes={
+                **{f"S{i}": Node(f"S{i}", f"source_{i}", "python") for i in range(30)},
+                **{f"D{i}": Node(f"D{i}", f"doc_{i}", "section") for i in range(100)},
+                **{f"F{i}": Node(f"F{i}", f"func_{i}", "function") for i in range(20)},
+            },
+            edges=[
+                *[Edge(f"D{i}", f"F{i % 20}", "mentions") for i in range(100)],
+                *[Edge(f"F{i}", f"F{(i + 1) % 20}", "calls") for i in range(20)],
+            ],
+        )
+        shape = profile_graph_shape(graph)
+        recommendation = recommend_node_budget("multi_hop_path", "runtime graph", shape)
+
+        self.assertEqual(recommendation.base_budget, 80)
+        # lambda_ = 0.05 * 1.2 (doc_node_ratio>=0.65) * 1.25 (nodes<=500) = 0.075
+        # density = 0.8 * (1.0 + 0.30*0.8333 + 0.20*0.6667) = 1.106664 -> clipped to 1.106664 (<1.5)
+        # tau = 1.496 + 6.215*1.106664 = 8.37391676
+        # n* = (1/0.075) * ln(max(1.1, 0.075/(1e-4*8.37391676))) = 60
+        self.assertEqual(recommendation.recommended_budget, 60)
+        self.assertEqual(recommendation.mode, "candidate")
+        self.assertEqual(
+            recommendation.reason,
+            "Regularized budget: n*=60 (lambda=0.075, tau=8.374); "
+            "doc-heavy graph trims structural noise; "
+            "warning: import topology looks under-extracted",
+        )
 
     def test_context_window_budget_expands_small_sparse_and_pages_huge_dense(self) -> None:
         small = Graph(
@@ -1059,6 +1128,32 @@ N1,N2,1,0.9
         
         ret_nodes, ret_edges = expand_context(graph, ("N0",), plan)
         self.assertLessEqual(len(ret_nodes), 60)
+
+    def test_expand_context_density_throttle_scales_effective_node_budget(self) -> None:
+        from graphgraph.planning.types import ContextPlan
+        from graphgraph.retrieval.context import expand_context
+
+        # Chain N0..N29 for connectivity ("calls"), plus skip-two cross edges
+        # ("references") to raise local edge density and engage the Edge Density
+        # Throttle's `scale = max(0.4, min(1.0, 1.5/density))` (retrieval/context.py).
+        N = 30
+        nodes = {f"N{i}": Node(f"N{i}", f"N{i}") for i in range(N)}
+        edges = [Edge(f"N{i}", f"N{i + 1}", "calls", weight=1.0) for i in range(N - 1)]
+        edges += [Edge(f"N{i}", f"N{i + 2}", "references", weight=1.0) for i in range(N - 2)]
+        graph = Graph(nodes=nodes, edges=edges)
+
+        plan = ContextPlan(
+            query_class="multi_hop_path", hops=40, direction="out", packet="gg_max",
+            node_budget=34, anchor_limit=6, weak_edge_limit=100, min_confidence=0.0, reason="test",
+        )
+        ret_nodes, ret_edges = expand_context(graph, ("N0",), plan)
+
+        kept = {rel: len([e for e in ret_edges if e.type == rel]) for rel in {"calls", "references"}}
+        # "calls" is not a limited relation type -- unaffected by any edge budget.
+        self.assertEqual(kept["calls"], 29)
+        # Retained density = (29+13)/30 = 1.4, engaging the throttle (>1.0 scale-down
+        # region relative to the untouched max_nodes//2==17 cap it would otherwise get).
+        self.assertEqual(kept["references"], 13)
 
     def test_default_path_resolution(self) -> None:
         from graphgraph.io import find_external_graph_path, find_graph_path, find_policies_path
@@ -1668,6 +1763,7 @@ N1,N2,1,0.9
             depth = "symbols"
             frontend = "regex"
             docs = True
+            history = False
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1919,6 +2015,26 @@ N1,N2,1,0.9
         self.assertGreaterEqual(kept_counts["links"], 1)
         self.assertGreaterEqual(kept_counts["mentions"], 1)
         self.assertEqual(kept_counts["calls"], 1)
+
+    def test_budget_edges_shaped_path_exact_quotas(self) -> None:
+        edges = [Edge("N1", f"R{i}", "references", 1.0, confidence=0.9, provenance="regex_reference") for i in range(40)]
+        edges += [Edge("N1", f"L{i}", "links", 1.0, confidence=0.4, provenance="ambiguous") for i in range(40)]
+        edges += [Edge("N1", f"M{i}", "mentions", 1.0, confidence=0.3, provenance="semantic_llm") for i in range(40)]
+
+        kept = budget_edges(edges, max_nodes=30)
+
+        # _weak_edge_target(120,120,max_nodes=30,weak_limit=None):
+        #   density=120/30=4.0; density_scale=1/sqrt(4.0)=0.5
+        #   base=max(8,round(30*0.55*0.5))=max(8,8)=8; target=max(4,min(120,8))=8
+        kept_counts = {rel: len([e for e in kept if e.type == rel]) for rel in {"references", "links", "mentions"}}
+        self.assertEqual(sum(kept_counts.values()), 8)
+        # _relation_quotas splits target=8 by sqrt(count)*strength*avg_utility across relations.
+        self.assertEqual(kept_counts, {"references": 4, "links": 2, "mentions": 2})
+
+        # Ties within a relation (identical confidence/provenance/weight) break by
+        # (source, target) ascending string sort -- pins the tie-break behavior too.
+        kept_refs = sorted((e.source, e.target) for e in kept if e.type == "references")
+        self.assertEqual(kept_refs, [("N1", "R0"), ("N1", "R1"), ("N1", "R10"), ("N1", "R11")])
 
     def test_relation_ontology_drives_traversal_and_weak_budgeting(self) -> None:
         self.assertEqual(relation_spec("calls").family, "execution")
@@ -2390,6 +2506,121 @@ Find the AuthService implementation.
             self.assertIn("explains", edge_types)
             self.assertTrue(any(edge.type == "explains" for edge in graph.edges))
 
+    def test_history_bugfix_and_maintenance_classification(self) -> None:
+        from graphgraph.scanner.history import _is_bugfix_commit
+
+        # Clear bug fix -> included.
+        self.assertTrue(_is_bugfix_commit(
+            "fix: cast scanner facts list to tuple to match Node dataclass typing"
+        ))
+        # Maintenance-only -> excluded (no bugfix keyword at all).
+        self.assertFalse(_is_bugfix_commit(
+            "chore: remove temporary web search lookup capabilities"
+        ))
+        # Contains a bugfix keyword AND a maintenance keyword -> excluded by the AND-NOT rule.
+        self.assertFalse(_is_bugfix_commit(
+            "style: fix ruff lint errors in scanner module"
+        ))
+        # Neutral feature commit -> excluded (no bugfix keyword).
+        self.assertFalse(_is_bugfix_commit(
+            "feat: add packet renderer for hybrid format"
+        ))
+
+    def test_history_parse_commit_log_output(self) -> None:
+        from graphgraph.scanner.history import _parse_commit_log_output
+
+        raw = (
+            "COMMIT abc1234567890\x1ffix: handle empty file list\n"
+            "2\t1\tsrc/graphgraph/scanner/core.py\n"
+            "0\t3\tsrc/graphgraph/scanner/files.py\n"
+            "\n"
+            "COMMIT def4567890abc\x1fchore: bump dependency versions\n"
+            "1\t1\tpyproject.toml\n"
+        )
+        records = _parse_commit_log_output(raw)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0].sha, "abc1234567890")
+        self.assertEqual(records[0].subject, "fix: handle empty file list")
+        self.assertEqual(
+            records[0].files,
+            ("src/graphgraph/scanner/core.py", "src/graphgraph/scanner/files.py"),
+        )
+        self.assertEqual(records[1].files, ("pyproject.toml",))
+
+    def test_history_skips_wide_commits_above_file_cap(self) -> None:
+        # Found via real-data validation against this repo's own history: a large
+        # refactor commit that happened to mention "fix" touched 84 files and would
+        # otherwise become an artificially high-degree hub node.
+        from graphgraph.scanner.history import extract_commit_history
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+
+            def fake_run(*args, **kwargs):
+                class _Result:
+                    returncode = 0
+                    stdout = (
+                        "COMMIT wide0000001\x1frefactor codebase, fix imports along the way\n"
+                        + "".join(f"1\t0\tfile{i}.py\n" for i in range(25))
+                        + "\nCOMMIT narrow000001\x1ffix: off-by-one in loop\n"
+                        "1\t0\tfile0.py\n"
+                    )
+                return _Result()
+
+            file_map = {f"file{i}.py": f"file_{i}" for i in range(25)}
+            with patch("graphgraph.scanner.history.subprocess.run", side_effect=fake_run):
+                nodes, edges = extract_commit_history(root, file_map, max_files_per_commit=20)
+
+            self.assertNotIn("commit_wide0000", nodes)
+            self.assertIn("commit_narrow00", nodes)
+            self.assertEqual(len(edges), 1)
+
+    @unittest.skipUnless(shutil.which("git"), "git binary not available on PATH")
+    def test_history_real_git_repo_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def run_git(*args: str) -> None:
+                subprocess.run(["git", *args], cwd=root, check=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            run_git("init", "-q")
+            run_git("config", "user.email", "test@example.com")
+            run_git("config", "user.name", "Test User")
+
+            (root / "app.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            (root / "README.md").write_text("# demo\n", encoding="utf-8")
+            run_git("add", ".")
+            run_git("commit", "-q", "-m", "feat: initial commit")
+
+            (root / "app.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+            run_git("add", ".")
+            run_git("commit", "-q", "-m", "fix: correct add() returning subtraction result")
+
+            (root / "app.py").write_text(
+                "def add(a, b):\n    return a - b\n\n\ndef sub(a, b):\n    return a - b\n",
+                encoding="utf-8",
+            )
+            run_git("add", ".")
+            run_git("commit", "-q", "-m", "style: reformat with black")
+
+            (root / "README.md").write_text("# demo\n\nUsage docs.\n", encoding="utf-8")
+            run_git("add", ".")
+            run_git("commit", "-q", "-m", "docs: add usage section")
+
+            graph = scan_directory(root, depth="files", history=True)
+
+            commit_nodes = {n.id: n for n in graph.nodes.values() if n.kind == "commit"}
+            self.assertEqual(len(commit_nodes), 1, commit_nodes)
+            commit_node = next(iter(commit_nodes.values()))
+            self.assertIn("correct add()", commit_node.summary)
+
+            fixes_edges = [e for e in graph.edges if e.type == "fixes"]
+            self.assertEqual(len(fixes_edges), 1)
+            app_file_node = next(n for n in graph.nodes.values() if n.path == "app.py")
+            self.assertEqual(fixes_edges[0].source, commit_node.id)
+            self.assertEqual(fixes_edges[0].target, app_file_node.id)
 
     def test_scanner_c_includes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3245,9 +3476,10 @@ Find the AuthService implementation.
                 self.assertTrue(mcp_json.exists())
                 mcp_data = json.loads(mcp_json.read_text(encoding="utf-8"))
                 server = mcp_data["mcpServers"]["graphgraph"]
-                self.assertEqual(server["command"], "uv")
-                self.assertIn("--project", server["args"])
-                self.assertEqual(server["args"][-1], "graphgraph-mcp")
+                # Codex plugin bundles are committed to git and consumed from many
+                # clones/machines, so this must always be the portable form -- no
+                # baked-in absolute path, no assumption that `uv` is on PATH.
+                self.assertEqual(server, {"command": "graphgraph-mcp"})
 
                 plugin_skill = Path("plugins") / "graphgraph" / "skills" / "graphgraph" / "SKILL.md"
                 self.assertTrue(plugin_skill.exists())
@@ -3409,6 +3641,65 @@ Find the AuthService implementation.
         # Test personalized search
         matches = search_nodes(g, "AuthService", personalize=True)
         self.assertEqual(matches[0].node.id, "A")
+
+    def test_personalization_lexical_score_constants(self) -> None:
+        from graphgraph.core import Edge, Graph, Node
+        from graphgraph.retrieval import search_nodes
+
+        def capture_personalization(query: str, nodes: dict) -> dict:
+            g = Graph(nodes=nodes, edges=[])
+            captured: dict = {}
+            original_ppr = g.personalized_pagerank
+
+            def _capture(personalization, *args, **kwargs):
+                captured["p"] = dict(personalization)
+                return original_ppr(personalization, *args, **kwargs)
+
+            g.personalized_pagerank = _capture
+            with patch("graphgraph.retrieval.git_utils.get_git_modified_files", return_value={}):
+                search_nodes(g, query, personalize=True)
+            return captured.get("p", {})
+
+        # Exact node-id match only -> +8.0, no other signal.
+        p = capture_personalization("svc", {"svc": Node("svc", "AuthService", "service", "auth.py", active=True)})
+        self.assertEqual(p.get("svc"), 8.0)
+
+        # Exact whole-label match (single-word label) -> +4.0.
+        p = capture_personalization("widget", {"n1": Node("n1", "Widget", "service", "widget.py", active=True)})
+        self.assertEqual(p.get("n1"), 4.0)
+
+        # Term present in tokenized label terms, but not equal to the whole label -> +2.0.
+        p = capture_personalization("factory", {"n2": Node("n2", "Widget Factory", "service", "wf.py", active=True)})
+        self.assertEqual(p.get("n2"), 2.0)
+
+    def test_personalization_git_session_weight_formula(self) -> None:
+        from graphgraph.core import Graph, Node
+        from graphgraph.retrieval import search_nodes
+
+        def capture_personalization(query: str, nodes: dict, git_files: dict) -> dict:
+            g = Graph(nodes=nodes, edges=[])
+            captured: dict = {}
+            original_ppr = g.personalized_pagerank
+
+            def _capture(personalization, *args, **kwargs):
+                captured["p"] = dict(personalization)
+                return original_ppr(personalization, *args, **kwargs)
+
+            g.personalized_pagerank = _capture
+            with patch("graphgraph.retrieval.git_utils.get_git_modified_files", return_value=git_files):
+                search_nodes(g, query, personalize=True)
+            return captured.get("p", {})
+
+        node = Node("svc", "AuthService", "service", "auth.py", active=True)
+
+        # Git weight only: query matches nothing lexically; path == modified path.
+        # math.log2(6 + 2) * 2.0 == log2(8) * 2.0 == 3.0 * 2.0 == 6.0
+        p = capture_personalization("zzzznomatch", {"svc": node}, {"auth.py": 6})
+        self.assertEqual(p.get("svc"), 6.0)
+
+        # Combined: id-match lexical (+8.0) plus same git weight (+6.0) == 14.0.
+        p = capture_personalization("svc", {"svc": node}, {"auth.py": 6})
+        self.assertEqual(p.get("svc"), 14.0)
 
     def test_tensor_spatial_bias(self) -> None:
         from graphgraph.packets import render_tensor_array

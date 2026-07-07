@@ -27,6 +27,7 @@ DEFAULT_RELATIONS: dict[str, RelationSpec] = {
     "contains": RelationSpec("contains", "hierarchy", strength=0.7, description="Source contains target."),
     "implements": RelationSpec("implements", "type", strength=0.9, description="Source implements target contract."),
     "references": RelationSpec("references", "mention", strength=0.7, description="Source mentions target."),
+    "fixes": RelationSpec("fixes", "history", strength=0.75, description="Source commit fixed/touched target file (from git log)."),
     "links": RelationSpec("links", "document", strength=0.55, weak=True, description="Source links to target."),
     "includes": RelationSpec("includes", "document", strength=0.6, weak=True, description="Source includes target."),
     "mentions": RelationSpec("mentions", "document", strength=0.5, weak=True, description="Source text mentions target concept."),
@@ -66,6 +67,7 @@ PROVENANCE_CONFIDENCE = {
     "extracted": 0.8,
     "inferred": 0.55,
     "ambiguous": 0.35,
+    "git_history": 0.75,
 }
 
 

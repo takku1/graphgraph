@@ -89,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Extract document sections and concept nodes during auto-build (default: true).")
     context.add_argument("--no-docs", action="store_false", dest="docs",
                          help="Disable document section/concept extraction during auto-build.")
+    context.add_argument("--history", action="store_true", default=False,
+                         help="Link qualifying bug-fix commits to the files they touched during auto-build. "
+                              "Opt-in; requires a git repo. Default: False.")
     context.add_argument("--generic-mentions", action="store_true", default=False,
                          help="Add weak references edges for files that mention another file's stem.")
     context.add_argument("--incremental", action="store_true", default=True,
@@ -140,6 +143,9 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto",
                       help="Symbol extraction frontend for --depth symbols. auto prefers Tree-sitter when available.")
     scan.add_argument("--docs", action="store_true", help="Extract document sections and concept nodes.")
+    scan.add_argument("--history", action="store_true", default=False,
+                      help="Link qualifying bug-fix commits (git log, regex-classified) to the files they "
+                           "touched via a 'fixes' edge. Opt-in; requires a git repo. Default: False.")
     scan.add_argument("--incremental", action="store_true", default=True, help="Use hash-based incremental scanner (default: True).")
     scan.add_argument("--no-incremental", action="store_false", dest="incremental", help="Disable incremental scanning.")
     scan.set_defaults(func=cmd_scan)

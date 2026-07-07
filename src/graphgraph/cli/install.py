@@ -61,8 +61,17 @@ def _mcp_server_config(project_root: Path | None) -> dict:
     return {"mcpServers": {"graphgraph": server}}
 
 
-def _codex_mcp_json(project_root: Path) -> dict:
-    return _mcp_server_config(project_root)
+def _codex_mcp_json() -> dict:
+    """Portable MCP block for Codex plugin bundles.
+
+    Codex plugin bundles (plugins/graphgraph/.mcp.json) are committed to git
+    and consumed from many different clones/machines, so they must never bake
+    in an absolute path or assume a particular machine has ``uv`` on PATH.
+    They rely on the ``graphgraph-mcp`` console script being resolvable from
+    PATH -- the same convention already used by the tracked
+    ``.agents/mcp_config.json``.
+    """
+    return {"mcpServers": {"graphgraph": {"command": "graphgraph-mcp"}}}
 
 
 def _upsert_mcp_servers(config_path: Path, server_block: dict) -> None:
@@ -110,7 +119,48 @@ def _write_claude_code(
         print(f"Registered GraphGraph for Claude Code (global): {skill_dir / 'SKILL.md'}, {Path.home() / '.claude.json'}")
 
 
-def _write_codex_plugin(plugin_root: Path, project_root: Path, skill_content: str) -> None:
+def _write_cursor(is_project: bool, project_root: Path | None) -> None:
+    """Register the GraphGraph MCP server for Cursor.
+
+    Cursor's config uses the same ``{"mcpServers": {...}}`` shape as Claude
+    Desktop plus a required ``"type": "stdio"`` field on the server entry
+    (see .agents/skills/graphgraph/examples/mcp_server_settings.json, the
+    in-repo documented reference for this shape). Project scope is pinned to
+    this checked-out repo, mirroring Claude Code's project-scope semantics;
+    global scope is portable.
+    """
+    if is_project and project_root is not None:
+        config_path = project_root / ".cursor" / "mcp.json"
+        server_block = _mcp_server_config(project_root)
+    else:
+        config_path = Path.home() / ".cursor" / "mcp.json"
+        server_block = _mcp_server_config(None)
+    server_block["mcpServers"]["graphgraph"]["type"] = "stdio"
+    _upsert_mcp_servers(config_path, server_block)
+    print(f"Registered GraphGraph MCP server for Cursor: {config_path}")
+
+
+def _write_gemini(is_project: bool, project_root: Path | None) -> None:
+    """Register the GraphGraph MCP server for Gemini CLI / Antigravity.
+
+    CAVEAT: based on the documented Gemini CLI settings.json convention
+    (~/.gemini/settings.json or <project>/.gemini/settings.json, top-level
+    "mcpServers" key) -- NOT verified against a live Gemini CLI or Antigravity
+    install. Verify against an actual install before relying on it; worst
+    case if the client reads a different location is an inert file with no
+    other side effects.
+    """
+    if is_project and project_root is not None:
+        config_path = project_root / ".gemini" / "settings.json"
+        server_block = _mcp_server_config(project_root)
+    else:
+        config_path = Path.home() / ".gemini" / "settings.json"
+        server_block = _mcp_server_config(None)
+    _upsert_mcp_servers(config_path, server_block)
+    print(f"Registered GraphGraph MCP server for Gemini/Antigravity: {config_path}")
+
+
+def _write_codex_plugin(plugin_root: Path, skill_content: str) -> None:
     (plugin_root / ".codex-plugin").mkdir(parents=True, exist_ok=True)
     (plugin_root / "skills" / "graphgraph").mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +169,7 @@ def _write_codex_plugin(plugin_root: Path, project_root: Path, skill_content: st
         encoding="utf-8",
     )
     (plugin_root / ".mcp.json").write_text(
-        json.dumps(_codex_mcp_json(project_root), indent=2) + "\n",
+        json.dumps(_codex_mcp_json(), indent=2) + "\n",
         encoding="utf-8",
     )
     (plugin_root / "skills" / "graphgraph" / "SKILL.md").write_text(skill_content, encoding="utf-8")
@@ -289,18 +339,26 @@ def cmd_install(args: argparse.Namespace) -> None:
     platform = getattr(args, "platform", "all")
     if platform in ("codex", "all"):
         if args.project:
-            project_root = Path(".").resolve()
             plugins_dir = dest_root / "plugins" / "graphgraph"
             market_file = dest_root / ".agents" / "plugins" / "marketplace.json"
         else:
-            project_root = Path.cwd().resolve()
             plugins_dir = Path.home() / "plugins" / "graphgraph"
             market_file = Path.home() / ".agents" / "plugins" / "marketplace.json"
 
-        _write_codex_plugin(plugins_dir, project_root, skill_content)
+        _write_codex_plugin(plugins_dir, skill_content)
         _upsert_codex_marketplace(market_file)
         print(f"Registered Codex plugin in: {plugins_dir}")
         print(f"Registered Codex marketplace entry in: {market_file}")
+
+    # Cursor: .cursor/mcp.json (project) or ~/.cursor/mcp.json (global)
+    if platform in ("cursor", "all"):
+        cursor_project_root = Path(".").resolve() if args.project else None
+        _write_cursor(args.project, cursor_project_root)
+
+    # Gemini CLI / Antigravity: .gemini/settings.json (project) or ~/.gemini/settings.json (global)
+    if platform in ("gemini", "antigravity", "agy", "all"):
+        gemini_project_root = Path(".").resolve() if args.project else None
+        _write_gemini(args.project, gemini_project_root)
 
     # Claude Code (project-scoped CLI/IDE agent): .mcp.json + .claude/skills + CLAUDE.md
     if platform in ("claude", "claude-code", "all"):

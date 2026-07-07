@@ -35,6 +35,7 @@ def scan_validated_graph(
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = True,
+    history: bool = False,
     skip_dirs: tuple[str, ...] = (),
     include_dirs: tuple[str, ...] = (),
     generic_mentions: bool = False,
@@ -54,6 +55,7 @@ def scan_validated_graph(
         depth=depth,
         frontend=frontend,
         docs=docs,
+        history=history,
         previous_graph_path=previous_graph_path,
         manifest_path=manifest_path,
     )
@@ -73,6 +75,7 @@ def scan_validated_graph(
         depth=depth,
         frontend=frontend,
         docs=docs,
+        history=history,
         previous_graph_path=None,
         manifest_path=output_path.parent / "manifest.json",
     )
@@ -89,6 +92,7 @@ def ensure_native_graph(
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = True,
+    history: bool = False,
     skip_dirs: tuple[str, ...] = (),
     include_dirs: tuple[str, ...] = (),
     generic_mentions: bool = False,
@@ -117,6 +121,7 @@ def ensure_native_graph(
         depth=depth,
         frontend=frontend,
         docs=docs,
+        history=history,
         incremental=incremental and not rebuild,
     )
 
@@ -321,6 +326,7 @@ def render_native_context(
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = True,
+    history: bool = False,
     generic_mentions: bool = False,
     incremental: bool = True,
     show_anchors: bool = False,
@@ -336,6 +342,7 @@ def render_native_context(
         depth=depth,
         frontend=frontend,
         docs=docs,
+        history=history,
         generic_mentions=generic_mentions,
         incremental=incremental,
         discover_existing=graph_path is None,

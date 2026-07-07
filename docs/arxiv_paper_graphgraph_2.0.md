@@ -51,35 +51,46 @@ graph TD
     Serializer ──► Injector["6. Prompt Injector (Legend Pre-Conditioning)"]
 ```
 
-1. **Query Router:** Sanitizes the input query to strip upstream metadata noise (such as markdown code blocks, untrusted agent headers, and timestamp logs), classifies it (e.g., `direct_lookup`, `blast_radius`, `subsystem_summary`) based on structural keywords, and tokenizes it to extract clean lexical match terms.
+1. **Query Router:** Sanitizes the input query to strip upstream metadata noise (such as markdown code blocks, untrusted agent headers, and timestamp logs), classifies it into one of seven query classes based on structural keywords, and tokenizes it to extract clean lexical match terms. Five classes resolve via graph traversal (`direct_lookup`, `reverse_lookup`, `subsystem_summary`, `blast_radius`, `multi_hop_path`); two deliberately bypass topology — `doc_summary` grounds directly in document sections with no adjacency expansion, and `negative_query` checks for the absence or isolation of a relationship and returns a minimal evidence packet.
 2. **Context Planner:** Runs during the *coarse query planning phase*. Solves an information-gain-regularized budget allocation problem to recommend a global target node budget $n^*$ based on high-level shape parameters.
-3. **Retriever:** Identifies starting points (anchors) via lexical matches, constructs a personalization seed vector, and runs Personalized PageRank (PPR) via flat-index power iteration. It integrates previous activation states using a turn-based temporal decay.
+3. **Retriever:** Identifies starting points (anchors) via lexical matches, constructs a personalization seed vector, and — for the five topological query classes — runs Personalized PageRank (PPR) via flat-index power iteration. A separate, exclusively-selected internal retrieval mode instead integrates previous activation states using a turn-based temporal decay; the two are never combined in a single step (§3 details why these are two distinct mechanisms).
 4. **Edge Density Throttle:** Prunes weak, repetitive relationships in dense subgraphs using relation quotas to prevent edge token bloat.
 5. **Serializer:** Runs during the *fine-grained retrieval phase*. Solves the exact connected tree knapsack DP to select the optimal connected subgraph $S$ fitting within the token budget of $n^*$, ensuring reachability back to anchor roots. It renders the prompt using numeric indices (`gg_max`) or unique 8-character lexical keys (`gg_lex`).
 6. **Prompt Injector:** Formats the final prompt, adding a schema "legend" prefix so the LLM can interpret the compact adjacency representations.
+
+Beyond this six-stage retrieval path, GraphGraph 2.0 exposes a companion tool surface for agent orchestration: `source_snippets` renders bounded raw-source excerpts for selected node IDs on demand, recovering the code-body detail the compact packet deliberately omits; `export_graph` serializes the graph to the self-describing binary `.gg` format for cross-session or cross-agent reuse; `validate_packet` mechanically checks a rendered packet's structural well-formedness; and four introspection endpoints — `describe_formats`, `describe_ontology`, `describe_frontends`, `describe_traversal` — let a calling agent query the system's own empirically-measured format costs, relation semantics, supported language frontends, and traversal policies at runtime rather than relying on static documentation. This tool surface is registered via the Model Context Protocol (MCP) across multiple coding-agent clients (Codex, Gemini/Antigravity, Claude Code, Cursor), with a `doctor` diagnostic subcommand reporting per-client registration status.
 
 ---
 
 ## 3. Retrieval & Centrality (QS-PPR)
 
-To ground the retrieval in both the user's natural language query and their current workspace state, GraphGraph 2.0 models the repository as a directed, weighted graph $G = (V, E)$. Let $N = |V|$ be the number of active nodes. 
+To ground the retrieval in both the user's natural language query and their current workspace state, GraphGraph 2.0 models the repository as a directed, weighted graph $G = (V, E)$. Let $N = |V|$ be the number of active nodes.
 
-Instead of treating retrieval as a flat vector lookup, we compile a **Joint Personalization Vector** $P^{(t)} \in \mathbb{R}^N$ for the current turn $t$ that blends lexical search matches, active working-copy modifications (the **Session Layer**), and historical activation states:
+GraphGraph 2.0 currently implements two distinct, non-overlapping retrieval mechanisms selected per query class, rather than a single formula that always blends all three signal sources. We describe both here and are explicit about which is which, since conflating them would overstate the system's unification.
 
-$$P_i^{(t)} = S_{lex}(v_i) + \alpha \cdot \log_2(\Delta(v_i) + 2) + \eta \cdot \text{Activation}_i^{(t-1)}$$
+**Mechanism A — Personalized PageRank (five topological classes: `direct_lookup`, `reverse_lookup`, `subsystem_summary`, `blast_radius`, `multi_hop_path`).** A **Session-Aware Personalization Vector** $P^{(t)} \in \mathbb{R}^N$ blends lexical search matches with active working-copy modifications (the **Session Layer**):
+
+$$P_i^{(t)} = S_{lex}(v_i) + \alpha \cdot \log_2(\Delta(v_i) + 2)$$
 
 Where:
-* $S_{lex}(v_i)$ is the lexical token matching score (assigning higher weights for exact symbol name or path stem hits, and penalizing floating concept nodes).
+* $S_{lex}(v_i)$ is the lexical token matching score: $8.0$ for an exact node-ID match, $4.0$ for an exact label match, and $2.0$ per query term present in the label's token set (measured constants from the retrieval implementation).
 * $\Delta(v_i)$ is the **Git Change Magnitude** (total additions + deletions in the local git diff) for the file containing node $v_i$. If the file is unmodified, $\Delta(v_i) = 0$.
 * $\alpha$ is a scaling coefficient (default $2.0$) that bounds the session weight.
-* $\text{Activation}_i^{(t-1)}$ is the historical turn decay score of node $i$ from the previous turn, and $\eta$ is a scaling multiplier (default $0.5$) that incorporates conversational history directly into the personalization seed.
+
+This vector is normalized and fed as the restart distribution to Personalized PageRank (§3.1). It does **not** currently incorporate a cross-turn activation term.
+
+**Mechanism B — Spreading Activation (a separate, internal query mode, not part of the seven user-facing query classes in §2).** This mode runs its own bounded BFS-style energy-spreading traversal, independent of PageRank, and is the one place cross-turn history is actually used:
+
+$$\text{Activation}_i^{(t)} = \gamma \cdot \text{Activation}_i^{(t-1)} + \text{Injection}_i^{(t)}$$
+
+detailed in §3.2. Because Mechanism A and Mechanism B are selected by an exclusive branch on query class rather than combined, we no longer present a single "joint" personalization equation spanning both; §9 discusses unifying them as future work.
 
 ### 3.1 Flat-Index Optimized Power Iteration
 Once the personalization vector $P^{(t)}$ is normalized ($\sum_i P_i^{(t)} = 1.0$), we compute the Personalized PageRank vector $PR \in \mathbb{R}^N$ iteratively:
 
-$$PR^{(t+1)} = (1 - \beta) P^{(t)} + \beta \left( W^T PR^{(t)} + D \cdot P^{(t)} \right)$$
+$$PR^{(t+1)} = (1 - \beta) P^{(t)} + \beta \left( W^T PR^{(t)} + d^{(t)} \cdot P^{(t)} \right)$$
 
-Where $\beta$ is the damping factor (default $0.85$), $W \in \mathbb{R}^{N \times N}$ is the transition probability matrix scaled by edge type weights, and $D \in \{0, 1\}^N$ is an indicator vector for dangling nodes.
+Where $\beta$ is the damping factor (default $0.85$), $W \in \mathbb{R}^{N \times N}$ is the transition probability matrix with entries $W_{ji} = \text{weight}(e_{j \to i}) \cdot \text{traversal\_strength}(\text{type}(e_{j \to i})) \, / \sum_{k} \text{weight}(e_{j \to k}) \cdot \text{traversal\_strength}(\text{type}(e_{j \to k}))$ over $j$'s out-edges (relation-type strength only — provenance confidence is not applied at this stage; it is applied separately in the Edge Density Throttle, §4.3), and $d^{(t)} = \beta \sum_{j \,:\, \text{dangling}} PR_j^{(t)}$ is the scalar total PageRank mass currently held by dangling (no-outgoing-edge) nodes, redistributed proportionally to $P^{(t)}$ each iteration. (An earlier draft described this redistribution term as a per-node $\{0,1\}$ indicator vector; it is in fact a scalar broadcast, corrected here to match the implementation.)
 
 To prevent CPU memory thrashing and dictionary hashing overhead during iteration, GraphGraph 2.0 maps all active node IDs to sequential integer indices $[0..N-1]$ during graph loading. Adjacency transitions are pre-computed as flat offset lists:
 
@@ -96,7 +107,7 @@ for i in range(N):
         next_pr_arr[i] += pr_arr[src_idx] * factor
 ```
 
-This flat-index numerical mapping reduces Personalized PageRank execution latency by **10%** in Python, delivering a cached execution time of **38.3 milliseconds per query** (covering all iterations until convergence) on a codebase of thousands of nodes.
+This flat-index numerical mapping is intended to reduce Personalized PageRank execution latency by avoiding per-iteration dictionary hashing overhead. We do not yet have a dedicated benchmark isolating flat-index vs. dict-based transition lookup, so the **10%** speedup and **38.3 millisecond** cached-execution figures previously stated here were unverified illustrative estimates rather than measured results, and we no longer cite them as benchmarked. A dedicated `benchmarks/context_graph/ppr_flat_index_benchmark.py` (A/B: dict-keyed transitions vs. the current flat-array transitions, across graph sizes) is the natural follow-up to produce a real number; until then this section describes the mechanism without asserting a specific magnitude.
 
 ### 3.2 Conversational Turn Decay
 To retain short-term conversational context across dialogue turns without unbounded expansion, GraphGraph integrates previous activation states using a turn-based temporal decay:
@@ -130,9 +141,9 @@ Solving for $n$ gives the operational budget formula:
 $$n^* = \frac{1}{\lambda} \ln \left( \frac{\lambda}{c \cdot \tau} \right)$$
 
 Where:
-* $\lambda$ is the complexity constant mapping target evidence distribution per query class (e.g., $0.08$ for focused `direct_lookup`, $0.035$ for distributed `blast_radius`).
-* $\tau$ is the marginal token cost per node derived from the throttled local edge density: $\tau = 1.496 + 6.215 \cdot \min(\text{raw\_edge\_density}, 1.5)$. This reflects the effective local density cap guaranteed by the Edge Density Throttle (§4.3).
-* The resulting $n^*$ is clipped to class-specific bounds: $n_{\text{final}} = \min(B_{\text{upper}}, \max(B_{\text{lower}}, n^*))$. This ensures the recommended budget remains within safe bounds prior to discrete selection.
+* $\lambda$ is the complexity constant mapping target evidence distribution per query class: $0.08$ for `direct_lookup`/`reverse_lookup`, $0.05$ for `multi_hop_path`, and $0.035$ for `blast_radius`/`subsystem_summary` (all as measured in the planner's `lambda_map`), further scaled by up to $\pm 25\%$ from graph-shape signals (e.g. $\times 1.2$ on doc-heavy graphs, $\times 1.25$ on small graphs $\le 500$ nodes, $\times 1.15$ on large graphs $\ge 5{,}000$ nodes) before being used below.
+* $\tau$ is the marginal token cost per node, fit as an affine function of a *noise-adjusted* edge density: $\tau = 1.496 + 6.215 \cdot \hat{R}_{ne}$, where $\hat{R}_{ne} = \text{clip}\!\left(R_{ne} \cdot (1 + 0.30\, w + 0.20\, d),\ 0.05,\ 1.5\right)$, $R_{ne}$ is the raw node-to-edge density, $w$ is the weak-edge ratio, and $d$ is the doc-node ratio of the graph. The upper clip at $1.5$ reflects the effective local density cap guaranteed by the Edge Density Throttle (§4.3); the noise terms increase the assumed per-node cost when a larger share of edges are weak or the graph is documentation-heavy, since both increase serialized tokens without proportionally increasing evidence value.
+* The resulting $n^*$ is clipped to class-specific bounds: $n_{\text{final}} = \min(B_{\text{upper}}, \max(B_{\text{lower}}, n^*))$. For the two recall-first classes (`blast_radius`, `subsystem_summary`), the planner additionally floors $n_{\text{final}}$ at the measured default budget (never trims below it), so the closed-form solution operates as a ceiling/expansion signal on top of a fixed recall-preserving floor rather than as the sole determinant of the served budget.
 
 ### 4.2 Fine-Grained Selection: Topologically-Connected Tree Knapsack DP
 The continuous solver determines the maximum budget $n^*$. The system then executes the Tree Knapsack DP during the *fine-grained retrieval phase* to select the exact nodes to display.
@@ -152,25 +163,25 @@ $$\text{avg\_label\_tokens} = \max\left(1.0, \frac{\sum_{v \in V} \text{len}(v.\
 Dynamic calibration reduces token estimation error from **$-17.1\%$** (using static multipliers) to **$+1.3\%$** for numeric formats and **$-0.8\%$** for lexical formats, enforcing tight budget limits without over-pruning.
 
 ### 4.3 Relation-Shaped Edge Budgeting (Edge Density Throttle)
-To prevent dense subgraphs from causing token bloat, GraphGraph implements an **Edge Density Throttle** (`budget_edges`) within the retrieval pipeline. When the edge density exceeds a threshold (node-to-edge ratio $R_{ne} > 1.5$), the system prunes weak relation types and keeps the top edges by confidence-weighted utility. This keeps the edge count bounded and prevents edge-heavy token inflation. If a subgraph region is extremely dense such that throttled density still threatens to exceed 1.5, the throttle enforces the hard cap by dropping lower-ranked weak relations using the top-$T$ confidence utility ranking. If no weak edges remain to prune, the system dynamically scales down the expansion hop radius.
+To prevent dense subgraphs from causing token bloat, GraphGraph implements an **Edge Density Throttle** (`budget_edges`) within the retrieval pipeline. When the edge density exceeds a threshold (node-to-edge ratio $R_{ne} > 1.5$), the system prunes weak relation types and keeps the top edges by confidence-weighted utility, where per-edge utility combines the relation family's fixed traversal-strength weight, the edge's own extraction confidence, and a provenance-confidence multiplier that discounts weakly-sourced edges (e.g., regex-inferred text mentions at $0.45$) relative to parser-verified ones (e.g., Tree-sitter call/import edges at $0.95$). This keeps the edge count bounded and prevents edge-heavy token inflation. If a subgraph region is extremely dense such that throttled density still threatens to exceed 1.5, the throttle enforces the hard cap by dropping lower-ranked weak relations using the top-$T$ confidence utility ranking. If no weak edges remain to prune, the system dynamically scales down the expansion hop radius.
 
 ---
 
 ## 5. Serialization Layouts & Prompts
 
-Once the connected context subgraph $S$ is selected, it must be presented to the LLM. GraphGraph 2.0 supports two prompt serialization formats:
+Once the connected context subgraph $S$ is selected, it must be presented to the LLM. GraphGraph 2.0's serializer supports a broader family of packet formats, introspectable at runtime via `describe_formats` (including `gg_max`, `gg_lex`, `gg_max_hybrid`, `gg_lex_hybrid`, `sql`, `semantic_arrow`, `svo`, and `doc_summary`). The two structural formats central to this section are:
 
 * **Numeric format (`gg_max`):** Maps nodes to sequential integer indices. Edges are represented as compact numeric lists (e.g., `[e] 1 2 calls`).
 * **Lexical format (`gg_lex`):** Maps nodes to unique, readable 8-character lexical keys (e.g., `authserv` for `AuthService`). Edges are declared using these keys (e.g., `authserv tokensto calls`).
 
 Under numeric representation (`gg_max`), the LLM's attention heads must perform multiple hops to resolve relationships (first from the edge indices back to the node mapping block, and then from the mapping to the actual code text). This **Attention Indirection Penalty** introduces reasoning overhead.
 
-By utilizing 8-character lexical keys, **`gg_lex`** bypasses this penalty by aligning topological relationships with the model's natural language token priors. Additionally, BPE tokenizers frequently split numbers like `142` into multiple subword fragments depending on surrounding numbers, whereas alphabetical keys like `authserv` are tokenized as single, stable tokens, preserving boundary protection.
+By utilizing 8-character lexical keys, **`gg_lex`** aims to bypass this penalty by aligning topological relationships with the model's natural language token priors. Additionally, BPE tokenizers frequently split numbers like `142` into multiple subword fragments depending on surrounding numbers, whereas alphabetical keys like `authserv` are tokenized as single, stable tokens, preserving boundary protection. This argument is orthogonal to raw serialization length, and we are careful not to overstate it: empirically (Table 1, §7.1), `gg_lex` costs marginally *more* tokens than `gg_max` (3,928 vs. 3,462 on a 200-node/265-edge subgraph) because 8-character alphabetic keys are not, in general, shorter in raw characters than the short integers they replace. We therefore position `gg_lex` as a reasoning-quality option traded against a small token premium, not as an additional compression technique; the production planner still defaults to `gg_max` unless the calling agent explicitly opts into `gg_lex` for multi-hop reasoning fidelity.
 
 ### 5.1 Experimental Extension: Geodesic Spatial Bias Tensors
-For local, open-weight models (e.g., Llama-3-Instruct, DeepSeek-Coder) where attention mechanisms can be modified, GraphGraph bypasses text-based graph parsing entirely. It compiles the selected subgraph directly into a **Geodesic Spatial Bias Tensor** ($S \in \mathbb{R}^{|S| \times |S|}$) representing the shortest undirected geodesic path distance between selected nodes.
+GraphGraph 2.0 implements and ships the data-preparation half of this extension today: its `tensor` packet renderer runs an all-pairs BFS over the selected subgraph and emits the resulting **Geodesic Spatial Bias Tensor** ($S \in \mathbb{R}^{|S| \times |S|}$, shortest undirected geodesic path distance between selected nodes) as part of the packet text. What follows — actually injecting $S$ into a live Transformer's attention computation — is a proposed integration for local, open-weight models (e.g., Llama-3-Instruct, DeepSeek-Coder) whose attention mechanism the calling application can modify; GraphGraph itself does not load model weights or hook attention layers, and no such integration is implemented in the current codebase. We describe the design here as a proposal for downstream integrators, distinct from the text-serialization pipeline (§2–§5) that is fully implemented and measured in §7.
 
-We inject this matrix directly into the self-attention heads of the Transformer model during inference by adding an attention bias matrix $M$:
+A downstream integrator would inject this matrix directly into the self-attention heads of the Transformer model during inference by adding an attention bias matrix $M$:
 
 $$\text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{QK^T}{\sqrt{d_k}} + M\right)V$$
 
@@ -181,7 +192,7 @@ $$M_{ij} = \begin{cases} \gamma \cdot (k - S_{ij}) & \text{if } 0 \le S_{ij} \le
 Here, $k$ is the maximum propagation hop limit (typically $2$) and $\gamma > 0$ is a scaling factor. Under this formula, the self-distance is $S_{ii} = 0$, yielding the maximum positive attention boost of $\gamma \cdot k$ for self-attention. Adjacent nodes ($S_{ij} = 1$) receive a positive attention boost of $\gamma \cdot (k-1) > 0$, while nodes separated by more than $k$ hops are fully masked out ($M_{ij} = -\infty$). By setting $S_{ii} = 0$, the self-attention coefficient receives the maximum positive boost ($\gamma k$), maintaining high representation fidelity for local node declarations, while adjacent relationships scale downward as a function of geodesic distance. This hardcodes the codebase topology directly into the self-attention layer, allowing the GPU to process code pathways in parallel.
 
 ### 5.2 Schema Legend Pre-Conditioning
-To enable the LLM to interpret the compressed numeric and lexical formats, the Serializer prepends a compact schema legend (pre-conditioning header) at the top of the serialized prompt (under `[r]`). This maps short numeric or lexical relation keys to their semantic meaning (e.g., `1:calls`, `2:contains`), allowing the model to decode adjacency declarations without verbose inline repetitions.
+To enable the LLM to interpret the compressed numeric and lexical formats, the Serializer prepends a compact schema legend (pre-conditioning header) at the top of the serialized prompt (under `[r]`). This maps short numeric or lexical relation keys to their semantic meaning (e.g., `1:calls`, `2:contains`), allowing the model to decode adjacency declarations without verbose inline repetitions. The underlying relation ontology (introspectable via `describe_ontology`) defines over 30 typed relations spanning execution (`calls`), dependency (`imports`, `imports_from`, `uses`), dataflow (`reads`, `writes`, `data_flow`), hierarchy (`contains`, `field_of`), type semantics (`implements`, `type_of`, `returns`), control flow (`control_flow`, `control_dep`), validation (`tests`), document structure (`section_of`, `discusses`, `explains`), and decision-trace/governance relations (`used_input`, `applied_policy`, `constrained_by`) used to audit the planner's own choices. Each relation carries a fixed traversal-strength weight (§4.3), independent of the per-edge provenance-confidence multiplier applied at retrieval time.
 
 ---
 
@@ -189,9 +200,11 @@ To enable the LLM to interpret the compressed numeric and lexical formats, the S
 
 In contrast to prior memory frameworks that rely on expensive LLM calls to process changes, GraphGraph updates its state locally and deterministically. File saves trigger local file watch hooks that execute an incremental scan. Only dirty files are re-parsed via Tree-sitter. In-memory nodes and edges are updated in-place in the `.gg` binary file. Stale edges are pruned instantly via array pointer adjustments.
 
+Ingestion is multi-language by design. Symbol-level scanning (`depth=symbols`) uses per-language Tree-sitter frontends for Python, JavaScript, TypeScript/TSX, Go, Java, C, C++, C#, Rust, and Ruby, normalizing each language's concrete syntax tree into a common intermediate representation of call, import, and containment edges. A regex-based frontend provides degraded-but-functional coverage when a language's Tree-sitter grammar is unavailable, and file-level scanning falls back further to path/extension-based nodes for any text format; supported and installed frontends are introspectable at runtime via `describe_frontends`. This lets the same retrieval, budgeting, and serialization pipeline operate uniformly across polyglot repositories, consistent with the Flask (Python) and Express (JavaScript) case studies in §7.
+
 ### 6.1 Complexity and Scaling Analysis
 * **Ingestion & Scanning:** $O(|F| + |V| + |E|)$ where $|F|$ is the number of files scanned. Tree-sitter parsing is linear in file size. Building adjacency indexes takes $O(|V| + |E|)$ time.
-* **QS-PPR Centrality:** $O(I \cdot (|V| + |E|))$ per query, where $I$ is the number of power iterations (typically 20). Because flat-indexed array offsets are pre-computed, each iteration step is a single sequential pass over the transitions array, avoiding dictionary hashing overhead. At 20 iterations on a graph of 10,000 nodes and 40,000 edges, total PPR execution time is ~38ms. On 100,000 nodes and 400,000 edges, this scales to ~380ms.
+* **QS-PPR Centrality:** $O(I \cdot (|V| + |E|))$ per query, where $I$ is the number of power iterations (typically 20). Because flat-indexed array offsets are pre-computed, each iteration step is a single sequential pass over the transitions array, avoiding dictionary hashing overhead. This is linear in graph size at fixed $I$; we do not yet have a dedicated benchmark isolating flat-index PPR latency in isolation (§3.1), so we report the complexity bound here rather than restate an unverified absolute millisecond figure.
 * **Tree Knapsack DP Partitioning:** $O(|V_C| \cdot W_{\text{max}}^2)$ where $|V_C|$ is the number of candidate nodes in the expanded subgraph (typically $\le 200$), and $W_{\text{max}}$ is the bucketed token weight limit ($\le 100$). Since the candidate size is small, this execution takes $<1$ ms.
 * **Memory & Storage Footprint:** The binary `.gg` format compacts the graph, consuming approximately $120$ bytes per node and $8$ bytes per edge on disk. A repository of 100,000 nodes and 400,000 edges compiles to a $\approx 15$ MB binary file, easily loading in under 1 second.
 
@@ -207,15 +220,18 @@ We measured the token footprint of different graph serialization formats on a su
 | Serialization Format | Subgraph Nodes | Subgraph Edges | Total Tokens | Prompt Token Footprint |
 | :--- | :---: | :---: | :---: | :---: |
 | **`csr_arrays` (Tensor)** | 200 | 265 | **3,007** | **3,025** |
-| **`gg_max` (Numeric)** | 200 | 265 | **3,133** | **3,151** |
+| `low_level_adj` (untagged) | 200 | 265 | 3,133 | 3,151 |
+| **`gg_max` (Numeric, production default)** | 200 | 265 | **3,462** | **3,480** |
 | `relation_coded` | 200 | 265 | 3,673 | 3,691 |
 | `sql_rows` | 200 | 265 | 3,802 | 3,820 |
+| `semantic_arrow` | 200 | 265 | 3,924 | 3,942 |
+| `gg_lex` (Lexical) | 200 | 265 | 3,928 | 3,946 |
 | `markdown_compact` | 200 | 265 | 5,255 | 5,273 |
 | `json_minified` | 200 | 265 | 6,320 | 6,338 |
 | `json_pretty` | 200 | 265 | 12,374 | 12,392 |
 | `graphml` | 200 | 265 | 13,338 | 13,356 |
 
-*Finding: CSR arrays and numeric `gg_max` represent the absolute token floor, saving over 70% of prompt space compared to standard JSON or GraphML formats.*
+*Finding: CSR arrays and the untagged low-level adjacency format sit at the absolute token floor. The production `gg_max` format adds a small, deliberate schema overhead (a relation-code legend and a per-edge type tag) for self-description, costing ~10% more tokens than the bare floor while still remaining under 30% of JSON's footprint. `gg_lex` costs marginally more again than `gg_max` (~13.5%) since 8-character alphabetic keys are not, in general, shorter in raw characters than the short integers they replace — its case rests on attention-indirection and BPE-tokenization-stability grounds (§5), not raw compression. All compact formats save over 70% of prompt space compared to standard JSON or GraphML.*
 
 ### 7.2 Storage Backend Bake-Off
 We evaluated GraphGraph's binary serialization format (`.gg`) against standard file-based databases across 13 repositories:
@@ -243,7 +259,7 @@ We measured query latency on the loaded live graph (fresh cold start vs. cached 
 *Finding: While a single CLI invocation takes ~300ms (dominated by Python VM startup and disk read), the persistent MCP server paths run queries in 38 milliseconds, proving it is fast enough for real-time agent loops.*
 
 ### 7.4 Context Planning and Answerability
-We evaluated the Adaptive Context Planner on a 48-task deterministic evidence-containment benchmark. The tasks are generated programmatically from the graph structure: `direct_lookup` and `reverse_lookup` expect the top 3 adjacent call/import edges of a starting node, `subsystem_summary` and `blast_radius` expect the full 1-hop and 2-hop neighborhoods of the graph hub, and `multi_hop_path` expects a two-hop dependency chain. Each task is defined with a ground-truth "evidence target" (the minimal set of nodes and edges required to successfully locate the relevant context):
+We evaluated the Adaptive Context Planner on a 48-task deterministic evidence-containment benchmark. The tasks are generated programmatically from the graph structure: `direct_lookup` and `reverse_lookup` expect the top 3 adjacent call/import edges of a starting node, `subsystem_summary` and `blast_radius` expect the full 1-hop and 2-hop neighborhoods of the graph hub, and `multi_hop_path` expects a two-hop dependency chain. This covers the five topologically-defined query classes; the remaining two production classes, `doc_summary` and `negative_query`, deliberately bypass graph traversal (grounding in document sections, or checking for the absence of a relationship) and are not evaluated against this node/edge evidence-containment metric — extending containment-style evaluation to these classes is future work (§9). Each task is defined with a ground-truth "evidence target" (the minimal set of nodes and edges required to successfully locate the relevant context):
 
 | Planning Strategy | Evidence Containment / Answerability | Mean Token Size | Token Savings vs. Baseline |
 | :--- | :---: | :---: | :---: |
@@ -315,6 +331,7 @@ While GraphGraph 2.0 establishes a robust retrieval framework, several challenge
 1. **Downstream Live Model Evaluation:** The current evaluations measure evidence-containment (recall) and token footprints. While evidence containment is a necessary precondition, it does not guarantee code generation success. We plan to execute end-to-end task scoring (e.g. SWE-bench) to evaluate actual code-generation pass rates.
 2. **Benchmark Representation Dependency:** The benchmark tasks are structurally defined over the same graph representation used by GraphGraph, which guarantees high recall by construction. Future work will evaluate on human-annotated or SWE-bench style tasks where ground truth is independent of the retrieval representation.
 3. **Scaling to Ultra-Large Repositories:** On codebases exceeding 100,000 nodes, Personalized PageRank execution time increases. Although flat-indexed power iteration scales linearly, memory footprints will require partitioning the graph into isolated module clusters.
+4. **Non-Topological Query Classes:** `doc_summary` and `negative_query` (§2, §7.4) intentionally bypass graph traversal and are not covered by the evidence-containment benchmark. Extending a comparable ground-truth methodology to grounded-document and absence/isolation queries is left to future work.
 
 ---
 

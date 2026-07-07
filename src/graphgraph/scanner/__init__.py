@@ -1,6 +1,7 @@
 from .ast import extract_symbols
 from .core import scan_directory
 from .doc import DocumentInput, extract_document_context
+from .history import CommitRecord, extract_commit_history
 from .frontends import (
     ExtractionResult,
     Extractor,
@@ -18,6 +19,8 @@ __all__ = [
     "extract_symbols",
     "DocumentInput",
     "extract_document_context",
+    "CommitRecord",
+    "extract_commit_history",
     "FrontendCapability",
     "SourceFile",
     "ExtractionResult",

@@ -256,7 +256,7 @@ def render_tensor_array(graph: Graph, nodes: set[str], edges: list[Edge]) -> str
     nodes = _existing_nodes(graph, nodes)
     edges = _existing_edges(nodes, edges)
     node_to_idx = {node_id: i for i, node_id in enumerate(sorted(nodes))}
-    kinds = ["file", "module", "class", "function", "struct", "method", "concept", "section", "policy", "decision_trace"]
+    kinds = ["file", "module", "class", "function", "struct", "method", "concept", "section", "policy", "decision_trace", "commit"]
     kind_to_id = {k: i for i, k in enumerate(kinds)}
     
     relations = list(DEFAULT_RELATION_ORDER)

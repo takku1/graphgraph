@@ -151,6 +151,7 @@ TOOLS = [
                 "depth": {"type": "string", "enum": ["files", "symbols"], "description": "'files' (default): one node per file. 'symbols': adds native function/class/struct nodes with call/reference edges."},
                 "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"], "description": "Symbol extraction frontend for depth=symbols. auto prefers Tree-sitter when available."},
                 "docs": {"type": "boolean", "description": "Extract document sections and concept nodes from Markdown/RST/HTML/text."},
+                "history": {"type": "boolean", "description": "Link qualifying bug-fix commits (git log, regex-classified) to the files they touched via a 'fixes' edge. Opt-in; requires a git repo. Default: false."},
                 "incremental": {"type": "boolean", "description": "Enable hash-based incremental scanning. Defaults to true."},
             },
         },
@@ -399,6 +400,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     depth = str(args.get("depth") or "files")
     frontend = str(args.get("frontend") or "auto")
     docs = bool(args.get("docs", False))
+    history = bool(args.get("history", False))
     incremental = bool(args.get("incremental", True))
 
     status = scan_validated_graph(
@@ -411,6 +413,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         depth=depth,
         frontend=frontend,
         docs=docs,
+        history=history,
         incremental=incremental,
     )
     graph = status.graph

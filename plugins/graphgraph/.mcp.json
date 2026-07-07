@@ -1,17 +1,7 @@
 {
   "mcpServers": {
     "graphgraph": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--no-sync",
-        "--project",
-        "C:/Users/dcarn/aiprojects/graphgraph",
-        "graphgraph-mcp"
-      ],
-      "cwd": "C:/Users/dcarn/aiprojects/graphgraph",
-      "startup_timeout_sec": 20,
-      "tool_timeout_sec": 120
+      "command": "graphgraph-mcp"
     }
   }
 }
