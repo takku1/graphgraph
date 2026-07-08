@@ -1587,6 +1587,38 @@ N1,N2,1,0.9
             calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
             self.assertIn(("caller", "helper"), calls, f"bare unqualified call should still resolve: {calls}")
 
+    def test_tree_sitter_resolves_path_qualified_associated_function_calls(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        # Regression: found via real-world usage -- a struct's own
+        # associated function, called as `QuadPoly::from_uni(...)`, never
+        # showed a `calls` edge pointing at it, making an actively-used
+        # struct falsely read as isolated/dead by negative_query/
+        # reverse_lookup. Unlike `receiver.method(...)` (needs the
+        # receiver's type), `Type::function(...)` names its target
+        # explicitly and lexically -- it should resolve like a bare call,
+        # not be treated as unresolvable-qualified.
+        rs_text = (
+            "struct QuadPoly { a: i32 }\n"
+            "impl QuadPoly {\n"
+            "    fn from_uni(x: i32) -> QuadPoly { QuadPoly { a: x } }\n"
+            "}\n"
+            "fn integrate_rational_rothstein_trager() {\n"
+            "    let q = QuadPoly::from_uni(5);\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "integrate.rs"
+            f.write_text(rs_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(f, "integrate.rs", "integrate_rs", rs_text)], max_total_symbols=100,
+            )
+            calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
+            self.assertIn(
+                ("integrate_rational_rothstein_trager", "from_uni"), calls,
+                f"Type::function(...) associated call should resolve: {calls}",
+            )
+
     def test_tree_sitter_extractor_captures_additional_languages(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")

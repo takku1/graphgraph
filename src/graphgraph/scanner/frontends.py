@@ -777,6 +777,22 @@ _CALL_NODE_TYPES = {
 # Fields that hold the callee across the grammars above.
 _CALL_NAME_FIELDS = ("function", "name", "method")
 
+# Path/scope-qualified callee expressions -- Type::function(...) (Rust) or
+# Namespace::function(...) / Class::static_method(...) (C++) -- name a
+# lexically fixed target, unlike receiver.method(...) where the receiver's
+# *type* determines what's actually called. These are NOT treated as
+# "qualified" for resolution purposes: the trailing name (e.g. "from_uni" in
+# `QuadPoly::from_uni(...)`) is still safe to look up like a bare call.
+# Deliberately not extended to languages where static and instance member
+# access are structurally identical (Python's `attribute` covers both
+# `Class.method()` and `instance.method()`; same for C#/JS/Java `.`-access)
+# -- there the grammar gives no signal to split them safely, so those stay
+# qualified/unresolved.
+_PATH_QUALIFIED_CALL_TYPES = {
+    "scoped_identifier",   # Rust: Type::function(...), module::function(...)
+    "qualified_identifier",  # C++: Namespace::function(...), Class::static_method(...)
+}
+
 
 def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tuple[str, bool]]:
     """Return (callee_name, is_qualified) pairs for call sites in [start, end).
@@ -789,6 +805,13 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tu
     (Vec::splice) to unrelated same-named free functions elsewhere in the
     repo purely by identifier collision. Callers should not resolve
     qualified calls against the global free-function/method name index.
+
+    Path-qualified calls (``_PATH_QUALIFIED_CALL_TYPES``, e.g. Rust's
+    ``Type::function(...)``) are the exception: the target is named
+    explicitly in the source, not receiver-type-dependent, so they're
+    reported as NOT qualified -- otherwise a struct's own associated
+    functions (`QuadPoly::from_uni(...)`) would never show a `calls` edge
+    pointing at it, making an actively-used struct look isolated/dead.
     """
     names: set[tuple[str, bool]] = set()
     stack = [root]
@@ -815,7 +838,7 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tu
                     break
         if fn is None:
             continue
-        is_qualified = fn.type not in _NAME_NODE_TYPES
+        is_qualified = fn.type not in _NAME_NODE_TYPES and fn.type not in _PATH_QUALIFIED_CALL_TYPES
         name = _call_name(fn, text)
         if name:
             names.add((name, is_qualified))
