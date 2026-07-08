@@ -1,345 +1,241 @@
 # graphgraph
 
-`graphgraph` is a native context graph engine for LLM agents.
+A native context graph engine for LLM coding agents: scan a codebase into a
+compact graph, then retrieve exactly the nodes/edges a query needs as a
+token-efficient packet — instead of pasting whole files into context.
 
-The goal is to build, store, retrieve, compress, validate, and benchmark
-graph-shaped project context in the format an LLM can use with the least token
-waste and the least interpretation loss. GraphGraph owns this runtime path, and
-also interoperates with Graphify, code-review-graph, CSV, and other graph
-systems as import sources and comparison baselines.
+JSON and prose are high-level languages for context. `graphgraph` aims for
+the LLM equivalent of a compact instruction stream: stable node symbols,
+relation opcodes, local adjacency, and only the text a query actually needs.
 
-Current native pieces:
+## What it does
 
-- **Deterministic AST/Doc Scanning:** Builds topological dependency graphs in `.graphgraph/graph.gg` with **Import-Guided Disambiguation** (resolves ambiguous callable definitions using local module import stems).
-- **Personalized PageRank (PPR):** Context-contextual ranking of node relevance relative to search keyword anchors (teleportation vector matches lexical hits).
-- **Continuous KKT Budget Planning:** Dynamically calculates optimal node bounds using continuous Lagrangian/KKT stationarity, saving **14%+ tokens** with perfect answerability.
-- **Bellman MDP Traversal stopping:** Early-terminates spreading activation propagation when marginal relevance energy per token falls below `0.005`.
-- **Lessons Reflection Integration:** Injects past session reflections (`lessons.md`) directly into final prompt packets to ground the assistant.
-- **Native Binary Storage:** Compresses and persists full-fidelity graphs in `.gg` format.
-- **Agent Skill & Installer:** Streamlined registration via `graphgraph install` CLI utility.
-- **Repeatable Benchmarking:** In-tree integration checks (`promote_check.py`) evaluating recall, token calibration, and answerability limits.
+- **Scans** Python, JS/TS, Go, Rust, Java, C#, C/C++, Ruby, PHP, Kotlin,
+  Scala, and Swift into a symbol-level graph (functions/classes/structs +
+  calls/imports/contains edges), plus Markdown/RST/HTML doc structure.
+- **Retrieves** query-scoped packets via anchor discovery, personalized
+  PageRank, and continuous-budget planning — sized for the query, not the
+  whole repo.
+- **Updates incrementally** at three granularities: full rescan (hash-diffed
+  against a manifest), targeted `update`/`remove` for files you already know
+  changed (no directory walk, no hashing anything else — see
+  [Incremental updates](#incremental-updates)), and a fine-grained
+  operation-logged API (`add_node`/`expire_edge`/`expire_node`/`merge_node`)
+  for single-mutation edits.
+- **Interoperates** with Graphify, code-review-graph, CSV, and other graph
+  sources via `graphgraph ingest` — normalized into the same retrieval and
+  packet pipeline. Nothing outside `.graphgraph/` is read by default; external
+  graphs are only touched when you explicitly pass them to `ingest` or a
+  graph-path argument.
 
-Interop is part of the architecture, not a fallback wrapper. `graphgraph ingest
---input graphify-out/graph.json` normalizes outside graph data into the same
-retrieval and packet pipeline. Default graph discovery still uses native files
-under `.graphgraph/` so generated exports do not silently pollute scans;
-Graphify, code-review-graph, CSV, and other external graph shapes are passed
-explicitly to `ingest` or commands that accept a graph path.
+## Design bar
 
-Install, scan, `context`, query, and MCP default workflows do not invoke
-Graphify, code-review-graph, or other graph tools, and they do not read those
-generated export directories. Those systems are used only when the user
-explicitly imports a graph file or runs a benchmark/comparison route.
+Measured against five axes, in priority order:
 
-## Design Bar
+1. **Context quality** — retrieve the right nodes, edges, paths, and facts.
+2. **Token economy** — the smallest packet the model can still interpret.
+3. **Interpretation accuracy** — prove the model answers correctly *from the
+   packet*, not just that the packet is short.
+4. **Update cost** — refresh changed regions, not the whole graph.
+5. **Latency** — fast enough for a live agent edit/test loop.
 
-The project should compete with graph/context systems on five axes:
+## Install
 
-1. **Context quality**: retrieve the right nodes, edges, paths, and source facts.
-2. **Token economy**: emit the smallest packet the model can still interpret.
-3. **Interpretation accuracy**: prove the model answers correctly from the
-   packet, not merely that the packet is short.
-4. **Update cost**: incrementally refresh changed graph regions instead of
-   rebuilding everything.
-5. **Latency**: keep retrieval and packet rendering fast enough for agent loops.
-
-The low-level thesis is simple: JSON and prose are high-level languages for
-context. `graphgraph` is trying to find the LLM equivalent of a compact
-instruction stream: stable node symbols, relation opcodes, local adjacency, and
-only the semantic text needed for the query.
-
-## Installation & Setup
-
-You can install `graphgraph` using `uv` (recommended) or `pipx`. This is the
-single quickstart path for every supported client (Claude Code, Codex, Cursor,
-Gemini/Antigravity, and Claude Desktop) — three steps, then verify.
-
-### Step 1 — Install the package:
+Three steps: install the package, register it with your assistant, verify.
 
 ```powershell
-# Recommended (isolated env; if 'graphgraph' isn't found after, run: uv tool update-shell):
+# 1. Install (uv recommended; if 'graphgraph' isn't found after, run: uv tool update-shell)
 uv tool install .
+# alternatives: pipx install .   |   pip install -e .  (dev editable)
 
-# Alternatives:
-pipx install .
-pip install -e .  # Developer editable installation only
-```
-
-### Step 2 — Register with your AI assistant:
-
-```powershell
-# Register the skill + MCP server globally for your user profile
+# 2. Register the skill + MCP server (global, for your user profile)
 graphgraph install
+# or scope to this repo instead: graphgraph install --project
+# or target one client: --platform {codex, claude, cursor, gemini, antigravity, claude-desktop}
 
-# Or install into the current repository instead of your user profile:
-graphgraph install --project
-
-# Target a specific platform (choices: codex, claude, cursor, gemini,
-# antigravity, agy, all — "all" is the default). Each platform gets a working
-# MCP server registration (portable, no absolute paths baked in) plus, where
-# applicable, a skill/rules file:
-graphgraph install --project --platform codex
-graphgraph install --project --platform cursor
-graphgraph install --project --platform gemini    # also covers antigravity / agy
-graphgraph install --platform claude-desktop       # global-only; Claude Desktop has no project scope
-```
-
-### Step 3 — Verify:
-
-```powershell
+# 3. Verify
 graphgraph doctor
 ```
 
-This reports MCP registration status for every client above, plus environment/dependency health. If a client shows "not configured," it prints the exact `graphgraph install` command to fix it.
+`doctor` reports MCP registration status per client plus environment health,
+and prints the exact `graphgraph install` command to fix anything it finds
+"not configured."
 
-### Alternative: run without installing (`uv run`, NPX-style)
+<details>
+<summary>Run without installing, manual per-client MCP config, Codex plugin details</summary>
 
-If you're using `uv` and want to execute the CLI or MCP server directly without activating a virtual environment (similar to Node's `npx` / `npx -y` workflow):
+### Run without installing (`uv run`, npx-style)
 
 ```powershell
-# Run the scanner via uv run
 uv run --project <path-to-graphgraph> graphgraph scan --directory .
-
-# Run the MCP server via uv run
 uv run --project <path-to-graphgraph> graphgraph-mcp
 ```
 
----
+### Manual MCP configuration
 
-## Manual MCP Configuration (fallback / advanced)
+`graphgraph install` covers Claude Code, Claude Desktop, Codex, Cursor, and
+Gemini/Antigravity. Hand-edit only if you need a client it doesn't cover yet.
 
-`graphgraph install` (above) is the recommended path and covers Claude Code, Claude Desktop, Codex, Cursor, and Gemini/Antigravity. Use the snippets below only if you need to hand-edit a config, or you're using a client `graphgraph install` doesn't cover yet.
+**Cursor** (`Settings > Features > MCP > Add New MCP Server`) — name
+`graphgraph`, type `stdio`:
+- Command `uv`, args `run --project <path-to-graphgraph> graphgraph-mcp`, or
+- Command `<path-to-graphgraph>/.venv/Scripts/graphgraph-mcp.exe` directly.
 
-### Cursor
-`graphgraph install --platform cursor` already writes `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global) for you. To hand-edit instead (`Settings > Features > MCP > Add New MCP Server`):
-
-- **Name**: `graphgraph`
-- **Type**: `stdio`
-- **Command / Args Option (Recommended - `uv run` mode)**:
-  - **Command**: `uv`
-  - **Args**: `run --project <path-to-graphgraph> graphgraph-mcp`
-- **Command / Args Option (Alternative - Local Virtualenv)**:
-  - **Command**: `<path-to-graphgraph>/.venv/Scripts/graphgraph-mcp.exe`
-
-### Claude Desktop
-`graphgraph install --platform claude-desktop` already does this for you. To hand-edit `claude_desktop_config.json` instead (typically `%APPDATA%\Claude\claude_desktop_config.json`):
-
+**Claude Desktop** (`%APPDATA%\Claude\claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "graphgraph": {
-      "command": "uv",
-      "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"]
-    }
+    "graphgraph": { "command": "uv", "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"] }
   }
 }
 ```
 
-### Codex Plugin / Skill / MCP Configuration
-
-`graphgraph` also ships a repo-local Codex plugin wrapper in
-`plugins/graphgraph`. This does not replace the existing OpenAI or Gemini
-benchmark paths; it adds Codex as another installation surface.
-
-The plugin bundles:
-
-- `.codex-plugin/plugin.json`,
-- a Codex skill for structural codebase retrieval workflows,
-- a portable MCP server config (`{"command": "graphgraph-mcp"}` — no absolute
-  paths, works from any clone once the package is installed),
-- a repo marketplace entry at `.agents/plugins/marketplace.json`.
-
-Generate or refresh the repo-local Codex plugin with:
-
+**Codex plugin** — `graphgraph` ships a repo-local plugin at
+`plugins/graphgraph` (plugin manifest, skill, portable MCP config, marketplace
+entry). Generate/refresh it with:
 ```powershell
 graphgraph install --project --platform codex
-```
-
-To make the repo marketplace visible to Codex:
-
-```powershell
 codex plugin marketplace add <path-to-graphgraph>
 codex plugin add graphgraph@graphgraph-local
 ```
+Then start a Codex thread and ask a structural codebase question, or invoke
+`@graphgraph` directly. To pin the plugin to an uninstalled dev checkout
+instead of the installed console script, run
+`python scripts\configure_codex_plugin.py --repo-root <checkout>`.
 
-Then start a new Codex thread and ask for `@graphgraph`, or ask a structural
-codebase question and let Codex invoke the bundled skill/MCP server.
+</details>
 
-If you'd rather pin the plugin to an uninstalled dev checkout (`uv run
---project <path> graphgraph-mcp` instead of relying on the installed
-`graphgraph-mcp` console script), `python scripts\configure_codex_plugin.py
---repo-root <checkout>` rewrites `plugins/graphgraph/.mcp.json` into that
-pinned form — an optional dev-mode convenience, not a required repair step.
-
----
-
-## Usage Guide
-
-Once installed, the CLI tools `graphgraph` and `graphgraph-mcp` are added to your environment path.
-
-### 1. Build a Native Context Graph
-The scanner builds a symbol-level graph. With Tree-sitter installed, `--depth symbols` emits class/function/method/struct/enum/interface nodes (with `contains` edges) for Python, JavaScript/TypeScript, Go, Rust, Java, C#, C/C++, Ruby, PHP, Kotlin, Scala, and Swift. Files in languages without a symbol frontend fall back to file-level nodes. By default, scanning uses **incremental updates** to only parse changed files.
+## Quickstart
 
 ```powershell
-# Standard incremental scan
+# Build the graph (incremental by default: hash-diffs against a manifest)
 graphgraph scan --directory . --depth symbols --output .graphgraph/graph.gg
 
-# Scan using Tree-sitter frontend
-graphgraph scan --directory . --depth symbols --frontend tree_sitter --output .graphgraph/graph.gg
-
-# Force a full rebuild (disable incremental updates)
-graphgraph scan --directory . --depth symbols --no-incremental --output .graphgraph/graph.gg
-```
-
-### 2. Retrieve Context & Render Packets
-Retrieve relevant context packets from natural-language queries. This is the
-preferred agent workflow because GraphGraph discovers anchors before rendering
-the packet:
-
-```powershell
-# One-step workflow: build/load .graphgraph/graph.gg, discover anchors, render packet
+# Ask a question — discovers anchors and renders a packet in one step
 graphgraph context "what is the blast radius of auth changes" --query-class blast_radius --show-stats
-
-# Query an existing graph directly and show the resolved anchors
-graphgraph query "what is the blast radius of auth changes" --query-class blast_radius --show-anchors
-
-# Use final only when you already have confirmed node IDs
-graphgraph final --query-class blast_radius --starts src_graphgraph_cli_py
-
-# Optional stable prefix for prompt-cache workflows
-graphgraph final --stable-skeleton --max-nodes 120
 ```
 
-### 3. Profile Graph Shape
-Measure graph shape and inspect dynamic budget candidates without changing
-runtime defaults:
+## Incremental updates
+
+Three ways to keep the graph current, cheapest first:
+
+| You know... | Use | Cost |
+|---|---|---|
+| One exact fact changed (an edge is stale, merge two nodes) | `add_node`/`expire_edge`/`expire_node`/`merge_node` (Python API, `graph/operations.py`) | O(1) |
+| Exactly which files you just edited/deleted | `graphgraph update --files <path...>` / `graphgraph remove --files <path...>` | O(files named) |
+| Nothing — just rescan and let it figure out what changed | `graphgraph scan` (hash-diffed against the manifest) | O(repo size) |
+
+`update`/`remove` skip the directory walk and skip hashing anything you
+didn't name — every other tracked file is trusted from the manifest.
+Measured on a 41k-node/87k-edge real-world monorepo: a single-file `update`
+takes ~2s versus ~16s for a full incremental rescan of the same repo. Both
+require a prior `scan` (they splice into an existing graph) and fall back to
+a full rebuild automatically if the manifest is missing or stale.
 
 ```powershell
-graphgraph profile --graph .graphgraph/graph.gg
+# After editing these two files:
+graphgraph update --files src/auth/session.py src/auth/tokens.py --depth symbols
+
+# After deleting/renaming a file away:
+graphgraph remove --files src/auth/legacy.py --depth symbols
 ```
 
-### 4. Summarize Project Status
-Validate the active graph, report code/doc balance, inspect package metadata,
-and optionally run lightweight Python import/module probes. Probe mode compares
-raw checkout behavior with src-layout `PYTHONPATH=src` behavior and prints
-runtime notes when a package only works after that path fix:
+MCP equivalents: `update_graph_files` / `remove_graph_files`, same shape as
+`build_graph`. See `docs/incremental-update-instruction-set.md` for the full
+design (profiling data, prior-art survey, correctness notes).
 
-```powershell
-graphgraph status --probe
-graphgraph status --json
-```
+## Command reference
 
-### 5. Exporters & Validators
+| Command | Purpose |
+|---|---|
+| `scan` | Build/refresh the graph from a directory (hash-diffed incremental by default). |
+| `update` | Re-extract only the named files; splice into the existing graph. |
+| `remove` | Drop the named files from the existing graph. |
+| `context` | One-step: ensure a graph exists, discover anchors, render a packet. |
+| `query` | Discover anchors and render a packet from an existing graph only. |
+| `final` | Render a packet from confirmed node IDs (no anchor discovery). |
+| `snippets` | Bounded source excerpts for selected node IDs/labels/paths. |
+| `status` | Graph validity, code/doc balance, package metadata, optional runtime probes. |
+| `profile` | Graph shape and dynamic budget candidates. |
+| `validate` / `validate-graph` | Validate a rendered packet / a saved graph file. |
+| `ingest` | Normalize an external graph (Graphify, CSV, TSV, ...) into `.graphgraph/graph.gg`. |
+| `export` | Export the current graph to native binary `.gg`. |
+| `compare` | Diff two graph files by size, relation types, and overlap. |
+| `eval` | Retrieval recall and token cost against labeled tasks. |
+| `ontology` / `traversal` / `frontends` | List relation types / query-class traversal policies / extraction frontend availability. |
+| `doctor` | Full environment + MCP registration diagnostic. |
+| `cache` | Inspect or clear the topological KV packet cache. |
+| `install` | Register the skill + MCP server for a client. |
 
-```powershell
-# Export JSON or imported graph data to native binary .gg
-graphgraph export --graph graphify-out/graph.json --output .graphgraph/graph.gg
-
-# Validate a generated context packet
-Get-Content packet.txt | graphgraph validate
-```
-
----
+Run `graphgraph <command> --help` for full flags.
 
 ## Diagnostics
-
-Verify that your system toolchain, Python environment, optional dependencies,
-compiled graph data, local runtime probes, optional benchmark credentials, and
-MCP integrations are operational:
 
 ```powershell
 graphgraph doctor
 ```
 
----
+Checks toolchain, Python environment, optional dependencies, compiled graph
+data, local runtime probes, optional benchmark credentials, and MCP
+integrations.
 
-## Optional External Benchmark API Keys
+## Optional external benchmark API keys
 
-Normal `graphgraph` CLI, skill, and MCP workflows are local. They scan the
-workspace, compile graph packets, validate those packets, and let the active AI
-assistant use them as context. No OpenAI, Gemini, or other provider API key is
-required for that path.
+Normal scan/update/query/MCP workflows are entirely local — no API key
+required. Keys are only needed for the optional external model-answer
+benchmarks below, and `graphgraph` reads them from the OS credential store
+(via `keyring`) with an environment-variable fallback.
 
-API keys are only needed when you explicitly run optional external model-answer
-benchmarks (below). For those benchmark scripts, `graphgraph` supports reading keys
-securely from the Windows Credential Manager via the `keyring` library (with
-automatic fallback to environment variables).
+<details>
+<summary>Credential setup (Windows Credential Manager / keyring / env vars)</summary>
 
-### How to set up credentials:
-
-#### Option A: Set via Python CLI (Fastest)
-Run the following commands in your terminal to securely store your keys:
+**Fastest — via Python:**
 ```powershell
-# Store OpenAI API key
 python -c "import keyring; keyring.set_password('OpenAI', 'API_KEY', 'your-openai-api-key')"
-
-# Store Gemini API key
 python -c "import keyring; keyring.set_password('Gemini', 'API_KEY', 'your-gemini-api-key')"
 ```
 
-#### Option B: Set via Windows GUI
-1. Open the **Start Menu** and search for **Credential Manager**.
-2. Click on **Windows Credentials**.
-3. Click **Add a generic credential**.
-4. Set the fields:
-   - **Internet or network address**: `OpenAI` or `Gemini`
-   - **User name**: `API_KEY`
-   - **Password**: `your-api-key-here`
-5. Click **OK**.
+**Via Windows GUI:** Start Menu → Credential Manager → Windows Credentials →
+Add a generic credential → address `OpenAI` or `Gemini`, username `API_KEY`,
+password your key.
 
-#### Option C: Fallback Environment Variables
-If `keyring` is not installed or keys are not found in the Credential Manager, `graphgraph` will fall back to reading:
+**Fallback env vars**, used if `keyring` isn't installed or nothing is found:
 ```powershell
 $env:OPENAI_API_KEY="your-openai-key"
 $env:GEMINI_API_KEY="your-gemini-key"
 ```
 
----
+</details>
 
-## Benchmarks & Testing
+## Benchmarks & testing
 
-`graphgraph` has an extensive benchmark suite to measure context quality, token efficiency, and reasoning accuracy.
-
-### Run All Benchmarks
 ```powershell
-python benchmarks\context_graph\run_all.py
-```
-
-### Run Recall Evaluation
-```powershell
+python benchmarks\context_graph\run_all.py    # full benchmark suite
 graphgraph eval --graph .graphgraph/graph.gg --tasks benchmarks/context_graph/data/locus_tasks.json --max-nodes 40
+python -m pytest                              # unit tests
 ```
 
-### Run Unit Tests
-```powershell
-python -m pytest
-```
+## Import routes
 
----
-
-## Import Routes
-
-Import/align third-party graphs (e.g. from `graphify`) into the native context graph format:
 ```powershell
 graphgraph ingest --input graphify-out/graph.json --output .graphgraph/graph.gg
 ```
 
-External graph directories are not default runtime sources. After import,
-run normal commands against the native `.graphgraph/graph.gg` output.
-
-The unified graph contract is defined in [graph.schema.json](src/graphgraph/schema/graph.schema.json).
+External graph directories are never a default runtime source — only
+`ingest` and explicit graph-path arguments read them. Run normal commands
+against the resulting native `.graphgraph/graph.gg` afterward. The unified
+graph contract is defined in
+[graph.schema.json](src/graphgraph/schema/graph.schema.json).
 
 ## Documentation
 
-For deep-dives into the design and architectures:
-- `docs/architecture.md`
-- `docs/llm-native-context-graph.md`
-- `docs/runtime-context-graph.md`
-- `docs/relation-ontology.md`
-- `docs/source-layout.md`
-- `docs/interpretation-layer.md`
-- `docs/frontend-ir-strategy.md`
-- `docs/empirical-findings.md`
-- `docs/schema-alignment.md`
-- `docs/integration-surfaces.md`
-- `docs/graphgraph-vs-graphify.md`
+- `docs/architecture.md` — system architecture
+- `docs/llm-native-context-graph.md` / `docs/runtime-context-graph.md` — core design
+- `docs/incremental-update-instruction-set.md` — incremental update primitives, profiling, prior art
+- `docs/relation-ontology.md` — edge types and traversal weights
+- `docs/interpretation-layer.md` — algorithm/concept detection
+- `docs/frontend-ir-strategy.md` — extraction frontends (regex vs. tree-sitter)
+- `docs/source-layout.md` — repo layout
+- `docs/schema-alignment.md` / `docs/integration-surfaces.md` — external graph interop
+- `docs/empirical-findings.md` — benchmark results
+- `docs/graphgraph-vs-graphify.md` — how this compares to Graphify
