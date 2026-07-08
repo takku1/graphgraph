@@ -285,7 +285,17 @@ def load_gg_text(path: Path) -> Graph:
             if rest:
                 node_path = rest[0]
             nid = _label_to_id(label)
-            if nid in nodes and nodes[nid].label != label:
+            if nid in nodes:
+                # Rename on ANY collision, not just when labels differ.
+                # Two distinct nodes can legitimately share one label (e.g.
+                # two different "helper" functions in different files) --
+                # this format has no other qualifier per node line. Renaming
+                # only when labels differed used to let a same-labeled node
+                # silently overwrite the earlier one in `nodes`, discarding
+                # it entirely rather than just leaving edge attribution
+                # ambiguous (which is an inherent limit of a label-only
+                # legacy format, not fixable here without a real qualifier
+                # in pending_edges).
                 nid = f"{nid}_{len(nodes)}"
             nodes[nid] = Node(id=nid, label=label, kind=kind, path=node_path)
             current_label = label

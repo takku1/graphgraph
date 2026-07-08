@@ -52,6 +52,7 @@ from graphgraph.io import (
     load_any,
     load_csv_edges,
     load_gg,
+    load_gg_text,
     load_graph,
     load_policies,
     save_gg,
@@ -965,6 +966,27 @@ N1,N2,1,0.9
                 load_graph(path)
             self.assertIn("load_any", str(ctx.exception))
 
+    def test_load_gg_text_preserves_distinct_nodes_with_duplicate_labels(self) -> None:
+        # Regression: two distinct nodes sharing the exact same label (e.g.
+        # two different "helper" functions in different files -- this
+        # legacy text format has no other per-node qualifier) collided on
+        # the same sanitized id. The rename-on-collision guard only fired
+        # when labels *differed*, so a same-labeled node silently overwrote
+        # the earlier one in `nodes`, discarding it entirely.
+        text = (
+            "gg/1\n"
+            "helper [function] a.py\n"
+            "  calls other 1.0\n"
+            "helper [function] c.py\n"
+            "other [function] b.py\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "g.gg.txt"
+            path.write_text(text, encoding="utf-8")
+            graph = load_gg_text(path)
+            self.assertEqual(len(graph.nodes), 3)
+            paths = sorted(n.path for n in graph.nodes.values())
+            self.assertEqual(paths, ["a.py", "b.py", "c.py"])
 
     def test_terms_normalize_concepts_consistently(self) -> None:
         self.assertEqual(term_key("Token Store"), "token store")
