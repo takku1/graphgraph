@@ -428,6 +428,17 @@ class Graph:
             if max_nodes is not None:
                 available = max_nodes - len(included)
                 if available <= 0:
+                    # Budget's already spent, so no new node from this round
+                    # will be added -- but new_edges may still contain edges
+                    # discovered this round between two nodes that were
+                    # already included in an earlier round (e.g. a back-edge
+                    # found while expanding the frontier). Same catch-up the
+                    # `not scores` branch above already does; without it,
+                    # breaking here silently drops those intra-subgraph edges
+                    # from the packet.
+                    for edge in new_edges:
+                        if edge.source in included and edge.target in included:
+                            edge_list.append(edge)
                     break
                 ranked = ranked[:available]
 

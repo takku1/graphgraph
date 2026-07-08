@@ -126,6 +126,27 @@ class GraphGraphCoreTest(unittest.TestCase):
         self.assertEqual(nodes, {"N1", "N2"})
         self.assertEqual([(edge.source, edge.target, edge.type) for edge in edges], [("N1", "N2", "reads")])
 
+    def test_expand_keeps_same_round_edges_when_budget_exhausted_mid_round(self) -> None:
+        # Regression: when the node budget was hit while `scores` was still
+        # non-empty (new candidates were found, just no room left for them),
+        # expand() broke out of the loop *before* appending new_edges whose
+        # both endpoints were already included (e.g. a direct edge between
+        # two explicit start nodes) -- silently dropping a real
+        # intra-subgraph edge from the packet. Two starts already connected
+        # by an edge, with max_nodes equal to the start count (no room to
+        # expand further), reproduces this directly.
+        graph = Graph(
+            nodes={
+                "A": Node("A", "A", "function"),
+                "B": Node("B", "B", "function"),
+                "C": Node("C", "C", "function"),
+            },
+            edges=[Edge("A", "B", "calls"), Edge("A", "C", "calls")],
+        )
+        included, edges = graph.expand(starts=("A", "B"), hops=2, max_nodes=2)
+        self.assertEqual(included, {"A", "B"})
+        self.assertIn(("A", "B", "calls"), [(e.source, e.target, e.type) for e in edges])
+
     def test_expand_direction(self) -> None:
         graph = sample_graph()
         out_nodes, out_edges = graph.expand(["N2"], hops=1, direction="out")
