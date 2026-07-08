@@ -22,7 +22,35 @@ def _label_to_id(lbl: str) -> str:
 
 
 def load_graph(path: Path, *, normalize_external_refs: bool = False) -> Graph:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    """Load a graph from GraphGraph's legacy/interop JSON schema.
+
+    Despite the generic-sounding name, this is JSON-only. For a native
+    ``.gg``/``.ggb`` binary graph (or any file whose format you don't know
+    ahead of time), use ``load_any`` instead -- it dispatches on the file's
+    actual format. Calling this on a binary graph used to fail deep inside
+    ``json.loads`` with a raw ``UnicodeDecodeError``; it now fails fast here
+    with a message that says what to do instead.
+    """
+    if is_binary_gg(path):
+        raise ValueError(
+            f"{path} is a native .gg/.ggb binary graph, not JSON -- load_graph() only reads "
+            "GraphGraph's JSON schema. Use load_any() instead, which dispatches on the file's "
+            "actual format (.gg/.ggb binary, JSON, CSV, TSV)."
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"{path} is not valid UTF-8 text, so it can't be GraphGraph's JSON schema. "
+            "Use load_any() instead, which dispatches on the file's actual format."
+        ) from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{path} is not valid JSON, so it can't be GraphGraph's JSON graph schema. "
+            "Use load_any() instead, which dispatches on the file's actual format."
+        ) from exc
     nodes = {
         item["id"]: Node(
             id=item["id"],

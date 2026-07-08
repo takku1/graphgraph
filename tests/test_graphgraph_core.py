@@ -921,6 +921,29 @@ N1,N2,1,0.9
             self.assertIsNotNone(loaded._pagerank_cache)
             self.assertIn("N1", scores)
 
+    def test_load_graph_gives_clear_error_on_binary_gg_input(self) -> None:
+        # Regression: load_graph() is JSON-only despite the generic-sounding
+        # name; calling it on a .gg binary file used to fail deep inside
+        # json.loads() with a raw UnicodeDecodeError. It should fail fast
+        # with a message pointing at load_any() instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg"
+            save_gg(sample_graph(), path)
+            with self.assertRaises(ValueError) as ctx:
+                load_graph(path)
+            self.assertIn("load_any", str(ctx.exception))
+            # load_any() on the same file must actually work.
+            loaded = load_any(path)
+            self.assertEqual(set(loaded.nodes), set(sample_graph().nodes))
+
+    def test_load_graph_gives_clear_error_on_non_json_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.json"
+            path.write_text("not json at all", encoding="utf-8")
+            with self.assertRaises(ValueError) as ctx:
+                load_graph(path)
+            self.assertIn("load_any", str(ctx.exception))
+
 
     def test_terms_normalize_concepts_consistently(self) -> None:
         self.assertEqual(term_key("Token Store"), "token store")
