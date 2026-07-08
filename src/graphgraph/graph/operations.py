@@ -145,6 +145,15 @@ def merge_node(graph: Graph, source_id: str, target_id: str, reason: str = "") -
     )
     del nodes[source_id]
 
+    # Redirect any other node's parent reference the same way edges are
+    # redirected below -- source_id no longer exists, so leaving `parent`
+    # pointing at it would dangle. target_id is the surviving identity
+    # source_id was absorbed into, so that's the correct redirect target
+    # (same treatment as an edge whose source/target was source_id).
+    for nid, node in list(nodes.items()):
+        if node.parent == source_id:
+            nodes[nid] = replace(node, parent=target_id)
+
     edges: list[Edge] = []
     seen: set[tuple[str, str, str]] = set()
     for edge in graph.edges:

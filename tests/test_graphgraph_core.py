@@ -495,6 +495,22 @@ N1,N2,1,0.9
         self.assertNotIn("B", graph.nodes)
         self.assertEqual(graph.nodes["A"].facts, ("fact",))
 
+    def test_merge_node_redirects_dangling_parent_references(self) -> None:
+        # Regression: merge_node rewrote edges pointing at source_id but not
+        # Node.parent fields naming it, so a merged-away node's former
+        # children were left with a parent reference to a node that no
+        # longer exists in the graph.
+        graph = Graph(
+            nodes={
+                "A": Node("A", "A"),
+                "B": Node("B", "B"),
+                "CHILD": Node("CHILD", "child", parent="A"),
+            }
+        )
+        graph, _ = merge_node(graph, "A", "B", reason="dup")
+        self.assertNotIn("A", graph.nodes)
+        self.assertEqual(graph.nodes["CHILD"].parent, "B")
+
     def test_expire_node_soft_deletes_node_and_incident_edges(self) -> None:
         graph = Graph()
         graph, _ = add_node(graph, Node("A", "Alpha"))
