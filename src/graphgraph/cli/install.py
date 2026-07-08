@@ -42,8 +42,18 @@ def _mcp_server_config(project_root: Path | None) -> dict:
 
     When ``project_root`` is given, pin ``uv`` to that project (used for
     project-scoped configs like Codex plugins and Claude Code ``.mcp.json``).
-    When it is ``None`` (global install), use the installed ``graphgraph-mcp``
+    When it is ``None`` (global install), use the bare ``graphgraph-mcp``
     entry point so the server resolves from any working directory.
+
+    Note: ``uv run graphgraph-mcp`` (no ``--project``) is deliberately NOT
+    used here even when ``uv`` is on PATH. Without a pinned project, ``uv
+    run`` resolves an ephemeral environment from the nearest pyproject.toml
+    above the server's cwd (which for a global client config is unrelated to
+    graphgraph), not from whatever is on PATH -- confirmed to fail with
+    ``ModuleNotFoundError: No module named 'graphgraph'`` when invoked from a
+    directory outside this project. The bare command relies on the installed
+    console script being resolvable from PATH, the same convention used by
+    ``_codex_mcp_json`` below.
     """
     if project_root is not None:
         root = project_root.resolve().as_posix()
@@ -54,8 +64,6 @@ def _mcp_server_config(project_root: Path | None) -> dict:
             "startup_timeout_sec": 20,
             "tool_timeout_sec": 120,
         }
-    elif shutil.which("uv") is not None:
-        server = {"command": "uv", "args": ["run", "graphgraph-mcp"]}
     else:
         server = {"command": "graphgraph-mcp", "args": []}
     return {"mcpServers": {"graphgraph": server}}

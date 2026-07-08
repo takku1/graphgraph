@@ -276,6 +276,20 @@ _NOISE_NAMES = frozenset({
 _CALLABLE_KINDS = frozenset({"function", "method"})
 
 
+def _lang_family(path: str) -> str | None:
+    """Coarse language grouping derived from the file suffix's extractor.
+
+    Used to stop Pass 2/3 from linking a call site in one language to an
+    unrelated same-named definition in another (e.g. a Rust ``.as_deref()``
+    call resolving to an unrelated Python ``as_deref`` function elsewhere in
+    the repo). C/C++ header/source variants and JS/TS variants intentionally
+    share a family since they extractor-share and do legitimately call across
+    each other.
+    """
+    extractor = _EXTRACTORS.get(Path(path).suffix.lower())
+    return extractor.__name__ if extractor else None
+
+
 # ── public API ───────────────────────────────────────────────────────────────
 
 def extract_symbols(
@@ -375,6 +389,7 @@ def extract_symbols(
     callsite_pat = _callsite_pattern(callable_names)
     if callsite_pat:
         for file_nid, _rel, text, defs in file_defs:
+            src_lang = _lang_family(_rel)
             callable_defs = [d for d in defs if d.kind in _CALLABLE_KINDS]
             for idx, d in enumerate(callable_defs):
                 src_id = f"{file_nid}__{d.name}"
@@ -383,8 +398,13 @@ def extract_symbols(
                 for m in callsite_pat.finditer(body):
                     name = m.group(1)
                     for tgt_id in name_to_symbols.get(name, []):
-                        if tgt_id != src_id:
-                            symbol_edges.append(Edge(source=src_id, target=tgt_id, type="calls", weight=1.0, confidence=0.75, provenance="regex_ast"))
+                        if tgt_id == src_id:
+                            continue
+                        tgt_node = all_symbol_nodes.get(tgt_id)
+                        tgt_lang = _lang_family(tgt_node.path) if tgt_node else None
+                        if src_lang is not None and tgt_lang is not None and src_lang != tgt_lang:
+                            continue
+                        symbol_edges.append(Edge(source=src_id, target=tgt_id, type="calls", weight=1.0, confidence=0.75, provenance="regex_ast"))
 
     # Pass 3 — detect cross-file references (name appears in another file's text)
     # Build a set of external-symbol names per file to check against
@@ -393,15 +413,21 @@ def extract_symbols(
         call_pat = _call_pattern(all_names)
         if call_pat:
             for path, rel, file_nid, text in files:
+                src_lang = _lang_family(rel)
                 for m in call_pat.finditer(text):
                     name = m.group(0)
                     tgt_ids = name_to_symbols.get(name, [])
                     for tgt_id in tgt_ids:
                         # only add cross-file references
-                        if symbol_to_file.get(tgt_id) != file_nid:
-                            symbol_edges.append(
-                                Edge(source=file_nid, target=tgt_id, type="references", weight=0.5, confidence=0.45, provenance="regex_reference")
-                            )
+                        if symbol_to_file.get(tgt_id) == file_nid:
+                            continue
+                        tgt_node = all_symbol_nodes.get(tgt_id)
+                        tgt_lang = _lang_family(tgt_node.path) if tgt_node else None
+                        if src_lang is not None and tgt_lang is not None and src_lang != tgt_lang:
+                            continue
+                        symbol_edges.append(
+                            Edge(source=file_nid, target=tgt_id, type="references", weight=0.5, confidence=0.45, provenance="regex_reference")
+                        )
 
     # Deduplicate edges
     seen_edges: set[tuple[str, str, str]] = set()

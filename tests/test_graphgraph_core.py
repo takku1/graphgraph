@@ -1376,6 +1376,30 @@ N1,N2,1,0.9
                 calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
                 self.assertIn(expect, calls, f"missing cross-file call edge {expect}; got {calls}")
 
+    def test_tree_sitter_does_not_link_calls_across_languages(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        # Regression: found via a real-world scan where a Rust function's call
+        # to a std-library-style helper resolved to an unrelated C function of
+        # the same name in vendored test fixtures purely because it was the
+        # only "count" definition in the whole repo -- producing a nonsensical
+        # Rust-calls-C edge (`_add_tree_sitter_calls` in frontends.py).
+        rs_text = "pub fn examine() -> i32 { count() }\n"
+        c_text = "int count(void) { return 1; }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            rs = Path(tmp) / "shape.rs"
+            rs.write_text(rs_text, encoding="utf-8")
+            c = Path(tmp) / "vendor" / "common.h"
+            c.parent.mkdir(parents=True, exist_ok=True)
+            c.write_text(c_text, encoding="utf-8")
+            srcs = [
+                SourceFile(rs, "shape.rs", "shape_rs", rs_text),
+                SourceFile(c, "vendor/common.h", "vendor_common_h", c_text),
+            ]
+            result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
+            calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
+            self.assertNotIn(("examine", "count"), calls, f"found Rust->C cross-language call edge: {calls}")
+
     def test_tree_sitter_extractor_captures_additional_languages(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
@@ -2760,6 +2784,39 @@ Find the AuthService implementation.
             self.assertTrue(any(e.type == "calls" for e in edges))
             self.assertTrue(any(e.type == "implements" for e in edges))
 
+    def test_extract_symbols_does_not_link_calls_across_languages(self) -> None:
+        # Regression: a Rust call site invoking a std-library-style method
+        # (e.g. `.as_deref()`) must not resolve to an unrelated Python function
+        # of the same name elsewhere in the repo -- found via a real cross-repo
+        # scan where `crates/.../algorithm_shape.rs::examine` calls into
+        # `Option::as_deref()` and a vendored numpy test fixture happened to
+        # define an unrelated `def as_deref(expr):` at module scope, producing
+        # a nonsensical Rust-calls-Python edge purely from name collision.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rs = root / "shape.rs"
+            rs.write_text(
+                "pub fn examine(x: Option<String>) -> Option<&str> { x.as_deref() }\n",
+                encoding="utf-8",
+            )
+            py = root / "vendor" / "symbolic.py"
+            py.parent.mkdir(parents=True, exist_ok=True)
+            py.write_text("def as_deref(expr):\n    return expr\n", encoding="utf-8")
+            tuples = [
+                (rs, "shape.rs", "shape_rs", rs.read_text(encoding="utf-8")),
+                (py, "vendor/symbolic.py", "vendor_symbolic_py", py.read_text(encoding="utf-8")),
+            ]
+            nodes, edges = extract_symbols(tuples)
+            self.assertIn("examine", {n.label for n in nodes.values()})
+            self.assertIn("as_deref", {n.label for n in nodes.values()})
+            cross_lang = [
+                e
+                for e in edges
+                if e.type in ("calls", "references") and e.target == "vendor_symbolic_py__as_deref"
+            ]
+            self.assertEqual(
+                [], cross_lang, f"found Rust<->Python cross-language edges: {cross_lang}"
+            )
 
     # --- .gg roundtrip tests ---
 

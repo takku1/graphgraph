@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 from ..graph.core import Edge, Node
 from ..graph.operations import _dedupe_edges
-from .ast import extract_symbols
+from .ast import _lang_family, extract_symbols
 
 __all__ = [
     "FrontendCapability",
@@ -375,6 +375,18 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     return defs
 
 
+_NESTED_NAME_PARENT_TYPES = {
+    "type_declaration",
+    "lexical_declaration",
+    # C/C++ function_definition nests its identifier under a function_declarator
+    # (e.g. `int count(void) {...}` -> function_definition > function_declarator >
+    # identifier) rather than exposing a direct "name" field like Python/Rust/Java
+    # do. Without this, C/C++ function extraction silently finds zero symbols.
+    "function_definition",
+    "declaration",
+}
+
+
 def _name_node(node: Any) -> Any | None:
     try:
         named = node.child_by_field_name("name")
@@ -386,7 +398,7 @@ def _name_node(node: Any) -> Any | None:
         if child.type in _NAME_NODE_TYPES:
             return child
         nested = _name_node(child)
-        if nested is not None and node.type in {"type_declaration", "lexical_declaration"}:
+        if nested is not None and node.type in _NESTED_NAME_PARENT_TYPES:
             return nested
     return None
 
@@ -639,6 +651,7 @@ def _add_tree_sitter_calls(
                     if len(matching) == 1:
                         local_resolutions[name] = matching[0]
 
+        src_lang = _lang_family(source.rel)
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
         for d in callable_defs:
             src_id = f"{source.file_node_id}__{d.name}"
@@ -647,8 +660,13 @@ def _add_tree_sitter_calls(
             calls = _call_names_in_range(root, source.text.encode("utf-8", errors="replace"), d.start, d.end)
             for call in calls:
                 tgt_id = local_resolutions.get(call)
-                if tgt_id and tgt_id != src_id:
-                    edges.append(Edge(src_id, tgt_id, "calls", confidence=0.9, provenance="tree_sitter"))
+                if not tgt_id or tgt_id == src_id:
+                    continue
+                tgt_node = nodes.get(tgt_id)
+                tgt_lang = _lang_family(tgt_node.path) if tgt_node else None
+                if src_lang is not None and tgt_lang is not None and src_lang != tgt_lang:
+                    continue
+                edges.append(Edge(src_id, tgt_id, "calls", confidence=0.9, provenance="tree_sitter"))
 
 
 def _add_imports_from(
@@ -659,14 +677,19 @@ def _add_imports_from(
 ) -> None:
     for source, _defs, _root in defs_by_file:
         suffix = source.path.suffix.lower()
+        src_lang = _lang_family(source.rel)
         imported_names = _imported_symbol_names(suffix, source.text)
         imported_sources = _imported_symbol_sources(suffix, source.text)
-        
+
         for name in imported_names:
             targets = name_to_symbols.get(name, [])
             target = None
             if len(targets) == 1:
-                target = targets[0]
+                candidate = targets[0]
+                candidate_node = nodes.get(candidate)
+                candidate_lang = _lang_family(candidate_node.path) if candidate_node else None
+                if src_lang is None or candidate_lang is None or src_lang == candidate_lang:
+                    target = candidate
             elif len(targets) > 1:
                 # Disambiguate by matching import stem to target file stem
                 stem = imported_sources.get(name)
