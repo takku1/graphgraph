@@ -1437,6 +1437,58 @@ N1,N2,1,0.9
             calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
             self.assertNotIn(("examine", "count"), calls, f"found Rust->C cross-language call edge: {calls}")
 
+    def test_tree_sitter_does_not_link_qualified_method_calls_to_free_functions(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        # Regression: found via a real-world scan where `order.splice(...)`
+        # (a receiver.method(...) call -- here Vec::splice, a stdlib method)
+        # resolved to an unrelated private free function `fn splice(...)`
+        # elsewhere in the same crate, purely because "splice" was the only
+        # definition with that name in the repo. Resolving a qualified call
+        # needs the receiver's type, which this heuristic extractor doesn't
+        # have -- same bug class as the cross-language case above, but
+        # same-language/same-crate, so the language-family guard alone
+        # doesn't catch it (`_add_tree_sitter_calls` in frontends.py).
+        rs_text_a = (
+            "fn validate_schedule(order: &mut Vec<i32>) {\n"
+            "    let pos = 0;\n"
+            "    order.splice(pos..=pos, [1, 2, 3]);\n"
+            "}\n"
+        )
+        rs_text_b = "fn splice(x: i32) -> i32 {\n    x + 1\n}\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            a = Path(tmp) / "schedule_legality.rs"
+            a.write_text(rs_text_a, encoding="utf-8")
+            b = Path(tmp) / "evolution.rs"
+            b.write_text(rs_text_b, encoding="utf-8")
+            srcs = [
+                SourceFile(a, "schedule_legality.rs", "schedule_legality_rs", rs_text_a),
+                SourceFile(b, "evolution.rs", "evolution_rs", rs_text_b),
+            ]
+            result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
+            calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
+            self.assertNotIn(
+                ("validate_schedule", "splice"), calls,
+                f"found qualified-call-to-unrelated-free-function edge: {calls}",
+            )
+
+        # But a bare (unqualified) call to a globally-unique free function
+        # must still resolve -- the fix must not break the common case.
+        rs_text_c = "fn caller() -> i32 {\n    helper()\n}\n"
+        rs_text_d = "fn helper() -> i32 {\n    1\n}\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            c = Path(tmp) / "c.rs"
+            c.write_text(rs_text_c, encoding="utf-8")
+            d = Path(tmp) / "d.rs"
+            d.write_text(rs_text_d, encoding="utf-8")
+            srcs = [
+                SourceFile(c, "c.rs", "c_rs", rs_text_c),
+                SourceFile(d, "d.rs", "d_rs", rs_text_d),
+            ]
+            result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
+            calls = {(result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"}
+            self.assertIn(("caller", "helper"), calls, f"bare unqualified call should still resolve: {calls}")
+
     def test_tree_sitter_extractor_captures_additional_languages(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")

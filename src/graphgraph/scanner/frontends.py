@@ -658,7 +658,12 @@ def _add_tree_sitter_calls(
             if src_id not in nodes:
                 continue
             calls = _call_names_in_range(root, source.text.encode("utf-8", errors="replace"), d.start, d.end)
-            for call in calls:
+            for call, is_qualified in calls:
+                if is_qualified:
+                    # receiver.method(...) -- resolving needs the receiver's
+                    # type, which we don't have. Do not guess against the
+                    # global free-function/method name index.
+                    continue
                 tgt_id = local_resolutions.get(call)
                 if not tgt_id or tgt_id == src_id:
                     continue
@@ -773,8 +778,19 @@ _CALL_NODE_TYPES = {
 _CALL_NAME_FIELDS = ("function", "name", "method")
 
 
-def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[str]:
-    names: set[str] = set()
+def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tuple[str, bool]]:
+    """Return (callee_name, is_qualified) pairs for call sites in [start, end).
+
+    ``is_qualified`` is True for ``receiver.method(...)``-style calls (the
+    callee expression is a compound field/member access, not a bare
+    identifier) -- resolving those needs the receiver's *type*, which this
+    heuristic system doesn't have. Conflating them with bare ``name(...)``
+    calls previously matched stdlib/trait method calls like `order.splice()`
+    (Vec::splice) to unrelated same-named free functions elsewhere in the
+    repo purely by identifier collision. Callers should not resolve
+    qualified calls against the global free-function/method name index.
+    """
+    names: set[tuple[str, bool]] = set()
     stack = [root]
     while stack:
         node = stack.pop()
@@ -797,9 +813,12 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[st
                 if "argument" not in child.type:
                     fn = child
                     break
-        name = _call_name(fn, text) if fn is not None else ""
+        if fn is None:
+            continue
+        is_qualified = fn.type not in _NAME_NODE_TYPES
+        name = _call_name(fn, text)
         if name:
-            names.add(name)
+            names.add((name, is_qualified))
     return names
 
 
