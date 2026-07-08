@@ -14,7 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
 from ..graph.core import Graph
 from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
 from ..packets.validation import ValidationResult
-from ..scanner import scan_directory
+from ..scanner import remove_paths, scan_directory, update_paths
 from .context import render_query_context
 
 
@@ -81,6 +81,114 @@ def scan_validated_graph(
     )
     validation = save_validated_graph(graph, output_path)
     return GraphBuildStatus(output_path, graph, built=True, repaired=True, validation=validation)
+
+
+def _full_rescan_fallback(
+    *,
+    directory: Path,
+    output_path: Path,
+    max_nodes: int,
+    depth: str,
+    frontend: str,
+    docs: bool,
+    history: bool,
+) -> GraphBuildStatus:
+    """Repair path shared by update/remove: promote to a clean full rebuild.
+
+    Mirrors ``scan_validated_graph``'s own incremental-then-repair fallback --
+    if the targeted operation produced an invalid graph (e.g. the manifest
+    was stale relative to disk), a full non-incremental scan is the safety
+    net, same as it is for the ordinary incremental scan path.
+    """
+    graph = scan_directory(
+        directory,
+        max_nodes=max_nodes,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        history=history,
+        previous_graph_path=None,
+        manifest_path=output_path.parent / "manifest.json",
+    )
+    validation = save_validated_graph(graph, output_path)
+    return GraphBuildStatus(output_path, graph, built=True, repaired=True, validation=validation)
+
+
+def update_paths_validated_graph(
+    *,
+    directory: Path,
+    output_path: Path,
+    paths: list[str],
+    max_nodes: int = 2000,
+    depth: str = "symbols",
+    frontend: str = "auto",
+    docs: bool = False,
+    history: bool = False,
+) -> GraphBuildStatus:
+    """Re-extract exactly *paths* and splice into the existing graph.
+
+    Requires a prior ``scan_validated_graph``/``graphgraph scan`` run (needs
+    an existing graph + manifest at *output_path*). Falls back to a full
+    rebuild if that's missing or the result fails validation.
+    """
+    manifest_path = output_path.parent / "manifest.json"
+    try:
+        graph = update_paths(
+            directory,
+            paths,
+            max_nodes=max_nodes,
+            depth=depth,
+            frontend=frontend,
+            docs=docs,
+            history=history,
+            previous_graph_path=output_path,
+            manifest_path=manifest_path,
+        )
+        validation = save_validated_graph(graph, output_path)
+        return GraphBuildStatus(output_path, graph, built=True, repaired=False, validation=validation)
+    except ValueError:
+        return _full_rescan_fallback(
+            directory=directory, output_path=output_path, max_nodes=max_nodes,
+            depth=depth, frontend=frontend, docs=docs, history=history,
+        )
+
+
+def remove_paths_validated_graph(
+    *,
+    directory: Path,
+    output_path: Path,
+    paths: list[str],
+    max_nodes: int = 2000,
+    depth: str = "symbols",
+    frontend: str = "auto",
+    docs: bool = False,
+    history: bool = False,
+) -> GraphBuildStatus:
+    """Drop *paths* (deleted/renamed-away files) from the existing graph.
+
+    Requires a prior ``scan_validated_graph``/``graphgraph scan`` run. Falls
+    back to a full rebuild if that's missing or the result fails validation.
+    """
+    manifest_path = output_path.parent / "manifest.json"
+    try:
+        graph = remove_paths(
+            directory,
+            paths,
+            max_nodes=max_nodes,
+            depth=depth,
+            frontend=frontend,
+            docs=docs,
+            history=history,
+            previous_graph_path=output_path,
+            manifest_path=manifest_path,
+        )
+        validation = save_validated_graph(graph, output_path)
+        return GraphBuildStatus(output_path, graph, built=True, repaired=False, validation=validation)
+    except ValueError:
+        return _full_rescan_fallback(
+            directory=directory, output_path=output_path, max_nodes=max_nodes,
+            depth=depth, frontend=frontend, docs=docs, history=history,
+        )
 
 
 def ensure_native_graph(

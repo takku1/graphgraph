@@ -9,6 +9,7 @@ from .graph.operations import (
     add_policy_node,
     append_operation,
     expire_edge,
+    expire_node,
     merge_node,
     operation_from_json,
     operation_to_json,
@@ -20,7 +21,7 @@ from .packets.validation import ValidationResult, validate_packet
 from .planning import ContextPlan, PacketChoice, choose_packet, plan_context
 from .planning.policies import select_policies
 from .retrieval import Match, RetrievalResult, retrieve_context, search_nodes
-from .scanner import extract_symbols, scan_directory
+from .scanner import extract_symbols, remove_paths, scan_directory, update_paths
 
 __all__ = [
     "Edge",
@@ -45,6 +46,7 @@ __all__ = [
     "detect_interpretation_concepts",
     "extract_symbols",
     "expire_edge",
+    "expire_node",
     "interpretation_concept_id",
     "Match",
     "merge_node",
@@ -58,6 +60,8 @@ __all__ = [
     "render_sql",
     "retrieve_context",
     "scan_directory",
+    "update_paths",
+    "remove_paths",
     "search_nodes",
     "select_policies",
     "term_key",

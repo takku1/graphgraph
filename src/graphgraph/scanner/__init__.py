@@ -1,7 +1,6 @@
 from .ast import extract_symbols
-from .core import scan_directory
+from .core import remove_paths, scan_directory, update_paths
 from .doc import DocumentInput, extract_document_context
-from .history import CommitRecord, extract_commit_history
 from .frontends import (
     ExtractionResult,
     Extractor,
@@ -13,9 +12,12 @@ from .frontends import (
     select_extractor,
     tree_sitter_available,
 )
+from .history import CommitRecord, extract_commit_history
 
 __all__ = [
     "scan_directory",
+    "update_paths",
+    "remove_paths",
     "extract_symbols",
     "DocumentInput",
     "extract_document_context",

@@ -51,6 +51,20 @@ def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
     return dirty_files, churn_counts
 
 
+def _load_manifest_and_graph(manifest_path: Path | None, previous_graph_path: Path | None):
+    from ..io import load_any
+    from ..manifest import Manifest
+
+    manifest = Manifest.load(manifest_path) if manifest_path else None
+    previous_graph = None
+    if previous_graph_path and previous_graph_path.exists():
+        try:
+            previous_graph = load_any(previous_graph_path)
+        except Exception:
+            previous_graph = None
+    return manifest, previous_graph
+
+
 # ── main entry point ─────────────────────────────────────────────────────────
 
 def scan_directory(
@@ -71,6 +85,11 @@ def scan_directory(
 
     Handles: Python, JS/TS, Go, Rust, Java, C#, C/C++, Ruby,
              Markdown links, RST includes, HTML hrefs.
+
+    This is the full-discovery path: it walks the whole tree and hashes every
+    file to figure out what changed. For an agent loop that already knows
+    exactly which files it just edited, ``update_paths``/``remove_paths``
+    below skip that discovery entirely and are much cheaper on large repos.
     """
     root = root.resolve()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
@@ -87,24 +106,8 @@ def scan_directory(
         nid = node_id(f, root)
         file_map[rel] = nid
 
-    nodes: dict[str, Node] = {}
-    edges: list[Edge] = []
-    seen: set[tuple[str, str]] = set()
-
-    # Load manifest and previous graph if available and paths are provided
-    from ..io import load_any
-    from ..manifest import Manifest, compute_file_hash
-
-    manifest = None
-    previous_graph = None
-    if manifest_path:
-        manifest = Manifest.load(manifest_path)
-    if previous_graph_path:
-        if previous_graph_path.exists():
-            try:
-                previous_graph = load_any(previous_graph_path)
-            except Exception:
-                previous_graph = None
+    manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
+    from ..manifest import compute_file_hash
 
     skipped_files: list[tuple[Path, str, str]] = []
     dirty_files: list[tuple[Path, str, str]] = []
@@ -128,6 +131,211 @@ def scan_directory(
             dirty_files.append((f, rel, current_hash))
 
     active_rels = {f.relative_to(root).as_posix() for f in files}
+
+    return _build_graph_from_split(
+        root=root,
+        file_map=file_map,
+        dirty_files=dirty_files,
+        skipped_files=skipped_files,
+        active_rels=active_rels,
+        dirty_git=dirty_git,
+        churn_git=churn_git,
+        manifest=manifest,
+        previous_graph=previous_graph,
+        manifest_path=manifest_path,
+        max_nodes=max_nodes,
+        generic_mentions=generic_mentions,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        history=history,
+        max_history_commits=max_history_commits,
+    )
+
+
+def _normalize_rels(root: Path, paths: list[str] | list[Path]) -> set[str]:
+    rels: set[str] = set()
+    for p in paths:
+        p = Path(p)
+        p = p if p.is_absolute() else (root / p)
+        try:
+            rel = p.resolve().relative_to(root).as_posix()
+        except ValueError:
+            # Not under root; fall back to treating it as already-relative.
+            rel = Path(p).as_posix()
+        rels.add(rel)
+    return rels
+
+
+def update_paths(
+    root: Path,
+    paths: list[str],
+    max_nodes: int = 2000,
+    generic_mentions: bool = False,
+    depth: str = "symbols",
+    frontend: str = "auto",
+    docs: bool = False,
+    history: bool = False,
+    max_history_commits: int = 300,
+    previous_graph_path: Path | None = None,
+    manifest_path: Path | None = None,
+) -> Graph:
+    """Re-extract exactly *paths* and splice the result into the existing graph.
+
+    Unlike ``scan_directory``, this never walks the directory tree or hashes
+    any file the caller didn't name -- every other previously-tracked file is
+    trusted as unchanged and restored verbatim from the manifest + previous
+    graph. This is the primitive an edit/test/measure loop should call after
+    touching a known set of files: cost is proportional to ``len(paths)``,
+    not to repo size.
+
+    Requires an existing manifest and graph (run ``scan_directory`` once
+    first). A path that no longer exists on disk is treated as a removal.
+    """
+    root = root.resolve()
+    if not manifest_path or not previous_graph_path:
+        raise ValueError("update_paths requires manifest_path and previous_graph_path from a prior scan")
+    manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
+    if manifest is None or previous_graph is None:
+        raise ValueError(
+            f"no existing graph/manifest at {previous_graph_path} -- run scan_directory once before update_paths"
+        )
+
+    target_rels = _normalize_rels(root, paths)
+    existing_target_rels = {rel for rel in target_rels if (root / rel).exists()}
+    removed_target_rels = target_rels - existing_target_rels
+
+    known_rels = (set(manifest.files.keys()) | existing_target_rels) - removed_target_rels
+    active_rels = known_rels
+
+    from ..manifest import compute_file_hash
+
+    dirty_files: list[tuple[Path, str, str]] = []
+    for rel in existing_target_rels:
+        f = root / rel
+        dirty_files.append((f, rel, compute_file_hash(f)))
+
+    skipped_files: list[tuple[Path, str, str]] = []
+    for rel in active_rels - existing_target_rels:
+        info = manifest.get_file_info(rel)
+        file_hash = info.get("hash", "") if info else ""
+        skipped_files.append((root / rel, rel, file_hash))
+
+    file_map = {rel: node_id(root / rel, root) for rel in active_rels}
+    dirty_git, churn_git = _get_git_metadata(root)
+
+    return _build_graph_from_split(
+        root=root,
+        file_map=file_map,
+        dirty_files=dirty_files,
+        skipped_files=skipped_files,
+        active_rels=active_rels,
+        dirty_git=dirty_git,
+        churn_git=churn_git,
+        manifest=manifest,
+        previous_graph=previous_graph,
+        manifest_path=manifest_path,
+        max_nodes=max_nodes,
+        generic_mentions=generic_mentions,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        history=history,
+        max_history_commits=max_history_commits,
+        scope_concepts_to_dirty=True,
+    )
+
+
+def remove_paths(
+    root: Path,
+    paths: list[str],
+    max_nodes: int = 2000,
+    generic_mentions: bool = False,
+    depth: str = "symbols",
+    frontend: str = "auto",
+    docs: bool = False,
+    history: bool = False,
+    max_history_commits: int = 300,
+    previous_graph_path: Path | None = None,
+    manifest_path: Path | None = None,
+) -> Graph:
+    """Drop *paths* (deleted/renamed-away files) from the graph, no re-extraction.
+
+    Every node/edge owned by *paths* is dropped; everything else is restored
+    verbatim from the manifest + previous graph. No directory walk, no
+    hashing, no symbol extraction -- this is pure removal.
+    """
+    root = root.resolve()
+    if not manifest_path or not previous_graph_path:
+        raise ValueError("remove_paths requires manifest_path and previous_graph_path from a prior scan")
+    manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
+    if manifest is None or previous_graph is None:
+        raise ValueError(
+            f"no existing graph/manifest at {previous_graph_path} -- run scan_directory once before remove_paths"
+        )
+
+    target_rels = _normalize_rels(root, paths)
+    active_rels = set(manifest.files.keys()) - target_rels
+
+    skipped_files: list[tuple[Path, str, str]] = []
+    for rel in active_rels:
+        info = manifest.get_file_info(rel)
+        file_hash = info.get("hash", "") if info else ""
+        skipped_files.append((root / rel, rel, file_hash))
+
+    file_map = {rel: node_id(root / rel, root) for rel in active_rels}
+
+    return _build_graph_from_split(
+        root=root,
+        file_map=file_map,
+        dirty_files=[],
+        skipped_files=skipped_files,
+        active_rels=active_rels,
+        dirty_git=set(),
+        churn_git={},
+        manifest=manifest,
+        previous_graph=previous_graph,
+        manifest_path=manifest_path,
+        max_nodes=max_nodes,
+        generic_mentions=generic_mentions,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        history=history,
+        max_history_commits=max_history_commits,
+        scope_concepts_to_dirty=True,
+    )
+
+
+def _build_graph_from_split(
+    *,
+    root: Path,
+    file_map: dict[str, str],
+    dirty_files: list[tuple[Path, str, str]],
+    skipped_files: list[tuple[Path, str, str]],
+    active_rels: set[str],
+    dirty_git: set[str],
+    churn_git: dict[str, int],
+    manifest,
+    previous_graph,
+    manifest_path: Path | None,
+    max_nodes: int,
+    generic_mentions: bool,
+    depth: str,
+    frontend: str,
+    docs: bool,
+    history: bool,
+    max_history_commits: int,
+    scope_concepts_to_dirty: bool = False,
+) -> Graph:
+    """Shared body: given a dirty/skip split (however it was determined),
+    build the resulting Graph. Used by both the full-discovery
+    ``scan_directory`` and the targeted ``update_paths``/``remove_paths``.
+    """
+    nodes: dict[str, Node] = {}
+    edges: list[Edge] = []
+    seen: set[tuple[str, str]] = set()
+
     dirty_rels = {rel for _f, rel, _fhash in dirty_files}
 
     # Helper to determine owning file path of any node ID (for edge mapping)
@@ -157,6 +365,8 @@ def scan_directory(
     # rescanned below; those symbols must come from the current source text.
     for f, rel, fhash in skipped_files:
         info = manifest.get_file_info(rel)
+        if info is None:
+            continue
         for nid in info.get("nodes", []):
             if nid in previous_graph.nodes:
                 previous_node = previous_graph.nodes[nid]
@@ -308,9 +518,23 @@ def scan_directory(
                     existing.add(key)
                     edges.append(e)
 
+    # Interpretation-concept linking is a pure function of a node's own
+    # fields (label/kind/path/facts) -- deterministic and independent of
+    # other files. For the full-discovery scan it's cheap enough (relative
+    # to everything else) to just run over every node. For targeted
+    # update/remove on a large graph, only the dirty side needs it: a
+    # skipped node's concept edges were already captured in its owning
+    # file's manifest entry the last time it was dirty (via the
+    # endpoint_nodes side-channel below) and get restored through
+    # skipped_edges/nodes exactly like any other edge type.
+    concept_source_nodes = (
+        tuple(n for n in nodes.values() if n.path in dirty_rels)
+        if scope_concepts_to_dirty
+        else tuple(nodes.values())
+    )
     interpretation_nodes: dict[str, Node] = {}
     interpretation_edges: list[Edge] = []
-    for node in tuple(nodes.values()):
+    for node in concept_source_nodes:
         if node.kind in {"concept", "section", "markdown", "rst", "html", "text", "unknown", "commit"}:
             continue
         found_nodes, found_edges = link_source_interpretation_concepts(node, source_location=node.path)
@@ -363,12 +587,13 @@ def scan_directory(
                 nodes=file_nodes,
                 edges=file_edges,
             )
-        manifest.save(manifest_path)
+        if manifest_path is not None:
+            manifest.save(manifest_path)
 
     graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
     # Adjust confidence for edges using node centrality (degree) and visibility modifiers
     deg = graph.degree()
-    
+
     # Calculate max degree per node kind
     max_deg_by_kind = {}
     for nid, node in graph.nodes.items():
@@ -382,7 +607,7 @@ def scan_directory(
         tgt_node = graph.nodes.get(e.target)
         if tgt_node and tgt_node.kind not in {"file", "package", "concept", "section", "unknown"}:
             confidence_adj = 0.0
-            
+
             # 1. Centrality Boost (for explains/references/calls edges)
             if e.type in {"explains", "references", "calls"}:
                 kind = tgt_node.kind
@@ -390,13 +615,13 @@ def scan_directory(
                 node_deg = deg.get(e.target, 0)
                 # Boost up to +20% based on normalized degree centrality within the same kind
                 confidence_adj += 0.2 * (node_deg / max_kind_deg)
-                
+
             # 2. Visibility penalty
             if "modifier:private" in tgt_node.facts or "modifier:local" in tgt_node.facts:
                 confidence_adj -= 0.15
             elif "modifier:protected" in tgt_node.facts:
                 confidence_adj -= 0.05
-                
+
             new_conf = min(1.0, max(0.0, e.confidence + confidence_adj))
             adjusted_edges.append(
                 Edge(

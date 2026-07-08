@@ -71,64 +71,144 @@ correctly and cheaply (dirty-file extraction, `context_nodes` merging); it
 just currently always pays the "rediscover what changed" cost too, even when
 a caller could hand it the answer directly.
 
-## Proposed primitives
+## Correction: graphgraph already had half of this instruction set
 
-Two entry points, thin wrappers around machinery that already exists inside
-`scan_directory`:
+An earlier draft of this doc claimed "no add_node/remove_node exists on
+`Graph`." That was wrong — missed on first read. `graph/operations.py`
+already implements exactly the CRDT vocabulary above, as an append-only,
+operation-logged API over a single in-memory `Graph`:
 
-- **`update(paths)`** — caller asserts these specific files changed (or are
-  new). Skip `collect_files` entirely; skip hashing everything else. Load
-  the manifest + previous graph, restore every *other* tracked file's
-  nodes/edges verbatim (trusted, not re-verified), and run the existing
-  dirty-file pipeline (`extract_symbols(..., context_nodes=<restored>)`,
-  `add_file_edges`, doc/history/concept passes) scoped to only `paths`.
-- **`remove(paths)`** — caller asserts these files were deleted/renamed away.
-  Drop their nodes/edges from the manifest and restored set; no directory
-  walk, no re-extraction.
+| CRDT op | graphgraph function | Delete semantics |
+|---|---|---|
+| `addN` | `add_node(graph, node)` | — |
+| `addE` | `add_edge(graph, edge)` | — |
+| `rmvE` | `expire_edge(graph, src, tgt, type, valid_to, reason)` | soft: `active=False`, `valid_to` set |
+| `rmvN` | **was missing** — added below | — |
+| (compound) | `merge_node(graph, source_id, target_id)` | dedupes edges, drops source node |
 
-Both map onto the CRDT vocabulary above: `update` is "rmvN/rmvE for the old
-version of this file, then addN/addE for the new one"; `remove` is pure
-`rmvN`/`rmvE`. Node/edge identity is already stable (`Node.id`, and now
-`(source, target, type)` for edges via the new index), so "old version" is
-just "whatever the manifest last recorded for that path."
+Every op returns `(new_graph, GraphOperation)` and can be appended to a
+JSONL log via `append_operation`/`read_operations` for replay/audit. This is
+the right layer for *fine-grained, programmatic* graph mutation — e.g. an
+agent asserting "this specific edge is now stale" or recording a decision
+trace — independent of any source file on disk.
 
-To actually hit the "skip collect_files and the full concept pass" win, two
-things need to change beyond just adding a CLI flag:
+**Gap closed**: added `expire_node(graph, node_id, valid_to, reason,
+expire_incident_edges=True)` to `graph/operations.py`, mirroring
+`expire_edge`'s soft-delete convention exactly (mark inactive, don't erase,
+so the operation log stays a true history). Defaults to also expiring
+incident edges, since a live edge pointing at a dead node is a dangling
+reference. Exported through `graph/__init__.py` and the top-level
+`graphgraph` package, same as `expire_edge`.
 
-1. The dirty/skip split (`scan_directory` lines ~112-131) needs a mode where
-   the "skip" side is populated from `manifest.files.keys()` directly instead
-   of from a fresh `collect_files()` walk — i.e. trust the manifest's file
-   list rather than re-deriving it from disk, when the caller has explicitly
-   scoped the update to `paths`.
-2. The interpretation-concept pass (`link_source_interpretation_concepts`,
-   currently `for node in tuple(nodes.values())` — all nodes, every scan)
-   needs to scope to nodes belonging to `dirty_rels` plus whatever the
-   manifest already recorded as concept edges for skipped files (mirroring
-   how `skipped_edges` restoration already works for other edge types).
+## Two layers, not a duplication
 
-Both are targeted, low-risk changes to existing loops, not a rewrite --
-`scan_directory`'s dirty/skip architecture already has the right shape, it's
-just always fed "everything is dirty until proven otherwise" instead of
-"only `paths` is dirty, full stop."
+`update_paths`/`remove_paths` (below) operate at a **different granularity**
+than `graph/operations.py` and don't replace it:
+
+- **`graph/operations.py`** — single node/edge, soft-delete, caller supplies
+  the exact mutation. No filesystem involved. Right tool for "assert one
+  fact changed."
+- **`scanner/core.py` (`update_paths`/`remove_paths`)** — whole-file
+  granularity, hard delete via omission (matching `scan_directory`'s
+  existing convention: a file's stale nodes are never re-added, not marked
+  inactive), driven by re-reading source files from disk. Right tool for
+  "I edited/deleted these files, re-derive what's true from source."
+
+Both are legitimate "instruction set" members; they answer different
+questions ("what should this file's subgraph look like now" vs. "apply this
+one exact mutation").
+
+## Implemented: `update_paths(paths)` / `remove_paths(paths)`
+
+Shipped in `scanner/core.py`, exported from `graphgraph.scanner` and the
+top-level `graphgraph` package. Both require a prior `scan_directory` run
+(existing manifest + graph at the given paths) and raise `ValueError`
+otherwise; the CLI/MCP wrappers (`update_paths_validated_graph` /
+`remove_paths_validated_graph` in `services/native.py`) catch that and any
+validation failure, and fall back to a full `scan_directory` rebuild — the
+same repair philosophy `scan_validated_graph` already uses.
+
+- **`update_paths(root, paths, ...)`** — caller asserts these specific files
+  changed (or are new). No `collect_files` walk, no hashing of anything the
+  caller didn't name. Every other tracked file (read from
+  `manifest.files.keys()`, not rediscovered from disk) is restored verbatim.
+  A named path that no longer exists on disk is treated as an implicit
+  removal rather than erroring. Passes `scope_concepts_to_dirty=True` to
+  `_build_graph_from_split` (see below).
+- **`remove_paths(root, paths, ...)`** — caller asserts these files were
+  deleted/renamed away. No re-extraction at all: just drop their manifest
+  entries and let the restoration loop naturally omit them.
+- **`_build_graph_from_split(...)`** — the ~250-line body of what used to be
+  the tail of `scan_directory`, extracted so both the full-discovery path and
+  the two targeted primitives run the *exact same* extraction/manifest/
+  confidence-adjustment logic. This is what makes the correctness guarantee
+  possible: `update_paths` and `scan_directory` are provably doing the same
+  work on the dirty set, just arriving at that set differently.
+
+**Second win, scoping concept-linking**: `link_source_interpretation_concepts`
+is a pure function of a node's own fields (label/kind/path/facts) — it reads
+no other file's content. Its edges are already correctly attributed back to
+the originating file in manifest bookkeeping (via the `endpoint_nodes`
+side-channel: a `implements_algorithm` edge's source is the originating
+symbol, so `find_file_for_node(edge.source) == rel` already captures it into
+that file's manifest entry). So for a skipped file, its concept edges get
+restored through the *existing* `skipped_edges` mechanism — the exact same
+path already used for `calls`/`contains`/etc. — with zero new bookkeeping
+needed. `scope_concepts_to_dirty=True` (opt-in, only used by the targeted
+primitives, `scan_directory`'s default behavior is untouched) skips
+re-running concept detection on restored nodes and relies on that existing
+restoration instead. Verified with a dedicated test
+(`test_update_paths_preserves_concept_edges_for_untouched_files`) that an
+untouched file's concept edge survives a targeted update of a different file.
+
+### Measured end-to-end result (locus, 41,546 nodes / 87,325 edges)
+
+| Operation | Time | vs. original |
+|---|---|---|
+| No-op full rescan, before any fix | 86s | baseline |
+| No-op full rescan, after O(n²) fix | 15.7s | 5.5x |
+| `update_paths(['crates/locus-cli/src/main.rs'])` | **2.1s** (library call) / 6.2s (cold CLI process) | **~40x** |
+
+Correctness verified two ways: (1) synthetic cross-file-call test comparing
+`update_paths` output to a full rescan node-for-node and edge-for-edge
+(`test_update_paths_matches_full_rescan_including_cross_file_calls`); (2)
+direct run against the real locus graph, matching node/edge counts.
+
+### CLI / MCP surface
+
+- `graphgraph update --files <path...> [--directory D] [--output O] [--depth ...]`
+- `graphgraph remove --files <path...> [--directory D] [--output O] [--depth ...]`
+- MCP tools `update_graph_files` / `remove_graph_files`, same shape as
+  `build_graph`. All three (`update_paths`, `remove_paths`, `expire_node`)
+  have direct pytest coverage; the CLI and MCP paths were smoke-tested
+  end-to-end (real subprocess, real stdin/stdout JSON-RPC) against both a
+  synthetic repo and the real locus repo.
 
 ## Where this fits in the agent loop
 
 This directly answers the "add code, test, measure, read context graph"
-loop: after fixing the O(n²) bug, that loop is already viable for
-small-to-medium repos (a few seconds per rescan). The `update(paths)`
-primitive would make it viable for large monorepos with big vendored
-corpora (locus's 22k-file tree) by making rescan cost proportional to what
-the agent just edited, not to repo size. Correctness caveat carried over
-from every incremental indexer that does this (ctags, LSP, salsa alike):
-files *indirectly* affected by a change (e.g. a caller in an untouched file)
-won't get new edges until that file is itself scanned — acceptable for a
-tight edit-test loop, not a substitute for an occasional full rescan before
-a big blast-radius query.
+loop. After the O(n²) fix, a full rescan is viable for small-to-medium repos
+(seconds). `update_paths` makes it viable for large monorepos with big
+vendored corpora (locus's 22k-file tree): rescan cost is now proportional to
+what the agent just edited, not to repo size. Correctness caveat carried
+over from every incremental indexer that does this (ctags, LSP, salsa
+alike): files *indirectly* affected by a change (e.g. a caller in an
+untouched file) won't get new edges until that file is itself scanned —
+acceptable for a tight edit-test loop, not a substitute for an occasional
+full rescan before a big blast-radius query.
 
 ## Status
 
 - [x] O(n²) edge-lookup fix in `scan_directory` (shipped, verified 5.5x on
       locus, output-identical).
-- [ ] `update(paths)` / `remove(paths)` CLI + MCP primitives.
-- [ ] Manifest-sourced (not disk-walk-sourced) skip-file enumeration.
-- [ ] Scope the interpretation-concept pass to dirty files.
+- [x] `expire_node` added to `graph/operations.py` (missing `rmvN`).
+- [x] `update_paths(paths)` / `remove_paths(paths)` in `scanner/core.py`,
+      exported from the top-level package.
+- [x] Manifest-sourced (not disk-walk-sourced) skip-file enumeration for the
+      targeted primitives.
+- [x] Concept-linking pass scoped to dirty files for the targeted primitives
+      (default `scan_directory` behavior unchanged).
+- [x] CLI (`graphgraph update` / `graphgraph remove`) and MCP
+      (`update_graph_files` / `remove_graph_files`) wiring, with fallback to
+      a full rebuild on any validation failure.
+- [x] Measured end-to-end on locus: 86s -> 15.7s -> 2.1s.

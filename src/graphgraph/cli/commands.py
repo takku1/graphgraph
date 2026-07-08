@@ -24,7 +24,14 @@ from ..retrieval import apply_shape_budget
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from ..services import render_final_packet, render_query_context, render_source_snippets, render_stable_skeleton
 from ..services.context import resolve_start_nodes
-from ..services.native import build_project_status, graph_shape, render_native_context, scan_validated_graph
+from ..services.native import (
+    build_project_status,
+    graph_shape,
+    remove_paths_validated_graph,
+    render_native_context,
+    scan_validated_graph,
+    update_paths_validated_graph,
+)
 from .install import cmd_install as cmd_install
 
 
@@ -559,6 +566,51 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print()
         print("  Tip: run  graphgraph doctor  for a full environment check.")
 
+
+def cmd_update(args: argparse.Namespace) -> None:
+    root = Path(args.directory) if args.directory else Path(".")
+    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
+
+    status = update_paths_validated_graph(
+        directory=root,
+        output_path=output_path,
+        paths=args.files,
+        max_nodes=args.max_nodes,
+        depth=args.depth,
+        frontend=args.frontend,
+        docs=args.docs,
+        history=args.history,
+    )
+    graph = status.graph
+    validation = status.validation
+    assert validation is not None
+    print(f"Updated {len(args.files)} file(s), graph now {len(graph.nodes)} nodes, {len(graph.edges)} edges  ->  {output_path}")
+    print(f"  Validation   : PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
+    if status.repaired:
+        print("  Repair       : no prior graph/manifest (or targeted update was invalid); promoted a clean full rebuild")
+
+
+def cmd_remove(args: argparse.Namespace) -> None:
+    root = Path(args.directory) if args.directory else Path(".")
+    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
+
+    status = remove_paths_validated_graph(
+        directory=root,
+        output_path=output_path,
+        paths=args.files,
+        max_nodes=args.max_nodes,
+        depth=args.depth,
+        frontend=args.frontend,
+        docs=args.docs,
+        history=args.history,
+    )
+    graph = status.graph
+    validation = status.validation
+    assert validation is not None
+    print(f"Removed {len(args.files)} file(s), graph now {len(graph.nodes)} nodes, {len(graph.edges)} edges  ->  {output_path}")
+    print(f"  Validation   : PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
+    if status.repaired:
+        print("  Repair       : no prior graph/manifest (or removal was invalid); promoted a clean full rebuild")
 
 
 def cmd_ingest(args: argparse.Namespace) -> None:

@@ -15,11 +15,13 @@ from .commands import (
     cmd_plan,
     cmd_profile,
     cmd_query,
+    cmd_remove,
     cmd_render,
     cmd_scan,
     cmd_snippets,
     cmd_status,
     cmd_traversal,
+    cmd_update,
     cmd_validate,
     cmd_validate_graph,
 )
@@ -149,6 +151,39 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--incremental", action="store_true", default=True, help="Use hash-based incremental scanner (default: True).")
     scan.add_argument("--no-incremental", action="store_false", dest="incremental", help="Disable incremental scanning.")
     scan.set_defaults(func=cmd_scan)
+
+    update = sub.add_parser(
+        "update",
+        help="Re-extract exactly the given files and splice into the existing graph. "
+             "No directory walk, no hashing of untouched files -- cost scales with "
+             "--files, not repo size. Requires a prior 'scan'.",
+    )
+    update.add_argument("--files", nargs="+", required=True, metavar="PATH",
+                        help="File(s) that changed (relative to --directory or absolute).")
+    update.add_argument("--directory", "-d", help="Root directory (default: cwd).")
+    update.add_argument("--output", "-o", help="Existing graph path to update (default: .graphgraph/graph.gg).")
+    update.add_argument("--max-nodes", type=int, default=2000, help="Max symbols per file batch (default: 2000).")
+    update.add_argument("--depth", choices=["files", "symbols"], default="symbols")
+    update.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto")
+    update.add_argument("--docs", action="store_true", help="Extract document sections and concept nodes for doc files among --files.")
+    update.add_argument("--history", action="store_true", default=False)
+    update.set_defaults(func=cmd_update)
+
+    remove = sub.add_parser(
+        "remove",
+        help="Drop the given files (deleted/renamed away) from the existing graph. "
+             "No re-extraction, no directory walk. Requires a prior 'scan'.",
+    )
+    remove.add_argument("--files", nargs="+", required=True, metavar="PATH",
+                        help="File(s) that no longer exist (relative to --directory or absolute).")
+    remove.add_argument("--directory", "-d", help="Root directory (default: cwd).")
+    remove.add_argument("--output", "-o", help="Existing graph path to update (default: .graphgraph/graph.gg).")
+    remove.add_argument("--max-nodes", type=int, default=2000)
+    remove.add_argument("--depth", choices=["files", "symbols"], default="symbols")
+    remove.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto")
+    remove.add_argument("--docs", action="store_true")
+    remove.add_argument("--history", action="store_true", default=False)
+    remove.set_defaults(func=cmd_remove)
 
     ingest = sub.add_parser("ingest", help="Ingest any graph format (.gg, .ggb, .json, .csv, .tsv) into .graphgraph/graph.gg.")
     ingest.add_argument("--input", "-i", help="Input file (.gg, .json, .csv, .tsv). Auto-detected if omitted.")

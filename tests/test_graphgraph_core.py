@@ -23,13 +23,16 @@ from graphgraph import (
     append_operation,
     choose_packet,
     expire_edge,
+    expire_node,
     merge_node,
     operation_to_json,
     plan_context,
     policy_to_node,
     read_operations,
+    remove_paths,
     scan_directory,
     select_policies,
+    update_paths,
     validate_packet,
 )
 from graphgraph.ast_scanner import extract_symbols
@@ -469,6 +472,40 @@ N1,N2,1,0.9
         self.assertIn("A", graph.nodes)
         self.assertNotIn("B", graph.nodes)
         self.assertEqual(graph.nodes["A"].facts, ("fact",))
+
+    def test_expire_node_soft_deletes_node_and_incident_edges(self) -> None:
+        graph = Graph()
+        graph, _ = add_node(graph, Node("A", "Alpha"))
+        graph, _ = add_node(graph, Node("B", "Beta"))
+        graph, _ = add_node(graph, Node("C", "Gamma"))
+        graph, _ = add_edge(graph, Edge("A", "B", "calls"))
+        graph, _ = add_edge(graph, Edge("C", "A", "calls"))
+        graph, _ = add_edge(graph, Edge("B", "C", "calls"))  # unrelated to A
+
+        graph, op = expire_node(graph, "A", "2026-07-08T00:00:00Z", reason="file removed")
+        self.assertEqual(op.op, "ExpireNode")
+        self.assertEqual(op.target, "A")
+
+        # Node itself is soft-deleted, not removed -- still present, inactive.
+        self.assertIn("A", graph.nodes)
+        self.assertFalse(graph.nodes["A"].active)
+        self.assertEqual(graph.nodes["A"].updated_at, "2026-07-08T00:00:00Z")
+
+        by_key = {(e.source, e.target, e.type): e for e in graph.edges}
+        self.assertFalse(by_key[("A", "B", "calls")].active)
+        self.assertFalse(by_key[("C", "A", "calls")].active)
+        # Edge not touching A is untouched.
+        self.assertTrue(by_key[("B", "C", "calls")].active)
+
+    def test_expire_node_can_leave_incident_edges_untouched(self) -> None:
+        graph = Graph()
+        graph, _ = add_node(graph, Node("A", "Alpha"))
+        graph, _ = add_node(graph, Node("B", "Beta"))
+        graph, _ = add_edge(graph, Edge("A", "B", "calls"))
+
+        graph, _ = expire_node(graph, "A", "2026-07-08T00:00:00Z", expire_incident_edges=False)
+        self.assertFalse(graph.nodes["A"].active)
+        self.assertTrue(graph.edges[0].active)
 
     def test_operation_log_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1857,6 +1894,116 @@ N1,N2,1,0.9
             )
             result = validate_graph_json(graph_to_json(graph2))
             self.assertTrue(result.ok, result.errors)
+
+    def test_update_paths_matches_full_rescan_including_cross_file_calls(self) -> None:
+        def build_baseline(root: Path, graph_path: Path, manifest_path: Path) -> Graph:
+            (root / "a.py").write_text("def foo():\n    return bar()\n\ndef bar():\n    return 1\n", encoding="utf-8")
+            (root / "b.py").write_text("def baz():\n    return 2\n", encoding="utf-8")
+            graph = scan_directory(root, depth="symbols", previous_graph_path=None, manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+            return graph
+
+        with tempfile.TemporaryDirectory() as tmp_full:
+            root = Path(tmp_full)
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            build_baseline(root, graph_path, manifest_path)
+
+            # a.py now calls into b.py instead of its own bar().
+            (root / "a.py").write_text("def foo():\n    return baz()\n\ndef bar():\n    return 1\n", encoding="utf-8")
+            full = scan_directory(root, depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path)
+            full_nodes = sorted((n.label, n.path) for n in full.nodes.values())
+            full_edges = sorted((e.source, e.target, e.type) for e in full.edges)
+
+        with tempfile.TemporaryDirectory() as tmp_targeted:
+            root = Path(tmp_targeted)
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            build_baseline(root, graph_path, manifest_path)
+
+            (root / "a.py").write_text("def foo():\n    return baz()\n\ndef bar():\n    return 1\n", encoding="utf-8")
+            targeted = update_paths(root, ["a.py"], depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path)
+            targeted_nodes = sorted((n.label, n.path) for n in targeted.nodes.values())
+            targeted_edges = sorted((e.source, e.target, e.type) for e in targeted.edges)
+
+        self.assertEqual(full_nodes, targeted_nodes)
+        self.assertEqual(full_edges, targeted_edges)
+        # The cross-file call must actually be present, not just equal-and-empty.
+        self.assertIn(("a_py__foo", "b_py__baz", "calls"), targeted_edges)
+
+    def test_update_paths_preserves_concept_edges_for_untouched_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # b.py's function name matches a registered interpretation-layer
+            # concept alias, producing an "implements_algorithm" edge.
+            (root / "b.py").write_text("def dynamic_programming():\n    return 1\n", encoding="utf-8")
+            (root / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+
+            graph = scan_directory(root, depth="symbols", previous_graph_path=None, manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+            concept_edges_before = {
+                (e.source, e.target, e.type) for e in graph.edges if e.type == "implements_algorithm"
+            }
+            self.assertTrue(concept_edges_before, "fixture should produce at least one concept edge")
+
+            # Touch only a.py -- b.py is untouched and must keep its concept
+            # edge via manifest restoration, not fresh linking.
+            (root / "a.py").write_text("def foo():\n    return 2\n", encoding="utf-8")
+            targeted = update_paths(root, ["a.py"], depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path)
+            concept_edges_after = {
+                (e.source, e.target, e.type) for e in targeted.edges if e.type == "implements_algorithm"
+            }
+            self.assertEqual(concept_edges_before, concept_edges_after)
+
+    def test_update_paths_requires_prior_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(ValueError):
+                update_paths(
+                    root,
+                    ["a.py"],
+                    previous_graph_path=root / ".graphgraph" / "graph.json",
+                    manifest_path=root / ".graphgraph" / "manifest.json",
+                )
+
+    def test_update_paths_treats_missing_target_as_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+
+            graph = scan_directory(root, depth="symbols", previous_graph_path=None, manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+            self.assertTrue(any(n.path == "a.py" for n in graph.nodes.values()))
+
+            (root / "a.py").unlink()
+            result = update_paths(root, ["a.py"], depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path)
+            self.assertFalse(any(n.path == "a.py" for n in result.nodes.values()))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertNotIn("a.py", manifest["files"])
+
+    def test_remove_paths_drops_file_nodes_and_manifest_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.py").write_text("def foo():\n    return bar()\n\ndef bar():\n    return 1\n", encoding="utf-8")
+            (root / "b.py").write_text("def baz():\n    return 2\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+
+            graph = scan_directory(root, depth="symbols", previous_graph_path=None, manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+
+            result = remove_paths(root, ["b.py"], depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path)
+            self.assertFalse(any(n.path == "b.py" for n in result.nodes.values()))
+            self.assertTrue(any(n.path == "a.py" for n in result.nodes.values()))
+            # a.py's own internal structure survives untouched.
+            self.assertIn(("a_py__foo", "a_py__bar", "calls"), {(e.source, e.target, e.type) for e in result.edges})
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertNotIn("b.py", manifest["files"])
+            self.assertIn("a.py", manifest["files"])
 
     def test_retrieval_anchors_code_identifier_queries(self) -> None:
         graph = Graph(

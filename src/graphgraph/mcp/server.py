@@ -13,7 +13,12 @@ from ..packets.validation import validate_packet
 from ..planning import plan_context
 from ..retrieval import search_nodes
 from ..services import render_final_packet, render_query_context, render_source_snippets
-from ..services.native import build_project_status, scan_validated_graph
+from ..services.native import (
+    build_project_status,
+    remove_paths_validated_graph,
+    scan_validated_graph,
+    update_paths_validated_graph,
+)
 
 SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
 
@@ -157,6 +162,54 @@ TOOLS = [
         },
     },
     {
+        "name": "update_graph_files",
+        "description": (
+            "Re-extract exactly the given files and splice the result into the existing graph. "
+            "Unlike build_graph, this never walks the directory tree or hashes any file you didn't "
+            "name -- every other tracked file is trusted as unchanged and restored from the manifest. "
+            "Use this after editing a known set of files in an edit/test/measure loop: cost scales "
+            "with len(paths), not repo size (e.g. ~2s vs ~15s on a 40k-node graph in practice). "
+            "Requires a prior build_graph/scan run at output_path. A path that no longer exists on "
+            "disk is treated as a removal."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "File(s) that changed, relative to directory or absolute."},
+                "directory": {"type": "string", "description": "Directory root. Defaults to current working directory."},
+                "output_path": {"type": "string", "description": "Existing graph path to update. Defaults to .graphgraph/graph.gg."},
+                "max_nodes": {"type": "integer", "description": "Max symbols per file batch. Default: 2000."},
+                "depth": {"type": "string", "enum": ["files", "symbols"], "description": "Default: symbols."},
+                "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"]},
+                "docs": {"type": "boolean", "description": "Extract document sections/concepts for doc files among paths."},
+                "history": {"type": "boolean"},
+            },
+            "required": ["paths"],
+        },
+    },
+    {
+        "name": "remove_graph_files",
+        "description": (
+            "Drop the given files (deleted/renamed away) from the existing graph -- their nodes and "
+            "edges are removed, everything else is restored verbatim. No re-extraction, no directory "
+            "walk. Requires a prior build_graph/scan run at output_path."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "File(s) that no longer exist, relative to directory or absolute."},
+                "directory": {"type": "string", "description": "Directory root. Defaults to current working directory."},
+                "output_path": {"type": "string", "description": "Existing graph path to update. Defaults to .graphgraph/graph.gg."},
+                "max_nodes": {"type": "integer"},
+                "depth": {"type": "string", "enum": ["files", "symbols"]},
+                "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"]},
+                "docs": {"type": "boolean"},
+                "history": {"type": "boolean"},
+            },
+            "required": ["paths"],
+        },
+    },
+    {
         "name": "search_nodes",
         "description": (
             "Search nodes in a graph by label, path, or kind. Returns a list of matching node IDs "
@@ -281,6 +334,10 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(handle_source_snippets(args))
     if name == "build_graph":
         return content(handle_build_graph(args))
+    if name == "update_graph_files":
+        return content(handle_update_graph_files(args))
+    if name == "remove_graph_files":
+        return content(handle_remove_graph_files(args))
     if name == "search_nodes":
         return content(handle_search_nodes(args))
     if name == "export_graph":
@@ -422,6 +479,66 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     return json.dumps({
         "action": "scanned",
         "directory": str(directory.resolve()),
+        "output": str(output_path),
+        "nodes": len(graph.nodes),
+        "edges": len(graph.edges),
+        "repaired": status.repaired,
+        "validation": {"ok": validation.ok, "format": validation.format},
+    })
+
+
+def handle_update_graph_files(args: dict[str, Any]) -> str:
+    directory = Path(args.get("directory") or ".")
+    output_path = Path(args.get("output_path") or ".graphgraph/graph.gg")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    paths = [str(p) for p in args["paths"]]
+
+    status = update_paths_validated_graph(
+        directory=directory,
+        output_path=output_path,
+        paths=paths,
+        max_nodes=int(args.get("max_nodes") or 2000),
+        depth=str(args.get("depth") or "symbols"),
+        frontend=str(args.get("frontend") or "auto"),
+        docs=bool(args.get("docs", False)),
+        history=bool(args.get("history", False)),
+    )
+    graph = status.graph
+    validation = status.validation
+    assert validation is not None
+    return json.dumps({
+        "action": "updated",
+        "paths": paths,
+        "output": str(output_path),
+        "nodes": len(graph.nodes),
+        "edges": len(graph.edges),
+        "repaired": status.repaired,
+        "validation": {"ok": validation.ok, "format": validation.format},
+    })
+
+
+def handle_remove_graph_files(args: dict[str, Any]) -> str:
+    directory = Path(args.get("directory") or ".")
+    output_path = Path(args.get("output_path") or ".graphgraph/graph.gg")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    paths = [str(p) for p in args["paths"]]
+
+    status = remove_paths_validated_graph(
+        directory=directory,
+        output_path=output_path,
+        paths=paths,
+        max_nodes=int(args.get("max_nodes") or 2000),
+        depth=str(args.get("depth") or "symbols"),
+        frontend=str(args.get("frontend") or "auto"),
+        docs=bool(args.get("docs", False)),
+        history=bool(args.get("history", False)),
+    )
+    graph = status.graph
+    validation = status.validation
+    assert validation is not None
+    return json.dumps({
+        "action": "removed",
+        "paths": paths,
         "output": str(output_path),
         "nodes": len(graph.nodes),
         "edges": len(graph.edges),

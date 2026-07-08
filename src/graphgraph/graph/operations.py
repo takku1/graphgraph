@@ -89,6 +89,46 @@ def expire_edge(
     )
 
 
+def expire_node(
+    graph: Graph,
+    node_id: str,
+    valid_to: str,
+    reason: str = "",
+    expire_incident_edges: bool = True,
+) -> tuple[Graph, GraphOperation]:
+    """Soft-delete *node_id*: mark it inactive rather than removing it.
+
+    This is the missing symmetric counterpart to ``expire_edge`` -- the
+    "rmvN" half of the minimal add/remove-node/edge instruction set (see
+    ``docs/incremental-update-instruction-set.md``). Kept as a soft delete,
+    consistent with ``expire_edge``, so the operation log stays a true
+    append-only history: nothing is destroyed, `active=False` plus
+    `valid_to` records when and why it stopped being current.
+
+    By default also expires any edge touching this node (both directions),
+    since a "live" edge pointing at a dead node is a dangling reference that
+    would otherwise silently reappear in traversals that don't check
+    `active` on both endpoints.
+    """
+    nodes = dict(graph.nodes)
+    if node_id in nodes:
+        nodes[node_id] = replace(nodes[node_id], active=False, updated_at=valid_to)
+
+    edges = list(graph.edges)
+    if expire_incident_edges:
+        edges = [
+            replace(edge, active=False, valid_to=valid_to)
+            if (edge.source == node_id or edge.target == node_id) and edge.active
+            else edge
+            for edge in edges
+        ]
+
+    return (
+        Graph(nodes=nodes, edges=edges, metadata=dict(graph.metadata)),
+        GraphOperation("ExpireNode", node_id, timestamp=valid_to, reason=reason),
+    )
+
+
 def merge_node(graph: Graph, source_id: str, target_id: str, reason: str = "") -> tuple[Graph, GraphOperation]:
     if source_id not in graph.nodes or target_id not in graph.nodes:
         return Graph(nodes=dict(graph.nodes), edges=list(graph.edges), metadata=dict(graph.metadata)), GraphOperation("MergeEntity", source_id, reason=reason)
