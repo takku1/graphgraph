@@ -4093,6 +4093,27 @@ Find the AuthService implementation.
         )
         self.assertIn("ORPHAN", selected)
 
+    def test_tree_knapsack_handles_long_chain_without_recursion_error(self) -> None:
+        # Regression: both the dfs() post-order traversal and
+        # subtree_backtrack() were plain function recursion. A long
+        # dependency chain -- plausible in a real 2000-node graph -- exceeds
+        # Python's default recursion limit (~1000) and crashes with
+        # RecursionError. Confirmed this exact input crashes the old
+        # recursive implementation; both were converted to explicit-stack
+        # iteration.
+        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+        n = 1500
+        nodes = {f"n{i}": Node(f"n{i}", f"n{i}", "function") for i in range(n)}
+        edges = [Edge(f"n{i}", f"n{i + 1}", "calls") for i in range(n - 1)]
+        graph = Graph(nodes=nodes, edges=edges)
+        candidates = set(nodes.keys()) - {"n0"}
+        values = {nid: 1.0 for nid in candidates}
+
+        selected = tree_knapsack_context_partition(
+            graph, starts=("n0",), candidates=candidates, node_values=values, max_token_budget=2000,
+        )
+        self.assertGreater(len(selected), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

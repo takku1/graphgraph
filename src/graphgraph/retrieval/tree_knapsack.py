@@ -1,5 +1,5 @@
 import math
-from typing import Dict, List, Set, Tuple
+from typing import Dict, Iterator, List, Set, Tuple
 
 from ..graph.core import Graph
 
@@ -81,13 +81,27 @@ def tree_knapsack_context_partition(
     post_order: List[str] = []
     visited_dfs = set()
     
-    def dfs(u: str):
-        visited_dfs.add(u)
-        for v in tree.get(u, []):
-            if v not in visited_dfs:
-                dfs(v)
-        post_order.append(u)
-        
+    def dfs(root: str) -> None:
+        # Iterative post-order traversal (explicit stack of (node, child
+        # iterator) frames) rather than function recursion: a long
+        # dependency chain -- plausible in a 2000-node graph -- can exceed
+        # Python's default recursion limit (~1000) and crash with
+        # RecursionError.
+        visited_dfs.add(root)
+        stack: List[Tuple[str, Iterator[str]]] = [(root, iter(tree.get(root, [])))]
+        while stack:
+            node, children_iter = stack[-1]
+            advanced = False
+            for child in children_iter:
+                if child not in visited_dfs:
+                    visited_dfs.add(child)
+                    stack.append((child, iter(tree.get(child, []))))
+                    advanced = True
+                    break
+            if not advanced:
+                post_order.append(node)
+                stack.pop()
+
     for s in starts:
         if s in candidates and s not in visited_dfs:
             dfs(s)
@@ -195,63 +209,75 @@ def subtree_backtrack(
     dp: Dict[str, List[float]],
     selected: Set[str],
 ):
-    """Recursively reconstructs the selected nodes in the subtree of u."""
-    selected.add(u)
-    w_u = weights[u]
-    remaining_w = allocated_w - w_u
-    if remaining_w <= 0:
-        return
-        
-    children = tree.get(u, [])
-    if not children:
-        return
-        
-    # Standard DP backtrack over children merges
-    # We rebuild the state sequence to see which child took how much weight.
-    # dp_states[i][w] = value of merging first i children using weight w.
-    dp_states = []
-    curr_state = [0.0] * (remaining_w + 1)
-    
-    # Base state: u alone (0 child value)
-    dp_states.append(list(curr_state))
-    
-    for child in children:
-        if child not in dp:
+    """Reconstructs the selected nodes in the subtree of u.
+
+    Iterative (explicit worklist of pending (node, allocated_w) pairs)
+    rather than recursive: a long dependency chain -- plausible in a
+    2000-node graph -- can exceed Python's default recursion limit
+    (~1000) and crash with RecursionError. Each node's own DP-state
+    reconstruction is unchanged (it was already loop-based); only the
+    descent into children is converted from a recursive call to a stack
+    push processed by the same loop.
+    """
+    work: List[Tuple[str, int]] = [(u, allocated_w)]
+    while work:
+        node, node_allocated_w = work.pop()
+        selected.add(node)
+        w_node = weights[node]
+        remaining_w = node_allocated_w - w_node
+        if remaining_w <= 0:
             continue
-        c_table = dp[child]
-        next_state = list(curr_state)
-        for w in range(remaining_w + 1):
-            best = curr_state[w]
-            for w_c in range(w + 1):
-                if c_table[w_c] > 0 or w_c == 0:
-                    val = curr_state[w - w_c] + c_table[w_c]
-                    if val > best:
-                        best = val
-            next_state[w] = best
-        curr_state = next_state
+
+        children = tree.get(node, [])
+        if not children:
+            continue
+
+        # Standard DP backtrack over children merges
+        # We rebuild the state sequence to see which child took how much weight.
+        # dp_states[i][w] = value of merging first i children using weight w.
+        dp_states = []
+        curr_state = [0.0] * (remaining_w + 1)
+
+        # Base state: node alone (0 child value)
         dp_states.append(list(curr_state))
-        
-    # Reconstruct backwards
-    curr_w = remaining_w
-    for idx in range(len(children) - 1, -1, -1):
-        child = children[idx]
-        if child not in dp:
-            continue
-            
-        c_table = dp[child]
-        prev_state = dp_states[idx]
-        
-        # Find which w_c was used
-        best_w_c = 0
-        for w_c in range(curr_w + 1):
-            if c_table[w_c] > 0 or w_c == 0:
-                val = prev_state[curr_w - w_c] + c_table[w_c]
-                if abs(val - curr_state[curr_w]) < 1e-5:
-                    best_w_c = w_c
-                    break
-        
-        if best_w_c > 0:
-            subtree_backtrack(child, best_w_c, tree, weights, dp, selected)
-            curr_w -= best_w_c
-            
-        curr_state = prev_state
+
+        for child in children:
+            if child not in dp:
+                continue
+            c_table = dp[child]
+            next_state = list(curr_state)
+            for w in range(remaining_w + 1):
+                best = curr_state[w]
+                for w_c in range(w + 1):
+                    if c_table[w_c] > 0 or w_c == 0:
+                        val = curr_state[w - w_c] + c_table[w_c]
+                        if val > best:
+                            best = val
+                next_state[w] = best
+            curr_state = next_state
+            dp_states.append(list(curr_state))
+
+        # Reconstruct backwards
+        curr_w = remaining_w
+        for idx in range(len(children) - 1, -1, -1):
+            child = children[idx]
+            if child not in dp:
+                continue
+
+            c_table = dp[child]
+            prev_state = dp_states[idx]
+
+            # Find which w_c was used
+            best_w_c = 0
+            for w_c in range(curr_w + 1):
+                if c_table[w_c] > 0 or w_c == 0:
+                    val = prev_state[curr_w - w_c] + c_table[w_c]
+                    if abs(val - curr_state[curr_w]) < 1e-5:
+                        best_w_c = w_c
+                        break
+
+            if best_w_c > 0:
+                work.append((child, best_w_c))
+                curr_w -= best_w_c
+
+            curr_state = prev_state
