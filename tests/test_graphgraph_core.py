@@ -1374,6 +1374,22 @@ N1,N2,1,0.9
             included = {p.relative_to(root).as_posix() for p in collect_files(root, 100, include=frozenset({"build"}))}
             self.assertIn("game/build/README.md", included)
 
+    def test_collect_files_ignores_skip_listed_ancestor_directory_names(self) -> None:
+        # Regression: the skip check used to compare against path.parts (the
+        # *absolute* path), so a project checked out under e.g. ~/repos/foo
+        # or /tmp/anything -- both "repos" and "tmp" are skip-listed dir
+        # names -- silently yielded zero files with no warning, since every
+        # file's absolute path contains the skip-listed ancestor component.
+        from graphgraph.scanner.files import collect_files
+        with tempfile.TemporaryDirectory() as tmp:
+            # "repos" is in SKIP_DIRS; put it as an *ancestor* of root, not a
+            # subdirectory being scanned.
+            root = Path(tmp) / "repos" / "myproject"
+            root.mkdir(parents=True)
+            (root / "main.py").write_text("def foo(): pass\n", encoding="utf-8")
+            files = {p.relative_to(root).as_posix() for p in collect_files(root, 100)}
+            self.assertIn("main.py", files)
+
     def test_tree_sitter_extractor_captures_csharp_class_and_methods(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
@@ -1625,6 +1641,24 @@ N1,N2,1,0.9
         # Query with explicit dependency/import keywords: intent gate opens for external node
         matches_dep = search_nodes(graph, "urllib3 dependency", limit=2)
         self.assertEqual(matches_dep[0].node.id, "EXT")
+
+    def test_search_nodes_excludes_expired_nodes(self) -> None:
+        # Regression: _search_index iterated graph.nodes.values() with no
+        # active filter, unlike pagerank/expand/degree elsewhere in the
+        # system. A node soft-deleted via expire_node could still be
+        # returned as a top search hit, and expand() would then silently
+        # drop it as an anchor, producing an empty/degraded context packet.
+        graph = Graph(
+            nodes={
+                "A": Node("A", "quadpoly_solver", "function", "src/solver.py"),
+            }
+        )
+        matches = search_nodes(graph, "quadpoly_solver", limit=5)
+        self.assertEqual([m.node.id for m in matches], ["A"])
+
+        graph, _ = expire_node(graph, "A", "2026-07-08T00:00:00Z", reason="removed")
+        matches_after = search_nodes(graph, "quadpoly_solver", limit=5)
+        self.assertEqual(matches_after, ())
 
     def test_search_nodes_respects_scope(self) -> None:
         graph = Graph(
@@ -4024,6 +4058,40 @@ Find the AuthService implementation.
         self.assertIn("A", selected)
         self.assertIn("C", selected)
         self.assertNotIn("B", selected)
+
+    def test_build_bfs_tree_handles_start_node_outside_candidates(self) -> None:
+        # Regression: tree was pre-seeded with keys only for `candidates`, but
+        # BFS starts from `starts`. A start node not itself in candidates
+        # (e.g. an anchor that graph.expand() dropped for being inactive or
+        # out of scope) with a neighbor that IS a candidate raised KeyError
+        # on `tree[curr].append(...)`.
+        from graphgraph.retrieval.tree_knapsack import build_bfs_tree
+        graph = Graph(
+            nodes={"S": Node("S", "S"), "C1": Node("C1", "C1")},
+            edges=[Edge("S", "C1", "calls")],
+        )
+        tree = build_bfs_tree(graph, starts=("S",), candidates={"C1"})
+        self.assertEqual(tree.get("S"), ["C1"])
+
+    def test_tree_knapsack_selects_orphan_candidates(self) -> None:
+        # Regression: the orphan-detection loop marked every disconnected
+        # candidate as visited via dfs() *before* the code that was supposed
+        # to record them as roots ran, so `[nid for nid in candidates if nid
+        # not in visited_dfs]` was always empty. Each orphan's DP table was
+        # computed but it could never be selected at the top level.
+        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+        graph = Graph(
+            nodes={
+                "S": Node("S", "S"),
+                "ORPHAN": Node("ORPHAN", "orphan", "function", summary="x" * 200),
+            },
+            edges=[],  # ORPHAN is unreachable from S -- a disconnected component
+        )
+        selected = tree_knapsack_context_partition(
+            graph, starts=("S",), candidates={"ORPHAN"},
+            node_values={"ORPHAN": 100.0}, max_token_budget=4000,
+        )
+        self.assertIn("ORPHAN", selected)
 
 
 if __name__ == "__main__":

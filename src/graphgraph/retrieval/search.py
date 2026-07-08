@@ -331,6 +331,15 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
         return graph._search_index_cache[1]  # type: ignore[return-value]
     rows: list[SearchIndexRow] = []
     for node in graph.nodes.values():
+        if not node.active:
+            # Consistent with pagerank/expand/degree elsewhere in the graph:
+            # a soft-deleted (expire_node) node must not be searchable or
+            # chosen as an anchor. Previously this was the only place in the
+            # retrieval path that didn't filter on active, so a query could
+            # surface an expired node as a top hit and expand() would then
+            # silently drop it, producing an empty/degraded packet with no
+            # explanation of why.
+            continue
         haystack = node_search_text(node)
         norm_path = node.path.replace("\\", "/") if node.path else ""
         path_name = norm_path.rsplit("/", 1)[-1] if norm_path else ""

@@ -119,7 +119,11 @@ def collect_files(
     for path in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
         if not path.is_file():
             continue
-        parts = path.parts
+        # Only components *within* the scanned tree count against skip rules.
+        # Checking the absolute path's parts would skip everything whenever
+        # any ancestor directory (e.g. a checkout under ~/repos/myproject or
+        # /tmp/anything) happens to share a name with a skip-listed dir.
+        parts = path.relative_to(root).parts
         if any(
             part in skip
             or part.startswith("target")

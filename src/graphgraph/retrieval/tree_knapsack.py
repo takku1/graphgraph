@@ -32,7 +32,11 @@ def build_bfs_tree(
             neighbor = edge.target if edge.source == curr else edge.source
             if neighbor in candidates and neighbor not in visited:
                 visited.add(neighbor)
-                tree[curr].append(neighbor)
+                # setdefault, not tree[curr]: curr can be a start node that
+                # isn't itself in candidates (e.g. an inactive/out-of-scope
+                # anchor after graph.expand() drops it), so it may not have
+                # been pre-seeded as a key by the dict comprehension above.
+                tree.setdefault(curr, []).append(neighbor)
                 queue.append(neighbor)
                 
     return tree
@@ -87,12 +91,20 @@ def tree_knapsack_context_partition(
     for s in starts:
         if s in candidates and s not in visited_dfs:
             dfs(s)
-            
-    # Also visit any orphan candidates not reachable from starts just in case
+
+    # Also visit any orphan candidates not reachable from starts. Record each
+    # one as its own root *before* recursing -- dfs() marks the whole subtree
+    # visited immediately, so deriving "was this an orphan root" from
+    # visited_dfs afterward (as opposed to recording it up front) always
+    # comes back empty, silently making every disconnected component
+    # unselectable even though its DP table gets computed.
+    orphan_roots: List[str] = []
     for nid in candidates:
         if nid not in visited_dfs:
+            orphan_roots.append(nid)
             dfs(nid)
-            
+
+
     # Run DP bottom-up
     for u in post_order:
         w_u = weights[u]
@@ -130,7 +142,7 @@ def tree_knapsack_context_partition(
     # 4. Backtracking to extract the selected nodes
     # For a forest, we create a dummy root node connecting all trees.
     # But since starts are the roots, we can run a simple knapsack over the start roots.
-    roots = list(starts) + [nid for nid in candidates if nid not in visited_dfs]
+    roots = list(starts) + orphan_roots
     roots = [r for r in roots if r in dp]
     
     # Knapsack over roots
