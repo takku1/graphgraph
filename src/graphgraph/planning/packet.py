@@ -21,7 +21,13 @@ def choose_packet(query_class: str, query: str = "") -> PacketChoice:
     if query_class == "spreading_activation":
         return PacketChoice(2, "gg_max", "spreading activation leverages 2-step energy propagation; gg_max is the measured token floor")
     if query_class == "negative_query":
-        return PacketChoice(0, "semantic_arrow", "negative queries need anchor evidence without pulling unrelated edges")
+        # hops=1, not 0: at hops=0 the packet can never show connectivity
+        # evidence for *any* node regardless of the graph, so a query like
+        # "is X isolated/unused" always reads as isolated even when X has
+        # real callers -- confirmed on a real repo (an actively-called Rust
+        # struct read as fully isolated). 1 hop is enough to prove real
+        # usage exists while staying far short of a full expansion.
+        return PacketChoice(1, "semantic_arrow", "negative queries need 1-hop evidence to actually prove connectivity, not just anchor existence")
     return PacketChoice(2, "gg_max_hybrid", "unknown query class: conservative 2-hop gg_max_hybrid")
 
 

@@ -49,7 +49,11 @@ DEFAULT_NODE_BUDGETS = {
     "direct_lookup": 80,
     "reverse_lookup": 80,
     "multi_hop_path": 80,
-    "negative_query": 1,
+    # 8, not 1: a 1-node budget caps expansion back down to just the anchor
+    # even with hops=1, which would silently undo the point of raising hops
+    # (see choose_packet's negative_query branch). 8 is enough to surface
+    # real direct evidence of use without ballooning into a full expansion.
+    "negative_query": 8,
     "subsystem_summary": 120,
     "blast_radius": 120,
     "spreading_activation": 120,

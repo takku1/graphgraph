@@ -588,8 +588,10 @@ N1,N2,1,0.9
         self.assertEqual(choose_packet("subsystem_summary").packet, "gg_max")
         self.assertEqual(choose_packet("subsystem_summary", "README installation usage").packet, "doc_summary")
         self.assertEqual(choose_packet("doc_summary").packet, "doc_summary")
-        # negative/absence probes avoid pulling unrelated edges.
-        self.assertEqual(choose_packet("negative_query").hops, 0)
+        # negative/absence probes use 1 hop -- enough to prove real
+        # connectivity exists (see test_negative_query_surfaces_real_edges),
+        # while staying far short of a full expansion.
+        self.assertEqual(choose_packet("negative_query").hops, 1)
         self.assertEqual(choose_packet("negative_query").packet, "semantic_arrow")
         # unknown → conservative 2-hop gg_max_hybrid
         self.assertEqual(choose_packet("unknown_xyz").hops, 2)
@@ -817,6 +819,32 @@ N1,N2,1,0.9
         )
         result = retrieve_context(graph, "cache", "direct_lookup", hops=1)
         self.assertGreaterEqual(len(result.starts), 10)
+
+    def test_negative_query_surfaces_real_edges_instead_of_always_isolated(self) -> None:
+        # Regression: negative_query used hops=0 with a 1-node budget, so it
+        # could never show connectivity evidence for *any* node regardless
+        # of the graph -- a query like "is X isolated/unused" always read as
+        # isolated even when X has real callers. Confirmed on a real repo:
+        # an actively-called Rust struct (QuadPoly, used via its own
+        # associated function QuadPoly::from_uni(...)) read as fully
+        # isolated under negative_query. Using plan_context's own default
+        # resolution (not an explicit hops override) to exercise exactly
+        # what a real query hits.
+        graph = Graph(
+            nodes={
+                "QuadPoly": Node("QuadPoly", "QuadPoly", "struct", "src/integrate.rs"),
+                "from_uni": Node("from_uni", "from_uni", "function", "src/integrate.rs"),
+                "caller": Node("caller", "integrate_rational_rothstein_trager", "function", "src/integrate.rs"),
+            },
+            edges=[
+                Edge("caller", "from_uni", "calls"),
+                Edge("from_uni", "QuadPoly", "returns"),
+            ],
+        )
+        plan = plan_context("negative_query", "QuadPoly")
+        result = retrieve_context(graph, "QuadPoly", "negative_query", hops=plan.hops, max_nodes=plan.node_budget)
+        self.assertIn("QuadPoly", result.nodes)
+        self.assertTrue(result.edges, "negative_query should surface real connectivity evidence, not read as isolated")
 
     def test_blast_radius_reserves_immediate_anchor_callee_under_budget_pressure(self) -> None:
         graph = Graph(
@@ -2252,7 +2280,7 @@ N1,N2,1,0.9
         self.assertEqual(retrieval_node_budget("compile to runtime path", "multi_hop_path", None), 80)
         self.assertEqual(retrieval_node_budget("auth service", "blast_radius", None), 120)
         self.assertEqual(retrieval_node_budget("matrix subsystem", "subsystem_summary", None), 120)
-        self.assertEqual(retrieval_node_budget("missing auth service", "negative_query", None), 1)
+        self.assertEqual(retrieval_node_budget("missing auth service", "negative_query", None), 8)
         self.assertEqual(retrieval_node_budget("matrix transpose orthogonal symmetric square vector rules", "subsystem_summary", 40), 32)
         self.assertEqual(retrieval_node_budget("README installation usage", "subsystem_summary", 40), 12)
         self.assertEqual(retrieval_node_budget("README installation usage", "doc_summary", 40), 12)
