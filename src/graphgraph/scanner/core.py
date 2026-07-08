@@ -8,8 +8,8 @@ from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph, Node
 from .doc import DocumentInput, extract_document_context
 from .files import DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
-from .history import extract_commit_history
 from .frontends import SourceFile, select_extractor
+from .history import extract_commit_history
 from .imports import add_file_edges
 
 
@@ -143,6 +143,16 @@ def scan_directory(
     skipped_edges: list[tuple[str, str, str, Edge | None]] = []
     context_symbol_nodes: dict[str, Node] = {}
 
+    # Index previous edges once by (source, target, type) so restoring skipped
+    # files' edges is O(1) per lookup instead of a linear scan over the whole
+    # previous graph. On a large repo with mostly-unchanged files, that linear
+    # scan was effectively O(edges^2) -- e.g. ~87k edges made a no-op rescan
+    # of locus take over 80s here even though nothing had changed.
+    previous_edge_index: dict[tuple[str, str, str], Edge] = {}
+    if previous_graph is not None:
+        for pe in previous_graph.edges:
+            previous_edge_index.setdefault((pe.source, pe.target, pe.type), pe)
+
     # Load skipped nodes. Do not restore nodes owned by files that will be
     # rescanned below; those symbols must come from the current source text.
     for f, rel, fhash in skipped_files:
@@ -155,11 +165,7 @@ def scan_directory(
                     if _context_symbol_node(previous_node):
                         context_symbol_nodes[nid] = previous_node
         for src, tgt, etype in info.get("edges", []):
-            matching_edge = None
-            for pe in previous_graph.edges:
-                if pe.source == src and pe.target == tgt and pe.type == etype:
-                    matching_edge = pe
-                    break
+            matching_edge = previous_edge_index.get((src, tgt, etype))
             skipped_edges.append((src, tgt, etype, matching_edge))
 
     # Create file nodes for dirty files
