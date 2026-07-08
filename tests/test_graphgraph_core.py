@@ -1663,6 +1663,24 @@ N1,N2,1,0.9
         matches_dep = search_nodes(graph, "urllib3 dependency", limit=2)
         self.assertEqual(matches_dep[0].node.id, "EXT")
 
+    def test_search_nodes_exact_phrase_bonus_fires_through_stopwords(self) -> None:
+        # Regression: the query side tokenizes with stopwords removed
+        # (tokenize(query)), but label_term_sequence/label_exact_sequence
+        # (built in _search_index) keep them, since a label like
+        # "how to deploy" needs "how"/"to" to reconstruct its real sequence.
+        # A query that's an exact phrase match for such a label could never
+        # equal that stopword-preserving sequence, so the +36
+        # label_exact_terms bonus could never fire for any label containing
+        # a stopword.
+        graph = Graph(
+            nodes={
+                "A": Node("A", "how to deploy", "section", "docs/deploy.md"),
+            }
+        )
+        matches = search_nodes(graph, "how to deploy", limit=5)
+        self.assertEqual(len(matches), 1)
+        self.assertIn("label_exact_terms", matches[0].reasons)
+
     def test_search_nodes_excludes_expired_nodes(self) -> None:
         # Regression: _search_index iterated graph.nodes.values() with no
         # active filter, unlike pagerank/expand/degree elsewhere in the

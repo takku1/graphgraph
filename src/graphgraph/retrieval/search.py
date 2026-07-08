@@ -39,6 +39,14 @@ def search_nodes(
     terms = tokenize(query)
     if not terms:
         return ()
+    # label_term_sequence/label_exact_sequence (built in _search_index) keep
+    # stopwords, since a label like "how to deploy" needs "how"/"to" to
+    # reconstruct its real word sequence. `terms` above strips them, so a
+    # query that's an exact phrase match for such a label could never equal
+    # that sequence and the +36 label_exact_terms bonus could never fire.
+    # Keep a stopword-preserving variant of the query around just for that
+    # exact-sequence comparison.
+    terms_with_stopwords = tokenize(query, keep_stopwords=True)
     query_terms = set(terms)
     test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
     dependency_query = bool(query_terms & DEPENDENCY_QUERY_TERMS)
@@ -163,8 +171,11 @@ def search_nodes(
             ):
                 score += 12.0
                 reasons.append("basename_stem_exact")
-            if len(query_terms) >= 2:
-                if terms == label_term_sequence or terms == label_exact_sequence:
+            if len(query_terms) >= 2 or len(terms_with_stopwords) >= 2:
+                if (
+                    terms == label_term_sequence or terms == label_exact_sequence
+                    or terms_with_stopwords == label_term_sequence or terms_with_stopwords == label_exact_sequence
+                ):
                     score += 36.0
                     reasons.append("label_exact_terms")
                 elif query_terms <= label_terms:
@@ -173,7 +184,10 @@ def search_nodes(
                 elif len(query_terms & label_terms) >= 2:
                     score += 8.0 * (len(query_terms & label_terms) / len(query_terms))
                     reasons.append("label_multi_terms")
-                if terms == path_name_sequence or terms == path_name_exact_sequence:
+                if (
+                    terms == path_name_sequence or terms == path_name_exact_sequence
+                    or terms_with_stopwords == path_name_sequence or terms_with_stopwords == path_name_exact_sequence
+                ):
                     score += 24.0
                     reasons.append("basename_exact_terms")
                 elif query_terms <= path_name_terms:
