@@ -1,63 +1,78 @@
 # Systems Analogy: From Assembly/Hardware to LLM Attention Mechanics
 
-This document establishes a rigorous mapping between traditional low-level systems compilation (Assembly $\rightarrow$ Machine Code $\rightarrow$ Register/ALU execution) and next-generation LLM-native context retrieval (Markdown Context $\rightarrow$ Tensor Representation $\rightarrow$ Attention Mask/KV Cache execution).
+> **Status: conceptual framing, not an implementation claim.** Per
+> [`rigorous-framing.md`](rigorous-framing.md)'s rule ("write hypotheses
+> separately and label them as hypotheses"), this document is a teaching
+> analogy for *why* compact packet formats help, plus two forward-looking
+> ideas (§3, §4) that are **not implemented** in this codebase today. Section
+> markers below call out exactly what's real vs. aspirational — don't cite
+> §3 or §4 as describing current GraphGraph behavior.
+
+This document maps traditional low-level systems compilation (Assembly
+$\rightarrow$ Machine Code $\rightarrow$ Register/ALU execution) onto
+LLM-native context retrieval, to explain the reasoning behind compact packet
+formats. Everything the model actually receives is still plain text passed
+through the normal token stream — nothing here bypasses that.
 
 ---
 
-## 🗺️ The Compilation Stack Mapping
+## ⚡ 1. The Assembly vs. Binary Representation — **implemented**
 
-| Stack Layer | Traditional Systems | LLM-Native Context Graph |
-| :--- | :--- | :--- |
-| **High-Level Source** | C / C++ Source Code | raw Markdown, file listings, directory trees |
-| **Assembly (ASM)** | Text Mnemonics (e.g., `MOV EAX, [ESP+4]`) | Textual graph packets (e.g., `[n] 1 file.py [e] 1 2 contains`) |
-| **Binary/Machine Code** | Packed Opcode Bytes (e.g., `0x89 0x44 0x24 0x04`) | Compact CSR arrays, index pointer strings, high-entropy tokens |
-| **CPU Cache / Registers** | L1/L2 Cache, General Purpose Registers | **KV Cache** (Key-Value cache prefix-pinning) |
-| **CPU execution / ALU** | Hardwired pipelines executing micro-ops | **Attention Matrix Masking** (Softmax-weighted dot-products) |
-
----
-
-## ⚡ 1. The Assembly vs. Binary Representation
-
-In early LLM context engines, graphs were serialized as verbose JSON or prose. This is the equivalent of trying to execute a program by reading its assembly source code text line-by-line during runtime:
-* **The High-Level Overhead**: A markdown representation like `"File A.py contains Function B"` requires the LLM's transformer layers to perform lexical parsing, syntax resolution, and pointer-chasing across the attention window.
-* **The LLM Binary Format**: In GraphGraph, formats like `gg_max` or `semantic_arrow` act as context bytecodes. We assign static short integer indices to nodes, converting the text-chasing problem into a dense adjacency vector.
+Verbose JSON/Markdown context requires the model to do lexical parsing and
+pointer-chasing across the attention window for every request. GraphGraph's
+`gg_max`/`semantic_arrow`/`lowlevel` formats instead assign short integer
+indices to nodes and encode edges as compact adjacency tuples — a real,
+tested, benchmarked reduction in tokens-per-fact (see
+`docs/empirical-findings.md`). This part of the analogy describes actual
+code (`src/graphgraph/packets/renderers.py`).
 
 ---
 
-## 🧠 2. KV Cache as General Purpose Registers
+## 🧠 2. Packet Caching — **implemented, but not literally the model's KV cache**
 
-Just as a compiler optimizes execution loops by pinning active variables into high-speed CPU registers, a context engine optimizes inference latency by utilizing the **Transformer's KV Cache**:
-
-```
-[ Static Codebase Graph ]  ==> (Prefilled & pinned in global VRAM KV Cache)
-         +
-[ Ephemeral Session Diff ] ==> (Appended dynamically; fast incremental prefill)
-         +
-[ User Active Query ]      ==> (Fastest execution; zero recompilation of static code)
-```
-
-By keeping the static AST layer pre-loaded in VRAM as a read-only prefix, the compiler (context planner) avoids re-running the token-prefill phase on unchanged files, reducing processing latency.
+`TopologicalKVCache` (`src/graphgraph/runtime/cache.py`) is an
+application-side LRU cache of *rendered packet text*, keyed by graph state
+and query, with dependency-path hashing so a rescan only evicts entries
+whose actual source files changed. That's real and reduces redundant
+re-rendering work. What it is **not**: direct manipulation of a
+transformer's internal KV cache or VRAM. The practical connection is
+indirect — a stable, repeated text prefix makes it *possible* for an LLM
+provider's own prompt-caching feature to help, but GraphGraph does not pin
+anything into a model's attention mechanism itself.
 
 ---
 
-## 🎛️ 3. Direct Attention Masking: Context-as-Hardware
+## 🎛️ 3. Direct Attention Masking — **hypothesis, not implemented**
 
-The ultimate goal of translating "hardware instructions" to LLM context is **bypassing the text token stream entirely**. Instead of feeding text representation to the model, we compile the retrieved sub-graph directly into the GPU attention layers:
+The idea: instead of serializing a geodesic-distance ("spatial bias") matrix
+as text for the model to read, inject it directly into the attention
+computation ($\text{Softmax}(QK^T/\sqrt{d_k} + S)V$) so the graph shape
+steers attention without ever being read as tokens.
 
-$$\text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{QK^T}{\sqrt{d_k}} + S\right)V$$
-
-Where:
-* **$QK^T$**: The model's semantic similarity query-key dot-product.
-* **$S \in \mathbb{R}^{N \times N}$**: The **Spatial Bias Tensor** representing graph geodesic distances.
-
-### The Hardware Translation:
-If `Class A` calls `Function B`, the geodesic distance is $1$. The spatial bias tensor injects a positive bias $S_{A,B}$ directly into the attention matrix. During GPU execution, the attention heads are physically guided along the code pathway without ever reading the words *"Class A calls Function B"*. The graph shape is hardcoded directly into the attention mechanism.
+What actually exists today is `render_tensor_array` /
+`tensor_spatial_bias` (`src/graphgraph/packets/renderers.py`): a real
+all-pairs BFS shortest-path matrix, computed correctly — but **serialized as
+plain-text numbers in a packet**, tokenized and read by the model through
+the ordinary attention mechanism like every other format. There is no code
+path in this repo that touches attention weights, KV-cache internals, or GPU
+execution directly; doing so would also require inference-server-level
+access this project doesn't have. Treat this section as a research
+direction, not a description of what `render_tensor_array` does.
 
 ---
 
-## ⚙️ 4. Demand Paging & Context Page Faults
+## ⚙️ 4. Demand Paging — **partially real, partially hypothesis**
 
-When a codebase is larger than the model's context window limit (e.g., $10^7$ tokens), we encounter a **Context Page Fault**:
-1. **LRU Page Replacement**: The Personalized PageRank (PPR) scoring serves as the virtual page table.
-2. **Page Fault Resolution**: As the developer navigates the session, the hot path swaps active code modules (pages) into the active context window, discarding stale modules using keystroke-decayed half-life weighting:
-   $$W(t) = W_0 \cdot 2^{-\frac{\Delta t}{\lambda}}$$
+**Real:** Personalized PageRank (`Graph.personalized_pagerank`) genuinely
+prioritizes which nodes make it into a budget-constrained packet, and
+session/git-recency weighting genuinely biases that scoring toward recently
+touched code (see `retrieval/git_utils.py`,
+`test_personalization_git_session_weight_formula`).
+
+**Hypothesis:** framing this as OS-style "LRU page replacement" with
+formal "context page faults" is a naming choice, not a literal paging
+system — there's no virtual memory table, no page-fault trap, and no
+`keystroke-decayed half-life weighting` formula ($W(t) = W_0 \cdot
+2^{-\Delta t/\lambda}$) currently implemented in the codebase. If that
+decay formula gets built, update this section to link the real function;
+until then, don't cite it as existing behavior.

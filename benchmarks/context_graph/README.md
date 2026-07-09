@@ -1,5 +1,11 @@
 # Context Graph Benchmark
 
+Reproducibility note: everything under `out/` is gitignored and mostly
+depends on repos checked out locally under `$AIPROJECTS_ROOT`, so it isn't
+verifiable from a fresh clone. `canonical_results/` is the one exception — a
+committed result from the one benchmark (`protocol_benchmark.py`) that needs
+no external checkout. See `canonical_results/README.md`.
+
 This folder is a small, repeatable lab for comparing context storage formats:
 
 - plain Markdown files

@@ -229,6 +229,11 @@ graph contract is defined in
 
 ## Documentation
 
+- `docs/start-here.md` — the default path in six commands; read this first
+- `docs/rigorous-framing.md` — the evidence bar this project holds itself to;
+  what's settled vs. still a hypothesis
+- `docs/retrieval-confidence-routing.md` — measured grep-vs-graphgraph
+  decision rule, latency breakdown, and the score-gap confidence signal
 - `docs/architecture.md` — system architecture
 - `docs/llm-native-context-graph.md` / `docs/runtime-context-graph.md` — core design
 - `docs/incremental-update-instruction-set.md` — incremental update primitives, profiling, prior art
@@ -238,4 +243,7 @@ graph contract is defined in
 - `docs/source-layout.md` — repo layout
 - `docs/schema-alignment.md` / `docs/integration-surfaces.md` — external graph interop
 - `docs/empirical-findings.md` — benchmark results
+- `docs/prior-art-research.md` — how comparable code-graph/agent-memory
+  systems work, and which of their ideas are already covered vs. worth
+  exploring
 - `docs/graphgraph-vs-graphify.md` — how this compares to Graphify
