@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from ..graph.core import Graph, Node
 from ..io import find_graph_path, load_any
 from .context import resolve_start_nodes
-
-LINE_RE = re.compile(r"\bL(\d+)\b")
 
 
 def render_source_snippets(
@@ -39,7 +36,7 @@ def render_source_snippets(
         if path is None:
             blocks.append(f"## {node.label} ({node_id})\n\nNo readable source path for node.")
             continue
-        start_line = _node_line(node)
+        start_line = node.line
         source = _read_excerpt(path, start_line, context_lines=context_lines, max_lines=max_lines)
         key = (str(path), source[0], source[1])
         if key in seen:
@@ -128,16 +125,6 @@ def _resolve_direct_path(root: Path, raw_path: str) -> Path | None:
         if resolved.exists() and resolved.is_file():
             return resolved
     return None
-
-
-def _node_line(node: Node) -> int | None:
-    match = LINE_RE.search(node.summary or "")
-    if not match:
-        return None
-    try:
-        return max(1, int(match.group(1)))
-    except ValueError:
-        return None
 
 
 def _read_excerpt(path: Path, line: int | None, *, context_lines: int, max_lines: int) -> tuple[int, int, str]:

@@ -28,7 +28,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         args.func(args)
-    except ValueError as exc:
+    except (ValueError, FileNotFoundError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 

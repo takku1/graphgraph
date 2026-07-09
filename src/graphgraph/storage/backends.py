@@ -11,6 +11,7 @@ new ``.gg`` writes use this binary format.
 from __future__ import annotations
 
 import struct
+import tempfile
 from pathlib import Path
 
 from ..graph.core import Edge, Graph, Node
@@ -106,36 +107,52 @@ def save_graph_binary(graph: Graph, path: Path) -> None:
     ]
 
     dictionary = sorted(strings, key=strings.__getitem__)
-    with path.open("wb") as fh:
-        fh.write(_GGB_HEADER.pack(
-            _GGB_MAGIC,
-            len(dictionary),
-            len(node_rows),
-            len(edge_rows),
-            len(metadata_rows),
-            len(fact_refs),
-            len(pagerank_scores),
-        ))
-        fh.write(_PAGERANK_HEADER.pack(
-            pagerank_signature,
-            float(pagerank.get("damping", 0.85)),
-            int(pagerank.get("max_iter", 20)),
-            pagerank_tol,
-        ))
-        for value in dictionary:
-            raw = value.encode("utf-8")
-            fh.write(struct.pack("<I", len(raw)))
-            fh.write(raw)
-        for key_idx, value_idx in metadata_rows:
-            fh.write(_PAIR_RECORD.pack(key_idx, value_idx))
-        for fact_idx in fact_refs:
-            fh.write(struct.pack("<I", fact_idx))
-        for row in node_rows:
-            fh.write(_GGB_NODE_RECORD.pack(*row))
-        for row in edge_rows:
-            fh.write(_GGB_EDGE_RECORD.pack(*row))
-        for node_idx, score in pagerank_scores:
-            fh.write(_PAGERANK_SCORE_RECORD.pack(node_idx, score))
+    # Write to a temp file in the same directory and atomically replace the
+    # destination only once every write has succeeded. `path.open("wb")` would
+    # truncate the existing (still-valid) .gg file immediately, so any failure
+    # partway through -- e.g. a label/summary/fact containing an unpaired
+    # UTF-16 surrogate that can't be UTF-8 encoded, which does happen with
+    # mis-decoded source text -- used to permanently destroy the last good
+    # persisted graph instead of just failing the save.
+    tmp = tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+    )
+    try:
+        with tmp:
+            fh = tmp
+            fh.write(_GGB_HEADER.pack(
+                _GGB_MAGIC,
+                len(dictionary),
+                len(node_rows),
+                len(edge_rows),
+                len(metadata_rows),
+                len(fact_refs),
+                len(pagerank_scores),
+            ))
+            fh.write(_PAGERANK_HEADER.pack(
+                pagerank_signature,
+                float(pagerank.get("damping", 0.85)),
+                int(pagerank.get("max_iter", 20)),
+                pagerank_tol,
+            ))
+            for value in dictionary:
+                raw = value.encode("utf-8")
+                fh.write(struct.pack("<I", len(raw)))
+                fh.write(raw)
+            for key_idx, value_idx in metadata_rows:
+                fh.write(_PAIR_RECORD.pack(key_idx, value_idx))
+            for fact_idx in fact_refs:
+                fh.write(struct.pack("<I", fact_idx))
+            for row in node_rows:
+                fh.write(_GGB_NODE_RECORD.pack(*row))
+            for row in edge_rows:
+                fh.write(_GGB_EDGE_RECORD.pack(*row))
+            for node_idx, score in pagerank_scores:
+                fh.write(_PAGERANK_SCORE_RECORD.pack(node_idx, score))
+    except BaseException:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+    Path(tmp.name).replace(path)
 
 
 def load_graph_binary(path: Path) -> Graph:

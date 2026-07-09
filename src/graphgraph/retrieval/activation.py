@@ -43,15 +43,22 @@ def spreading_activation(
     """
     activation: dict[str, float] = {}
 
-    # 1. Apply conversational decay to previous activation state
+    # 1. Apply conversational decay to previous activation state.
+    # Must check node.active, not just membership: the cache persists across
+    # turns in .graphgraph/activation_state.json, and the graph can mutate
+    # between turns (a file gets deleted/merged and its node is soft-deleted
+    # via expire_node). Without this check a since-expired node's cached
+    # energy gets reinjected and the node can resurface in selected_nodes
+    # below even though it's no longer live -- the same soft-delete leak
+    # search_nodes had before it started filtering on .active.
     if previous_activation:
         for node_id, score in previous_activation.items():
-            if node_id in graph.nodes:
+            if node_id in graph.nodes and graph.nodes[node_id].active:
                 activation[node_id] = score * decay
 
     # 2. Inject query-start energy (injection = 1.0)
     for start in starts:
-        if start in graph.nodes:
+        if start in graph.nodes and graph.nodes[start].active:
             activation[start] = activation.get(start, 0.0) + 1.0
 
     # 3. Spread activation through outgoing and incoming edges
@@ -66,9 +73,15 @@ def spreading_activation(
 
             neighbors = []
             if node_id in outg:
-                neighbors.extend(e.target for e in outg[node_id] if e.active and e.target in graph.nodes)
+                neighbors.extend(
+                    e.target for e in outg[node_id]
+                    if e.active and e.target in graph.nodes and graph.nodes[e.target].active
+                )
             if node_id in inc:
-                neighbors.extend(e.source for e in inc[node_id] if e.active and e.source in graph.nodes)
+                neighbors.extend(
+                    e.source for e in inc[node_id]
+                    if e.active and e.source in graph.nodes and graph.nodes[e.source].active
+                )
 
             if neighbors:
                 # Distribute alpha fraction of current energy to neighbors
@@ -76,7 +89,9 @@ def spreading_activation(
                 for neighbor in neighbors:
                     next_activation[neighbor] = next_activation.get(neighbor, 0.0) + spread_energy
 
-        # 4. Bellman early-stopping constraint: expected value of next-stage information vs. token cost
+        # 4. Marginal-utility early stopping: a greedy cutoff, not a value function or
+        # MDP formalism -- stop spreading once the new energy per estimated token spent
+        # falls below the convergence threshold.
         new_nodes = {nid: score for nid, score in next_activation.items() if nid not in activation}
         total_new_energy = sum(new_nodes.values())
         # Estimate token cost of new nodes (roughly 8.0 tokens per node)
@@ -91,7 +106,7 @@ def spreading_activation(
 
     # 4. Sort and select the top max_nodes by score
     sorted_nodes = sorted(activation.items(), key=lambda x: x[1], reverse=True)
-    selected_nodes = {nid for nid, score in sorted_nodes[:max_nodes] if nid in graph.nodes}
+    selected_nodes = {nid for nid, score in sorted_nodes[:max_nodes] if nid in graph.nodes and graph.nodes[nid].active}
 
     # 5. Extract interconnecting edges
     selected_edges = []

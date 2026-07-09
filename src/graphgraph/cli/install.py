@@ -151,21 +151,28 @@ def _write_cursor(is_project: bool, project_root: Path | None) -> None:
 def _write_gemini(is_project: bool, project_root: Path | None) -> None:
     """Register the GraphGraph MCP server for Gemini CLI / Antigravity.
 
-    CAVEAT: based on the documented Gemini CLI settings.json convention
-    (~/.gemini/settings.json or <project>/.gemini/settings.json, top-level
-    "mcpServers" key) -- NOT verified against a live Gemini CLI or Antigravity
-    install. Verify against an actual install before relying on it; worst
-    case if the client reads a different location is an inert file with no
-    other side effects.
+    Supports the unified customization locations (mcp_config.json under config/
+    or .agents/) as well as the standard settings.json configurations.
     """
     if is_project and project_root is not None:
-        config_path = project_root / ".gemini" / "settings.json"
+        paths = [
+            project_root / ".gemini" / "settings.json",
+            project_root / ".agents" / "mcp_config.json",
+        ]
         server_block = _mcp_server_config(project_root)
+        for path in paths:
+            _upsert_mcp_servers(path, server_block)
+            print(f"Registered GraphGraph MCP server for Gemini/Antigravity (project): {path}")
     else:
-        config_path = Path.home() / ".gemini" / "settings.json"
+        paths = [
+            Path.home() / ".gemini" / "settings.json",
+            Path.home() / ".gemini" / "config" / "mcp_config.json",
+            Path.home() / ".gemini" / "antigravity-cli" / "mcp_config.json",
+        ]
         server_block = _mcp_server_config(None)
-    _upsert_mcp_servers(config_path, server_block)
-    print(f"Registered GraphGraph MCP server for Gemini/Antigravity: {config_path}")
+        for path in paths:
+            _upsert_mcp_servers(path, server_block)
+            print(f"Registered GraphGraph MCP server for Gemini/Antigravity (global): {path}")
 
 
 def _write_codex_plugin(plugin_root: Path, skill_content: str) -> None:
@@ -238,39 +245,43 @@ def cmd_install(args: argparse.Namespace) -> None:
         existing_content = agents_file.read_text(encoding="utf-8")
 
     rule_marker = "# GraphGraph Workspace Rules" if args.project else "# GraphGraph Global Rules"
-    if True:
-        rule_content = f"\n\n{rule_marker}\n\n"
-        rule_content += (
-            "You have direct access to the **`graphgraph`** codebase context serialization engine. "
-            "It is available as a CLI tool (`graphgraph`) and, on platforms with MCP config, as an MCP server (`graphgraph` server).\n\n"
-            "## Instinctive Tool Guide\n\n"
-            "When the user asks codebase structure/dependency questions or says \"using graphgraph now to build context\":\n"
-            "0. **Check MCP availability first:** The `graphgraph/*` MCP tools exist only if a graphgraph MCP server is registered for *this* client; many sessions have none even when Claude Desktop does. If those tools are not present, use the `graphgraph` CLI instead and do NOT map MCP tool names onto CLI flags (the CLI subcommands `context`/`query`/`final` have different options). `graphgraph doctor` shows per-client MCP status.\n"
-            "1. **Graph-first orientation:** Check if `.graphgraph/graph.gg` or another native graph exists in the workspace. "
-            "If it does not exist, run `graphgraph scan --depth symbols --docs` to generate it before broad structural exploration.\n"
-            "2. **Context Compilation -- preferred (no node IDs needed):** Call `graphgraph/query_context` with a "
-            "natural-language query. It auto-discovers anchors and returns a ready packet.\n"
-            "3. **Context Compilation -- when you know node IDs:** Call `graphgraph/search_nodes` to confirm the ID, "
-            "then `graphgraph/final_packet` with the confirmed IDs.\n"
-            "4. **Evidence discipline:** Use the compressed topological packet as orientation evidence for project structure, imports, and calls.\n"
-            "5. **Verification:** Validate graph packets with `graphgraph/validate_packet` or `graphgraph validate`, and verify final claims against source files, tests, or explicitly requested command output.\n"
-            "### Available MCP Tools\n"
-            "* **`graphgraph/query_context`**: **Preferred.** Natural-language query -> auto-discovered anchors -> graph packet. No node IDs needed.\n"
-            "* **`graphgraph/search_nodes`**: Find node IDs by label, path, or kind substring. Use before `final_packet`.\n"
-            "* **`graphgraph/final_packet`**: Render compressed context packet from known anchor node IDs.\n"
-            "* **`graphgraph/project_status`**: Validate the graph, summarize code/doc balance, package metadata, and optional runtime probes.\n"
-            "* **`graphgraph/plan_context`**: Pass `query_class` to plan the expansion depth.\n"
-            "* **`graphgraph/build_graph`**: Scan a directory. Accepts `exclude_dirs` to skip large external dirs and `include_dirs` to keep real project dirs that match default skip names.\n\n"
-            "### Available CLI Commands\n"
-            "* **Scan**: `graphgraph scan --depth symbols --docs` (default max-nodes=2000)\n"
-            "* **Scan with exclusions**: `graphgraph scan --depth symbols --docs --exclude repos references_temp`\n"
-            "* **Project status**: `graphgraph status --probe`\n"
-            "* **One-step context packet**: `graphgraph context \"<text>\" --query-class subsystem_summary --show-stats`\n"
-            "* **Natural-language query on an existing graph**: `graphgraph query \"<text>\" --query-class blast_radius --show-anchors`\n"
-            "* **Known-node packet only**: `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...`\n"
-            "* **Stable prompt-cache skeleton**: `graphgraph final --stable-skeleton --max-nodes 120`\n"
-            "* **System diagnostics**: `graphgraph doctor`\n"
-        )
+    rule_content = f"\n\n{rule_marker}\n\n"
+    rule_content += (
+        "You have direct access to the **`graphgraph`** codebase context serialization engine. "
+        "It is available as a CLI tool (`graphgraph`) and, on platforms with MCP config, as an MCP server (`graphgraph` server).\n\n"
+        "## Instinctive Tool Guide\n\n"
+        "When the user asks codebase structure/dependency questions or says \"using graphgraph now to build context\":\n"
+        "0. **Check MCP availability first:** The `graphgraph/*` MCP tools exist only if a graphgraph MCP server is registered for *this* client; many sessions have none even when Claude Desktop does. If those tools are not present, use the `graphgraph` CLI instead and do NOT map MCP tool names onto CLI flags (the CLI subcommands `context`/`query`/`final` have different options). `graphgraph doctor` shows per-client MCP status.\n"
+        "1. **Graph-first orientation:** Check if `.graphgraph/graph.gg` or another native graph exists in the workspace. "
+        "If it does not exist, run `graphgraph scan --depth symbols --docs` to generate it before broad structural exploration.\n"
+        "2. **Context Compilation -- preferred (no node IDs needed):** Call `graphgraph/query_context` with a "
+        "natural-language query. It auto-discovers anchors and returns a ready packet.\n"
+        "3. **Context Compilation -- when you know node IDs:** Call `graphgraph/search_nodes` to confirm the ID, "
+        "then `graphgraph/final_packet` with the confirmed IDs.\n"
+        "4. **Evidence discipline:** Use the compressed topological packet as orientation evidence for project structure, imports, and calls.\n"
+        "5. **Verification:** Validate graph packets with `graphgraph/validate_packet` or `graphgraph validate`, and verify final claims against source files, tests, or explicitly requested command output.\n"
+        "6. **grep vs. graphgraph (measured, see `docs/retrieval-confidence-routing.md`):** already have the exact symbol/string and don't need relationships? `grep`/`git grep` is equally valid. Reach for graphgraph specifically for callers/dependents/blast-radius/\"how does X work\" questions -- grep cannot answer those structurally. `search_nodes` returns `ambiguous`/`top_score_gap_ratio`: trust the top hit when `ambiguous` is false; treat the list as multiple real candidates when true.\n"
+        "### Available MCP Tools\n"
+        "* **`graphgraph/query_context`**: **Preferred.** Natural-language query -> auto-discovered anchors -> graph packet. No node IDs needed.\n"
+        "* **`graphgraph/search_nodes`**: Find node IDs by label, path, or kind substring. Use before `final_packet`.\n"
+        "* **`graphgraph/final_packet`**: Render compressed context packet from known anchor node IDs.\n"
+        "* **`graphgraph/source_snippets`**: Render bounded source excerpts for node IDs/labels/paths. Use after `query_context` when exact code lines are needed.\n"
+        "* **`graphgraph/project_status`**: Validate the graph, summarize code/doc balance, package metadata, and optional runtime probes.\n"
+        "* **`graphgraph/plan_context`**: Pass `query_class` to plan the expansion depth.\n"
+        "* **`graphgraph/build_graph`**: Scan a directory. Accepts `exclude_dirs` to skip large external dirs and `include_dirs` to keep real project dirs that match default skip names.\n"
+        "* **`graphgraph/update_graph_files`** / **`graphgraph/remove_graph_files`**: Splice specific edited/deleted files into an existing graph without a full rescan.\n"
+        "* **`graphgraph/validate_packet`**: Validate a rendered packet, or omit `packet` (optionally pass `graph_path`) to validate the saved native graph file instead.\n"
+        "* **`graphgraph/describe_formats`** / **`describe_ontology`** / **`describe_frontends`** / **`describe_traversal`**: Introspect packet formats, edge-type ontology, extraction frontends, and per-query-class traversal policy.\n\n"
+        "### Available CLI Commands\n"
+        "* **Scan**: `graphgraph scan --depth symbols --docs` (default max-nodes=2000)\n"
+        "* **Scan with exclusions**: `graphgraph scan --depth symbols --docs --exclude repos references_temp`\n"
+        "* **Project status**: `graphgraph status --probe`\n"
+        "* **One-step context packet**: `graphgraph context \"<text>\" --query-class subsystem_summary --show-stats`\n"
+        "* **Natural-language query on an existing graph**: `graphgraph query \"<text>\" --query-class blast_radius --show-anchors`\n"
+        "* **Known-node packet only**: `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...`\n"
+        "* **Stable prompt-cache skeleton**: `graphgraph final --stable-skeleton --max-nodes 120`\n"
+        "* **System diagnostics**: `graphgraph doctor`\n"
+    )
     if rule_marker not in existing_content:
         agents_file.write_text(existing_content + rule_content, encoding="utf-8")
         print(f"Updated rules in: {agents_file}")
@@ -301,16 +312,20 @@ def cmd_install(args: argparse.Namespace) -> None:
         "2. If no graph exists or MCP is unavailable, run `graphgraph context \"<query>\" --query-class subsystem_summary --show-stats`.\n"
         "3. For focused implementation work, add `--scope src/path` or use `search_nodes` before `final_packet`.\n"
         "4. Validate saved graph files with `graphgraph validate-graph`; validate rendered packets with `graphgraph validate`.\n"
-        "5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.\n\n"
+        "5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.\n"
+        "6. **grep vs. GraphGraph (measured, see `docs/retrieval-confidence-routing.md`):** if you already have an exact known symbol/string and don't need relationships, `grep`/`git grep` is equally valid -- GraphGraph isn't trying to win that case. Reach for GraphGraph specifically when the question is about callers, dependents, blast radius, or \"how does X work\" with no exact symbol given -- that's the case grep structurally cannot answer. `search_nodes` also returns `top_score_gap_ratio`/`ambiguous`: a large gap means the top hit is a confident single answer; `ambiguous: true` means treat the result list as several real candidates, not one answer.\n\n"
         "## MCP Tools\n\n"
         "| Tool | Purpose |\n"
         "|------|---------|\n"
         "| `query_context` | Natural-language query -> anchors -> compressed packet. Best default. |\n"
         "| `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |\n"
         "| `final_packet` | Render a packet from known node IDs. |\n"
+        "| `source_snippets` | Bounded source excerpts for node IDs/labels/paths; use after `query_context` for exact lines. |\n"
         "| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |\n"
         "| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs` and `include_dirs`. |\n"
-        "| `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |\n\n"
+        "| `update_graph_files` / `remove_graph_files` | Splice specific edited/deleted files into an existing graph, no full rescan. |\n"
+        "| `validate_packet` | Validate a rendered packet, or omit `packet` (+ optional `graph_path`) to validate the saved graph file instead. |\n"
+        "| `describe_formats` / `describe_ontology` / `describe_frontends` / `describe_traversal` | Introspect packet formats, edge ontology, extraction frontends, traversal policy. |\n\n"
         "## CLI Commands (the real subcommands)\n\n"
         "The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands with **disjoint** options -- do not, e.g., pass `--starts` to `query` (it has no such flag). Use this map:\n\n"
         "| Need | Subcommand | Anchors | Example |\n"

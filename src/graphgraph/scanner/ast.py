@@ -42,7 +42,12 @@ _JS_FUNC = re.compile(
     r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*\(", re.MULTILINE
 )
 _JS_ARROW = re.compile(
-    r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(?", re.MULTILINE
+    r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?"
+    r"(?:\([^()]*\)|[A-Za-z_]\w*)\s*=>",
+    re.MULTILINE,
+)
+_JS_FUNC_EXPR = re.compile(
+    r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\b", re.MULTILINE
 )
 
 _GO_FUNC = re.compile(
@@ -76,6 +81,46 @@ _C_FUNC = re.compile(
     re.MULTILINE,
 )
 
+_KOTLIN_CLASS = re.compile(
+    r"^\s*(?:public\s+|private\s+|internal\s+|abstract\s+|open\s+|sealed\s+|data\s+|enum\s+)*"
+    r"(?:class|object|interface)\s+(\w+)",
+    re.MULTILINE,
+)
+_KOTLIN_FUN = re.compile(
+    r"^\s*(?:public\s+|private\s+|internal\s+|protected\s+|override\s+|open\s+|suspend\s+|inline\s+)*"
+    r"fun\s+(?:<[^>]*>\s*)?(?:[\w.<>]+\.)?(\w+)\s*\(",
+    re.MULTILINE,
+)
+
+_SCALA_CLASS = re.compile(
+    r"^\s*(?:private\s+|protected\s+|final\s+|abstract\s+|sealed\s+|case\s+)*"
+    r"(?:class|object|trait)\s+(\w+)",
+    re.MULTILINE,
+)
+_SCALA_DEF = re.compile(
+    r"^\s*(?:private\s+|protected\s+|final\s+|override\s+)*def\s+(\w+)\s*[\[(]", re.MULTILINE
+)
+
+_SWIFT_TYPE = re.compile(
+    r"^\s*(?:public\s+|private\s+|internal\s+|open\s+|final\s+)*"
+    r"(?:class|struct|enum|protocol|extension)\s+(\w+)",
+    re.MULTILINE,
+)
+_SWIFT_FUNC = re.compile(
+    r"^\s*(?:public\s+|private\s+|internal\s+|open\s+|final\s+|static\s+|override\s+|mutating\s+)*"
+    r"func\s+(\w+)\s*[<(]",
+    re.MULTILINE,
+)
+
+_RUBY_CLASS = re.compile(r"^\s*class\s+([A-Z]\w*)", re.MULTILINE)
+_RUBY_MODULE = re.compile(r"^\s*module\s+([A-Z]\w*)", re.MULTILINE)
+_RUBY_DEF = re.compile(r"^\s*def\s+(?:self\.)?([a-zA-Z_]\w*[?!=]?)", re.MULTILINE)
+
+_PHP_CLASS = re.compile(r"^\s*(?:abstract\s+|final\s+)?class\s+(\w+)", re.MULTILINE)
+_PHP_FUNC = re.compile(
+    r"^\s*(?:public\s+|private\s+|protected\s+|static\s+)*function\s+(\w+)\s*\(", re.MULTILINE
+)
+
 _LEAN_DEF = re.compile(
     r"^\s*(?:@\[[^\]]*\]\s*)*(private|protected|noncomputable|partial|scoped|local)?\s*"
     r"(def|theorem|lemma|inductive|structure|class|abbrev|opaque|axiom)\s+"
@@ -107,9 +152,13 @@ def _callsite_pattern(names: list[str]) -> re.Pattern[str] | None:
     pat = _limited_name_alternation(names, word_boundaries=False)
     if pat is None:
         return None
-    # Match function calls, optionally qualified (e.g., module.func())
-    # Use a negative lookbehind to allow a preceding dot for qualified names.
-    return re.compile(r"(?<!\.)\b(" + pat + r")\b\s*(?:!|::)?\s*\(")
+    # Exclude receiver-qualified calls (e.g. receiver.method(), ptr->method())
+    # from bare-call resolution: which symbol they hit depends on the
+    # receiver's type, which this regex-only extractor doesn't know, so
+    # matching them here would wrongly link to an unrelated same-named free
+    # function elsewhere in the repo. Both "." and "->" (C/C++ pointer member
+    # access) are equally receiver-dependent and must both be excluded.
+    return re.compile(r"(?<!\.)(?<!->)\b(" + pat + r")\b\s*(?:!|::)?\s*\(")
 
 
 # ── symbol extraction per language ───────────────────────────────────────────
@@ -189,11 +238,17 @@ def _defs_js(text: str) -> list[SymbolDef]:
         defs.append(SymbolDef(m.group(1), "class", text[:m.start()].count("\n") + 1, m.start()))
     for m in _JS_FUNC.finditer(text):
         defs.append(SymbolDef(m.group(1), "function", text[:m.start()].count("\n") + 1, m.start()))
-    # only capture arrow functions that look like non-trivial declarations
-    for m in _JS_ARROW.finditer(text):
-        name = m.group(1)
-        if not name[0].isupper():  # skip CONSTANT_CASE etc.
-            defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1, m.start()))
+    # Only capture const/let/var assignments whose value is actually a
+    # function (arrow function or function expression). The previous pattern
+    # matched *any* `const x = ...` with an optional trailing "(" -- which is
+    # zero-width and therefore matched plain data too (`const apiUrl = "...";`,
+    # `const config = {...};`), misclassifying ordinary constants as
+    # "function" symbols.
+    for pattern in (_JS_ARROW, _JS_FUNC_EXPR):
+        for m in pattern.finditer(text):
+            name = m.group(1)
+            if not name[0].isupper():  # skip CONSTANT_CASE etc.
+                defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1, m.start()))
     return defs
 
 
@@ -224,6 +279,28 @@ def _defs_c(text: str) -> list[SymbolDef]:
         if len(name) > 2 and not name.startswith("if") and not name.startswith("for"):
             defs.append(SymbolDef(name, "function", text[:m.start()].count("\n") + 1, m.start()))
     return defs
+
+
+def _defs_kotlin(text: str) -> list[SymbolDef]:
+    return _defs_by_patterns(text, [(_KOTLIN_CLASS, "class"), (_KOTLIN_FUN, "function")])
+
+
+def _defs_scala(text: str) -> list[SymbolDef]:
+    return _defs_by_patterns(text, [(_SCALA_CLASS, "class"), (_SCALA_DEF, "function")])
+
+
+def _defs_swift(text: str) -> list[SymbolDef]:
+    return _defs_by_patterns(text, [(_SWIFT_TYPE, "class"), (_SWIFT_FUNC, "function")])
+
+
+def _defs_ruby(text: str) -> list[SymbolDef]:
+    return _defs_by_patterns(
+        text, [(_RUBY_CLASS, "class"), (_RUBY_MODULE, "module"), (_RUBY_DEF, "function")]
+    )
+
+
+def _defs_php(text: str) -> list[SymbolDef]:
+    return _defs_by_patterns(text, [(_PHP_CLASS, "class"), (_PHP_FUNC, "function")])
 
 
 def _defs_lean(text: str) -> list[SymbolDef]:
@@ -263,6 +340,11 @@ _EXTRACTORS: dict[str, callable] = {
     ".cc": _defs_c,
     ".h": _defs_c,
     ".hpp": _defs_c,
+    ".rb": _defs_ruby,
+    ".php": _defs_php,
+    ".kt": _defs_kotlin,
+    ".scala": _defs_scala,
+    ".swift": _defs_swift,
     ".lean": _defs_lean,
 }
 

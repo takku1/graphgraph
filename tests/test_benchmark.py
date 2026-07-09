@@ -30,7 +30,23 @@ class BenchmarkExtractionTest(unittest.TestCase):
         src_dir = Path(__file__).parents[1] / "src"
         files = []
         for path in src_dir.rglob("*.*"):
-            if path.suffix.lower() not in {".py", ".rs", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".cs", ".c", ".cpp", ".cxx", ".cc", ".h", ".hpp"}:
+            if path.suffix.lower() not in {
+                ".py",
+                ".rs",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".go",
+                ".java",
+                ".cs",
+                ".c",
+                ".cpp",
+                ".cxx",
+                ".cc",
+                ".h",
+                ".hpp",
+            }:
                 continue
             rel = path.relative_to(src_dir).as_posix()
             file_node_id = f"file_{rel}"  # deterministic id
@@ -53,7 +69,9 @@ class BenchmarkExtractionTest(unittest.TestCase):
         token_est = estimate_token_size(g)
         self.assertLess(token_est, 50000, f"Token estimate too high: {token_est}")
 
-        print(f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, edges: {len(symbol_edges)}, token_estimate: {token_est}")
+        print(
+            f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, edges: {len(symbol_edges)}, token_estimate: {token_est}"
+        )
 
     def test_model_reasoning_prompt_records_do_not_embed_answer_keys(self):
         from benchmarks.context_graph import model_reasoning_benchmark as benchmark
@@ -90,6 +108,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
             self.assertEqual(server["args"][project_index], temp_root.resolve().as_posix())
             self.assertEqual(server["args"][-1], "graphgraph-mcp")
             self.assertEqual(result["cwd"], temp_root.resolve().as_posix())
+
 
 if __name__ == "__main__":
     unittest.main()

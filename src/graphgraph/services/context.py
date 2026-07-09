@@ -276,6 +276,7 @@ def render_query_context(
                         "label": match.node.label,
                         "kind": match.node.kind,
                         "path": match.node.path,
+                        "line": match.node.line,
                         "score": match.score,
                         "reasons": list(match.reasons),
                     }
@@ -290,7 +291,8 @@ def render_query_context(
         out_lines = ["ANCHORS:"]
         for match in result.matches[:limit]:
             node = match.node
-            out_lines.append(f"- {node.id} {node.label} [{node.kind}] {node.path} score={match.score:g}")
+            location = f"{node.path}:{node.line}" if node.line else node.path
+            out_lines.append(f"- {node.id} {node.label} [{node.kind}] {location} score={match.score:g}")
         out_lines.extend(["\nGRAPH:", graph_packet])
         response = "\n".join(out_lines)
     else:

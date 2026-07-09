@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import re
+
 from ..graph.core import Policy, Query
 
 
 def path_matches(pattern: str, path: str) -> bool:
     if pattern == "**":
         return True
-    if "**" in pattern:
-        return path.startswith(pattern.split("**", 1)[0])
-    return path == pattern
+    if "**" not in pattern:
+        return path == pattern
+    # `pattern.split("**", 1)[0]` used to be the whole match: for a trailing
+    # wildcard like "src/**" that's a correct prefix check, but for a
+    # leading/middle wildcard like "**/tests/**" the text before the first
+    # "**" is "", and path.startswith("") is True for every path -- so a
+    # policy scoped to "**/tests/**" silently matched the entire repo instead
+    # of just paths containing "tests/". Treat every "**" segment as a
+    # wildcard run and require the literal segments around it to actually
+    # appear, in order.
+    segments = pattern.split("**")
+    regex = ".*".join(re.escape(segment) for segment in segments)
+    return re.fullmatch(regex, path) is not None
 
 
 def policy_applies(policy: Policy, query: Query) -> bool:

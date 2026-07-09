@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 
@@ -12,26 +13,42 @@ from .frontends import SourceFile, select_extractor
 from .history import extract_commit_history
 from .imports import add_file_edges
 
+logger = logging.getLogger(__name__)
+
 
 def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
     dirty_files: set[str] = set()
     churn_counts: dict[str, int] = {}
     try:
+        # `-z` disables git's core.quotepath escaping (which otherwise wraps
+        # any path containing a space or non-ASCII byte in double quotes with
+        # C-style/octal escapes, e.g. "caf\303\251.py" for "café.py") and
+        # NUL-terminates each field instead. Parsing the quoted/escaped text
+        # form directly (the previous approach) left the literal quote
+        # characters and escape sequences in the path, so such files never
+        # matched their real on-disk relative path and were silently dropped.
         res_status = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "-z"],
             cwd=root,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False
         )
         if res_status.returncode == 0:
-            for line in res_status.stdout.splitlines():
-                if len(line) > 3:
-                    path_part = line[3:].strip()
-                    if " -> " in path_part:
-                        path_part = path_part.split(" -> ")[-1].strip()
-                    rel_path = Path(path_part).as_posix()
+            tokens = res_status.stdout.split("\0")
+            i = 0
+            while i < len(tokens):
+                entry = tokens[i]
+                i += 1
+                if len(entry) > 3:
+                    status_code = entry[:2]
+                    rel_path = Path(entry[3:]).as_posix()
                     dirty_files.add(rel_path)
+                    if "R" in status_code or "C" in status_code:
+                        # Renamed/copied entries are followed by an extra
+                        # NUL-terminated token holding the original path.
+                        i += 1
 
         res_log = subprocess.run(
             ["git", "log", "-n", "100", "--name-only", "--format="],
@@ -47,7 +64,7 @@ def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
                     rel_path = Path(line).as_posix()
                     churn_counts[rel_path] = churn_counts.get(rel_path, 0) + 1
     except Exception:
-        pass
+        logger.debug("git metadata lookup failed; scan priority/churn signals disabled", exc_info=True)
     return dirty_files, churn_counts
 
 

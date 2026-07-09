@@ -48,7 +48,7 @@ PARSEABLE_SUFFIXES = frozenset({
     ".py", ".ts", ".tsx", ".js", ".jsx",
     ".go", ".rs", ".java", ".cs",
     ".cpp", ".cxx", ".cc", ".c", ".h", ".hpp",
-    ".rb", ".php", ".lean",
+    ".rb", ".php", ".kt", ".scala", ".swift", ".lean",
     ".md", ".mdx", ".rst", ".html", ".htm",
 })
 

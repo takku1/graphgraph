@@ -129,7 +129,13 @@ def extract_document_context(
                         ))
 
             for file_label, target_id in label_to_file.items():
-                if file_label.lower() in body.lower() and target_id != doc.file_node_id:
+                # Word-boundary match, not raw substring: file stems are
+                # commonly short/generic words (e.g. "core", "io", "app"),
+                # and a bare `in` check matches them inside unrelated words
+                # too (e.g. stem "core" inside "score"), producing false
+                # "mentions" edges to the wrong file.
+                pattern = r"\b" + re.escape(file_label.lower()) + r"\b"
+                if target_id != doc.file_node_id and re.search(pattern, body.lower()):
                     edges.append(Edge(
                         section_id,
                         target_id,

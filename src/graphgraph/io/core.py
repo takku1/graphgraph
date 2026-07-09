@@ -404,14 +404,46 @@ def load_csv_edges(path: Path) -> Graph:
     return Graph(nodes=nodes, edges=edges)
 
 
+_graph_load_cache: dict[tuple[str, bool], tuple[int, int, Graph]] = {}
+
+
 def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
-    """Load a graph from any supported format: .gg, .ggb, .json, .csv, .tsv."""
+    """Load a graph from any supported format: .gg, .ggb, .json, .csv, .tsv.
+
+    Memoized by (resolved path, normalize_external_refs) plus an (mtime, size)
+    fingerprint, so repeated calls against an unchanged file within one
+    long-lived process (e.g. the MCP server making many tool calls against
+    the same saved graph) skip re-parsing entirely -- measured at ~120ms for
+    a ~5k-node/17k-edge native graph, which otherwise dominates per-call
+    latency far more than the actual search/retrieval work. Graph is treated
+    as immutable everywhere in this codebase (every mutator in
+    graph/operations.py returns a new instance rather than mutating in
+    place), so sharing the cached object across callers is safe.
+    """
+    resolved = path.resolve()
+    cache_key = (str(resolved), normalize_external_refs)
+    try:
+        stat = resolved.stat()
+    except OSError:
+        stat = None
+
+    if stat is not None:
+        fingerprint = (stat.st_mtime_ns, stat.st_size)
+        cached = _graph_load_cache.get(cache_key)
+        if cached is not None and (cached[0], cached[1]) == fingerprint:
+            return cached[2]
+
     suffix = path.suffix.lower()
     if suffix in _BINARY_GRAPH_SUFFIXES:
-        return load_gg(path)
-    if suffix in (".csv", ".tsv"):
-        return load_csv_edges(path)
-    return load_graph(path, normalize_external_refs=normalize_external_refs)
+        graph = load_gg(path)
+    elif suffix in (".csv", ".tsv"):
+        graph = load_csv_edges(path)
+    else:
+        graph = load_graph(path, normalize_external_refs=normalize_external_refs)
+
+    if stat is not None:
+        _graph_load_cache[cache_key] = (fingerprint[0], fingerprint[1], graph)
+    return graph
 
 
 def validate_graph_file(path: Path) -> ValidationResult:

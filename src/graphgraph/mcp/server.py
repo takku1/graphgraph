@@ -8,8 +8,8 @@ from typing import Any
 from ..frontends import available_frontends
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..graph.traversal import POLICIES, traversal_policy
-from ..io import find_graph_path, load_any, save_gg, save_validated_graph
-from ..packets.validation import validate_packet
+from ..io import find_graph_path, load_any, save_gg, save_validated_graph, validate_graph_file
+from ..packets.validation import validate_any
 from ..planning import plan_context
 from ..retrieval import search_nodes
 from ..services import render_final_packet, render_query_context, render_source_snippets
@@ -105,13 +105,18 @@ TOOLS = [
     },
     {
         "name": "validate_packet",
-        "description": "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, or gg_max).",
+        "description": (
+            "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, gg_max, or "
+            "raw graph JSON). Omit `packet` to instead validate the saved native graph file "
+            "(auto-detected, or `graph_path` if given) -- mirrors `graphgraph validate`'s "
+            "auto-detect behavior."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "packet": {"type": "string"},
+                "packet": {"type": "string", "description": "Rendered packet or raw graph JSON text. Omit to validate the saved graph file instead."},
+                "graph_path": {"type": "string", "description": "Path to native graphgraph graph; auto-detected if omitted and packet is also omitted."},
             },
-            "required": ["packet"],
         },
     },
     {
@@ -212,8 +217,15 @@ TOOLS = [
     {
         "name": "search_nodes",
         "description": (
-            "Search nodes in a graph by label, path, or kind. Returns a list of matching node IDs "
-            "and metadata. Use this to find the right anchor node IDs before calling final_packet."
+            "Search nodes in a graph by label, path, or kind. Returns the matching node's exact file "
+            "(`path`) and 1-based source `line` directly -- no follow-up call needed just to locate it; "
+            "use source_snippets afterward only when you need the surrounding code, not just where it is. "
+            "Use this to find the right anchor node IDs before calling final_packet. "
+            "The response also includes `top_score_gap_ratio` (top match's score / runner-up's score) "
+            "and a provisional `ambiguous` flag: a large gap means the top match is a confident single "
+            "answer (safe to use directly, comparable to grepping an exact known symbol); a small/no gap "
+            "means multiple candidates are genuinely close and the result list should be treated as "
+            "several plausible options, not one answer."
         ),
         "inputSchema": {
             "type": "object",
@@ -322,7 +334,12 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
     if name == "project_status":
         return content(handle_project_status(args))
     if name == "validate_packet":
-        result = validate_packet(str(args["packet"]))
+        packet = args.get("packet")
+        if packet:
+            result = validate_any(str(packet))
+        else:
+            graph_path = Path(args["graph_path"]) if args.get("graph_path") else find_graph_path()
+            result = validate_graph_file(graph_path)
         return content(json.dumps({
             "ok": result.ok,
             "format": result.format,
@@ -412,8 +429,8 @@ def handle_source_snippets(args: dict[str, Any]) -> str:
     return render_source_snippets(
         starts=[str(item) for item in args["starts"]],
         graph_path=graph_path,
-        context_lines=int(args.get("context_lines") or 4),
-        max_lines=int(args.get("max_lines") or 40),
+        context_lines=int(args["context_lines"]) if args.get("context_lines") is not None else 4,
+        max_lines=int(args["max_lines"]) if args.get("max_lines") is not None else 40,
     )
 
 
@@ -447,7 +464,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         })
 
     directory = Path(args.get("directory") or ".")
-    max_nodes = int(args.get("max_nodes") or 2000)
+    max_nodes = int(args["max_nodes"]) if args.get("max_nodes") is not None else 2000
     generic_mentions = bool(args.get("generic_mentions", False))
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
     exclude_dirs = [str(d) for d in args.get("exclude_dirs") or []]
@@ -497,7 +514,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
         directory=directory,
         output_path=output_path,
         paths=paths,
-        max_nodes=int(args.get("max_nodes") or 2000),
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 2000,
         depth=str(args.get("depth") or "symbols"),
         frontend=str(args.get("frontend") or "auto"),
         docs=bool(args.get("docs", False)),
@@ -527,7 +544,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
         directory=directory,
         output_path=output_path,
         paths=paths,
-        max_nodes=int(args.get("max_nodes") or 2000),
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 2000,
         depth=str(args.get("depth") or "symbols"),
         frontend=str(args.get("frontend") or "auto"),
         docs=bool(args.get("docs", False)),
@@ -569,9 +586,26 @@ def handle_search_nodes(args: dict[str, Any]) -> str:
     graph = load_any(graph_path)
 
     q = str(args["query"]).lower()
-    limit = int(args.get("limit") or 20)
+    limit = int(args["limit"]) if args.get("limit") is not None else 20
 
     matches = search_nodes(graph, q, limit=limit)
+
+    # Confidence signal: ratio of the top match's score to the runner-up's.
+    # A large gap means one dominant, high-confidence anchor (empirically,
+    # ratio >= ~1.8 on exact-symbol-style queries against this project);
+    # a ratio near 1.0 means multiple candidates are genuinely tied and the
+    # caller should treat the list as several options, not a single answer.
+    # The 1.3 cutoff below is a provisional heuristic from a small sample,
+    # not a calibrated threshold -- treat the raw ratio as the real signal.
+    top_score_gap_ratio = None
+    ambiguous = False
+    if len(matches) >= 2:
+        if matches[1].score > 0:
+            top_score_gap_ratio = matches[0].score / matches[1].score
+            ambiguous = top_score_gap_ratio < 1.3
+        else:
+            ambiguous = False  # runner-up scored zero -- top match isn't contested
+
     return json.dumps({
         "matches": [
             {
@@ -579,6 +613,7 @@ def handle_search_nodes(args: dict[str, Any]) -> str:
                 "label": match.node.label,
                 "kind": match.node.kind,
                 "path": match.node.path,
+                "line": match.node.line,
                 "score": match.score,
                 "reasons": list(match.reasons),
                 "summary": match.node.summary,
@@ -586,6 +621,8 @@ def handle_search_nodes(args: dict[str, Any]) -> str:
             for match in matches
         ],
         "total": len(matches),
+        "top_score_gap_ratio": top_score_gap_ratio,
+        "ambiguous": ambiguous,
     })
 
 

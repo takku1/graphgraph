@@ -24,6 +24,11 @@ MAINTENANCE_COMMIT_RE = re.compile(
 _UNIT_SEP = "\x1f"
 _COMMIT_PREFIX = "COMMIT "
 
+# git numstat's abbreviated rename syntax, e.g. "src/{old_name.py => new_name.py}"
+# or "common/{old => new}/tail.py". Captures the new-name half so the target path
+# can be reconstructed with the shared prefix/suffix kept intact.
+_RENAME_BRACE_RE = re.compile(r"\{[^{}]*\s=>\s([^{}]*)\}")
+
 
 @dataclass(frozen=True)
 class CommitRecord:
@@ -59,16 +64,32 @@ def _parse_commit_log_output(raw: str) -> list[CommitRecord]:
             files = []
             started = True
             continue
-        stripped = line.strip()
-        if not stripped:
+        stripped = line.strip("\r\n")
+        if not stripped.strip():
             continue
-        parts = stripped.split()
+        # numstat lines are tab-separated (added\tremoved\tpath) specifically so
+        # they stay machine-parseable even when the path itself contains spaces
+        # (e.g. "docs/getting started.md"). Splitting on generic whitespace
+        # (str.split()) breaks such paths into multiple tokens and also mangles
+        # git's rename syntax ("old => new", or abbreviated
+        # "common/{old => new}/tail") the same way, silently dropping the
+        # fixes-edge for renamed/space-containing files.
+        parts = stripped.split("\t", 2)
         if len(parts) >= 3:
-            file_path = parts[2].replace("\\", "/")
-            files.append(file_path)
+            file_path = _numstat_target_path(parts[2]).replace("\\", "/")
+            if file_path:
+                files.append(file_path)
 
     _flush()
     return records
+
+
+def _numstat_target_path(field: str) -> str:
+    """Resolve a numstat path field to the file's current (post-rename) path."""
+    field = _RENAME_BRACE_RE.sub(r"\1", field)
+    if " => " in field:
+        field = field.rsplit(" => ", 1)[1]
+    return field.strip()
 
 
 def extract_commit_history(

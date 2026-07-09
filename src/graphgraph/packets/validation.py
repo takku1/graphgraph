@@ -225,10 +225,20 @@ def validate_gg_max(packet: str) -> ValidationResult:
             errors.append(f"bad edge weight: {weight}")
         edges.append((source, target, rel_id, weight))
 
-    # Detect hybrid: node lines carry metadata beyond just index+label ([kind] annotation or legacy summary: prefix)
+    # Detect hybrid: node lines carry metadata beyond just index+label ([kind] annotation,
+    # indented fact/summary continuation lines, or legacy summary: prefix).
+    #
+    # The [kind] bracket can appear anywhere on the line, not just right after a
+    # single-token label -- labels are free text (e.g. doc-section titles like
+    # "Getting Started") and can contain spaces, so anchoring the regex to
+    # "^\S+\s+\S+\s+\[" (idx, exactly one token, then bracket) silently failed to
+    # match whenever a hybrid node's label had more than one word, misclassifying
+    # a real gg_max_hybrid/gg_lex_hybrid packet as plain gg_max/gg_lex.
     is_lex = any(not nid.isdigit() for nid in nodes)
-    is_hybrid = "summary:" in packet or bool(
-        re.search(r"^\S+\s+\S+\s+\[", nodes_part, re.MULTILINE)
+    is_hybrid = (
+        "summary:" in packet
+        or bool(re.search(r"\[[A-Za-z_][\w-]*\]", nodes_part))
+        or bool(re.search(r"^[ \t]+\S", nodes_part, re.MULTILINE))
     )
     if is_lex:
         fmt = "gg_lex_hybrid" if is_hybrid else "gg_lex"

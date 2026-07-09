@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
 from .ontology import provenance_confidence, traversal_strength
+
+_LINE_RE = re.compile(r"\bL(\d+)\b")
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,25 @@ class Node:
     active: bool = True
     created_at: str = ""
     updated_at: str = ""
+
+    @property
+    def line(self) -> int | None:
+        """1-based source line this node's definition starts at, if known.
+
+        The scanner encodes this as an "L<N>" token in `summary` at
+        extraction time (see scanner/ast.py, scanner/doc.py) rather than as
+        its own stored field, so this stays correct for every already-saved
+        graph without a schema/format migration. This is the single place
+        that convention gets decoded -- callers should always go through
+        `node.line`, never re-parse `summary` themselves.
+        """
+        match = _LINE_RE.search(self.summary or "")
+        if not match:
+            return None
+        try:
+            return max(1, int(match.group(1)))
+        except ValueError:
+            return None
 
     @property
     def normalized_scope_values(self) -> tuple[str, ...]:
@@ -375,6 +397,20 @@ class Graph:
         }
         seen_edges: set[tuple[str, str, str]] = set()
         edge_list: list[Edge] = []
+        # Hop-0 evidence: edges directly connecting two of the caller's own
+        # start nodes. When hops >= 1 these fall out for free (either the
+        # `not scores` catch-up branch or the `all_included` filter after
+        # each round picks them up), but with hops=0 the loop below never
+        # runs at all, so without this pre-pass any edge between two
+        # already-included starts is silently dropped even though both
+        # endpoints are already selected.
+        for nid in included:
+            for edge in outgoing.get(nid, []) + incoming.get(nid, []):
+                if edge.source in included and edge.target in included:
+                    ekey = (edge.source, edge.target, edge.type)
+                    if ekey not in seen_edges:
+                        seen_edges.add(ekey)
+                        edge_list.append(edge)
         frontier = set(included)
         node_energies: dict[str, float] = {s: 100.0 for s in included}
 

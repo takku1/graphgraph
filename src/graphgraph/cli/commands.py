@@ -236,16 +236,34 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         home / ".cursor" / "mcp.json",
         "run: graphgraph install --platform cursor",
     )
-    gemini_project = _report_mcp_client(
+    gemini_proj_1 = _report_mcp_client(
         "Gemini/Antigravity (project ./.gemini/settings.json)",
         Path(".gemini/settings.json"),
         "run: graphgraph install --project --platform gemini",
     )
-    gemini_global = _report_mcp_client(
+    gemini_proj_2 = _report_mcp_client(
+        "Gemini/Antigravity (project ./.agents/mcp_config.json)",
+        Path(".agents/mcp_config.json"),
+        "run: graphgraph install --project --platform gemini",
+    )
+    gemini_project = gemini_proj_1 or gemini_proj_2
+
+    gemini_glob_1 = _report_mcp_client(
         "Gemini/Antigravity (user ~/.gemini/settings.json)",
         home / ".gemini" / "settings.json",
         "run: graphgraph install --platform gemini",
     )
+    gemini_glob_2 = _report_mcp_client(
+        "Gemini/Antigravity (user ~/.gemini/config/mcp_config.json)",
+        home / ".gemini" / "config" / "mcp_config.json",
+        "run: graphgraph install --platform gemini",
+    )
+    gemini_glob_3 = _report_mcp_client(
+        "Gemini/Antigravity (user ~/.gemini/antigravity-cli/mcp_config.json)",
+        home / ".gemini" / "antigravity-cli" / "mcp_config.json",
+        "run: graphgraph install --platform gemini",
+    )
+    gemini_global = gemini_glob_1 or gemini_glob_2 or gemini_glob_3
 
     if not (
         code_global or code_project or desktop
@@ -329,6 +347,16 @@ def cmd_query(args: argparse.Namespace) -> None:
         show_anchors=args.show_anchors,
         cache_namespace="cli_query",
     )
+    if getattr(args, "show_stats", False):
+        shape = graph_shape(load_any(graph_path))
+        print(
+            (
+                f"GraphGraph query: {graph_path} "
+                f"nodes={shape['nodes']} edges={shape['edges']} "
+                f"source={shape['source_nodes']} docs={shape['doc_nodes']} other={shape['other_nodes']}"
+            ),
+            file=sys.stderr,
+        )
     print(output)
 
 

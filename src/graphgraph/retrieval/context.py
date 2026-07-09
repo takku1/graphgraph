@@ -4,6 +4,17 @@ import math
 import re
 from dataclasses import dataclass, replace
 
+from ..concepts.doccode import doc_code_bias
+from ..graph.core import Edge, Graph
+from ..graph.ontology import provenance_confidence
+from ..graph.traversal import relation_rank, traversal_policy
+from ..planning import ContextPlan, compute_subgraph_stats, plan_context
+from ..planning.budgets import doc_intensity_score, plan_terms
+from ..planning.shape import profile_graph_shape, recommend_node_budget
+from .budgeting import budget_edges, enrich_runtime_context
+from .models import Match, RetrievalResult
+from .search import search_nodes
+
 _NOISE_PATTERNS = [
     re.compile(r"```[\s\S]*?```"),                          # markdown code blocks
     re.compile(r"Sender\s*\(untrusted metadata\)\s*:\s*", re.IGNORECASE),  # untrusted sender prefix
@@ -16,17 +27,6 @@ def sanitize_query(query: str) -> str:
     for pat in _NOISE_PATTERNS:
         text = pat.sub("", text)
     return text.strip()
-
-from ..concepts.doccode import doc_code_bias
-from ..graph.core import Edge, Graph
-from ..graph.ontology import provenance_confidence
-from ..graph.traversal import relation_rank, traversal_policy
-from ..planning import ContextPlan, compute_subgraph_stats, plan_context
-from ..planning.budgets import doc_intensity_score, plan_terms
-from ..planning.shape import profile_graph_shape, recommend_node_budget
-from .budgeting import budget_edges, enrich_runtime_context
-from .models import Match, RetrievalResult
-from .search import search_nodes
 
 STRUCTURAL_QUERY_CLASSES = {"blast_radius", "multi_hop_path", "reverse_lookup"}
 NON_STRUCTURAL_KINDS = {"concept", "section", "markdown", "rst", "html", "text"}
@@ -514,16 +514,13 @@ def retrieve_context(
     starts_list = list(match.node.id for match in selected_matches)
     
     # Discover git-modified files (active session context / Ephemeral Session Layer)
-    from .git_utils import get_git_modified_files
-    try:
-        modified_paths = get_git_modified_files()
-        for path in modified_paths:
-            for node_id, node in graph.nodes.items():
-                if node.active and (node.path.replace("\\", "/") == path or node.id == path):
-                    if node_id not in starts_list:
-                        starts_list.append(node_id)
-    except Exception:
-        pass
+    from .git_utils import get_git_modified_files, resolve_modified_node_ids
+    modified_paths = get_git_modified_files()
+    resolved = resolve_modified_node_ids(graph, modified_paths)
+    for path in modified_paths:
+        for node_id in resolved.get(path, []):
+            if node_id not in starts_list:
+                starts_list.append(node_id)
 
     starts = tuple(starts_list[:12])
     if not starts:

@@ -73,17 +73,15 @@ def search_nodes(
         # Discover git-modified files and change counts (Session Layer)
         import math
 
-        from .git_utils import get_git_modified_files
+        from .git_utils import get_git_modified_files, resolve_modified_node_ids
         session_weights = {}
-        try:
-            modified_paths = get_git_modified_files()
-            for path, change_count in modified_paths.items():
-                for node_id, node in graph.nodes.items():
-                    if node.active and (node.path.replace("\\", "/") == path or node.id == path):
-                        session_weights[node_id] = math.log2(change_count + 2) * 2.0
-        except Exception:
-            pass
-            
+        modified_paths = get_git_modified_files()
+        resolved = resolve_modified_node_ids(graph, modified_paths)
+        for path, change_count in modified_paths.items():
+            for node_id in resolved.get(path, []):
+                session_weights[node_id] = math.log2(change_count + 2) * 2.0
+
+
         for node_id, weight in session_weights.items():
             personalization[node_id] = personalization.get(node_id, 0.0) + weight
             

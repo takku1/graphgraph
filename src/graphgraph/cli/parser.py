@@ -66,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     query.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
     query.add_argument("--show-anchors", action="store_true")
+    query.add_argument("--show-stats", action="store_true", help="Print graph load shape metrics to stderr.")
     query.set_defaults(func=cmd_query)
 
     context = sub.add_parser("context", help="One-step native workflow: ensure a graph exists, then render query context.")
