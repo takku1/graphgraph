@@ -11,6 +11,20 @@ Status key: `[ ]` not started · `[~]` scoped but not built · `[x]` done
 
 ## Priority 1 — small, scoped, cheap to try
 
+- [ ] **Consolidate CLI/MCP shared defaults into one source of truth.**
+  Found by tripping over the same bug class three separate times this
+  session: `query --show-stats` existed on the CLI but not the identical
+  MCP tool; MCP `validate_packet` couldn't validate a graph file the way
+  CLI `validate` could; and `max_nodes=2000`'s default was hardcoded
+  independently in `cli/parser.py`, `mcp/server.py` (twice), and
+  `scanner/core.py`/`services/native.py` — three-plus places that can (and
+  did) silently drift out of sync. Each instance got fixed individually as
+  found, but the root cause (no shared parameter/defaults layer between
+  the two surfaces) is still there and will produce the next one. Scope:
+  route both `cli/commands.py` and `mcp/server.py` through one shared
+  `services/` layer for default values and validation, instead of each
+  reimplementing its own copy.
+
 - [ ] **Well-named-identifier lexical scoring bonus** (from
   [`prior-art-research.md`](prior-art-research.md), Aider's repo-map).
   Aider's PageRank personalization gives a well-formed identifier

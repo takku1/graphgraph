@@ -153,7 +153,7 @@ TOOLS = [
                 "directory": {"type": "string", "description": "Directory to scan. Defaults to current working directory."},
                 "input_graph": {"type": "string", "description": "Path to an existing graph JSON (e.g. graphify output) to ingest instead of scanning."},
                 "output_path": {"type": "string", "description": "Where to save the graph. Defaults to .graphgraph/graph.gg."},
-                "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 2000."},
+                "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 5000."},
                 "generic_mentions": {"type": "boolean", "description": "Also add weak 'references' edges for any file that mentions another file's name. Useful for docs-heavy repos. Default: false."},
                 "skip_dirs": {"type": "array", "items": {"type": "string"}, "description": "Extra directory names to exclude (beyond built-ins). E.g. ['spikes', 'test-inputs']."},
                 "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "Alias for skip_dirs — extra directory names to exclude. Merged with skip_dirs if both supplied."},
@@ -183,7 +183,7 @@ TOOLS = [
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "File(s) that changed, relative to directory or absolute."},
                 "directory": {"type": "string", "description": "Directory root. Defaults to current working directory."},
                 "output_path": {"type": "string", "description": "Existing graph path to update. Defaults to .graphgraph/graph.gg."},
-                "max_nodes": {"type": "integer", "description": "Max symbols per file batch. Default: 2000."},
+                "max_nodes": {"type": "integer", "description": "Max symbols per file batch. Default: 5000."},
                 "depth": {"type": "string", "enum": ["files", "symbols"], "description": "Default: symbols."},
                 "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"]},
                 "docs": {"type": "boolean", "description": "Extract document sections/concepts for doc files among paths."},
@@ -464,7 +464,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         })
 
     directory = Path(args.get("directory") or ".")
-    max_nodes = int(args["max_nodes"]) if args.get("max_nodes") is not None else 2000
+    max_nodes = int(args["max_nodes"]) if args.get("max_nodes") is not None else 5000
     generic_mentions = bool(args.get("generic_mentions", False))
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
     exclude_dirs = [str(d) for d in args.get("exclude_dirs") or []]
@@ -493,7 +493,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     graph = status.graph
     validation = status.validation
     assert validation is not None
-    return json.dumps({
+    result = {
         "action": "scanned",
         "directory": str(directory.resolve()),
         "output": str(output_path),
@@ -501,7 +501,17 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         "edges": len(graph.edges),
         "repaired": status.repaired,
         "validation": {"ok": validation.ok, "format": validation.format},
-    })
+    }
+    # Surface truncation to MCP-only callers too -- they never see the CLI's
+    # printed warnings, so an incomplete graph would otherwise look identical
+    # to a complete one from this response alone.
+    if graph.metadata.get("files_truncated") == "true":
+        result["files_truncated"] = True
+        result["files_total_matched"] = graph.metadata.get("files_total_matched")
+    if graph.metadata.get("symbols_truncated") == "true":
+        result["symbols_truncated"] = True
+        result["symbols_cap"] = graph.metadata.get("symbols_cap")
+    return json.dumps(result)
 
 
 def handle_update_graph_files(args: dict[str, Any]) -> str:
@@ -514,7 +524,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
         directory=directory,
         output_path=output_path,
         paths=paths,
-        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 2000,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 5000,
         depth=str(args.get("depth") or "symbols"),
         frontend=str(args.get("frontend") or "auto"),
         docs=bool(args.get("docs", False)),
@@ -523,7 +533,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
     graph = status.graph
     validation = status.validation
     assert validation is not None
-    return json.dumps({
+    result = {
         "action": "updated",
         "paths": paths,
         "output": str(output_path),
@@ -531,7 +541,11 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
         "edges": len(graph.edges),
         "repaired": status.repaired,
         "validation": {"ok": validation.ok, "format": validation.format},
-    })
+    }
+    if graph.metadata.get("symbols_truncated") == "true":
+        result["symbols_truncated"] = True
+        result["symbols_cap"] = graph.metadata.get("symbols_cap")
+    return json.dumps(result)
 
 
 def handle_remove_graph_files(args: dict[str, Any]) -> str:
@@ -544,7 +558,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
         directory=directory,
         output_path=output_path,
         paths=paths,
-        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 2000,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 5000,
         depth=str(args.get("depth") or "symbols"),
         frontend=str(args.get("frontend") or "auto"),
         docs=bool(args.get("docs", False)),

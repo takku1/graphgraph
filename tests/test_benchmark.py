@@ -55,7 +55,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
 
         # Run symbol extraction benchmark
         start = time.perf_counter()
-        symbol_nodes, symbol_edges = extract_symbols(files, max_total_symbols=5000)
+        symbol_nodes, symbol_edges, _truncated = extract_symbols(files, max_total_symbols=5000)
         elapsed = time.perf_counter() - start
 
         # Basic sanity checks

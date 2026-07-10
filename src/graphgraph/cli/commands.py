@@ -590,9 +590,28 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print("  !  WARNING: zero source nodes found. Possible causes:")
         print("     * All source files are inside excluded/skipped directories")
         print("     * The --directory flag points to the wrong root")
-        print("     * max_nodes cap hit before source files were reached (try --max-nodes 5000)")
+        print("     * max_nodes cap hit before source files were reached (try --max-nodes 20000)")
         print()
         print("  Tip: run  graphgraph doctor  for a full environment check.")
+    if graph.metadata.get("files_truncated") == "true":
+        matched = graph.metadata.get("files_total_matched", "?")
+        scanned = graph.metadata.get("files_scanned", str(total_nodes))
+        print()
+        print(
+            f"  !  WARNING: this codebase has {matched} matching files, but only "
+            f"{scanned} were scanned (--max-nodes cap). The remaining files were "
+            "never read -- this graph is INCOMPLETE, not just small."
+        )
+        print(f"     Re-run with a higher --max-nodes (e.g. --max-nodes {matched}) for full coverage.")
+    if graph.metadata.get("symbols_truncated") == "true":
+        cap = graph.metadata.get("symbols_cap", "?")
+        print()
+        print(
+            f"  !  WARNING: symbol extraction hit its cap ({cap} symbols). Some scanned "
+            "files may have zero extracted functions/classes even though they were read -- "
+            "this graph's call/reference edges are INCOMPLETE for a codebase this large."
+        )
+        print("     Re-run with a higher --max-nodes to raise the symbol cap proportionally.")
 
 
 def cmd_update(args: argparse.Namespace) -> None:

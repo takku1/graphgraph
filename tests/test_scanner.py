@@ -131,12 +131,12 @@ class ScannerTest(unittest.TestCase):
             (root / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
 
             # By default, a directory named 'build' is skipped.
-            default = {p.relative_to(root).as_posix() for p in collect_files(root, 100)}
+            default = {p.relative_to(root).as_posix() for p in collect_files(root, 100).files}
             self.assertNotIn("game/build/README.md", default)
             # find_pruned_dirs reports it (not silent).
             self.assertIn("build", find_pruned_dirs(root, frozenset({"build"})))
             # --include build keeps it.
-            included = {p.relative_to(root).as_posix() for p in collect_files(root, 100, include=frozenset({"build"}))}
+            included = {p.relative_to(root).as_posix() for p in collect_files(root, 100, include=frozenset({"build"})).files}
             self.assertIn("game/build/README.md", included)
 
     def test_collect_files_ignores_skip_listed_ancestor_directory_names(self) -> None:
@@ -153,7 +153,7 @@ class ScannerTest(unittest.TestCase):
             root = Path(tmp) / "repos" / "myproject"
             root.mkdir(parents=True)
             (root / "main.py").write_text("def foo(): pass\n", encoding="utf-8")
-            files = {p.relative_to(root).as_posix() for p in collect_files(root, 100)}
+            files = {p.relative_to(root).as_posix() for p in collect_files(root, 100).files}
             self.assertIn("main.py", files)
 
     def test_tree_sitter_extractor_captures_csharp_class_and_methods(self) -> None:
@@ -304,6 +304,80 @@ class ScannerTest(unittest.TestCase):
                 (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
             }
             self.assertIn(("caller", "helper"), calls, f"bare unqualified call should still resolve: {calls}")
+
+    def test_tree_sitter_links_function_passed_as_callback_argument(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        # Regression: found via real usage on a large C codebase. A function
+        # invoked exclusively via function-pointer/callback registration
+        # (SetMainCallback2(CB2_InitBattle), never called directly as
+        # CB2_InitBattle(...)) had zero caller edges -- static call-graph
+        # detection only recognizes name(...) call sites, so a name that's
+        # merely *passed* as a bare argument was invisible, making an
+        # actively-used function read as isolated/dead. Verified via a
+        # direct tree-sitter parse (not assumed) that C's call_expression
+        # exposes its argument list via child_by_field_name("arguments").
+        c_text = (
+            "void CB2_InitBattle(void) {}\n"
+            "void MainLoop(void) {\n"
+            "    SetMainCallback2(CB2_InitBattle);\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "battle_main.c"
+            f.write_text(c_text, encoding="utf-8")
+            src = SourceFile(f, "battle_main.c", "battle_main_c", c_text)
+            result = select_extractor("tree_sitter").extract_symbols([src], max_total_symbols=100)
+            refs = {
+                (result.nodes[e.source].label, result.nodes[e.target].label)
+                for e in result.edges
+                if e.type == "references"
+            }
+            self.assertIn(
+                ("MainLoop", "CB2_InitBattle"),
+                refs,
+                f"callback-registration argument should produce a references edge: {refs}",
+            )
+            # Must not be misclassified as an actual "calls" edge -- passing
+            # a name as an argument doesn't prove it's ever invoked.
+            calls = {
+                (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
+            }
+            self.assertNotIn(("MainLoop", "CB2_InitBattle"), calls)
+
+    def test_tree_sitter_links_python_keyword_argument_callback(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        # Same bug class as the C callback-registration case above, but for
+        # Python's extremely common `func=callback` idiom (argparse's
+        # `set_defaults(func=cmd_scan)`, Click, dataclasses, ...). Verified
+        # directly that tree-sitter wraps this in a keyword_argument node
+        # (name="func", value="cmd_scan"), not a bare identifier -- a naive
+        # `arg.type in _NAME_NODE_TYPES` check misses it entirely unless the
+        # keyword_argument's `value` field is explicitly unwrapped.
+        py_text = (
+            "def cmd_scan(args):\n"
+            "    pass\n"
+            "\n"
+            "def build_parser():\n"
+            "    scan = sub.add_parser('scan')\n"
+            "    scan.set_defaults(func=cmd_scan)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "parser.py"
+            f.write_text(py_text, encoding="utf-8")
+            src = SourceFile(f, "parser.py", "parser_py", py_text)
+            result = select_extractor("tree_sitter").extract_symbols([src], max_total_symbols=100)
+            refs = {
+                (result.nodes[e.source].label, result.nodes[e.target].label)
+                for e in result.edges
+                if e.type == "references"
+            }
+            self.assertIn(
+                ("build_parser", "cmd_scan"),
+                refs,
+                f"func=callback keyword argument should produce a references edge: {refs}",
+            )
 
     def test_tree_sitter_resolves_path_qualified_associated_function_calls(self) -> None:
         if not tree_sitter_available():
@@ -608,6 +682,75 @@ class ScannerTest(unittest.TestCase):
                 (root / f"mod_{i}.py").write_text("pass\n", encoding="utf-8")
             graph = scan_directory(root, max_nodes=5)
             self.assertLessEqual(len(graph.nodes), 5)
+
+    def test_collect_files_reports_truncation(self) -> None:
+        # Regression: collect_files silently dropped every file past
+        # max_nodes with no way for the caller to know the scan was
+        # incomplete rather than just small. Confirmed on a real large C
+        # codebase: a directly-called function 469 call sites deep never
+        # got a node because its file fell past the cap, and nothing
+        # indicated the graph was incomplete.
+        from graphgraph.scanner.files import collect_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(10):
+                (root / f"mod_{i}.py").write_text("pass\n", encoding="utf-8")
+            result = collect_files(root, 5)
+            self.assertEqual(len(result.files), 5)
+            self.assertTrue(result.truncated)
+            self.assertEqual(result.total_matched, 10)
+
+            result_untruncated = collect_files(root, 100)
+            self.assertFalse(result_untruncated.truncated)
+            self.assertEqual(result_untruncated.total_matched, 10)
+
+    def test_scan_directory_surfaces_file_truncation_in_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(10):
+                (root / f"mod_{i}.py").write_text("pass\n", encoding="utf-8")
+            graph = scan_directory(root, max_nodes=5)
+            self.assertEqual(graph.metadata.get("files_truncated"), "true")
+            self.assertEqual(graph.metadata.get("files_total_matched"), "10")
+
+            graph_full = scan_directory(root, max_nodes=100)
+            self.assertNotIn("files_truncated", graph_full.metadata)
+
+    def test_regex_extractor_reports_symbol_truncation(self) -> None:
+        # Same silent-truncation bug class, at the symbol-extraction layer:
+        # TreeSitterExtractor/RegexExtractor both used to `break` out the
+        # instant max_total_symbols was hit with no signal to the caller,
+        # so every file processed afterward got zero symbols.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for i in range(3):
+                path = root / f"mod_{i}.py"
+                path.write_text("\n".join(f"def fn_{i}_{j}(): pass" for j in range(10)) + "\n", encoding="utf-8")
+                files.append(SourceFile(path, f"mod_{i}.py", f"mod_{i}_py", path.read_text(encoding="utf-8")))
+
+            result = RegexExtractor().extract_symbols(files, max_total_symbols=5)
+            self.assertTrue(result.truncated)
+            self.assertLessEqual(len(result.nodes), 5)
+
+            result_full = RegexExtractor().extract_symbols(files, max_total_symbols=1000)
+            self.assertFalse(result_full.truncated)
+            self.assertEqual(len(result_full.nodes), 30)
+
+    def test_scan_directory_surfaces_symbol_truncation_in_metadata(self) -> None:
+        # Integration-level confirmation through the real scan_directory
+        # path. The derived symbol cap has a max(500, ...) floor, so this
+        # needs enough real defs to exceed 500 even at a small max_nodes.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(20):
+                (root / f"mod_{i}.py").write_text(
+                    "\n".join(f"def fn_{i}_{j}(): pass" for j in range(30)) + "\n", encoding="utf-8"
+                )
+            graph = scan_directory(root, max_nodes=20, depth="symbols", frontend="regex")
+            self.assertEqual(graph.metadata.get("symbols_truncated"), "true")
+            self.assertIn("symbols_cap", graph.metadata)
 
     def test_scanner_skips_tmp_directories_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1082,7 +1225,7 @@ class ScannerTest(unittest.TestCase):
             f = root / "mod.py"
             f.write_text("class Foo:\n    def bar(self): baz()\n\ndef baz(): pass\n", encoding="utf-8")
             tuples = [(f, "mod.py", "mod_py", f.read_text(encoding="utf-8"))]
-            nodes, edges = extract_symbols(tuples)
+            nodes, edges, _truncated = extract_symbols(tuples)
             labels = {n.label for n in nodes.values()}
             self.assertIn("Foo", labels)
             self.assertIn("baz", labels)
@@ -1104,7 +1247,7 @@ class ScannerTest(unittest.TestCase):
                 encoding="utf-8",
             )
             tuples = [(f, "lib.rs", "lib_rs", f.read_text(encoding="utf-8"))]
-            nodes, edges = extract_symbols(tuples)
+            nodes, edges, _truncated = extract_symbols(tuples)
             labels = {n.label for n in nodes.values()}
             self.assertIn("Point", labels)
             self.assertIn("distance", labels)
@@ -1179,7 +1322,7 @@ class ScannerTest(unittest.TestCase):
                 (rs, "shape.rs", "shape_rs", rs.read_text(encoding="utf-8")),
                 (py, "vendor/symbolic.py", "vendor_symbolic_py", py.read_text(encoding="utf-8")),
             ]
-            nodes, edges = extract_symbols(tuples)
+            nodes, edges, _truncated = extract_symbols(tuples)
             self.assertIn("examine", {n.label for n in nodes.values()})
             self.assertIn("as_deref", {n.label for n in nodes.values()})
             cross_lang = [
@@ -1236,7 +1379,7 @@ class ScannerTest(unittest.TestCase):
                 encoding="utf-8",
             )
             tuples = [(f, "config.js", "config_js", f.read_text(encoding="utf-8"))]
-            nodes, _edges = extract_symbols(tuples)
+            nodes, _edges, _truncated = extract_symbols(tuples)
             labels_by_kind: dict[str, str] = {n.label: n.kind for n in nodes.values()}
             self.assertNotIn("apiUrl", labels_by_kind, "plain string constant misclassified as a symbol")
             self.assertNotIn("config", labels_by_kind, "plain object constant misclassified as a symbol")

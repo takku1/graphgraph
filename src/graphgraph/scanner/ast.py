@@ -378,11 +378,14 @@ def extract_symbols(
     files: list[tuple[Path, str, str, str]],  # (path, rel_posix, file_node_id, text)
     max_total_symbols: int = 5000,
     context_nodes: dict[str, Node] | None = None,
-) -> tuple[dict[str, Node], list[Edge]]:
+) -> tuple[dict[str, Node], list[Edge], bool]:
     """Extract symbol nodes and edges from a list of (path, rel, file_node_id, text) tuples.
 
-    Returns (new_nodes, new_edges) to be merged into an existing Graph.
-    The caller is responsible for de-duplicating against existing nodes.
+    Returns (new_nodes, new_edges, truncated) to be merged into an existing
+    Graph. The caller is responsible for de-duplicating against existing
+    nodes. `truncated` is True if max_total_symbols was hit before every
+    file's definitions could be recorded -- callers should surface this
+    rather than silently returning an incomplete graph.
     """
     # Pass 1 — collect all symbol defs and build name→file maps
     file_defs: list[tuple[str, str, str, list[SymbolDef]]] = []  # (file_node_id, rel, text, defs)
@@ -394,6 +397,7 @@ def extract_symbols(
     all_symbol_nodes: dict[str, Node] = dict(context_nodes or {})
     symbol_edges: list[Edge] = []
     total = 0
+    truncated = False
 
     for node_id, node in (context_nodes or {}).items():
         if not _is_context_symbol(node):
@@ -425,6 +429,7 @@ def extract_symbols(
         file_defs.append((file_nid, rel, text, unique_defs))
         for d in unique_defs:
             if total >= max_total_symbols:
+                truncated = True
                 break
             sym_id = f"{file_nid}__{d.name}"
             facts = []
@@ -520,7 +525,7 @@ def extract_symbols(
             seen_edges.add(key)
             deduped.append(e)
 
-    return symbol_nodes, deduped
+    return symbol_nodes, deduped, truncated
 
 
 def _is_context_symbol(node: Node) -> bool:

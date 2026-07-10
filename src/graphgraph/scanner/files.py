@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class CollectFilesResult:
+    files: list[Path]
+    truncated: bool
+    total_matched: int
 
 SKIP_DIRS = frozenset({
     ".git", ".svn", ".hg",
@@ -97,7 +105,7 @@ def collect_files(
     extra_skip: frozenset[str] = frozenset(),
     git_staged: set[str] | None = None,
     include: frozenset[str] = frozenset(),
-) -> list[Path]:
+) -> CollectFilesResult:
     """Collect files from *root*, honouring skip rules.
 
     Priority order (highest first):
@@ -145,4 +153,8 @@ def collect_files(
             other_files.append(path)
 
     ordered = priority_files + code_files + doc_files + other_files
-    return ordered[:max_nodes]
+    return CollectFilesResult(
+        files=ordered[:max_nodes],
+        truncated=len(ordered) > max_nodes,
+        total_matched=len(ordered),
+    )

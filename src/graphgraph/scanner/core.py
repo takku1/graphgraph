@@ -86,7 +86,7 @@ def _load_manifest_and_graph(manifest_path: Path | None, previous_graph_path: Pa
 
 def scan_directory(
     root: Path,
-    max_nodes: int = 2000,
+    max_nodes: int = 5000,
     generic_mentions: bool = False,
     skip_dirs: list[str] | None = None,
     depth: str = "files",
@@ -115,7 +115,8 @@ def scan_directory(
     # Gather git metadata early so staged files get scan priority.
     dirty_git, churn_git = _get_git_metadata(root)
 
-    files = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git, include=include_set)
+    collected = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git, include=include_set)
+    files = collected.files
 
     file_map: dict[str, str] = {}   # rel_posix -> node_id
     for f in files:
@@ -167,6 +168,8 @@ def scan_directory(
         docs=docs,
         history=history,
         max_history_commits=max_history_commits,
+        files_truncated=collected.truncated,
+        files_total_matched=collected.total_matched,
     )
 
 
@@ -187,7 +190,7 @@ def _normalize_rels(root: Path, paths: list[str] | list[Path]) -> set[str]:
 def update_paths(
     root: Path,
     paths: list[str],
-    max_nodes: int = 2000,
+    max_nodes: int = 5000,
     generic_mentions: bool = False,
     depth: str = "symbols",
     frontend: str = "auto",
@@ -266,7 +269,7 @@ def update_paths(
 def remove_paths(
     root: Path,
     paths: list[str],
-    max_nodes: int = 2000,
+    max_nodes: int = 5000,
     generic_mentions: bool = False,
     depth: str = "symbols",
     frontend: str = "auto",
@@ -344,6 +347,8 @@ def _build_graph_from_split(
     history: bool,
     max_history_commits: int,
     scope_concepts_to_dirty: bool = False,
+    files_truncated: bool = False,
+    files_total_matched: int = 0,
 ) -> Graph:
     """Shared body: given a dirty/skip split (however it was determined),
     build the resulting Graph. Used by both the full-discovery
@@ -468,6 +473,14 @@ def _build_graph_from_split(
         "git_dirty": ",".join(dirty_git),
         "git_high_churn": ",".join(rel for rel, churn in churn_git.items() if churn >= 5),
     }
+    if files_truncated:
+        # collect_files() hit max_nodes before covering every matched file --
+        # some real files were never even read, let alone symbol-extracted.
+        # Silent by default before this fix; now surfaced so a scan of a
+        # large real codebase doesn't quietly produce an incomplete graph.
+        metadata["files_truncated"] = "true"
+        metadata["files_total_matched"] = str(files_total_matched)
+        metadata["files_scanned"] = str(len(active_rels))
 
     if depth == "symbols" and dirty_files:
         source_files: list[SourceFile] = []
@@ -483,7 +496,13 @@ def _build_graph_from_split(
             source_files.append(SourceFile(f, rel, file_nid, text))
 
         if source_files:
-            max_syms = max(500, max_nodes * 5)
+            # Raised from *5 (10,000 symbols at the old max_nodes=2000 default)
+            # after real usage on a large C codebase (tens of thousands of
+            # functions) silently truncated mid-scan with no indication --
+            # a real function 469 call sites deep didn't even get a node.
+            # Still bounded (not unlimited) to protect against pathological
+            # repos, but now the truncation itself is never silent (below).
+            max_syms = max(500, max_nodes * 20)
             extraction = select_extractor(frontend).extract_symbols(
                 source_files,
                 max_total_symbols=max_syms,
@@ -497,6 +516,14 @@ def _build_graph_from_split(
                 if key not in existing:
                     existing.add(key)
                     edges.append(e)
+            if extraction.truncated:
+                # Symbol extraction hit max_total_symbols before every
+                # collected file's definitions could be recorded -- some
+                # files may have zero symbols (whichever were processed
+                # after the cap), producing an incomplete graph silently
+                # unless surfaced here.
+                metadata["symbols_truncated"] = "true"
+                metadata["symbols_cap"] = str(max_syms)
 
     if docs and dirty_files:
         doc_inputs: list[DocumentInput] = []

@@ -31,7 +31,7 @@ def run_extraction(files: List[Tuple[Path, str, str, str]], max_symbols: int = 5
         library but can be tuned for benchmarking.
     """
     start = time.perf_counter()
-    symbol_nodes, symbol_edges = extract_symbols(files, max_total_symbols=max_symbols)
+    symbol_nodes, symbol_edges, _truncated = extract_symbols(files, max_total_symbols=max_symbols)
     elapsed = time.perf_counter() - start
     # Build a temporary graph to hold the symbols only (no existing graph merged).
     g = Graph()

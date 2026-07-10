@@ -37,7 +37,7 @@ async def worker():
 def helper():
     return worker()
 """
-    nodes, edges = extract_symbols(
+    nodes, edges, _truncated = extract_symbols(
         [(Path("pkg/service.py"), "pkg/service.py", "file_pkg/service.py", text)],
         max_total_symbols=100,
     )

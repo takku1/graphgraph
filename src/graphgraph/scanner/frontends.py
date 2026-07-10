@@ -46,6 +46,7 @@ class ExtractionResult:
     nodes: dict[str, Node]
     edges: list[Edge]
     frontend: str
+    truncated: bool = False
 
 
 class Extractor(Protocol):
@@ -72,8 +73,8 @@ class RegexExtractor:
         context_nodes: dict[str, Node] | None = None,
     ) -> ExtractionResult:
         tuples = [(f.path, f.rel, f.file_node_id, f.text) for f in files]
-        nodes, edges = extract_symbols(tuples, max_total_symbols=max_total_symbols, context_nodes=context_nodes)
-        return ExtractionResult(nodes=nodes, edges=edges, frontend=self.name)
+        nodes, edges, truncated = extract_symbols(tuples, max_total_symbols=max_total_symbols, context_nodes=context_nodes)
+        return ExtractionResult(nodes=nodes, edges=edges, frontend=self.name, truncated=truncated)
 
 
 class TreeSitterExtractor:
@@ -92,6 +93,7 @@ class TreeSitterExtractor:
         defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]] = []
         name_to_symbols: dict[str, list[str]] = {}
         total = 0
+        truncated = False
 
         for node_id, node in nodes.items():
             if _is_context_symbol(node):
@@ -109,6 +111,7 @@ class TreeSitterExtractor:
             seen_names: set[str] = set()
             for d in defs:
                 if total >= max_total_symbols:
+                    truncated = True
                     break
                 if d.kind == "impl_block" or d.name in seen_names:
                     continue
@@ -141,8 +144,9 @@ class TreeSitterExtractor:
         _add_returns(defs_by_file, nodes, name_to_symbols, edges)
         _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
         _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
+        _add_tree_sitter_callback_references(defs_by_file, nodes, name_to_symbols, edges)
         new_nodes = {node_id: node for node_id, node in nodes.items() if node_id not in context_ids}
-        return ExtractionResult(nodes=new_nodes, edges=_dedupe_edges(edges), frontend=self.name)
+        return ExtractionResult(nodes=new_nodes, edges=_dedupe_edges(edges), frontend=self.name, truncated=truncated)
 
 
 def tree_sitter_available() -> bool:
@@ -612,6 +616,49 @@ def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
     return sources
 
 
+def _add_tree_sitter_callback_references(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    nodes: dict[str, Node],
+    name_to_symbols: dict[str, list[str]],
+    edges: list[Edge],
+) -> None:
+    """Weak `references` edges for names passed as bare call arguments.
+
+    Not a `calls` edge -- passing a function's name as a callback argument
+    doesn't prove it's ever actually invoked, unlike a direct `name(...)`
+    call site. This exists so a callback-only function (never called
+    directly, only registered via e.g. `SetMainCallback2(CB2_InitBattle)`)
+    shows up as connected/used rather than reading as isolated/dead, which
+    is genuinely misleading for codebases that lean on function-pointer
+    dispatch (common in C, and callback-heavy JS).
+    """
+    unique_callables = {
+        name: ids[0] for name, ids in name_to_symbols.items()
+        if len(ids) == 1 and nodes[ids[0]].kind in {"function", "method"}
+    }
+    if not unique_callables:
+        return
+
+    for source, defs, root in defs_by_file:
+        src_lang = _lang_family(source.rel)
+        callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
+        for d in callable_defs:
+            src_id = f"{source.file_node_id}__{d.name}"
+            if src_id not in nodes:
+                continue
+            for name in _callback_arg_names_in_range(
+                root, source.text.encode("utf-8", errors="replace"), d.start, d.end
+            ):
+                tgt_id = unique_callables.get(name)
+                if not tgt_id or tgt_id == src_id:
+                    continue
+                tgt_node = nodes.get(tgt_id)
+                tgt_lang = _lang_family(tgt_node.path) if tgt_node else None
+                if src_lang is not None and tgt_lang is not None and src_lang != tgt_lang:
+                    continue
+                edges.append(Edge(src_id, tgt_id, "references", confidence=0.6, provenance="tree_sitter_callback_ref"))
+
+
 def _add_tree_sitter_calls(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
     nodes: dict[str, Node],
@@ -838,6 +885,56 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tu
         name = _call_name(fn, text)
         if name:
             names.add((name, is_qualified))
+    return names
+
+
+def _callback_arg_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[str]:
+    """Return bare-identifier names passed as call arguments in [start, end).
+
+    Static call-graph analysis only recognizes ``name(...)`` as a call site,
+    so a function invoked exclusively via function-pointer/callback
+    dispatch -- ``SetMainCallback2(CB2_InitBattle)`` (C), ``setTimeout(cb, ms)``
+    (JS), ``signal.connect(handler)`` (Python) -- reads as having zero
+    callers even when it's genuinely used extensively. This walks the same
+    call-expression nodes as ``_call_names_in_range`` but looks at the
+    ``arguments`` field instead of the callee, collecting any argument that
+    is itself a bare name (not a nested call, literal, or other expression).
+    Also unwraps Python/keyword-style ``func=callback`` arguments (e.g.
+    argparse's ``set_defaults(func=cmd_scan)``) via their ``value`` field --
+    an extremely common callback-registration idiom that a bare
+    ``arg.type in _NAME_NODE_TYPES`` check would otherwise miss entirely,
+    since the direct argument-list child is a ``keyword_argument`` wrapper,
+    not the identifier itself.
+    Verified empirically (not assumed) that tree-sitter's C, JavaScript, and
+    Python grammars all expose this via ``child_by_field_name("arguments")``
+    despite differing node type names (``argument_list`` vs ``arguments``).
+    """
+    names: set[str] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if int(node.end_byte) < start or int(node.start_byte) > end:
+            continue
+        stack.extend(reversed(list(getattr(node, "named_children", ()))))
+        if node.type not in _CALL_NODE_TYPES:
+            continue
+        try:
+            args_node = node.child_by_field_name("arguments")
+        except Exception:
+            args_node = None
+        if args_node is None:
+            continue
+        for arg in getattr(args_node, "named_children", ()):
+            candidate = arg
+            if arg.type == "keyword_argument":
+                try:
+                    candidate = arg.child_by_field_name("value") or arg
+                except Exception:
+                    candidate = arg
+            if candidate.type in _NAME_NODE_TYPES:
+                name = _node_text(candidate, text)
+                if name:
+                    names.add(name)
     return names
 
 
