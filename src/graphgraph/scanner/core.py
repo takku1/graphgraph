@@ -8,7 +8,7 @@ from ..concepts import link_source_interpretation_concepts
 from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph, Node
 from .doc import DocumentInput, extract_document_context
-from .files import DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
+from .files import DEFAULT_SCAN_MAX_NODES, DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
 from .frontends import SourceFile, select_extractor
 from .history import extract_commit_history
 from .imports import add_file_edges
@@ -86,7 +86,7 @@ def _load_manifest_and_graph(manifest_path: Path | None, previous_graph_path: Pa
 
 def scan_directory(
     root: Path,
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     generic_mentions: bool = False,
     skip_dirs: list[str] | None = None,
     depth: str = "files",
@@ -190,7 +190,7 @@ def _normalize_rels(root: Path, paths: list[str] | list[Path]) -> set[str]:
 def update_paths(
     root: Path,
     paths: list[str],
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     generic_mentions: bool = False,
     depth: str = "symbols",
     frontend: str = "auto",
@@ -269,7 +269,7 @@ def update_paths(
 def remove_paths(
     root: Path,
     paths: list[str],
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     generic_mentions: bool = False,
     depth: str = "symbols",
     frontend: str = "auto",

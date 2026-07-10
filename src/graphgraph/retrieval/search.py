@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -8,6 +9,44 @@ from .models import Match
 from .text import node_search_text, tokenize
 
 DEPENDENCY_QUERY_TERMS = {"dependency", "dependencies", "external", "import", "imports", "module", "package", "vendor"}
+
+# Generic/placeholder identifier names that don't indicate a well-formed,
+# descriptive symbol even if they technically have multiple characters.
+_GENERIC_IDENTIFIER_TOKENS = frozenset({
+    "x", "y", "z", "i", "j", "k", "n", "m", "a", "b", "c",
+    "tmp", "temp", "val", "value", "data", "obj", "item", "el",
+    "res", "ret", "out", "arg", "args", "kwargs", "self", "cls",
+    "idx", "index", "buf", "buffer", "str", "num", "err", "e",
+})
+
+_CAMEL_CASE_SEGMENT = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")
+
+
+def identifier_quality_bonus(label: str) -> float:
+    """Reward well-formed, multi-segment identifiers over short/generic ones.
+
+    From Aider's repo-map PageRank personalization (see
+    docs/prior-art-research.md): a descriptive identifier like
+    `resolve_modified_node_ids` is far more likely to be what a query
+    actually means than a generic single-letter/placeholder name like `x`
+    or `tmp`, even when both technically match. Segments a label by
+    snake_case or camelCase word boundaries and scales the bonus with
+    segment count, capped so it can never dominate an exact match (still
+    an order of magnitude below `label_exact_terms`'s +36).
+    """
+    if not label:
+        return 0.0
+    stripped = label.strip("_")
+    if not stripped or stripped.lower() in _GENERIC_IDENTIFIER_TOKENS:
+        return 0.0
+    if "_" in label:
+        segments = [s for s in label.split("_") if s]
+    else:
+        segments = _CAMEL_CASE_SEGMENT.findall(label)
+    segments = [s for s in segments if len(s) >= 2]
+    if len(segments) <= 1:
+        return 0.0
+    return min(3.0, 0.5 * (len(segments) - 1))
 
 
 @dataclass(frozen=True)
@@ -215,6 +254,11 @@ def search_nodes(
                 else:
                     score *= 0.25
                     reasons.append("external_unresolved_penalty")
+
+            identifier_bonus = identifier_quality_bonus(label)
+            if identifier_bonus:
+                score += identifier_bonus
+                reasons.append("well_named_identifier")
 
             n_scores = len(pagerank_scores)
             pr_val = pagerank_scores.get(node.id, 0.0)

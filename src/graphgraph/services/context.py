@@ -23,6 +23,55 @@ def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100,
     return render_packet(graph, top_set, skeleton_edges, packet)
 
 
+class FullGraphTooLargeError(ValueError):
+    """Raised by render_full_graph when the estimated token cost exceeds max_tokens."""
+
+    def __init__(self, estimated_tokens: int, max_tokens: int, node_count: int, edge_count: int):
+        self.estimated_tokens = estimated_tokens
+        self.max_tokens = max_tokens
+        self.node_count = node_count
+        self.edge_count = edge_count
+        super().__init__(
+            f"Full-graph packet is ~{estimated_tokens} tokens ({node_count} nodes, {edge_count} edges), "
+            f"over the {max_tokens}-token guard. Pass max_tokens=None (or a higher value) to render anyway, "
+            "or use a scoped query instead -- see docs/retrieval-confidence-routing.md for when a full "
+            "dump is actually the right tool vs. a targeted query."
+        )
+
+
+def render_full_graph(
+    graph_path: Path | None = None,
+    packet: str = "gg_max",
+    max_tokens: int | None = 20_000,
+) -> str:
+    """Render every active node/edge in the graph as one packet -- no query, no budget.
+
+    This is deliberately not the default path. query/context/final exist
+    precisely so a caller never has to pay for the whole graph to answer one
+    question (see docs/retrieval-confidence-routing.md) -- this function is
+    the explicit "I actually want everything" escape hatch for cases like
+    full-corpus offline analysis or exporting a complete snapshot.
+
+    Raises FullGraphTooLargeError if the estimated token cost exceeds
+    max_tokens (a cheap regex-based proxy, the same one eval.py uses,
+    not tiktoken -- good enough to catch "this is about to be 190,000
+    tokens" without adding a dependency). Pass max_tokens=None to disable
+    the guard entirely.
+    """
+    resolved_graph_path = graph_path or find_graph_path()
+    graph = load_any(resolved_graph_path)
+    all_nodes = {node_id for node_id, node in graph.nodes.items() if node.active}
+    all_edges = [edge for edge in graph.edges if edge.active]
+    rendered = render_packet(graph, all_nodes, all_edges, packet)
+    if max_tokens is not None:
+        from ..eval import estimate_tokens
+
+        estimated = estimate_tokens(rendered)
+        if estimated > max_tokens:
+            raise FullGraphTooLargeError(estimated, max_tokens, len(all_nodes), len(all_edges))
+    return rendered
+
+
 def render_final_packet(
     *,
     starts: list[str],

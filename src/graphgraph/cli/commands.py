@@ -22,7 +22,15 @@ from ..planning import (
 )
 from ..retrieval import apply_shape_budget
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
-from ..services import render_final_packet, render_query_context, render_source_snippets, render_stable_skeleton
+from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..services import (
+    FullGraphTooLargeError,
+    render_final_packet,
+    render_full_graph,
+    render_query_context,
+    render_source_snippets,
+    render_stable_skeleton,
+)
 from ..services.context import resolve_start_nodes
 from ..services.native import (
     build_project_status,
@@ -164,7 +172,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             if source_count == 0:
                 print("    - [!] WARNING: No source-code nodes found in graph.")
                 print("      The scanner may have missed your source directory due to:")
-                print("      * max_nodes cap (default 5000 -- try --max-nodes 20000)")
+                print(f"      * max_nodes cap (default {DEFAULT_SCAN_MAX_NODES} -- try --max-nodes {DEFAULT_SCAN_MAX_NODES * 4})")
                 print("      * Source dir is inside a skipped directory (repos/, references/, etc.)")
                 print("      * Files are staged but not committed (re-scan after git add)")
                 print("      Rescan with: graphgraph scan --depth symbols --docs")
@@ -322,11 +330,24 @@ def cmd_final(args: argparse.Namespace) -> None:
         print(render_stable_skeleton(graph_path, max_nodes=max_nodes, packet=getattr(args, "packet", "gg_max") or "gg_max"))
         return
 
+    if getattr(args, "full_graph", False):
+        max_tokens = getattr(args, "full_graph_max_tokens", 20_000)
+        try:
+            print(render_full_graph(
+                graph_path,
+                packet=getattr(args, "packet", "gg_max") or "gg_max",
+                max_tokens=max_tokens if max_tokens else None,
+            ))
+        except FullGraphTooLargeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     if not args.starts:
-        print("Error: --starts is required unless --stable-skeleton is specified.", file=sys.stderr)
+        print("Error: --starts is required unless --stable-skeleton or --full-graph is specified.", file=sys.stderr)
         sys.exit(1)
     if not args.query_class:
-        print("Error: --query-class is required unless --stable-skeleton is specified.", file=sys.stderr)
+        print("Error: --query-class is required unless --stable-skeleton or --full-graph is specified.", file=sys.stderr)
         sys.exit(1)
 
     print(
@@ -609,7 +630,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print("  !  WARNING: zero source nodes found. Possible causes:")
         print("     * All source files are inside excluded/skipped directories")
         print("     * The --directory flag points to the wrong root")
-        print("     * max_nodes cap hit before source files were reached (try --max-nodes 20000)")
+        print(f"     * max_nodes cap hit before source files were reached (try --max-nodes {DEFAULT_SCAN_MAX_NODES * 4})")
         print()
         print("  Tip: run  graphgraph doctor  for a full environment check.")
     if graph.metadata.get("files_truncated") == "true":

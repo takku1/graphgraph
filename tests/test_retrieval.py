@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from conftest import sample_graph
 
@@ -140,6 +141,84 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(result.starts[0], "N1")
         self.assertEqual(result.nodes, {"N1", "N2", "N3"})
 
+    def test_recent_changes_query_class_surfaces_fixes_edges_deprioritized_elsewhere(self) -> None:
+        # Concrete, scoped instance of the "time-scoped query" idea in
+        # docs/planned-work.md: extract_commit_history already puts commit
+        # nodes + fixes edges into the graph when history=True, but before
+        # this test/feature, no traversal policy in graph/traversal.py
+        # listed "history" in preferred_families or "fixes" in
+        # preferred_relations -- confirmed by reading every POLICIES entry.
+        # Those edges only ever survived as unprioritized weak-edge-limit
+        # leftovers under every existing query class.
+        import subprocess
+
+        from graphgraph.graph.traversal import traversal_policy
+        from graphgraph.scanner import scan_directory
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def run_git(*args: str) -> None:
+                subprocess.run(["git", *args], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            run_git("init", "-q")
+            run_git("config", "user.email", "test@example.com")
+            run_git("config", "user.name", "Test User")
+            (root / "app.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            run_git("add", ".")
+            run_git("commit", "-q", "-m", "feat: initial commit")
+            (root / "app.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+            run_git("add", ".")
+            run_git("commit", "-q", "-m", "fix: correct add() returning subtraction result")
+
+            graph = scan_directory(root, depth="files", history=True)
+
+            result = retrieve_context(graph, "app", "recent_changes", hops=1)
+            commit_nodes_in_result = [n for n in result.nodes if graph.nodes[n].kind == "commit"]
+            self.assertTrue(commit_nodes_in_result, "recent_changes should surface the fix commit touching app.py")
+            fixes_edges_in_result = [e for e in result.edges if e.type == "fixes"]
+            self.assertTrue(fixes_edges_in_result, "recent_changes should surface the fixes edge itself")
+
+            # Contrast: confirm blast_radius genuinely does not prioritize
+            # this relation/family -- the gap this query class closes.
+            blast_policy = traversal_policy("blast_radius")
+            self.assertNotIn("fixes", blast_policy.preferred_relations)
+            self.assertNotIn("history", blast_policy.preferred_families)
+
+    def test_recent_changes_ignores_ephemeral_session_layer_git_dirty_injection(self) -> None:
+        # Found live-testing recent_changes against this project's own repo
+        # (which had 15 uncommitted files at the time): retrieve_context
+        # unconditionally appends every currently-dirty file as an extra
+        # start for every query class ("Ephemeral Session Layer"), which is
+        # reasonable for exploratory queries but actively defeats
+        # recent_changes -- a query class specifically about one deliberate
+        # anchor's committed history. On a repo under active development
+        # (exactly when "what recently changed here" is most useful), a
+        # dozen unrelated dirty files drowned out the one real anchor and
+        # its fixes/commit evidence before the node budget was ever reached.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "unrelated.py").write_text("x = 1\n", encoding="utf-8")
+            graph = Graph(nodes={"TARGET": Node("TARGET", "widget", "function", "widget.py")})
+            with patch(
+                "graphgraph.retrieval.git_utils.get_git_modified_files",
+                return_value={"unrelated.py": 3},
+            ):
+                result = retrieve_context(graph, "widget", "recent_changes", hops=1)
+                self.assertNotIn("unrelated_py", result.starts)
+
+                # Confirm the injection is genuinely still active for other
+                # query classes -- this guard is scoped to recent_changes
+                # only, not a regression of the session-layer feature itself.
+                graph2 = Graph(
+                    nodes={
+                        "TARGET": Node("TARGET", "widget", "function", "widget.py"),
+                        "unrelated_py": Node("unrelated_py", "unrelated.py", "python", "unrelated.py"),
+                    }
+                )
+                result2 = retrieve_context(graph2, "widget", "blast_radius", hops=1)
+                self.assertIn("unrelated_py", result2.starts)
+
     def test_search_prefers_source_over_tests_unless_query_mentions_tests(self) -> None:
         graph = Graph(
             nodes={
@@ -168,6 +247,41 @@ class RetrievalTest(unittest.TestCase):
         # Query with explicit dependency/import keywords: intent gate opens for external node
         matches_dep = search_nodes(graph, "urllib3 dependency", limit=2)
         self.assertEqual(matches_dep[0].node.id, "EXT")
+
+    def test_identifier_quality_bonus_rewards_descriptive_multi_segment_names(self) -> None:
+        # From prior-art-research.md: Aider's repo-map personalization gives
+        # a well-formed identifier a 10x weight over a generic one when
+        # ranking. Direct unit coverage of the scoring function itself.
+        from graphgraph.retrieval.search import identifier_quality_bonus
+
+        self.assertEqual(identifier_quality_bonus("x"), 0.0)
+        self.assertEqual(identifier_quality_bonus("tmp"), 0.0)
+        self.assertEqual(identifier_quality_bonus("data"), 0.0)
+        self.assertEqual(identifier_quality_bonus(""), 0.0)
+        self.assertEqual(identifier_quality_bonus("helper"), 0.0)  # single segment, not generic-listed but still 1 segment
+        self.assertGreater(identifier_quality_bonus("resolve_modified_node_ids"), 0.0)
+        self.assertGreater(identifier_quality_bonus("resolveModifiedNodeIds"), 0.0)
+        # More segments should score at least as high, and the bonus must
+        # stay capped well below an exact-match-tier bonus (36.0).
+        four_seg = identifier_quality_bonus("resolve_modified_node")
+        eight_seg = identifier_quality_bonus("resolve_modified_node_ids_from_git_diff_output")
+        self.assertGreaterEqual(eight_seg, four_seg)
+        self.assertLessEqual(eight_seg, 3.0)
+
+    def test_search_nodes_prefers_well_named_identifier_when_otherwise_tied(self) -> None:
+        # Integration-level: two functions match a generic query term
+        # equally (both are "function" kind with the same lexical match
+        # strength), but one has a descriptive multi-segment name and the
+        # other is a bare placeholder-style name. The well-named one should
+        # rank first.
+        graph = Graph(
+            nodes={
+                "GOOD": Node("GOOD", "resolve_modified_node_ids", "function", "a.py"),
+                "BAD": Node("BAD", "x", "function", "b.py"),
+            }
+        )
+        matches = search_nodes(graph, "resolve modified node ids", limit=2)
+        self.assertEqual(matches[0].node.id, "GOOD")
 
     def test_search_nodes_exact_phrase_bonus_fires_through_stopwords(self) -> None:
         # Regression: the query side tokenizes with stopwords removed
@@ -678,3 +792,47 @@ Find the AuthService implementation.
         edge_start = lines.index("[e]")
         node_rows = [line for line in lines[node_start:edge_start] if not line.startswith("# ")]
         self.assertEqual(len(node_rows), 70)
+
+    def test_render_full_graph_includes_every_active_node_and_edge(self) -> None:
+        # The explicit "give me everything, no query scoping" escape hatch
+        # added after testing full-graph loading surfaced a real validator
+        # bug (see test_gg_max_validation_survives_node_content_containing_
+        # marker_substrings in test_packets.py). render_full_graph must
+        # include every active node/edge with no budget/retrieval filtering
+        # at all, and must exclude inactive (soft-deleted) ones.
+        from graphgraph.packets.validation import validate_packet
+        from graphgraph.services import render_full_graph
+
+        graph = Graph(
+            nodes={
+                "A": Node("A", "Alpha", "function", active=True),
+                "B": Node("B", "Beta", "function", active=True),
+                "GONE": Node("GONE", "Gone", "function", active=False),
+            },
+            edges=[Edge("A", "B", "calls")],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(graph, graph_path)
+            packet = render_full_graph(graph_path, max_tokens=None)
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.node_count, 2)
+        self.assertNotIn("Gone", packet)
+
+    def test_render_full_graph_refuses_over_token_guard(self) -> None:
+        from graphgraph.services import FullGraphTooLargeError, render_full_graph
+
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"node_number_{i}_with_a_longer_label", "function") for i in range(50)},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(graph, graph_path)
+            with self.assertRaises(FullGraphTooLargeError) as ctx:
+                render_full_graph(graph_path, max_tokens=10)
+            self.assertIn("10", str(ctx.exception))
+            # max_tokens=None (or 0, via the CLI/MCP "disable" convention)
+            # must render regardless of size.
+            packet = render_full_graph(graph_path, max_tokens=None)
+            self.assertIn("node_number_0_with_a_longer_label", packet)

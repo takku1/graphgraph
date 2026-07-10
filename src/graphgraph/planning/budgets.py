@@ -57,6 +57,10 @@ DEFAULT_NODE_BUDGETS = {
     "subsystem_summary": 120,
     "blast_radius": 120,
     "spreading_activation": 120,
+    # Recent-changes results are a short list of qualifying commits per file,
+    # not a deep expansion -- 40 comfortably covers a well-touched file's
+    # fix history without ballooning into unrelated subsystem context.
+    "recent_changes": 40,
 }
 DEFAULT_FALLBACK_NODE_BUDGET = 120
 DOC_NODE_BUDGET = 12

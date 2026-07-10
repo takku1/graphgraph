@@ -1,6 +1,7 @@
 from .ast import extract_symbols
 from .core import remove_paths, scan_directory, update_paths
 from .doc import DocumentInput, extract_document_context
+from .files import DEFAULT_SCAN_MAX_NODES
 from .frontends import (
     ExtractionResult,
     Extractor,
@@ -15,6 +16,7 @@ from .frontends import (
 from .history import CommitRecord, extract_commit_history
 
 __all__ = [
+    "DEFAULT_SCAN_MAX_NODES",
     "scan_directory",
     "update_paths",
     "remove_paths",

@@ -20,6 +20,8 @@ def choose_packet(query_class: str, query: str = "") -> PacketChoice:
         return PacketChoice(1, "gg_max", "subsystem summaries: gg_max is the measured token floor")
     if query_class == "spreading_activation":
         return PacketChoice(2, "gg_max", "spreading activation leverages 2-step energy propagation; gg_max is the measured token floor")
+    if query_class == "recent_changes":
+        return PacketChoice(1, "gg_max", "recent-changes queries need 1-hop commit/fixes evidence; gg_max is the measured token floor")
     if query_class == "negative_query":
         # hops=1, not 0: at hops=0 the packet can never show connectivity
         # evidence for *any* node regardless of the graph, so a query like

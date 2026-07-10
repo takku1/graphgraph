@@ -14,13 +14,42 @@ class ValidationResult:
     errors: tuple[str, ...] = ()
 
 
+def _has_marker_line(text: str, marker: str) -> bool:
+    """True if *marker* (e.g. "[r]") appears as its own exact line.
+
+    render_gg_max/render_gg_lex always emit "[r]"/"[n]"/"[e]" as standalone
+    lines (confirmed directly in packets/renderers.py -- each is its own
+    `lines.append(...)` call). Checking for the marker as a bare substring
+    anywhere in the packet (the previous approach) meant a node whose
+    label/summary/fact happened to *contain* the literal text "[e]" (e.g. a
+    doc-scanned string like "a packet ending in \\n[e]", captured verbatim
+    as a concept label) would corrupt parsing for the entire rest of the
+    packet -- confirmed with a real repro: rendering this project's own
+    full graph unfiltered produced exactly such a node and broke gg_max
+    validation for ~250 nodes downstream of it.
+    """
+    return re.search(rf"^\s*{re.escape(marker)}\s*$", text, re.MULTILINE) is not None
+
+
+def _split_on_marker_line(text: str, marker: str) -> tuple[str, str]:
+    """Split *text* at the first line that is exactly *marker*, dropping that line.
+
+    Line-anchored counterpart to ``text.split(marker, 1)`` -- see
+    ``_has_marker_line`` for why a bare substring split is unsafe.
+    """
+    match = re.search(rf"^\s*{re.escape(marker)}\s*$", text, re.MULTILINE)
+    if match is None:
+        raise ValueError(f"marker line {marker!r} not found")
+    return text[: match.start()], text[match.end():]
+
+
 def validate_packet(packet: str) -> ValidationResult:
     text = packet.strip()
     if text.startswith("<g>"):
         return _require_nonempty_nodes(validate_lowlevel(text))
     if text.startswith("TABLE nodes:"):
         return _require_nonempty_nodes(validate_sql(text))
-    if text.startswith("[r]") or "[r]" in text:
+    if text.startswith("[r]") or _has_marker_line(text, "[r]"):
         return _require_nonempty_nodes(validate_gg_max(text))
     if text.startswith("@nodes") or "@nodes" in text:
         return _require_nonempty_nodes(validate_semantic_arrow(text))
@@ -156,18 +185,14 @@ def validate_gg_max(packet: str) -> ValidationResult:
     nodes: dict[str, str] = {}
     edges = []
 
-    if "[r]" not in packet or "[n]" not in packet or "[e]" not in packet:
+    if not (_has_marker_line(packet, "[r]") and _has_marker_line(packet, "[n]") and _has_marker_line(packet, "[e]")):
         errors.append("missing [r], [n], or [e] sections")
         fmt = "gg_max_hybrid" if "summary:" in packet else "gg_max"
         return ValidationResult(False, fmt, 0, 0, tuple(errors))
 
-    parts = packet.split("[e]", 1)
-    rn_part = parts[0]
-    edges_part = parts[1]
-
-    rn_parts = rn_part.split("[n]", 1)
-    relations_part = rn_parts[0].split("[r]", 1)[1]
-    nodes_part = rn_parts[1]
+    rn_part, edges_part = _split_on_marker_line(packet, "[e]")
+    _, relations_and_nodes = _split_on_marker_line(rn_part, "[r]")
+    relations_part, nodes_part = _split_on_marker_line(relations_and_nodes, "[n]")
 
     for line in nonempty_lines(relations_part):
         if ":" not in line:

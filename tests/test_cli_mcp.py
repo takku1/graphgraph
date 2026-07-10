@@ -336,6 +336,27 @@ class CliMcpTest(unittest.TestCase):
             self.assertTrue(result.ok, result.errors)
             self.assertEqual(result.node_count, 3)
 
+    def test_mcp_full_graph_renders_everything_and_errors_over_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+
+            response = dispatch({
+                "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                "params": {"name": "full_graph", "arguments": {"graph_path": str(graph_path)}},
+            })
+            assert response is not None
+            packet = response["result"]["content"][0]["text"]
+            self.assertIn("AuthService", packet)
+            self.assertIn("AuditLog", packet)
+
+            response_guard = dispatch({
+                "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                "params": {"name": "full_graph", "arguments": {"graph_path": str(graph_path), "max_tokens": 1}},
+            })
+            assert response_guard is not None
+            self.assertIn("error", response_guard)
+
     def test_mcp_query_context_without_starts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"
@@ -656,6 +677,39 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(proc.stdout, "")
         self.assertIn("Error: No graph nodes matched the requested starts", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
+
+    def test_cli_final_full_graph_renders_everything_and_refuses_over_guard(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+
+            proc = subprocess.run(
+                [sys.executable, "-m", "graphgraph", "final", "--graph", str(graph_path), "--full-graph"],
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("[n]", proc.stdout)
+            self.assertIn("AuthService", proc.stdout)
+            self.assertIn("AuditLog", proc.stdout)
+
+            proc_guard = subprocess.run(
+                [
+                    sys.executable, "-m", "graphgraph", "final", "--graph", str(graph_path),
+                    "--full-graph", "--full-graph-max-tokens", "1",
+                ],
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(proc_guard.returncode, 1)
+            self.assertIn("Error:", proc_guard.stderr)
+            self.assertNotIn("Traceback", proc_guard.stderr)
 
     def test_local_context_validate_snippets_smoke_without_provider_keys(self) -> None:
         import os

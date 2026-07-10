@@ -1,5 +1,6 @@
 import argparse
 
+from ..scanner import DEFAULT_SCAN_MAX_NODES
 from .commands import (
     cmd_cache,
     cmd_compare,
@@ -52,6 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--path", action="append", default=[])
     final.add_argument("--tag", action="append", default=[])
     final.add_argument("--stable-skeleton", action="store_true", help="Compile a stable, PageRank-based skeleton of top architectural nodes to use as a static prompt cache prefix.")
+    final.add_argument("--full-graph", action="store_true", help="Render every active node/edge with no query/budget -- an explicit escape hatch, not the default path. Refuses over --full-graph-max-tokens unless raised or disabled.")
+    final.add_argument("--full-graph-max-tokens", type=int, default=20_000, help="Token guard for --full-graph (default: 20000). Pass 0 to disable.")
     final.add_argument("--max-nodes", type=int, default=None, help="Expanded node budget. Default: dynamic by query class and graph shape; stable skeleton uses 100.")
     final.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     final.set_defaults(func=cmd_final)
@@ -74,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--directory", "-d", help="Root directory to scan if a graph must be built (default: cwd).")
     context.add_argument("--graph", help="Graph path to read/write (default: .graphgraph/graph.gg).")
     context.add_argument("--rebuild", action="store_true", help="Force a graph rebuild before querying.")
-    context.add_argument("--scan-max-nodes", type=int, default=5000, help="Max files/nodes collected during auto-build (default: 5000).")
+    context.add_argument("--scan-max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Max files/nodes collected during auto-build (default: {DEFAULT_SCAN_MAX_NODES}).")
     context.add_argument("--query-class", default="subsystem_summary")
     context.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     context.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
@@ -130,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="Scan a directory and build a graph from import relationships.")
     scan.add_argument("--directory", "-d", help="Root directory to scan (default: cwd).")
     scan.add_argument("--output", "-o", help="Output graph path (default: .graphgraph/graph.gg).")
-    scan.add_argument("--max-nodes", type=int, default=5000, help="Max nodes to collect (default: 5000).")
+    scan.add_argument("--max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Max nodes to collect (default: {DEFAULT_SCAN_MAX_NODES}).")
     scan.add_argument("--generic-mentions", action="store_true", default=False,
                       help="Add weak 'references' edges for any file that mentions another file's stem name.")
     scan.add_argument("--skip-dirs", nargs="*", metavar="DIR",
@@ -163,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="File(s) that changed (relative to --directory or absolute).")
     update.add_argument("--directory", "-d", help="Root directory (default: cwd).")
     update.add_argument("--output", "-o", help="Existing graph path to update (default: .graphgraph/graph.gg).")
-    update.add_argument("--max-nodes", type=int, default=5000, help="Max symbols per file batch (default: 5000).")
+    update.add_argument("--max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Max symbols per file batch (default: {DEFAULT_SCAN_MAX_NODES}).")
     update.add_argument("--depth", choices=["files", "symbols"], default="symbols")
     update.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto")
     update.add_argument("--docs", action="store_true", help="Extract document sections and concept nodes for doc files among --files.")
@@ -179,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="File(s) that no longer exist (relative to --directory or absolute).")
     remove.add_argument("--directory", "-d", help="Root directory (default: cwd).")
     remove.add_argument("--output", "-o", help="Existing graph path to update (default: .graphgraph/graph.gg).")
-    remove.add_argument("--max-nodes", type=int, default=5000)
+    remove.add_argument("--max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES)
     remove.add_argument("--depth", choices=["files", "symbols"], default="symbols")
     remove.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto")
     remove.add_argument("--docs", action="store_true")

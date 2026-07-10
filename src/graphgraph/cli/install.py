@@ -6,6 +6,8 @@ import os
 import shutil
 from pathlib import Path
 
+from ..scanner import DEFAULT_SCAN_MAX_NODES
+
 
 def _codex_plugin_json() -> dict:
     return {
@@ -265,6 +267,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "* **`graphgraph/query_context`**: **Preferred.** Natural-language query -> auto-discovered anchors -> graph packet. No node IDs needed.\n"
         "* **`graphgraph/search_nodes`**: Find node IDs by label, path, or kind substring. Use before `final_packet`.\n"
         "* **`graphgraph/final_packet`**: Render compressed context packet from known anchor node IDs.\n"
+        "* **`graphgraph/full_graph`**: Render every active node/edge, no query/budget. Rarely the right tool -- use query_context for normal questions; this is for a genuine full-corpus snapshot need. Refuses above a token guard by default.\n"
         "* **`graphgraph/source_snippets`**: Render bounded source excerpts for node IDs/labels/paths. Use after `query_context` when exact code lines are needed.\n"
         "* **`graphgraph/project_status`**: Validate the graph, summarize code/doc balance, package metadata, and optional runtime probes.\n"
         "* **`graphgraph/plan_context`**: Pass `query_class` to plan the expansion depth.\n"
@@ -273,13 +276,14 @@ def cmd_install(args: argparse.Namespace) -> None:
         "* **`graphgraph/validate_packet`**: Validate a rendered packet, or omit `packet` (optionally pass `graph_path`) to validate the saved native graph file instead.\n"
         "* **`graphgraph/describe_formats`** / **`describe_ontology`** / **`describe_frontends`** / **`describe_traversal`**: Introspect packet formats, edge-type ontology, extraction frontends, and per-query-class traversal policy.\n\n"
         "### Available CLI Commands\n"
-        "* **Scan**: `graphgraph scan --depth symbols --docs` (default max-nodes=5000)\n"
+        f"* **Scan**: `graphgraph scan --depth symbols --docs` (default max-nodes={DEFAULT_SCAN_MAX_NODES})\n"
         "* **Scan with exclusions**: `graphgraph scan --depth symbols --docs --exclude repos references_temp`\n"
         "* **Project status**: `graphgraph status --probe`\n"
         "* **One-step context packet**: `graphgraph context \"<text>\" --query-class subsystem_summary --show-stats`\n"
         "* **Natural-language query on an existing graph**: `graphgraph query \"<text>\" --query-class blast_radius --show-anchors`\n"
         "* **Known-node packet only**: `graphgraph final --graph <graph_path> --query-class <query_class> --starts <node_id>...`\n"
         "* **Stable prompt-cache skeleton**: `graphgraph final --stable-skeleton --max-nodes 120`\n"
+        "* **Full unscoped graph dump (rarely the right tool -- see below)**: `graphgraph final --full-graph`\n"
         "* **System diagnostics**: `graphgraph doctor`\n"
     )
     if rule_marker not in existing_content:
@@ -320,6 +324,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "| `query_context` | Natural-language query -> anchors -> compressed packet. Best default. |\n"
         "| `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |\n"
         "| `final_packet` | Render a packet from known node IDs. |\n"
+        "| `full_graph` | Every active node/edge, no query. Rarely the right tool -- refuses above a token guard by default. |\n"
         "| `source_snippets` | Bounded source excerpts for node IDs/labels/paths; use after `query_context` for exact lines. |\n"
         "| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |\n"
         "| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs` and `include_dirs`. |\n"
@@ -336,7 +341,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "| Low-level render from known IDs (no policies) | `render` | `--starts <id>...` | `graphgraph render --query-class direct_lookup --starts <id>` |\n\n"
         "Notes: `--starts` exists only on `final` and `render`. `context`/`query` take free text and discover anchors themselves; use `--show-anchors` to see what they picked. Other helpers:\n\n"
         "- Project status: `graphgraph status --probe`\n"
-        "- Force rebuild: `graphgraph context \"<query>\" --rebuild --scan-max-nodes 5000 --show-stats`\n"
+        "- Force rebuild on a large repo: `graphgraph context \"<query>\" --rebuild --scan-max-nodes 20000 --show-stats`\n"
         "- Focus scope: `graphgraph context \"<query>\" --scope src/graphgraph/retrieval --query-class blast_radius`\n"
         "- Dynamic sizing: omit `--max-nodes` for production context packets; use `--scan-max-nodes` only to control how much of the repo is indexed.\n"
         "- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects the native graph under `.graphgraph/`)\n"
@@ -350,7 +355,8 @@ def cmd_install(args: argparse.Namespace) -> None:
         "| `blast_radius` | What changes if this is modified? | 2 | `gg_max` | topology-first |\n"
         "| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |\n"
         "| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |\n"
-        "| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |\n\n"
+        "| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |\n"
+        "| `recent_changes` | What recent fix commits touched this file/subsystem? | 1 | `gg_max` | commit/fixes evidence. Requires the graph to have been scanned with `--history` -- otherwise there are no commit nodes to surface. |\n\n"
         "Format note: `gg_max`/`gg_max_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg_max` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.\n\n"
         "## Noise Controls\n\n"
         "Default scanning skips generated artifact directories such as `.graphgraph`, `graphify-out`, `.code-review-graph`, `evidence`, `artifacts`, `scratch`, `tmp`, build outputs, vendors, and cloned external repos. Normal install, scan, context, query, and MCP workflows do not invoke Graphify, code-review-graph, or other graph tools; external graph outputs are read only when explicitly passed to `ingest` or a graph-path argument. For project-specific noise, pass `exclude_dirs` in MCP or `--exclude <dir>` in CLI.\n"

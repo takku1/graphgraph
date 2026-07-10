@@ -12,7 +12,8 @@ from ..io import find_graph_path, load_any, save_gg, save_validated_graph, valid
 from ..packets.validation import validate_any
 from ..planning import plan_context
 from ..retrieval import search_nodes
-from ..services import render_final_packet, render_query_context, render_source_snippets
+from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
 from ..services.native import (
     build_project_status,
     remove_paths_validated_graph,
@@ -29,7 +30,8 @@ TOOLS = [
         "description": (
             "Choose the empirically-measured optimal graph packet strategy for a query class. "
             "Returns hops, packet format, and rationale. Query classes: direct_lookup, "
-            "reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query."
+            "reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query, "
+            "recent_changes."
         ),
         "inputSchema": {
             "type": "object",
@@ -66,6 +68,31 @@ TOOLS = [
         },
     },
     {
+        "name": "full_graph",
+        "description": (
+            "Render EVERY active node/edge in the graph as one packet -- no query, no budget. "
+            "Not the default path: query_context/final_packet exist precisely so a caller never "
+            "has to pay for the whole graph to answer one question. Use this only when you "
+            "genuinely need a complete snapshot (e.g. full-corpus offline analysis), not for "
+            "normal codebase questions. Refuses (raises an error) above max_tokens unless raised "
+            "or disabled -- a full graph can easily be 100,000+ tokens on a real repo."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {"type": "string", "description": "Path to graph JSON; auto-detected if omitted."},
+                "packet": {
+                    "type": "string",
+                    "description": "Packet format (default gg_max, the measured token floor for full topology).",
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Token guard (default 20000). Pass 0 to disable and render regardless of size.",
+                },
+            },
+        },
+    },
+    {
         "name": "query_context",
         "description": (
             "Native graphgraph retrieval: find graph anchors from a natural-language query, "
@@ -77,7 +104,7 @@ TOOLS = [
             "properties": {
                 "graph_path": {"type": "string", "description": "Path to native graphgraph graph; auto-detected if omitted."},
                 "query": {"type": "string"},
-                "query_class": {"type": "string", "description": "direct_lookup, reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query."},
+                "query_class": {"type": "string", "description": "direct_lookup, reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query, recent_changes."},
                 "packet": {"type": "string", "description": "Optional packet override."},
                 "hops": {"type": "integer", "description": "Override traversal radius. Default: measured by query class."},
                 "anchor_limit": {"type": "integer", "description": "Max anchor nodes before expansion. Default: adaptive by query class."},
@@ -153,7 +180,7 @@ TOOLS = [
                 "directory": {"type": "string", "description": "Directory to scan. Defaults to current working directory."},
                 "input_graph": {"type": "string", "description": "Path to an existing graph JSON (e.g. graphify output) to ingest instead of scanning."},
                 "output_path": {"type": "string", "description": "Where to save the graph. Defaults to .graphgraph/graph.gg."},
-                "max_nodes": {"type": "integer", "description": "Max file/node count during directory scan. Default: 5000."},
+                "max_nodes": {"type": "integer", "description": f"Max file/node count during directory scan. Default: {DEFAULT_SCAN_MAX_NODES}."},
                 "generic_mentions": {"type": "boolean", "description": "Also add weak 'references' edges for any file that mentions another file's name. Useful for docs-heavy repos. Default: false."},
                 "skip_dirs": {"type": "array", "items": {"type": "string"}, "description": "Extra directory names to exclude (beyond built-ins). E.g. ['spikes', 'test-inputs']."},
                 "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "Alias for skip_dirs — extra directory names to exclude. Merged with skip_dirs if both supplied."},
@@ -183,7 +210,7 @@ TOOLS = [
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "File(s) that changed, relative to directory or absolute."},
                 "directory": {"type": "string", "description": "Directory root. Defaults to current working directory."},
                 "output_path": {"type": "string", "description": "Existing graph path to update. Defaults to .graphgraph/graph.gg."},
-                "max_nodes": {"type": "integer", "description": "Max symbols per file batch. Default: 5000."},
+                "max_nodes": {"type": "integer", "description": f"Max symbols per file batch. Default: {DEFAULT_SCAN_MAX_NODES}."},
                 "depth": {"type": "string", "enum": ["files", "symbols"], "description": "Default: symbols."},
                 "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"]},
                 "docs": {"type": "boolean", "description": "Extract document sections/concepts for doc files among paths."},
@@ -329,6 +356,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(json.dumps(plan.__dict__))
     if name == "final_packet":
         return content(build_final_packet(args))
+    if name == "full_graph":
+        return content(build_full_graph(args))
     if name == "query_context":
         return content(build_query_context(args))
     if name == "project_status":
@@ -405,6 +434,17 @@ def build_final_packet(args: dict[str, Any]) -> str:
     )
 
 
+def build_full_graph(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    max_tokens = int(args["max_tokens"]) if args.get("max_tokens") is not None else 20_000
+    return render_full_graph(
+        graph_path,
+        packet=str(args["packet"]) if args.get("packet") else "gg_max",
+        max_tokens=max_tokens if max_tokens else None,
+    )
+
+
 def build_query_context(args: dict[str, Any]) -> str:
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
@@ -464,7 +504,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         })
 
     directory = Path(args.get("directory") or ".")
-    max_nodes = int(args["max_nodes"]) if args.get("max_nodes") is not None else 5000
+    max_nodes = int(args["max_nodes"]) if args.get("max_nodes") is not None else DEFAULT_SCAN_MAX_NODES
     generic_mentions = bool(args.get("generic_mentions", False))
     skip_dirs = [str(d) for d in args.get("skip_dirs") or []]
     exclude_dirs = [str(d) for d in args.get("exclude_dirs") or []]
@@ -524,7 +564,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
         directory=directory,
         output_path=output_path,
         paths=paths,
-        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 5000,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else DEFAULT_SCAN_MAX_NODES,
         depth=str(args.get("depth") or "symbols"),
         frontend=str(args.get("frontend") or "auto"),
         docs=bool(args.get("docs", False)),
@@ -558,7 +598,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
         directory=directory,
         output_path=output_path,
         paths=paths,
-        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 5000,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else DEFAULT_SCAN_MAX_NODES,
         depth=str(args.get("depth") or "symbols"),
         frontend=str(args.get("frontend") or "auto"),
         docs=bool(args.get("docs", False)),

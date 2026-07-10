@@ -87,6 +87,34 @@ class PacketsTest(unittest.TestCase):
         self.assertEqual(result.node_count, 3)
         self.assertEqual(result.edge_count, 2)
 
+    def test_gg_max_validation_survives_node_content_containing_marker_substrings(self) -> None:
+        # Found live-testing full-graph (unfiltered, unbounded) rendering:
+        # validate_gg_max detected/split sections by searching for "[r]"/
+        # "[n]"/"[e]" as a bare substring anywhere in the packet text. A doc
+        # -scanned concept node whose label happened to literally contain
+        # those characters (e.g. quoted example packet output captured
+        # verbatim from a docstring/comment, such as
+        # "[r]\\n[n]\\n1 Widget\\n[e]") corrupted parsing for the entire rest
+        # of the packet -- confirmed with a real repro rendering this
+        # project's own full graph. The real renderer always emits these
+        # markers as standalone lines, so validation must anchor on that
+        # structural guarantee instead of a substring search.
+        graph = Graph(
+            nodes={
+                "A": Node("A", "AuthService", "service", "server/auth.py"),
+                # This label contains literal "[r]"/"[n]"/"[e]" substrings,
+                # but never as a standalone line by itself.
+                "B": Node("B", "example output: [r]\\n[n]\\n1 Widget\\n[e]", "concept"),
+                "C": Node("C", "TokenStore", "data", "server/tokens.py"),
+            },
+            edges=[Edge("A", "C", "reads", 0.9)],
+        )
+        packet = render_gg_max(graph, {"A", "B", "C"}, graph.edges)
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.node_count, 3)
+        self.assertEqual(result.edge_count, 1)
+
     def test_gg_max_hybrid_scales_facts_per_node_to_selection_size(self) -> None:
         # New: every hybrid renderer used to hardcode facts[:2]/facts[:3]
         # regardless of how many nodes were actually selected -- a small

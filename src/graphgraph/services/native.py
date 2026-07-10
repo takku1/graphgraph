@@ -14,7 +14,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
 from ..graph.core import Graph
 from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
 from ..packets.validation import ValidationResult
-from ..scanner import remove_paths, scan_directory, update_paths
+from ..scanner import DEFAULT_SCAN_MAX_NODES, remove_paths, scan_directory, update_paths
 from .context import render_query_context
 
 
@@ -31,7 +31,7 @@ def scan_validated_graph(
     *,
     directory: Path,
     output_path: Path,
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = True,
@@ -119,7 +119,7 @@ def update_paths_validated_graph(
     directory: Path,
     output_path: Path,
     paths: list[str],
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = False,
@@ -158,7 +158,7 @@ def remove_paths_validated_graph(
     directory: Path,
     output_path: Path,
     paths: list[str],
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = False,
@@ -196,7 +196,7 @@ def ensure_native_graph(
     directory: Path = Path("."),
     output_path: Path = Path(".graphgraph/graph.gg"),
     rebuild: bool = False,
-    max_nodes: int = 5000,
+    max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     depth: str = "symbols",
     frontend: str = "auto",
     docs: bool = True,
@@ -436,7 +436,7 @@ def render_native_context(
     graph_path: Path | None = None,
     rebuild: bool = False,
     max_nodes: int | None = None,
-    scan_max_nodes: int = 5000,
+    scan_max_nodes: int = DEFAULT_SCAN_MAX_NODES,
     packet: str | None = None,
     anchor_limit: int | None = None,
     scopes: tuple[str, ...] = (),

@@ -512,15 +512,24 @@ def retrieve_context(
     )
     selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class, doc_intensity >= 0.35)
     starts_list = list(match.node.id for match in selected_matches)
-    
-    # Discover git-modified files (active session context / Ephemeral Session Layer)
-    from .git_utils import get_git_modified_files, resolve_modified_node_ids
-    modified_paths = get_git_modified_files()
-    resolved = resolve_modified_node_ids(graph, modified_paths)
-    for path in modified_paths:
-        for node_id in resolved.get(path, []):
-            if node_id not in starts_list:
-                starts_list.append(node_id)
+
+    # Discover git-modified files (active session context / Ephemeral Session Layer).
+    # Skipped for recent_changes: that query class already targets committed
+    # git-history evidence for one deliberately chosen anchor. Unconditionally
+    # injecting every currently-dirty file here defeats its purpose -- on a
+    # repo under active development (precisely when "what recently changed
+    # here" is most useful), a dozen unrelated dirty files drown out the one
+    # real anchor before the node budget is ever reached. Confirmed live: on
+    # this repo's own history with 15 dirty files, the intended fixes/commit
+    # evidence for a scoped anchor was silently dropped without this guard.
+    if query_class != "recent_changes":
+        from .git_utils import get_git_modified_files, resolve_modified_node_ids
+        modified_paths = get_git_modified_files()
+        resolved = resolve_modified_node_ids(graph, modified_paths)
+        for path in modified_paths:
+            for node_id in resolved.get(path, []):
+                if node_id not in starts_list:
+                    starts_list.append(node_id)
 
     starts = tuple(starts_list[:12])
     if not starts:

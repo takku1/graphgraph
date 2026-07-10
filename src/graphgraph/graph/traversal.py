@@ -69,6 +69,23 @@ POLICIES: dict[str, TraversalPolicy] = {
         weak_edge_limit=8,
         min_confidence=0.3,
     ),
+    # "What changed recently touching this file/subsystem" -- answers with
+    # the commit/fixes history data `extract_commit_history` already puts in
+    # the graph when a scan runs with history=True, which no other policy
+    # prioritizes: "history" was in no preferred_families and "fixes" in no
+    # preferred_relations anywhere above, so those edges only ever survived
+    # as unprioritized weak-edge-limit leftovers under every other query
+    # class. Direction="in" from a file anchor finds the commit nodes that
+    # point at it (fixes edges are commit -> file), the same reasoning
+    # reverse_lookup uses to find callers.
+    "recent_changes": TraversalPolicy(
+        "recent_changes",
+        ("history", "hierarchy"),
+        ("fixes", "contains"),
+        weak_edge_limit=20,
+        min_confidence=0.0,
+        direction="in",
+    ),
 }
 
 

@@ -12,6 +12,81 @@ This file is a status log of *specific bugs found and fixed*. For the
 forward-looking backlog of open ideas/gaps (new features, research
 directions), see [`docs/planned-work.md`](../planned-work.md) instead.
 
+## Session 5 (2026-07-11) — backlog cleanup, recent_changes query class, full-graph mode
+
+- [x] **CLI/MCP defaults consolidation** (Priority 1 backlog item). Added
+  `DEFAULT_SCAN_MAX_NODES` as a single constant in `scanner/files.py`
+  (exported via `scanner/__init__.py`); updated all 17 places the `5000`
+  default was previously hardcoded independently (`cli/parser.py` x4,
+  `mcp/server.py` x5, `scanner/core.py` x3, `services/native.py` x5) plus
+  the generated `AGENTS.md` skill text and both `doctor`/`cmd_scan`
+  warning messages, to reference it instead of restating the literal.
+- [x] **Well-named-identifier lexical scoring bonus** (Priority 1 backlog
+  item, from Aider's repo-map). Added `identifier_quality_bonus`
+  (`retrieval/search.py`): segments a label by snake_case/camelCase word
+  boundaries, 0 bonus for single-segment/generic-placeholder names, a
+  small additive bonus (capped at 3.0) scaling with segment count for
+  multi-word descriptive identifiers. No regression on the canonical
+  benchmark (408 rows, zero diffs); proven directly by a unit test on the
+  scoring function and an integration test showing a descriptive name
+  outranks a generic one when otherwise tied.
+- [x] **Roost-style plugin signing — resolved as not applicable.**
+  Investigated the actual mechanism in `cli/install.py` before building
+  anything: `marketplace.json`'s `"source"` is hardcoded to `"local"`
+  everywhere (confirmed via grep, only one construction site) — the
+  plugin bundle is generated on-disk by code the user already ran and
+  trusts, then consumed by the same-machine Codex client. No remote/
+  downloaded plugin path exists to sign against. Documented and moved to
+  the "not a gap" section of `planned-work.md`.
+- [x] **`recent_changes` query class — a scoped, real version of "time-
+  scoped queries."** `extract_commit_history` already puts commit nodes +
+  `fixes` edges into the graph when `history=True`, but reading every
+  entry in `graph/traversal.py`'s `POLICIES` table confirmed no query
+  class listed `"history"` in `preferred_families` or `"fixes"` in
+  `preferred_relations` — those edges only ever survived as unprioritized
+  weak-edge-limit leftovers. Added the `recent_changes` query class
+  (`direction="in"`, matching `reverse_lookup`'s reasoning for finding
+  incoming edges) plus budget/packet-choice defaults. Verified live
+  against this repo's own real git history. **Found a second, live bug
+  along the way**: `retrieve_context`'s "Ephemeral Session Layer"
+  unconditionally injects every currently-*dirty* file as an extra
+  anchor for every query class, which drowned out `recent_changes`'
+  one deliberate anchor exactly on a repo under active development (15
+  dirty files at the time) -- precisely when "what recently changed
+  here" is most useful. Fixed by skipping that injection for
+  `recent_changes` specifically; added a regression test proving the
+  skip is scoped correctly (still active for other query classes).
+- [ ] **Deductive-reasoning layer and hierarchical summarization** —
+  investigated both honestly; correctly still not built. Neither had a
+  use case scoped small enough to build responsibly in this pass (both
+  would need genuinely new infrastructure, unlike `recent_changes` which
+  only unlocked already-existing data). Left deferred in `planned-work.md`
+  rather than forced.
+- [x] **Full-graph rendering — found and fixed a real validation bug,
+  then added an explicit "give me everything" mode.** Testing "load the
+  entire graph, no query scoping" (something no existing test/CLI path
+  exercised) surfaced a genuine bug: `validate_gg_max` detected packet
+  sections by searching for `[r]`/`[n]`/`[e]` as bare substrings anywhere
+  in the packet text. A doc-scanned concept node whose label happened to
+  literally contain those characters (found for real in this repo: a
+  concept node capturing an example packet string verbatim from a
+  docstring/comment) corrupted parsing for the entire rest of the
+  packet. Fixed by anchoring detection/splitting to the renderer's actual
+  structural guarantee (these markers are always standalone lines,
+  confirmed directly in `packets/renderers.py`) via `_has_marker_line`/
+  `_split_on_marker_line`, instead of substring search. Verified with a
+  repro that fails without the fix. Full graph (3,253 nodes / 18,110
+  edges) now renders and validates correctly (~40ms total).
+
+  Added `render_full_graph` (`services/context.py`) as an explicit
+  escape-hatch mode -- `graphgraph final --full-graph` (CLI) and a new
+  `full_graph` MCP tool -- deliberately not the default path (raises
+  `FullGraphTooLargeError` above a token guard, default 20,000, unless
+  raised/disabled). On this repo the full graph costs ~80,000 tokens
+  vs. ~100-800 tokens for a real scoped query -- confirms the value of
+  query-scoping is inherent to the retrieval design, not something a
+  smarter full-graph encoding could close.
+
 ## Session 4 (2026-07-11) — real-world usage findings + dogfood pass + dynamic detail density
 
 Two sources: (1) a user's real-world test of graphgraph against a large C

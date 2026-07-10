@@ -11,6 +11,17 @@ class CollectFilesResult:
     truncated: bool
     total_matched: int
 
+
+# Single source of truth for the file/symbol collection cap. Previously
+# hardcoded independently in cli/parser.py (4x), mcp/server.py (3x), and
+# every max_nodes=N default across scanner/core.py and services/native.py --
+# they drifted out of sync more than once (found via three separate bugs in
+# one session: query --show-stats missing on MCP, validate_packet unable to
+# check a graph file, and this literal value inconsistent across surfaces).
+# Every caller should reference this constant instead of restating the
+# number, so raising/lowering the default is a one-line change.
+DEFAULT_SCAN_MAX_NODES = 5000
+
 SKIP_DIRS = frozenset({
     ".git", ".svn", ".hg",
     "__pycache__", ".venv", "venv", "env", ".tox", ".mypy_cache",

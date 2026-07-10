@@ -11,52 +11,51 @@ Status key: `[ ]` not started · `[~]` scoped but not built · `[x]` done
 
 ## Priority 1 — small, scoped, cheap to try
 
-- [ ] **Consolidate CLI/MCP shared defaults into one source of truth.**
+- [x] **Consolidate CLI/MCP shared defaults into one source of truth.**
   Found by tripping over the same bug class three separate times this
   session: `query --show-stats` existed on the CLI but not the identical
   MCP tool; MCP `validate_packet` couldn't validate a graph file the way
-  CLI `validate` could; and `max_nodes=2000`'s default was hardcoded
-  independently in `cli/parser.py`, `mcp/server.py` (twice), and
-  `scanner/core.py`/`services/native.py` — three-plus places that can (and
-  did) silently drift out of sync. Each instance got fixed individually as
-  found, but the root cause (no shared parameter/defaults layer between
-  the two surfaces) is still there and will produce the next one. Scope:
-  route both `cli/commands.py` and `mcp/server.py` through one shared
-  `services/` layer for default values and validation, instead of each
-  reimplementing its own copy.
+  CLI `validate` could; and `max_nodes`'s default value was hardcoded
+  independently in `cli/parser.py` (4x), `mcp/server.py` (5x, including
+  tool-schema description text), `scanner/core.py` (3x), and
+  `services/native.py` (5x) — 17 places that could (and did) silently drift
+  out of sync. Fixed by adding `DEFAULT_SCAN_MAX_NODES` as a single
+  constant in `scanner/files.py` (exported via `scanner/__init__.py`) and
+  updating every one of those 17 sites, plus the generated `AGENTS.md`
+  skill text and both `doctor`/`cmd_scan` warning messages, to reference it
+  instead of restating the literal. Verified end-to-end: `graphgraph scan
+  --help` now shows the constant's live value in its help text.
 
-- [ ] **Well-named-identifier lexical scoring bonus** (from
+- [x] **Well-named-identifier lexical scoring bonus** (from
   [`prior-art-research.md`](prior-art-research.md), Aider's repo-map).
-  Aider's PageRank personalization gives a well-formed identifier
-  (`resolve_modified_node_ids`) a 10x weight over a generic one (`x`,
-  `tmp`). Checked directly against `retrieval/search.py`: nothing currently
-  distinguishes identifier quality when scoring. Cheapest, lowest-risk item
-  on this list — a small bonus based on label length/segmentation
-  (snake_case/camelCase word count), testable against the existing
-  `benchmarks/context_graph/` suite before promotion.
-
-- [ ] **Roost-style signing for the plugin/marketplace distribution path**
-  (from the job-posting concept list). graphgraph already has a
-  Codex-plugin-bundle + `marketplace.json` distribution mechanism
-  (`cli/install.py`), but zero cryptographic signing or integrity
-  verification anywhere in that path — confirmed via direct grep. Lower
-  priority than the retrieval-quality items since it's a supply-chain
-  concern, not a core knowledge-graph capability, but worth a scoped look
-  if the plugin distribution ever needs to be trusted by third parties.
+  Added `identifier_quality_bonus` (`retrieval/search.py`): segments a
+  label by snake_case/camelCase word boundaries, gives 0 bonus to
+  single-segment or generic placeholder names (`x`, `tmp`, `data`, ...),
+  and a small additive bonus (capped at 3.0, an order of magnitude below
+  an exact-match-tier bonus) scaling with segment count for multi-word
+  descriptive identifiers. Verified no regression: diffed a fresh canonical
+  benchmark run against the last baseline across all 408 rows on every
+  deterministic metric — zero differences (the synthetic corpus doesn't
+  exercise close-tie ranking between competing candidates at this scale,
+  same caveat as the fact-density change). Proven directly by two targeted
+  tests instead: a unit test on the scoring function, and an integration
+  test showing `resolve_modified_node_ids` outranks a generic `x` function
+  when both otherwise match a query equally.
 
 ## Priority 2 — bigger, needs a concrete use case first
 
-- [ ] **Time-scoped query classes** (from `prior-art-research.md`,
-  Zep/Graphiti's temporal knowledge graph — published 15-point benchmark
-  gap over Mem0 attributed specifically to treating time as first-class).
-  graphgraph already has the bitemporal bones: `Edge.valid_from`/`valid_to`,
-  `Node.created_at`/`updated_at`, an append-only operation log via
-  `expire_node`/`expire_edge`, and git-history-derived `fixes`/churn edges.
-  What's missing: no query class lets a caller ask a time-scoped question
-  ("what did this function's dependents look like as of commit X," "what
-  changed in the last N commits touching this subsystem"). The storage
-  model supports it; retrieval doesn't expose it. Needs a concrete task
-  definition and a benchmark before building — don't build speculatively.
+- [x] **Time-scoped query classes — built a scoped, real version.**
+  graphgraph already had the bitemporal bones (`Edge.valid_from`/`valid_to`,
+  `Node.created_at`/`updated_at`, an append-only operation log, and
+  git-history-derived `fixes`/churn edges), but reading every entry in
+  `graph/traversal.py`'s `POLICIES` table confirmed no query class
+  prioritized that data at all. Added `recent_changes`: a query class that
+  surfaces already-existing commit/`fixes` history for a scoped file,
+  verified live against this repo's own history (see
+  `docs/bugs/REALFINDINGS.md`, Session 5). Deliberately did NOT build the
+  bigger "what did dependents look like as of commit X" idea — that
+  genuinely needs new infrastructure (replaying/indexing graph state per
+  commit), not just exposing existing data, and stays out of scope.
 
 - [ ] **A rule-based/deductive inference layer** (from the "Vektor" concept
   — "knowledge graph, deductive reasoning, hierarchical summarization").
@@ -117,6 +116,17 @@ Status key: `[ ]` not started · `[~]` scoped but not built · `[x]` done
 
 Kept here so these don't get re-investigated:
 
+- **Roost-style signing for the plugin/marketplace distribution path**
+  (from the job-posting concept list) — investigated the actual mechanism
+  in `cli/install.py` before building anything: the Codex `marketplace.json`
+  entry is hardcoded to `"source": "local"` and the plugin bundle is
+  generated on-disk by `graphgraph install` (code the user already ran and
+  trusts), then consumed by the Codex client on the same machine. There is
+  no remote/downloaded plugin path anywhere in the codebase — confirmed via
+  grep (only one `"source":` construction site, always `"local"`).
+  Cryptographic signing solves tamper-in-transit for a fetched artifact;
+  there's no transit here to protect. Revisit only if graphgraph ever adds
+  a real remote/registry-based plugin source.
 - `validate_gg_max`'s residual hybrid-detection edge case — proven via a
   direct repro that hybrid and plain rendering are byte-identical for a
   no-metadata node; needs a wire-format change, not a bug fix.
