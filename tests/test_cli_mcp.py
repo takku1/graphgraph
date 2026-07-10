@@ -541,6 +541,32 @@ class CliMcpTest(unittest.TestCase):
             self.assertFalse(probes["raw_module_help"]["ok"])
             self.assertTrue(any("PYTHONPATH includes src" in note for note in report["runtime_notes"]))
 
+    def test_project_status_surfaces_scan_truncation(self) -> None:
+        # Found via live dogfooding: doctor already surfaces
+        # files_truncated/symbols_truncated (fixed earlier this session for
+        # cmd_scan), but project_status -- also explicitly documented as
+        # "the is-something-wrong-with-my-graph surface" -- didn't check
+        # graph.metadata for the same flags at all, so it could report a
+        # graph as fully validated/healthy while silently built from an
+        # incomplete scan.
+        from graphgraph.services.native import build_project_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True)
+            graph = Graph(
+                nodes={"N1": Node("N1", "AuthService", "service", "server/auth.py")},
+                metadata={"files_truncated": "true", "files_total_matched": "500", "symbols_truncated": "true", "symbols_cap": "100"},
+            )
+            save_graph(graph, graph_path)
+
+            report = build_project_status(directory=root, graph_path=graph_path)
+            self.assertTrue(report["graph"]["files_truncated"])
+            self.assertEqual(report["graph"]["files_total_matched"], "500")
+            self.assertTrue(report["graph"]["symbols_truncated"])
+            self.assertEqual(report["graph"]["symbols_cap"], "100")
+
     def test_mcp_project_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

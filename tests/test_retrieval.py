@@ -475,6 +475,38 @@ class RetrievalTest(unittest.TestCase):
             self.assertIn("5 |     token = helper()", out)
             self.assertNotIn("1 | def helper", out)
 
+    def test_render_source_snippets_prefers_real_code_over_doc_concept_with_same_label(self) -> None:
+        # Found via live dogfooding: a label commonly matches both a real
+        # code symbol AND a doc-derived "concept" node with the identical
+        # label (e.g. the function name also gets mentioned in commit
+        # messages/docs, producing a concept node). resolve_start_nodes
+        # correctly resolves both (ambiguous labels resolve to every
+        # matching active node, by design), but the old rendering printed a
+        # confusing "No readable source path for node." block for the
+        # concept match right alongside the real, useful source excerpt --
+        # noise with no explanation. Now the real source wins outright when
+        # it exists.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "auth.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("def login():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir()
+            graph = Graph(
+                nodes={
+                    "F": Node("F", "login", "function", "src/auth.py", summary="L1"),
+                    "C": Node("C", "login", "concept", ""),
+                }
+            )
+            save_graph(graph, graph_path)
+
+            out = render_source_snippets(starts=["login"], graph_path=graph_path, context_lines=1, max_lines=5)
+            self.assertIn("## login (F)", out)
+            self.assertIn("src/auth.py:1", out)
+            self.assertNotIn("No readable source path", out)
+            self.assertNotIn("## login (C)", out)
+
     def test_render_source_snippets_resolves_package_children(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

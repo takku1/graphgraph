@@ -273,7 +273,7 @@ def cmd_install(args: argparse.Namespace) -> None:
         "* **`graphgraph/validate_packet`**: Validate a rendered packet, or omit `packet` (optionally pass `graph_path`) to validate the saved native graph file instead.\n"
         "* **`graphgraph/describe_formats`** / **`describe_ontology`** / **`describe_frontends`** / **`describe_traversal`**: Introspect packet formats, edge-type ontology, extraction frontends, and per-query-class traversal policy.\n\n"
         "### Available CLI Commands\n"
-        "* **Scan**: `graphgraph scan --depth symbols --docs` (default max-nodes=2000)\n"
+        "* **Scan**: `graphgraph scan --depth symbols --docs` (default max-nodes=5000)\n"
         "* **Scan with exclusions**: `graphgraph scan --depth symbols --docs --exclude repos references_temp`\n"
         "* **Project status**: `graphgraph status --probe`\n"
         "* **One-step context packet**: `graphgraph context \"<text>\" --query-class subsystem_summary --show-stats`\n"

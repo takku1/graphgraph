@@ -164,12 +164,24 @@ def cmd_doctor(args: argparse.Namespace) -> None:
             if source_count == 0:
                 print("    - [!] WARNING: No source-code nodes found in graph.")
                 print("      The scanner may have missed your source directory due to:")
-                print("      * max_nodes cap (default 2000 -- try --max-nodes 5000)")
+                print("      * max_nodes cap (default 5000 -- try --max-nodes 20000)")
                 print("      * Source dir is inside a skipped directory (repos/, references/, etc.)")
                 print("      * Files are staged but not committed (re-scan after git add)")
                 print("      Rescan with: graphgraph scan --depth symbols --docs")
             else:
                 print(f"    - Source nodes: {source_count} (OK)")
+            if graph.metadata.get("files_truncated") == "true":
+                matched = graph.metadata.get("files_total_matched", "?")
+                print(
+                    f"    - [!] WARNING: file scan was truncated -- only some of {matched} matching "
+                    "files were read. Rescan with a higher --max-nodes for full coverage."
+                )
+            if graph.metadata.get("symbols_truncated") == "true":
+                cap = graph.metadata.get("symbols_cap", "?")
+                print(
+                    f"    - [!] WARNING: symbol extraction hit its cap ({cap}) -- some scanned files "
+                    "may have zero extracted functions/classes. Rescan with a higher --max-nodes."
+                )
         except Exception as e:
             print(f"    - Error loading graph: {e}")
     except FileNotFoundError:
@@ -438,6 +450,13 @@ def cmd_status(args: argparse.Namespace) -> None:
         f"other={shape['other_nodes']} total={shape['nodes']}"
     )
     print("Top kinds: " + ", ".join(f"{k}={v}" for k, v in graph["top_kinds"].items()))
+    if graph.get("files_truncated"):
+        print(
+            f"  !  WARNING: file scan was truncated -- only some of "
+            f"{graph.get('files_total_matched', '?')} matching files were read."
+        )
+    if graph.get("symbols_truncated"):
+        print(f"  !  WARNING: symbol extraction hit its cap ({graph.get('symbols_cap', '?')}).")
     if package.get("name"):
         print(f"Package: {package['name']} {package.get('version') or ''}".rstrip())
         print(f"Module: {package.get('module') or '(unknown)'}")

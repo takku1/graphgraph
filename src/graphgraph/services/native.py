@@ -271,19 +271,30 @@ def build_project_status(
     package = _read_package_status(directory)
     probes = _run_package_probes(directory, package) if run_probes else []
     runtime_notes = _runtime_notes(probes) if run_probes else []
-    return {
-        "graph": {
-            "path": str(resolved_graph_path),
-            "validation": {
-                "ok": validation.ok,
-                "format": validation.format,
-                "nodes": validation.node_count,
-                "edges": validation.edge_count,
-                "errors": list(validation.errors[:10]),
-            },
-            "shape": shape,
-            "top_kinds": dict(sorted(kind_counts.items(), key=lambda item: -item[1])[:10]),
+    graph_report: dict[str, object] = {
+        "path": str(resolved_graph_path),
+        "validation": {
+            "ok": validation.ok,
+            "format": validation.format,
+            "nodes": validation.node_count,
+            "edges": validation.edge_count,
+            "errors": list(validation.errors[:10]),
         },
+        "shape": shape,
+        "top_kinds": dict(sorted(kind_counts.items(), key=lambda item: -item[1])[:10]),
+    }
+    # Same diagnostic gap already closed in `graphgraph scan`'s own output and
+    # `doctor`: this is the "is something wrong with my graph" surface, so it
+    # should say so when the last scan silently hit a truncation cap instead
+    # of only showing counts that look complete.
+    if graph.metadata.get("files_truncated") == "true":
+        graph_report["files_truncated"] = True
+        graph_report["files_total_matched"] = graph.metadata.get("files_total_matched")
+    if graph.metadata.get("symbols_truncated") == "true":
+        graph_report["symbols_truncated"] = True
+        graph_report["symbols_cap"] = graph.metadata.get("symbols_cap")
+    return {
+        "graph": graph_report,
         "package": package,
         "runtime_probes": probes,
         "runtime_notes": runtime_notes,

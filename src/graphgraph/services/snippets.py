@@ -6,6 +6,11 @@ from ..graph.core import Graph, Node
 from ..io import find_graph_path, load_any
 from .context import resolve_start_nodes
 
+# Kinds that never have a source-file location -- a label match against one
+# of these is not a "missing file" problem, it's a doc/concept/metadata node
+# that source_snippets structurally cannot show code for.
+_NO_SOURCE_KINDS = {"concept", "section", "decision_trace", "policy", "commit"}
+
 
 def render_source_snippets(
     *,
@@ -27,6 +32,7 @@ def render_source_snippets(
 
     root = _graph_root(resolved_graph_path)
     blocks: list[str] = []
+    no_source_blocks: list[str] = []
     seen: set[tuple[str, int, int]] = set()
     for node_id in node_ids:
         node = graph.nodes.get(node_id)
@@ -34,7 +40,14 @@ def render_source_snippets(
             continue
         path = _resolve_source_path(graph, root, node)
         if path is None:
-            blocks.append(f"## {node.label} ({node_id})\n\nNo readable source path for node.")
+            if node.kind in _NO_SOURCE_KINDS:
+                no_source_blocks.append(
+                    f"## {node.label} ({node_id})\n\n"
+                    f"(a {node.kind} node -- no source file to show; not a missing-file error, "
+                    "this label also matched a doc/metadata node alongside any real code match)"
+                )
+            else:
+                no_source_blocks.append(f"## {node.label} ({node_id})\n\nNo readable source path for node.")
             continue
         start_line = node.line
         source = _read_excerpt(path, start_line, context_lines=context_lines, max_lines=max_lines)
@@ -55,7 +68,12 @@ def render_source_snippets(
                 ]
             )
         )
-    return "\n\n".join(blocks)
+    # Prefer real source: a label that matched both a code symbol and a
+    # doc/concept node with the same name shouldn't clutter the response
+    # with a confusing "no source" block when the code match already
+    # answered the request. Only surface the no-source blocks if nothing
+    # resolved to real code at all, so the response is never silently empty.
+    return "\n\n".join(blocks) if blocks else "\n\n".join(no_source_blocks)
 
 
 def _graph_root(graph_path: Path) -> Path:
