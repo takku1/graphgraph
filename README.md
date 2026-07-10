@@ -232,6 +232,8 @@ graph contract is defined in
 - `docs/start-here.md` — the default path in six commands; read this first
 - `docs/rigorous-framing.md` — the evidence bar this project holds itself to;
   what's settled vs. still a hypothesis
+- `docs/planned-work.md` — the open backlog: every unresolved idea/gap
+  found so far, prioritized, with what's already ruled out and why
 - `docs/retrieval-confidence-routing.md` — measured grep-vs-graphgraph
   decision rule, latency breakdown, and the score-gap confidence signal
 - `docs/architecture.md` — system architecture
@@ -246,4 +248,7 @@ graph contract is defined in
 - `docs/prior-art-research.md` — how comparable code-graph/agent-memory
   systems work, and which of their ideas are already covered vs. worth
   exploring
+- `docs/hardware_compilation_analogy.md` — assembly/hardware teaching
+  analogy for the packet formats; clearly marks which parts are
+  implemented vs. still a hypothesis
 - `docs/graphgraph-vs-graphify.md` — how this compares to Graphify

@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from conftest import sample_graph
+
 from graphgraph import (
     Edge,
     Graph,
@@ -28,20 +30,6 @@ from graphgraph.validate import validate_any, validate_graph_json
 
 if TYPE_CHECKING:
     from graphgraph.cache import TopologicalKVCache
-
-
-def sample_graph() -> Graph:
-    return Graph(
-        nodes={
-            "N1": Node("N1", "AuthService", "service", "server/auth.py"),
-            "N2": Node("N2", "TokenStore", "data", "server/tokens.py"),
-            "N3": Node("N3", "AuditLog", "data", "server/audit.py"),
-        },
-        edges=[
-            Edge("N1", "N2", "reads", 0.9),
-            Edge("N2", "N3", "writes", 0.8),
-        ],
-    )
 
 
 class IOTest(unittest.TestCase):
@@ -501,7 +489,14 @@ class IOTest(unittest.TestCase):
         overlay = Graph(
             nodes={
                 # Same path as base "A" -- should enrich, not duplicate.
-                "ext-A": Node("ext-A", "AuthService", "service", "server/auth.py", summary="Handles login", facts=("owns sessions",)),
+                "ext-A": Node(
+                    "ext-A",
+                    "AuthService",
+                    "service",
+                    "server/auth.py",
+                    summary="Handles login",
+                    facts=("owns sessions",),
+                ),
                 # Overlay-only node -- should be added verbatim.
                 "ext-C": Node("ext-C", "AuditLog", "data", "server/audit.py"),
             },

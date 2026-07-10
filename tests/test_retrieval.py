@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from conftest import sample_graph
+
 from graphgraph import (
     Edge,
     Graph,
@@ -22,20 +24,6 @@ from graphgraph.retrieval import (
 )
 from graphgraph.services import render_final_packet, render_query_context, render_source_snippets
 from graphgraph.services.context import resolve_start_nodes
-
-
-def sample_graph() -> Graph:
-    return Graph(
-        nodes={
-            "N1": Node("N1", "AuthService", "service", "server/auth.py"),
-            "N2": Node("N2", "TokenStore", "data", "server/tokens.py"),
-            "N3": Node("N3", "AuditLog", "data", "server/audit.py"),
-        },
-        edges=[
-            Edge("N1", "N2", "reads", 0.9),
-            Edge("N2", "N3", "writes", 0.8),
-        ],
-    )
 
 
 class RetrievalTest(unittest.TestCase):

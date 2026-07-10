@@ -9,9 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from graphgraph import (
-    Edge,
     Graph,
-    Node,
     remove_paths,
     scan_directory,
     update_paths,
@@ -33,20 +31,6 @@ from graphgraph.io import (
 from graphgraph.ontology import relation_spec
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
 from graphgraph.validate import validate_graph_json
-
-
-def sample_graph() -> Graph:
-    return Graph(
-        nodes={
-            "N1": Node("N1", "AuthService", "service", "server/auth.py"),
-            "N2": Node("N2", "TokenStore", "data", "server/tokens.py"),
-            "N3": Node("N3", "AuditLog", "data", "server/audit.py"),
-        },
-        edges=[
-            Edge("N1", "N2", "reads", 0.9),
-            Edge("N2", "N3", "writes", 0.8),
-        ],
-    )
 
 
 class ScannerTest(unittest.TestCase):
@@ -1037,25 +1021,15 @@ class ScannerTest(unittest.TestCase):
             # line-anchored, unlike TreeSitterExtractor's AST-based parsing;
             # this matches how real Kotlin/Scala/Swift source is formatted).
             (root / "Svc.kt").write_text(
-                "class RecipeResolver {\n"
-                "    fun resolve(id: String): Int {\n"
-                "        return 1\n"
-                "    }\n"
-                "}\n",
+                "class RecipeResolver {\n    fun resolve(id: String): Int {\n        return 1\n    }\n}\n",
                 encoding="utf-8",
             )
             (root / "Svc.scala").write_text(
-                "class RecipeResolver {\n"
-                "  def resolve(id: String): Int = 1\n"
-                "}\n",
+                "class RecipeResolver {\n  def resolve(id: String): Int = 1\n}\n",
                 encoding="utf-8",
             )
             (root / "Svc.swift").write_text(
-                "class RecipeResolver {\n"
-                "    func resolve(_ id: String) -> Int {\n"
-                "        return 1\n"
-                "    }\n"
-                "}\n",
+                "class RecipeResolver {\n    func resolve(_ id: String) -> Int {\n        return 1\n    }\n}\n",
                 encoding="utf-8",
             )
             graph = scan_directory(root, depth="symbols", frontend="regex")
@@ -1226,10 +1200,7 @@ class ScannerTest(unittest.TestCase):
             root = Path(tmp)
             foo_c = root / "foo.c"
             foo_c.write_text(
-                "struct Ops { int (*process)(int); };\n"
-                "int foo(struct Ops *ops) {\n"
-                "    return ops->process(5);\n"
-                "}\n",
+                "struct Ops { int (*process)(int); };\nint foo(struct Ops *ops) {\n    return ops->process(5);\n}\n",
                 encoding="utf-8",
             )
             reader_c = root / "reader.c"
@@ -1240,12 +1211,11 @@ class ScannerTest(unittest.TestCase):
             ]
             result = RegexExtractor().extract_symbols(files, max_total_symbols=100)
             calls = {
-                (result.nodes[e.source].label, result.nodes[e.target].label)
-                for e in result.edges
-                if e.type == "calls"
+                (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
             }
             self.assertNotIn(
-                ("foo", "process"), calls,
+                ("foo", "process"),
+                calls,
                 f"found arrow-qualified-call-to-unrelated-free-function edge: {calls}",
             )
 
@@ -1259,7 +1229,7 @@ class ScannerTest(unittest.TestCase):
             root = Path(tmp)
             f = root / "config.js"
             f.write_text(
-                "export const apiUrl = \"https://example.com\";\n"
+                'export const apiUrl = "https://example.com";\n'
                 "export const config = { retries: 3 };\n"
                 "export const helper = (x) => x + 1;\n"
                 "const process = function(x) { return x; };\n",

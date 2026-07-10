@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 from ..graph.core import Edge, Node
 from ..graph.operations import _dedupe_edges
-from .ast import _lang_family, extract_symbols
+from .ast import _is_context_symbol, _lang_family, extract_symbols
 
 __all__ = [
     "FrontendCapability",
@@ -755,10 +755,6 @@ def _imported_symbol_names(suffix: str, text: str) -> set[str]:
 
 def _identifier(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value))
-
-
-def _is_context_symbol(node: Node) -> bool:
-    return node.kind not in {"file", "python", "package", "concept", "section", "unknown"} and bool(node.path)
 
 
 _CALL_NODE_TYPES = {

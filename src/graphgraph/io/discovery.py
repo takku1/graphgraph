@@ -16,16 +16,6 @@ _EXTERNAL_GRAPH_CANDIDATES = [
 ]
 
 
-def find_graphify_path(workspace_root: Path = Path(".")) -> Path | None:
-    for c in _EXTERNAL_GRAPH_CANDIDATES:
-        if "graphify" not in c:
-            continue
-        p = workspace_root / c
-        if p.exists():
-            return p
-    return None
-
-
 def find_external_graph_path(workspace_root: Path = Path(".")) -> Path | None:
     """Find a non-native graph that can be ingested explicitly.
 

@@ -8,6 +8,10 @@ issue, check here first.**
 Status key: `[x]` fixed and committed · `[~]` fixed, not yet committed ·
 `[ ]` deferred/open, with reasoning.
 
+This file is a status log of *specific bugs found and fixed*. For the
+forward-looking backlog of open ideas/gaps (new features, research
+directions), see [`docs/planned-work.md`](../planned-work.md) instead.
+
 ## Session 3 (2026-07-11) — grep-vs-graphgraph measurement + performance fix
 
 See [`docs/retrieval-confidence-routing.md`](../retrieval-confidence-routing.md)

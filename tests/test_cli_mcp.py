@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from conftest import sample_graph
+
 from graphgraph import (
     Edge,
     Graph,
@@ -23,20 +25,6 @@ from graphgraph.packets import (
 from graphgraph.scanner import scan_directory
 from graphgraph.services.native import graph_shape, render_native_context
 from graphgraph.validate import validate_graph_json
-
-
-def sample_graph() -> Graph:
-    return Graph(
-        nodes={
-            "N1": Node("N1", "AuthService", "service", "server/auth.py"),
-            "N2": Node("N2", "TokenStore", "data", "server/tokens.py"),
-            "N3": Node("N3", "AuditLog", "data", "server/audit.py"),
-        },
-        edges=[
-            Edge("N1", "N2", "reads", 0.9),
-            Edge("N2", "N3", "writes", 0.8),
-        ],
-    )
 
 
 class CliMcpTest(unittest.TestCase):
@@ -211,10 +199,17 @@ class CliMcpTest(unittest.TestCase):
             graph = scan_directory(root, depth="symbols", frontend="regex")
             save_graph(graph, graph_path)
 
-            response = dispatch({
-                "jsonrpc": "2.0", "id": 8, "method": "tools/call",
-                "params": {"name": "search_nodes", "arguments": {"query": "find_this_function", "graph_path": str(graph_path)}},
-            })
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "search_nodes",
+                        "arguments": {"query": "find_this_function", "graph_path": str(graph_path)},
+                    },
+                }
+            )
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
             match = next(m for m in data["matches"] if m["label"] == "find_this_function")
@@ -235,19 +230,28 @@ class CliMcpTest(unittest.TestCase):
             # partial match -- should NOT be ambiguous.
             clear_graph = root / "clear.json"
             clear_graph.write_text(
-                json.dumps({
-                    "nodes": [
-                        {"id": "N1", "label": "resolve_modified_node_ids", "kind": "function", "path": "a.py"},
-                        {"id": "N2", "label": "resolve_start_nodes", "kind": "function", "path": "b.py"},
-                    ],
-                    "edges": [],
-                }),
+                json.dumps(
+                    {
+                        "nodes": [
+                            {"id": "N1", "label": "resolve_modified_node_ids", "kind": "function", "path": "a.py"},
+                            {"id": "N2", "label": "resolve_start_nodes", "kind": "function", "path": "b.py"},
+                        ],
+                        "edges": [],
+                    }
+                ),
                 encoding="utf-8",
             )
-            resp = dispatch({
-                "jsonrpc": "2.0", "id": 6, "method": "tools/call",
-                "params": {"name": "search_nodes", "arguments": {"query": "resolve_modified_node_ids", "graph_path": str(clear_graph)}},
-            })
+            resp = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 6,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "search_nodes",
+                        "arguments": {"query": "resolve_modified_node_ids", "graph_path": str(clear_graph)},
+                    },
+                }
+            )
             data = json.loads(resp["result"]["content"][0]["text"])
             self.assertFalse(data["ambiguous"], data)
             self.assertIsNotNone(data["top_score_gap_ratio"])
@@ -257,19 +261,25 @@ class CliMcpTest(unittest.TestCase):
             # should BE ambiguous (ratio == 1.0).
             tied_graph = root / "tied.json"
             tied_graph.write_text(
-                json.dumps({
-                    "nodes": [
-                        {"id": "N1", "label": "Widget", "kind": "class", "path": "a.py"},
-                        {"id": "N2", "label": "Widget", "kind": "class", "path": "b.py"},
-                    ],
-                    "edges": [],
-                }),
+                json.dumps(
+                    {
+                        "nodes": [
+                            {"id": "N1", "label": "Widget", "kind": "class", "path": "a.py"},
+                            {"id": "N2", "label": "Widget", "kind": "class", "path": "b.py"},
+                        ],
+                        "edges": [],
+                    }
+                ),
                 encoding="utf-8",
             )
-            resp2 = dispatch({
-                "jsonrpc": "2.0", "id": 7, "method": "tools/call",
-                "params": {"name": "search_nodes", "arguments": {"query": "widget", "graph_path": str(tied_graph)}},
-            })
+            resp2 = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "tools/call",
+                    "params": {"name": "search_nodes", "arguments": {"query": "widget", "graph_path": str(tied_graph)}},
+                }
+            )
             data2 = json.loads(resp2["result"]["content"][0]["text"])
             self.assertTrue(data2["ambiguous"], data2)
             self.assertEqual(data2["top_score_gap_ratio"], 1.0)
@@ -961,7 +971,10 @@ class CliMcpTest(unittest.TestCase):
                     "jsonrpc": "2.0",
                     "id": 59,
                     "method": "tools/call",
-                    "params": {"name": "search_nodes", "arguments": {"query": "auth", "graph_path": str(graph_path), "limit": 0}},
+                    "params": {
+                        "name": "search_nodes",
+                        "arguments": {"query": "auth", "graph_path": str(graph_path), "limit": 0},
+                    },
                 }
             )
             assert response is not None

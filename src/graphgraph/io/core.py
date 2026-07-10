@@ -327,35 +327,6 @@ def save_gg(graph: Graph, path: Path) -> None:
     save_graph_binary(graph, path)
 
 
-def save_gg_text(graph: Graph, path: Path) -> None:
-    """Save a Graph as a legacy human-readable .gg adjacency-list file."""
-    outgoing: dict[str, list[Edge]] = {}
-    for edge in graph.edges:
-        outgoing.setdefault(edge.source, []).append(edge)
-
-    lines = ["gg/1"]
-    for nid in sorted(graph.nodes, key=lambda x: graph.nodes[x].label.lower()):
-        node = graph.nodes[nid]
-        parts = [node.label]
-        if node.kind and node.kind != "unknown":
-            parts.append(f"[{node.kind}]")
-        if node.path:
-            parts.append(node.path)
-        lines.append(" ".join(parts))
-        if node.summary:
-            lines.append(f"  # {node.summary}")
-        for edge in sorted(outgoing.get(nid, []), key=lambda e: e.type):
-            tgt = graph.nodes.get(edge.target)
-            tgt_ref = tgt.label if tgt else edge.target
-            if edge.weight != 1.0:
-                lines.append(f"  {edge.type} {tgt_ref} {edge.weight:g}")
-            else:
-                lines.append(f"  {edge.type} {tgt_ref}")
-        lines.append("")
-
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-
-
 def load_csv_edges(path: Path) -> Graph:
     """Load a CSV/TSV edge list into a Graph.
 

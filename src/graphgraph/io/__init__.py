@@ -8,7 +8,6 @@ from .core import (
     load_policies,
     merge_graphify,
     save_gg,
-    save_gg_text,
     save_graph,
     save_validated_graph,
     validate_graph_file,
@@ -16,7 +15,6 @@ from .core import (
 from .discovery import (
     find_external_graph_path,
     find_graph_path,
-    find_graphify_path,
     find_lessons_path,
     find_policies_path,
 )
@@ -24,7 +22,6 @@ from .discovery import (
 __all__ = [
     "find_external_graph_path",
     "find_graph_path",
-    "find_graphify_path",
     "find_lessons_path",
     "find_policies_path",
     "graph_to_json",
@@ -36,7 +33,6 @@ __all__ = [
     "load_policies",
     "merge_graphify",
     "save_gg",
-    "save_gg_text",
     "save_graph",
     "save_validated_graph",
     "validate_graph_file",
