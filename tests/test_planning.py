@@ -186,6 +186,22 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(blast_recommendation.recommended_budget, blast_recommendation.base_budget)
         self.assertEqual(blast_recommendation.mode, "measured_default")
 
+    def test_recommend_facts_per_node_scales_with_selection_size(self) -> None:
+        from graphgraph.planning import recommend_facts_per_node
+
+        # Small selections can afford close to the max per-node allowance.
+        self.assertEqual(recommend_facts_per_node(1), 5)
+        self.assertEqual(recommend_facts_per_node(0), 5)
+        # Monotonically non-increasing as selection size grows.
+        prev = recommend_facts_per_node(1)
+        for n in (5, 25, 100, 500, 5000):
+            current = recommend_facts_per_node(n)
+            self.assertLessEqual(current, prev)
+            prev = current
+        # Always within [1, max_facts] regardless of scale.
+        self.assertGreaterEqual(recommend_facts_per_node(1_000_000), 1)
+        self.assertEqual(recommend_facts_per_node(1, max_facts=8), 8)
+
     def test_recommend_node_budget_multi_hop_path_matches_closed_form(self) -> None:
         graph = Graph(
             nodes={

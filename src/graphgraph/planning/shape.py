@@ -358,3 +358,28 @@ def adjusted_edge_density(shape: GraphShape) -> float:
     raw_density = shape.edge_density * noise_factor
     # Local density is capped at 1.5 by the Edge Density Throttle at runtime
     return max(0.05, min(1.5, raw_density))
+
+
+def recommend_facts_per_node(node_count: int, max_facts: int = 5) -> int:
+    """How many facts to render per node, scaled to how many nodes are selected.
+
+    Every hybrid packet renderer previously hardcoded `node.facts[:2]` or
+    `node.facts[:3]` -- a fixed constant regardless of whether the packet
+    carries 5 nodes or 500. That meant a small project didn't actually get
+    *more detail per thing*, it just had less competition for the same fixed
+    per-node allowance; a large project wasn't deliberately made sparser,
+    the fixed allowance just added up faster. This makes the density an
+    explicit function of selection size: a handful of selected nodes can
+    each afford close to `max_facts`; a large selection tapers toward 1.
+
+    The curve (`max_facts / sqrt(node_count)`) and `max_facts` default are a
+    reasonable starting point, not a calibrated constant -- unlike
+    `estimate_gg_max_tokens` (node/edge-count token cost), there is currently
+    no benchmarked per-fact token cost term to fit this against. Treat this
+    as provisional; revisit once fact-inclusion has its own benchmark
+    signal, per this project's own promotion-evidence bar.
+    """
+    if node_count <= 0:
+        return max_facts
+    scaled = max_facts / math.sqrt(node_count)
+    return max(1, min(max_facts, round(scaled)))

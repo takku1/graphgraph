@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..graph.core import Edge, Graph
+from .shape import recommend_facts_per_node
 from .types import SubgraphStats
 
 WEAK_RELATIONS = {"references", "links", "mentions", "discusses", "section_of"}
@@ -29,6 +30,7 @@ def compute_subgraph_stats(graph: Graph, nodes: set[str], edges: list[Edge]) -> 
 
     factful_nodes = 0
     fact_token_proxy = 0
+    facts_per_node = recommend_facts_per_node(node_count)
     for node_id in nodes:
         node = graph.nodes.get(node_id)
         if not node:
@@ -36,7 +38,7 @@ def compute_subgraph_stats(graph: Graph, nodes: set[str], edges: list[Edge]) -> 
         if node.summary or node.facts:
             factful_nodes += 1
         fact_token_proxy += max(0, len(node.summary) // 4)
-        fact_token_proxy += sum(max(1, len(fact) // 4) for fact in node.facts[:2])
+        fact_token_proxy += sum(max(1, len(fact) // 4) for fact in node.facts[:facts_per_node])
 
     total_label_len = 0
     for node_id in nodes:

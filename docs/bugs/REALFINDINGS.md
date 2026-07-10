@@ -12,6 +12,72 @@ This file is a status log of *specific bugs found and fixed*. For the
 forward-looking backlog of open ideas/gaps (new features, research
 directions), see [`docs/planned-work.md`](../planned-work.md) instead.
 
+## Session 4 (2026-07-11) — real-world usage findings + dogfood pass + dynamic detail density
+
+Two sources: (1) a user's real-world test of graphgraph against a large C
+codebase (a game decompilation project), reporting concrete false negatives;
+(2) an actual dogfood pass using graphgraph's own tools (`doctor`,
+`search_nodes`, `source_snippets`, `project_status`) to navigate this repo,
+not just reading source looking for bugs.
+
+- [x] **Silent scan truncation (major).** `collect_files` (file-count cap)
+  and both symbol extractors silently dropped everything past their cap
+  with zero indication — root-caused to `max(500, max_nodes*5)` = exactly
+  10,000 at the old `max_nodes=2000` default, the same "suspiciously round"
+  number the user observed independently. A function with 469 real call
+  sites had zero caller edges and didn't even appear in `search_nodes`
+  because its file was processed after the cap was exhausted. Fixed by
+  threading a `truncated` flag through `collect_files`/`ExtractionResult`/
+  `scan_directory`'s metadata; `graphgraph scan` now prints an explicit
+  WARNING, and MCP's `build_graph`/`update_graph_files` surface the same as
+  JSON fields. Raised defaults (file cap 2000→5000, symbol multiplier
+  ×5→×20) and fixed the same `2000` default hardcoded independently in
+  three more places (`mcp/server.py` ×2, `services/native.py`).
+- [x] **Function-pointer/callback calls invisible to the call graph.** A
+  function invoked exclusively via callback registration
+  (`SetMainCallback2(CB2_InitBattle)` in C) read as having zero callers,
+  since static call-graph detection only recognizes `name(...)` call
+  sites. Verified the exact tree-sitter node shape empirically for C/JS/
+  Python before implementing (all three expose a call's arguments via
+  `child_by_field_name("arguments")`). Added a weak `references` edge (not
+  `calls`) for any bare-identifier argument matching a known function,
+  including Python's `func=callback` keyword-argument idiom (`set_defaults
+  (func=cmd_scan)`), which needed unwrapping a `keyword_argument` node's
+  `value` field. Verified live: 191 real edges found in this repo's own
+  graph.
+- [x] **Dogfood pass found 4 more real gaps**, from actually using the
+  tools: (1) the registered MCP server was running stale code (inherent to
+  how MCP works, not fixable, but worth knowing — restart after upgrading);
+  (2) `doctor` never checked the graph's own truncation metadata despite
+  being the "is something wrong" diagnostic surface, and had a stale
+  "default 2000" reference; (3) `project_status` had the identical gap;
+  (4) `source_snippets` printed a confusing "No readable source path for
+  node" block for a doc-derived "concept" node sharing a label with the
+  real code match, right next to the useful result. Fixed all four; also
+  caught the same stale `2000` default baked into the generated `AGENTS.md`
+  skill content (`install.py`).
+- [x] **Dynamic per-node detail density.** Confirmed via grep that every
+  hybrid packet renderer hardcoded `node.facts[:2]`/`[:3]` — a fixed
+  constant regardless of whether the packet held 5 nodes or 500, so
+  "smaller project = more detail per thing" was never a deliberate
+  behavior, just less competition for a static budget. Added
+  `recommend_facts_per_node` (`planning/shape.py`): scales the per-node
+  fact allowance down as selection size grows (`max_facts/sqrt(node_count)`,
+  clamped to `[1, max_facts]`). Wired into all 4 hybrid renderers plus the
+  `stats.py` token-cost proxy. The exact curve/constant are explicitly
+  flagged as provisional (no benchmarked per-fact token-cost term exists
+  yet to fit against, unlike `estimate_gg_max_tokens`'s node/edge
+  coefficients) — same honesty pattern as the `ambiguous` threshold in
+  session 3. Verified no regression: diffed a fresh run of the canonical
+  benchmark (`canonical_results/`) against the committed baseline across
+  all 408 rows on every deterministic metric (tokens, node/edge/path
+  recall, irrelevant ratio) — zero differences. The synthetic corpus
+  doesn't populate rich facts, so this confirms no regression rather than
+  proving the feature's real-world effect; that's proven separately by two
+  targeted unit tests (`recommend_facts_per_node`'s monotonic scaling, and
+  a render-level test: 5 facts shown for a 1-node selection vs ≤2 for a
+  60-node selection).
+
 ## Session 3 (2026-07-11) — grep-vs-graphgraph measurement + performance fix
 
 See [`docs/retrieval-confidence-routing.md`](../retrieval-confidence-routing.md)

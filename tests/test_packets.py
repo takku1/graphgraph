@@ -87,6 +87,33 @@ class PacketsTest(unittest.TestCase):
         self.assertEqual(result.node_count, 3)
         self.assertEqual(result.edge_count, 2)
 
+    def test_gg_max_hybrid_scales_facts_per_node_to_selection_size(self) -> None:
+        # New: every hybrid renderer used to hardcode facts[:2]/facts[:3]
+        # regardless of how many nodes were actually selected -- a small
+        # project got the exact same fixed allowance as a huge one, so
+        # "more detail for a small project" was never a deliberate behavior,
+        # just less competition for a static budget. recommend_facts_per_node
+        # makes this an explicit function of selection size.
+        many_facts = tuple(f"fact_{i}" for i in range(8))
+
+        # Small selection: one richly-detailed node should show close to
+        # the max allowance.
+        small_graph = Graph(nodes={"A": Node("A", "Widget", "class", "a.py", facts=many_facts)})
+        small_packet = render_gg_max(small_graph, {"A"}, [], hybrid=True)
+        small_fact_lines = [line for line in small_packet.splitlines() if line.startswith(" fact_")]
+        self.assertGreaterEqual(len(small_fact_lines), 4, small_packet)
+
+        # Large selection: the same richly-detailed node, now competing
+        # with many other selected nodes, should show fewer facts.
+        large_nodes = {"A": Node("A", "Widget", "class", "a.py", facts=many_facts)}
+        for i in range(60):
+            large_nodes[f"N{i}"] = Node(f"N{i}", f"Other{i}", "function", f"n{i}.py")
+        large_graph = Graph(nodes=large_nodes)
+        large_packet = render_gg_max(large_graph, set(large_nodes), [], hybrid=True)
+        large_fact_lines = [line for line in large_packet.splitlines() if line.startswith(" fact_")]
+        self.assertLess(len(large_fact_lines), len(small_fact_lines))
+        self.assertLessEqual(len(large_fact_lines), 2)
+
     def test_render_and_validate_gg_max_with_default_weights(self) -> None:
         graph = Graph(
             nodes={

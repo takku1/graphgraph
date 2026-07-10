@@ -81,6 +81,10 @@ Status key: `[ ]` not started · `[~]` scoped but not built · `[x]` done
   (would likely need either an LLM-generated summary cached per subtree, or
   a non-trivial extractive-summarization algorithm) — scope it as its own
   project if pursued, don't bolt it onto the existing packet renderers.
+  **Note:** this is about missing synthesis *across* levels. The related
+  but distinct "same fixed detail regardless of project size" gap *within*
+  one level is now fixed — see `recommend_facts_per_node`
+  (`planning/shape.py`) in `docs/bugs/REALFINDINGS.md`.
 
 ## Priority 3 — hygiene, low urgency
 

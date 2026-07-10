@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ..graph.core import Edge, Graph
 from ..graph.ontology import DEFAULT_RELATIONS
+from ..planning.shape import recommend_facts_per_node
 
 DEFAULT_RELATION_ORDER = tuple(DEFAULT_RELATIONS)
 
@@ -59,10 +60,11 @@ def render_hybrid(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     nodes = _existing_nodes(graph, nodes)
     edges = _existing_edges(nodes, edges)
     lines = ["# Context Packet", "", "Nodes:"]
+    facts_per_node = recommend_facts_per_node(len(nodes))
     for node_id in sorted(nodes):
         node = graph.nodes[node_id]
         lines.append(f"- {node.id} {node.label} [{node.kind}] {node.path}: {node.summary}")
-        for fact in node.facts[:2]:
+        for fact in node.facts[:facts_per_node]:
             lines.append(f"  - {fact}")
     lines.extend(["", "Edges:"])
     for edge in edges:
@@ -100,6 +102,7 @@ def render_gg_max(
     lines.append("[n]")
     node_to_idx = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
     grouped = _group_nodes_by_subsystem(nodes, graph)
+    facts_per_node = recommend_facts_per_node(len(nodes))
     for sub, sub_nodes in grouped:
         for node_id in sub_nodes:
             idx = node_to_idx[node_id]
@@ -115,7 +118,7 @@ def render_gg_max(
                     lines.append(f"{idx} {node.label} {' '.join(meta_parts)}")
                 else:
                     lines.append(f"{idx} {node.label}")
-                for fact in node.facts[:3]:
+                for fact in node.facts[:facts_per_node]:
                     lines.append(f" {fact}")
             else:
                 lines.append(f"{idx} {node.label}")
@@ -235,6 +238,7 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     """
     nodes = _existing_nodes(graph, nodes)
     lines = ["[d]"]
+    facts_per_node = recommend_facts_per_node(len(nodes))
     for node_id in sorted(nodes, key=lambda nid: (graph.nodes[nid].path, graph.nodes[nid].label, nid)):
         node = graph.nodes[node_id]
         if node.kind == "concept" and not node.facts:
@@ -247,7 +251,7 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
         if node.summary:
             parts.append(node.summary)
         lines.append(" ".join(parts))
-        for fact in node.facts[:2]:
+        for fact in node.facts[:facts_per_node]:
             lines.append(f" {fact}")
     return "\n".join(lines)
 
@@ -359,6 +363,7 @@ def render_gg_lex(
     lines.append("[n]")
     node_to_id = _lexical_ids(nodes, graph)
     grouped = _group_nodes_by_subsystem(nodes, graph)
+    facts_per_node = recommend_facts_per_node(len(nodes))
     for sub, sub_nodes in grouped:
         for node_id in sub_nodes:
             node = graph.nodes[node_id]
@@ -373,7 +378,7 @@ def render_gg_lex(
                     lines.append(f"{lex_id} {node.label} {' '.join(meta_parts)}")
                 else:
                     lines.append(f"{lex_id} {node.label}")
-                for fact in node.facts[:3]:
+                for fact in node.facts[:facts_per_node]:
                     lines.append(f" {fact}")
             else:
                 lines.append(f"{lex_id} {node.label}")

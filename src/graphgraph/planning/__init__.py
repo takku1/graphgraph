@@ -8,6 +8,7 @@ from .shape import (
     GraphShape,
     profile_graph_shape,
     recommend_context_window,
+    recommend_facts_per_node,
     recommend_node_budget,
     recommend_observed_context_window,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "policy_applies",
     "profile_graph_shape",
     "recommend_context_window",
+    "recommend_facts_per_node",
     "recommend_node_budget",
     "recommend_observed_context_window",
     "refine_packet_for_subgraph",
