@@ -47,6 +47,7 @@ graphgraph-mcp = "graphgraph.mcp_server:main"
 [dependency-groups]
 dev = [
     "pytest>=9.0",
+    "ruff>=0.15",
 ]
 
 [tool.uv]
