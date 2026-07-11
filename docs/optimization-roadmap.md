@@ -27,22 +27,37 @@ that a particular model will interpret every packet correctly.
    fold in an embedding fallback for synonym queries that share no lexical
    terms with the section text. (Heading-weighted BM25 section ranking within
    the budget is done; see baseline.)
-3. Add adversarial ambiguity cases: duplicate symbols, generated sources,
-   overloaded methods, re-exports, and mixed documentation/code anchors.
+3. Extend the adversarial ambiguity suite. The initial benchmark
+   (`adversarial_ambiguity_benchmark.py`, 6/6) and a generated-source ranking
+   penalty are done; still to add: name collisions across many files, cyclic
+   re-export chains, and overloads distinguished only by signature/arity.
 4. Measure completeness expectations separately from minimum evidence. A bounded
    packet can support an answer without listing every raw neighbor.
 
 ## P1: Mathematical Calibration
 
-1. Refit packet token surfaces with train/holdout project splits. Include label
+Scoring-model note: `search_nodes` is a multiplicative (log-linear) ranking
+model -- `log(score) = log(base) + Σ feature·log(weight)`. Penalties on binary
+facts (is-test, is-generated, is-external) are single weights and are correct
+as constants; there is no continuous input there to turn into a formula.
+Continuous signals should be smooth functions, so the former hard `min()` caps
+on the PageRank and degree boosts are now `tanh` saturations. The remaining
+"proper formula" upgrade is to fit all of these weights from labeled
+query -> correct-node data rather than hand-setting them; that is gated on the
+same evaluation signal as the accuracy gates below.
+
+1. Fit the ranking-model weights (penalty log-weights, boost caps, coverage
+   slope) by leave-one-project-out on labeled anchor-resolution data once an
+   eval set exists. Until then hand-set weights are the honest state.
+2. Refit packet token surfaces with train/holdout project splits. Include label
    bytes, fact bytes, relation-map cardinality, and packet fixed overhead.
-2. Replace manually chosen query-class lambda values only if leave-one-project-out
+3. Replace manually chosen query-class lambda values only if leave-one-project-out
    validation beats the current regularized budget with no evidence failures.
-3. Test beam search or Lagrangian relaxation for multi-hop connected selection.
+4. Test beam search or Lagrangian relaxation for multi-hop connected selection.
    Greedy is unsafe there because a low-value parent can unlock valuable descendants.
-4. Calibrate local PPR tolerance and push limits by graph size and seed confidence,
+5. Calibrate local PPR tolerance and push limits by graph size and seed confidence,
    using top-k agreement and latency Pareto fronts rather than one fixed threshold.
-5. Add latency and memory constraints to the budget objective. Token-only optima
+6. Add latency and memory constraints to the budget objective. Token-only optima
    can be operationally wrong when graph loading or selection dominates.
 
 ## P1: Runtime Efficiency
