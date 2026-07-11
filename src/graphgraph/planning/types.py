@@ -21,7 +21,7 @@ class ContextPlan:
     weak_edge_limit: int
     min_confidence: float
     reason: str
-    planner_version: str = "context_plan_v2_budget_directional"
+    planner_version: str = "context_plan_v4_intent_precision"
 
 
 @dataclass(frozen=True)

@@ -22,6 +22,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
+    "pathspec>=0.12",
     "tree-sitter>=0.22",
     "tree-sitter-language-pack>=0.7",
     "keyring>=24.0.0",

@@ -25,6 +25,13 @@ __all__ = [
 ]
 
 
+def _definition_summary(text: str, line: int) -> str:
+    lines = text.splitlines()
+    excerpt = lines[line - 1].strip() if 0 < line <= len(lines) else ""
+    excerpt = re.sub(r"\s+", " ", excerpt)[:160]
+    return f"L{line} {excerpt}".rstrip()
+
+
 @dataclass(frozen=True)
 class FrontendCapability:
     name: str
@@ -122,7 +129,7 @@ class TreeSitterExtractor:
                     label=d.name,
                     kind=d.kind,
                     path=source.rel,
-                    summary=f"L{d.line}",
+                    summary=_definition_summary(source.text, d.line),
                     source=str(source.path),
                     confidence=self.confidence,
                 )
@@ -539,7 +546,7 @@ def _add_rust_fields(
                         label=field_name,
                         kind="field",
                         path=source.rel,
-                        summary=f"L{line}",
+                        summary=_definition_summary(source.text, line),
                         parent=struct_id,
                         source=str(source.path),
                         confidence=0.9,

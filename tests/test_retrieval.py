@@ -233,6 +233,21 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(search_nodes(graph, "scan directory", limit=2)[0].node.id, "SRC")
         self.assertEqual(search_nodes(graph, "test scan directory", limit=2)[0].node.id, "TEST")
 
+    def test_broad_implementation_query_keeps_tests_as_support_not_primary_intent(self) -> None:
+        graph = Graph(
+            nodes={
+                "SRC": Node("SRC", "scanner_implementation", "function", "src/graphgraph/scanner/core.py"),
+                "TEST": Node(
+                    "TEST",
+                    "test_scanner_implementation_blast_radius",
+                    "function",
+                    "tests/test_scanner.py",
+                ),
+            }
+        )
+        matches = search_nodes(graph, "scanner implementation callers tests blast radius", limit=2)
+        self.assertEqual(matches[0].node.id, "SRC")
+
     def test_search_prefers_handwritten_source_over_generated_stub(self) -> None:
         # Adversarial: identical text, and the generated protobuf stub is more
         # connected (higher degree/PPR). Only a generated-source signal can
@@ -251,6 +266,16 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(
             search_nodes(graph, "User protobuf", limit=3, personalize=True)[0].node.id, "GEN"
         )
+
+    def test_search_prefers_source_over_benchmark_unless_query_mentions_benchmark(self) -> None:
+        graph = Graph(
+            nodes={
+                "SRC": Node("SRC", "rank_packet", "function", "src/graphgraph/retrieval/search.py"),
+                "BENCH": Node("BENCH", "rank_packet", "function", "benchmarks/context_graph/ranking.py"),
+            }
+        )
+        self.assertEqual(search_nodes(graph, "rank packet", limit=2)[0].node.id, "SRC")
+        self.assertEqual(search_nodes(graph, "benchmark rank packet", limit=2)[0].node.id, "BENCH")
 
     def test_search_nodes_penalizes_external_nodes_unless_intent_gate_matches(self) -> None:
         graph = Graph(
@@ -818,6 +843,63 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(result.starts, ("SRC",))
         self.assertIn("CALLER", result.nodes)
 
+    def test_broad_blast_radius_caps_ambiguous_two_hop_expansion(self) -> None:
+        nodes = {"SRC": Node("SRC", "scanner.py", "python", "src/graphgraph/scanner/core.py")}
+        edges = []
+        for i in range(100):
+            node_id = f"N{i}"
+            nodes[node_id] = Node(node_id, f"scanner_helper_{i}", "function", f"src/helpers/h{i}.py")
+            edges.append(Edge(node_id, "SRC", "calls"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(
+            graph,
+            "continue implementation scanner callers tests blast radius",
+            "blast_radius",
+            hops=2,
+        )
+
+        self.assertLessEqual(len(result.nodes), 48)
+
+    def test_broad_subsystem_summary_caps_ambiguous_expansion(self) -> None:
+        nodes = {"SRC": Node("SRC", "scanner.py", "python", "src/graphgraph/scanner/core.py")}
+        edges = []
+        for i in range(100):
+            node_id = f"N{i}"
+            nodes[node_id] = Node(node_id, f"scanner_helper_{i}", "function", f"src/helpers/h{i}.py")
+            edges.append(Edge("SRC", node_id, "contains"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(graph, "continue implementation scanner architecture", "subsystem_summary", hops=1)
+
+        self.assertLessEqual(len(result.nodes), 48)
+
+    def test_exact_symbol_blast_radius_retains_recall_budget(self) -> None:
+        nodes = {"SRC": Node("SRC", "render_packet", "function", "src/packets.py")}
+        edges = []
+        for i in range(70):
+            node_id = f"C{i}"
+            nodes[node_id] = Node(node_id, f"caller_{i}", "function", f"src/c{i}.py")
+            edges.append(Edge(node_id, "SRC", "calls"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(graph, "blast radius changing render_packet", "blast_radius", hops=2)
+
+        self.assertGreater(len(result.nodes), 48)
+
+    def test_exact_symbol_subsystem_summary_retains_recall_budget(self) -> None:
+        nodes = {"SRC": Node("SRC", "render_packet", "function", "src/packets.py")}
+        edges = []
+        for i in range(70):
+            node_id = f"C{i}"
+            nodes[node_id] = Node(node_id, f"helper_{i}", "function", f"src/c{i}.py")
+            edges.append(Edge("SRC", node_id, "calls"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(graph, "render_packet", "subsystem_summary", hops=1)
+
+        self.assertGreater(len(result.nodes), 48)
+
     def test_render_source_snippets_uses_node_line_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1045,9 +1127,9 @@ Find the AuthService implementation.
         node_start = lines.index("[n]") + 1
         edge_start = lines.index("[e]")
         node_rows = [line for line in lines[node_start:edge_start] if not line.startswith("# ")]
-        # Budget tracks the gg_max token surface; the LOPO-refit lowered the
-        # per-edge cost, so the same token budget now admits a few more nodes.
-        self.assertEqual(len(node_rows), 72)
+        # Budget tracks the path-aware gg_max token surface. Source provenance
+        # raises per-node cost, so the same token target admits fewer nodes.
+        self.assertEqual(len(node_rows), 58)
 
     def test_render_full_graph_includes_every_active_node_and_edge(self) -> None:
         # The explicit "give me everything, no query scoping" escape hatch

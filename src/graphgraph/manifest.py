@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+MANIFEST_VERSION = 2
+
 
 def compute_file_hash(path: Path) -> str:
     """Compute SHA-256 hash of a file."""
@@ -21,6 +23,11 @@ class Manifest:
     def __init__(self, data: dict[str, Any] | None = None):
         # files: rel_path -> {hash, depth, frontend, docs, nodes: list[str], edges: list[tuple[str, str, str]]}
         self.files = data.get("files", {}) if data else {}
+        self.version = int(data.get("version", 0)) if data is not None else MANIFEST_VERSION
+
+    @property
+    def compatible(self) -> bool:
+        return self.version == MANIFEST_VERSION
 
     @classmethod
     def load(cls, path: Path) -> Manifest:
@@ -30,11 +37,11 @@ class Manifest:
             data = json.loads(path.read_text(encoding="utf-8"))
             return cls(data)
         except Exception:
-            return cls()
+            return cls({"version": 0})
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"files": self.files}
+        data = {"version": MANIFEST_VERSION, "files": self.files}
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def update_file(

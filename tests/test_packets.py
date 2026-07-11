@@ -87,6 +87,12 @@ class PacketsTest(unittest.TestCase):
         self.assertEqual(result.node_count, 3)
         self.assertEqual(result.edge_count, 2)
 
+    def test_gg_max_inlines_editing_location_and_signature(self) -> None:
+        graph = Graph(nodes={"F": Node("F", "foo", "function", "src/a.py", summary="L12 def foo(x):")})
+        packet = render_gg_max(graph, {"F"}, [])
+        self.assertIn("1 foo @src/a.py:12 def foo(x):", packet)
+        self.assertTrue(validate_packet(packet).ok)
+
     def test_gg_max_validation_survives_node_content_containing_marker_substrings(self) -> None:
         # Found live-testing full-graph (unfiltered, unbounded) rendering:
         # validate_gg_max detected/split sections by searching for "[r]"/

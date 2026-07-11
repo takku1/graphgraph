@@ -108,7 +108,7 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(direct.packet, "gg_max")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
-        self.assertIn("context_plan_v2", direct.planner_version)
+        self.assertIn("context_plan_v4", direct.planner_version)
 
         docs = plan_context("subsystem_summary", "README installation usage")
         self.assertEqual(docs.packet, "doc_summary")
@@ -152,15 +152,18 @@ class PlanningTest(unittest.TestCase):
         summary_plan = refine_plan_for_subgraph(plan_context("subsystem_summary", "auth subsystem"), summary_stats)
         self.assertEqual(summary_plan.packet, "gg_max")
 
-    def test_calibrated_token_surface_preserves_packet_cliff(self) -> None:
+    def test_calibrated_token_surface_preserves_density_crossover(self) -> None:
         from graphgraph.planning import estimate_packet_tokens
 
         zero_edge = estimate_packet_tokens(2, 0)
         self.assertLessEqual(zero_edge["semantic_arrow"], zero_edge["gg_max"])
 
-        structural = estimate_packet_tokens(20, 10)
-        self.assertLess(structural["gg_max"], structural["semantic_arrow"])
-        self.assertLess(structural["gg_max"], structural["sql"])
+        sparse = estimate_packet_tokens(20, 10)
+        self.assertLess(sparse["semantic_arrow"], sparse["gg_max"])
+
+        dense = estimate_packet_tokens(20, 50)
+        self.assertLess(dense["gg_max"], dense["semantic_arrow"])
+        self.assertLess(dense["gg_max"], dense["sql"])
 
     def test_subgraph_relation_entropy_is_normalized_shannon_entropy(self) -> None:
         from graphgraph.planning import compute_subgraph_stats
@@ -232,13 +235,13 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(recommendation.base_budget, 80)
         # lambda_ = 0.05 * 1.2 (doc_node_ratio>=0.65) * 1.25 (nodes<=500) = 0.075
         # density = 0.8 * (1.0 + 0.30*0.8333 + 0.20*0.6667) = 1.106664 -> clipped to 1.106664 (<1.5)
-        # tau = 1.6839 + 5.2418*1.106664 = 7.4848113552 (gg_max surface, LOPO refit)
-        # n* = (1/0.075) * ln(max(1.1, 0.075/(1e-4*7.4848113552))) = 61
-        self.assertEqual(recommendation.recommended_budget, 61)
+        # tau = 11.9975 + 5.1632*1.106664 = 17.7116 (path-aware gg_max LOPO refit)
+        # n* = (1/0.075) * ln(max(1.1, 0.075/(1e-4*17.7116))) = 50
+        self.assertEqual(recommendation.recommended_budget, 50)
         self.assertEqual(recommendation.mode, "candidate")
         self.assertEqual(
             recommendation.reason,
-            "Regularized budget: n*=61 (lambda=0.075, tau=7.485); "
+            "Regularized budget: n*=50 (lambda=0.075, tau=17.711); "
             "doc-heavy graph trims structural noise; "
             "warning: import topology looks under-extracted",
         )

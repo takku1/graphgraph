@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from ..graph.core import Edge, Graph
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..planning.shape import recommend_facts_per_node
@@ -112,8 +114,9 @@ def render_gg_max(
                 meta_parts = []
                 if node.kind and node.kind != "unknown":
                     meta_parts.append(f"[{node.kind}]")
-                if node.summary:
-                    meta_parts.append(node.summary)
+                context = _compact_source_context(node)
+                if context:
+                    meta_parts.append(context)
                 if meta_parts:
                     lines.append(f"{idx} {node.label} {' '.join(meta_parts)}")
                 else:
@@ -121,7 +124,8 @@ def render_gg_max(
                 for fact in node.facts[:facts_per_node]:
                     lines.append(f" {fact}")
             else:
-                lines.append(f"{idx} {node.label}")
+                context = _compact_source_context(node)
+                lines.append(f"{idx} {node.label}{f' {context}' if context else ''}")
     lines.append("[e]")
     for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
         lines.append(f"{rel_id}:")
@@ -133,6 +137,18 @@ def render_gg_max(
             else:
                 lines.append(f"{src_idx} {tgt_idx}")
     return "\n".join(lines)
+
+
+def _compact_source_context(node: object) -> str:
+    """Inline the minimum editing provenance a compact packet needs."""
+    path = str(getattr(node, "path", "") or "")
+    summary = str(getattr(node, "summary", "") or "")
+    line = getattr(node, "line", None)
+    if not path:
+        return summary
+    location = f"{path}:{line}" if line is not None else path
+    signature = re.sub(r"^L\d+\s*", "", summary).strip()
+    return f"@{location}{f' {signature}' if signature else ''}"
 
 
 def _relation_ids(edges: list[Edge], relations: tuple[str, ...]) -> dict[str, int]:

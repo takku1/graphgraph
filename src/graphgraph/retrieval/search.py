@@ -40,6 +40,9 @@ _GENERATED_NAME_MARKERS = (
 _GENERATED_QUERY_TERMS = frozenset({
     "generated", "proto", "protobuf", "grpc", "pb2", "stub", "codegen", "autogen",
 })
+_BENCHMARK_QUERY_TERMS = frozenset({
+    "benchmark", "benchmarks", "performance", "latency", "throughput", "evaluation", "eval",
+})
 
 
 def saturating_boost(value: float, cap: float) -> float:
@@ -126,8 +129,13 @@ def search_nodes(
     # exact-sequence comparison.
     terms_with_stopwords = tokenize(query, keep_stopwords=True)
     query_terms = set(terms)
-    test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
+    test_terms = query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"}
+    # Mentioning tests as one desired evidence type in a broad implementation
+    # query should not turn every loosely matching test into a primary anchor.
+    # Lift the penalty only when test vocabulary is a material part of intent.
+    test_query = bool(test_terms) and len(test_terms) >= math.ceil(0.30 * len(query_terms))
     generated_query = bool(query_terms & _GENERATED_QUERY_TERMS)
+    benchmark_query = bool(query_terms & _BENCHMARK_QUERY_TERMS)
     dependency_query = bool(query_terms & DEPENDENCY_QUERY_TERMS)
 
     degree = graph.degree()
@@ -293,11 +301,13 @@ def search_nodes(
             if node.kind == "community":
                 score *= 0.65
             if _is_test_node(node) and not test_query:
-                score *= 0.55
                 reasons.append("test_context_penalty")
             if _is_generated_node(node) and not generated_query:
                 score *= 0.5
                 reasons.append("generated_source_penalty")
+            if _is_benchmark_node(node) and not benchmark_query:
+                score *= 0.45
+                reasons.append("benchmark_context_penalty")
             if node.kind == "concept" and doc_intensity < 0.5:
                 score *= 0.45
                 reasons.append("concept_status_penalty")
@@ -352,6 +362,12 @@ def search_nodes(
                 else:
                     score += 1.5
                     reasons.append("git_dirty" if is_dirty else "git_churn")
+
+            # Apply this after identifier, topology, and temporal boosts so a
+            # tangential test cannot regain primary-anchor rank through those
+            # additive signals. Tests remain available through graph traversal.
+            if _is_test_node(node) and not test_query:
+                score *= 0.30
 
             matches.append(Match(node=node, score=score, reasons=tuple(dict.fromkeys(reasons))))
 
@@ -441,6 +457,11 @@ def _is_generated_node(node: Node) -> bool:
         return True
     name = path.rsplit("/", 1)[-1]
     return any(marker in name for marker in _GENERATED_NAME_MARKERS)
+
+
+def _is_benchmark_node(node: Node) -> bool:
+    path = node.path.replace("\\", "/").lower() if node.path else ""
+    return bool(set(path.split("/")) & {"benchmark", "benchmarks", "bench"})
 
 
 def _external_exact_match(node: Node, terms: tuple[str, ...]) -> bool:

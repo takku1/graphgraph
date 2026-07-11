@@ -7,7 +7,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "promotion"
 REPORT_JSON = OUT / "promotion_report.json"
@@ -97,16 +96,21 @@ def computed_gates() -> list[Gate]:
     gates.append(Gate("frontier_current_expand", bool(current_frontier) and current_frontier_answerable == len(current_frontier), f"{current_frontier_answerable}/{len(current_frontier)} current_expand answerable"))
 
     proxy_rows = read_csv(ROOT / "benchmarks/context_graph/out/real_projects/token_proxy_calibration.csv")
-    case_keys = {
+    zero_edge_keys = {
         (row.get("project"), row.get("start_kind"), row.get("start"), row.get("hops"))
         for row in proxy_rows
+        if row.get("edges") == "0"
     }
-    semantic_matches = {
+    zero_edge_semantic_matches = {
         (row.get("project"), row.get("start_kind"), row.get("start"), row.get("hops"))
         for row in proxy_rows
-        if row.get("semantic_vs_gg_match", "").lower() == "true"
+        if row.get("edges") == "0" and row.get("semantic_vs_gg_match", "").lower() == "true"
     }
-    gates.append(Gate("token_proxy_semantic_gg", bool(case_keys) and len(semantic_matches) == len(case_keys), f"{len(semantic_matches)}/{len(case_keys)} semantic/gg decisions match"))
+    gates.append(Gate(
+        "token_proxy_zero_edge_semantic_gg",
+        bool(zero_edge_keys) and len(zero_edge_semantic_matches) == len(zero_edge_keys),
+        f"{len(zero_edge_semantic_matches)}/{len(zero_edge_keys)} runtime-relevant zero-edge decisions match",
+    ))
 
     dynamic_rows = read_csv(ROOT / "benchmarks/context_graph/out/real_projects/dynamic_budget_results.csv")
     shape_rows = [row for row in dynamic_rows if row.get("candidate") == "shape_recommended"]

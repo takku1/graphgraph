@@ -216,7 +216,7 @@ def update_paths(
     if not manifest_path or not previous_graph_path:
         raise ValueError("update_paths requires manifest_path and previous_graph_path from a prior scan")
     manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
-    if manifest is None or previous_graph is None:
+    if manifest is None or not manifest.compatible or previous_graph is None:
         raise ValueError(
             f"no existing graph/manifest at {previous_graph_path} -- run scan_directory once before update_paths"
         )
@@ -289,7 +289,7 @@ def remove_paths(
     if not manifest_path or not previous_graph_path:
         raise ValueError("remove_paths requires manifest_path and previous_graph_path from a prior scan")
     manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
-    if manifest is None or previous_graph is None:
+    if manifest is None or not manifest.compatible or previous_graph is None:
         raise ValueError(
             f"no existing graph/manifest at {previous_graph_path} -- run scan_directory once before remove_paths"
         )
@@ -392,7 +392,15 @@ def _build_graph_from_split(
         for nid in info.get("nodes", []):
             if nid in previous_graph.nodes:
                 previous_node = previous_graph.nodes[nid]
-                if previous_node.path not in dirty_rels:
+                # Manifest node lists intentionally include edge endpoints so
+                # pathless shared concepts survive targeted updates. A file
+                # node referenced by another file is also such an endpoint,
+                # though, and restoring it after its owning path was removed
+                # resurrects the exact base-node leak seen in `remove`.
+                # Path-bearing nodes are owned by that path; only active paths
+                # may restore them. Pathless semantic nodes remain shared.
+                owns_active_path = not previous_node.path or previous_node.path in active_rels
+                if previous_node.path not in dirty_rels and owns_active_path:
                     nodes[nid] = previous_node
                     if _context_symbol_node(previous_node):
                         context_symbol_nodes[nid] = previous_node

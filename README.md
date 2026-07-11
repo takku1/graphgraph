@@ -115,6 +115,16 @@ graphgraph scan --directory . --depth symbols --output .graphgraph/graph.gg
 graphgraph context "what is the blast radius of auth changes" --query-class blast_radius --show-stats
 ```
 
+Scans honor repository and nested `.gitignore`/`.ignore` rules (including
+negation), and exclude secret-bearing environment files plus local agent/MCP
+configuration by default. Compact `gg_max` packets include `@path:line` and a
+definition-line signature when the scanner can extract one.
+
+Broad natural-language `subsystem_summary`/`blast_radius` queries use a
+48-node orientation cap when anchor discovery cannot identify a targeted
+symbol. Exact-symbol queries retain the 120-node recall budget; tests remain
+connected support evidence unless the query is materially test-focused.
+
 ## Incremental updates
 
 Three ways to keep the graph current, cheapest first:
@@ -164,7 +174,7 @@ design (profiling data, prior-art survey, correctness notes).
 | `eval` | Retrieval recall and token cost against labeled tasks. |
 | `ontology` / `traversal` / `frontends` | List relation types / query-class traversal policies / extraction frontend availability. |
 | `doctor` | Full environment + MCP registration diagnostic. |
-| `cache` | Inspect or clear the topological KV packet cache. |
+| `cache` | Inspect/clear packet caches or recompute and persist centrality (`--recompute-centrality`). |
 | `install` | Register the skill + MCP server for a client. |
 
 Run `graphgraph <command> --help` for full flags.

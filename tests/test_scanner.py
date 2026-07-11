@@ -139,6 +139,42 @@ class ScannerTest(unittest.TestCase):
             included = {p.relative_to(root).as_posix() for p in collect_files(root, 100, include=frozenset({"build"})).files}
             self.assertIn("game/build/README.md", included)
 
+    def test_collect_files_honors_gitignore_ignore_and_nested_negation(self) -> None:
+        from graphgraph.scanner.files import collect_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitignore").write_text("ignored.py\n*.env\n!keep.env\n", encoding="utf-8")
+            (root / ".ignore").write_text("dump-*.json\n", encoding="utf-8")
+            (root / "ignored.py").write_text("", encoding="utf-8")
+            (root / "secret.env").write_text("SECRET=x", encoding="utf-8")
+            (root / "keep.env").write_text("documented=x", encoding="utf-8")
+            (root / "dump-analysis.json").write_text("{}", encoding="utf-8")
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / ".gitignore").write_text("*.tmp\n!keep.tmp\n", encoding="utf-8")
+            (nested / "drop.tmp").write_text("", encoding="utf-8")
+            (nested / "keep.tmp").write_text("", encoding="utf-8")
+            (root / "kept.py").write_text("", encoding="utf-8")
+
+            files = {path.relative_to(root).as_posix() for path in collect_files(root, 100).files}
+            self.assertEqual(files, {"kept.py", "keep.env", "nested/keep.tmp"})
+
+    def test_collect_files_skips_sensitive_and_agent_configuration_by_default(self) -> None:
+        from graphgraph.scanner.files import collect_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".env").write_text("SECRET=x", encoding="utf-8")
+            (root / ".mcp.json").write_text("{}", encoding="utf-8")
+            (root / "GEMINI.md").write_text("prompt", encoding="utf-8")
+            (root / ".gemini").mkdir()
+            (root / ".gemini" / "settings.json").write_text("{}", encoding="utf-8")
+            (root / "app.py").write_text("", encoding="utf-8")
+
+            files = {path.relative_to(root).as_posix() for path in collect_files(root, 100).files}
+            self.assertEqual(files, {"app.py"})
+
     def test_collect_files_ignores_skip_listed_ancestor_directory_names(self) -> None:
         # Regression: the skip check used to compare against path.parts (the
         # *absolute* path), so a project checked out under e.g. ~/repos/foo
@@ -596,6 +632,26 @@ class ScannerTest(unittest.TestCase):
                     manifest_path=root / ".graphgraph" / "manifest.json",
                 )
 
+    def test_update_paths_rejects_stale_manifest_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            graph = scan_directory(root, depth="symbols", manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            raw.pop("version")
+            manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                update_paths(
+                    root,
+                    ["a.py"],
+                    previous_graph_path=graph_path,
+                    manifest_path=manifest_path,
+                )
+
     def test_update_paths_treats_missing_target_as_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -636,6 +692,23 @@ class ScannerTest(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertNotIn("b.py", manifest["files"])
             self.assertIn("a.py", manifest["files"])
+
+    def test_remove_paths_does_not_restore_referenced_file_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.py").write_text("from b import target\n", encoding="utf-8")
+            (root / "b.py").write_text("def target():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            graph = scan_directory(root, depth="symbols", manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+
+            result = remove_paths(
+                root, ["b.py"], depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path
+            )
+
+            self.assertFalse(any(node.path == "b.py" for node in result.nodes.values()))
+            self.assertTrue(any(node.path == "a.py" for node in result.nodes.values()))
 
     def test_scanner_detects_imports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -838,6 +911,24 @@ class ScannerTest(unittest.TestCase):
             )
             section = next(node for node in nodes.values() if node.kind == "section")
             self.assertTrue(section.facts)
+
+    def test_document_context_bounds_explains_and_requires_symbol_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            aliases = {f"symbol_{i}": f"S{i}" for i in range(20)}
+            text = "# Details\n" + " ".join(aliases) + " running only\n"
+            doc = root / "guide.md"
+            doc.write_text(text, encoding="utf-8")
+            aliases["run"] = "RUN"
+            _nodes, edges = extract_document_context(
+                [DocumentInput(doc, "guide.md", "guide_md", text)],
+                {"guide.md": "guide_md"},
+                symbol_map=aliases,
+                max_explains_per_section=5,
+            )
+            explains = [edge for edge in edges if edge.type == "explains"]
+            self.assertEqual(len(explains), 5)
+            self.assertNotIn("RUN", {edge.target for edge in explains})
 
     def test_document_context_mentions_requires_word_boundary(self) -> None:
         # Regression: the "mentions" edge used a raw substring check

@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "codex"
 REPORT_JSON = OUT / "codex_integration_check.json"
@@ -56,17 +55,19 @@ def main() -> None:
     args = graphgraph_server.get("args", [])
     cwd_value = graphgraph_server.get("cwd", "")
     command = graphgraph_server.get("command", "")
+    portable = command == "graphgraph-mcp" and not args and not cwd_value
     project_arg = args[args.index("--project") + 1] if "--project" in args and args.index("--project") + 1 < len(args) else ""
     project_path = Path(project_arg) if project_arg else Path()
     cwd_path = Path(cwd_value) if cwd_value else Path()
 
     checks.append(Check("mcp_server_declared", bool(graphgraph_server), ",".join(sorted(servers))))
     checks.append(Check("mcp_command_available", bool(command and shutil.which(command)), command))
-    checks.append(Check("mcp_project_path_exists", bool(project_arg and project_path.exists()), project_arg))
-    checks.append(Check("mcp_cwd_exists", bool(cwd_value and cwd_path.exists()), cwd_value))
-    checks.append(Check("mcp_cwd_matches_project", bool(cwd_value and project_arg and cwd_path.resolve() == project_path.resolve()), f"cwd={cwd_value}; project={project_arg}"))
-    checks.append(Check("mcp_project_matches_repo", bool(project_arg and project_path.resolve() == ROOT.resolve()), project_arg))
-    checks.append(Check("mcp_entrypoint", args[-1:] == ["graphgraph-mcp"], " ".join(str(item) for item in args)))
+    mode_detail = "portable installed entrypoint" if portable else project_arg
+    checks.append(Check("mcp_project_path_exists", portable or bool(project_arg and project_path.exists()), mode_detail))
+    checks.append(Check("mcp_cwd_exists", portable or bool(cwd_value and cwd_path.exists()), "portable cwd" if portable else cwd_value))
+    checks.append(Check("mcp_cwd_matches_project", portable or bool(cwd_value and project_arg and cwd_path.resolve() == project_path.resolve()), "portable cwd" if portable else f"cwd={cwd_value}; project={project_arg}"))
+    checks.append(Check("mcp_project_matches_repo", portable or bool(project_arg and project_path.resolve() == ROOT.resolve()), mode_detail))
+    checks.append(Check("mcp_entrypoint", portable or args[-1:] == ["graphgraph-mcp"], command if portable else " ".join(str(item) for item in args)))
     checks.append(Check("codex_configurator_present", CONFIGURATOR.exists(), str(CONFIGURATOR.relative_to(ROOT))))
 
     marketplace_plugins = marketplace.get("plugins", []) if isinstance(marketplace.get("plugins"), list) else []
@@ -104,12 +105,19 @@ def main() -> None:
 
 
 def doctor_probe(command: str, args: list[Any], cwd: Path) -> tuple[float, bool, str]:
-    if not command or not args:
-        return 0.0, False, "missing command or args"
-    probe_args = [str(item) for item in args[:-1]] + ["graphgraph", "doctor"]
+    if not command:
+        return 0.0, False, "missing command"
+    if command == "graphgraph-mcp" and not args:
+        doctor_command = shutil.which("graphgraph")
+        if not doctor_command:
+            return 0.0, False, "portable graphgraph command unavailable"
+        invocation = [doctor_command, "doctor"]
+    else:
+        probe_args = [str(item) for item in args[:-1]] + ["graphgraph", "doctor"]
+        invocation = [command, *probe_args]
     start = time.perf_counter()
     proc = subprocess.run(
-        [command, *probe_args],
+        invocation,
         cwd=cwd,
         text=True,
         stdout=subprocess.PIPE,

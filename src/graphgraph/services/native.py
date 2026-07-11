@@ -44,7 +44,10 @@ def scan_validated_graph(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     use_incremental = incremental
     previous_graph_path = output_path if use_incremental else None
-    manifest_path = (output_path.parent / "manifest.json") if use_incremental else None
+    # A clean scan must also replace the manifest. Leaving it untouched made
+    # the next targeted update resurrect edges from an older extraction
+    # policy even though the graph itself had just been rebuilt.
+    manifest_path = output_path.parent / "manifest.json"
 
     graph = scan_directory(
         directory,

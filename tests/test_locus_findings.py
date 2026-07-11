@@ -114,12 +114,12 @@ def test_budget_density_denominator_is_positive_for_valid_shapes() -> None:
     # noise_factor=1.0+0.30*0(weak_edge_ratio)+0.20*0.1(doc_node_ratio)=1.02; raw_density=0.0
     # -> clamped to the 0.05 floor since raw_density*noise_factor==0.0.
     assert density == 0.05
-    # tau = 1.6839 + 5.2418*0.05 = 1.94599 (gg_max surface, LOPO refit)
-    assert abs(tau - 1.94599) < 1e-9
+    # tau = 11.9975 + 5.1632*0.05 = 12.25566 (path-aware gg_max LOPO refit)
+    assert abs(tau - 12.25566) < 1e-9
     # lambda_ = 0.08 * 1.25 (nodes<=500) = 0.10
-    # n* = (1/0.10) * ln(max(1.1, 0.10/(1e-4*1.94599))) = 62
-    assert recommendation.recommended_budget == 62
+    # n* = (1/0.10) * ln(max(1.1, 0.10/(1e-4*12.25566))) = 44
+    assert recommendation.recommended_budget == 44
     assert recommendation.mode == "candidate"
     assert recommendation.reason == (
-        "Regularized budget: n*=62 (lambda=0.100, tau=1.946); small graph direct/reverse lookup"
+        "Regularized budget: n*=44 (lambda=0.100, tau=12.256); small graph direct/reverse lookup"
     )

@@ -229,9 +229,14 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Run local diagnostics for graph files, CLI runtime, dependencies, optional benchmark credentials, and MCP configs.")
     doctor.set_defaults(func=cmd_doctor)
 
-    cache_cmd = sub.add_parser("cache", help="Inspect or clear the topological KV packet cache.")
+    cache_cmd = sub.add_parser("cache", help="Inspect, clear, or rebuild query/ranking caches.")
     cache_cmd.add_argument("--graph", help="Graph path (used to locate cache file). Defaults to .graphgraph/.")
     cache_cmd.add_argument("--clear", action="store_true", help="Delete all cached entries.")
+    cache_cmd.add_argument(
+        "--recompute-centrality",
+        action="store_true",
+        help="Recompute PageRank from the current graph, persist it, and clear stale packet caches.",
+    )
     cache_cmd.set_defaults(func=cmd_cache)
 
     install = sub.add_parser("install", help="Register/Install GraphGraph assistant skill, workspace rules, and MCP plugins.")

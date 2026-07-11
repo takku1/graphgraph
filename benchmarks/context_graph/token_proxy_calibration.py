@@ -5,7 +5,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -16,7 +15,6 @@ from graphgraph.eval import estimate_tokens  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.planning import compute_subgraph_stats  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out"
 REAL_GRAPHS = OUT / "real_projects" / "graphs"
@@ -179,7 +177,7 @@ def write(rows: list[dict[str, object]]) -> None:
         "",
         "- Exact proxy magnitude is less important than preserving packet rank decisions.",
         "- Runtime packet refinement currently relies only on the `semantic_arrow` versus `gg_max` zero-edge decision.",
-        "- If semantic/GG agreement falls below 100%, packet refinement should use a safer rule than proxy comparison.",
+        "- If zero-edge semantic/GG agreement falls below 100%, packet refinement should use a safer rule than proxy comparison.",
         "",
         f"CSV: `{RESULTS_CSV.relative_to(ROOT)}`",
     ])

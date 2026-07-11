@@ -68,6 +68,14 @@ multi_hop_path:     h=2, d=both, p=gg_max,         n=80
 docs/install usage: h=1, d=both, p=doc_summary,    n=12
 ```
 
+These are the base budgets after query classification. Once anchors are
+ranked, `subsystem_summary` and `blast_radius` requests without an exact or
+high-confidence symbol anchor are capped at 48 nodes. This precision gate does
+not apply to explicit-symbol queries, which retain the measured 120-node
+recall floor. A query that merely lists tests as one desired evidence type
+also keeps test nodes as traversal support rather than promoting them to
+primary anchors; test-focused queries lift that penalty.
+
 This is based on the current real-project evidence-containment benchmark:
 
 | Budget policy | Answerable | Avg tokens |

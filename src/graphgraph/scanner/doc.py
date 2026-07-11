@@ -37,6 +37,7 @@ def extract_document_context(
     file_map: dict[str, str],
     symbol_map: dict[str, str] | None = None,
     max_concepts_per_doc: int = 24,
+    max_explains_per_section: int = 12,
 ) -> tuple[dict[str, Node], list[Edge]]:
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
@@ -109,24 +110,22 @@ def extract_document_context(
                 ))
 
             if symbol_map:
-                for alias, target_id in symbol_map.items():
-                    if not alias or target_id == doc.file_node_id:
-                        continue
-                    # Determine if alias matches a canonical term key or appears case‑insensitively in the body
-                    alias_lower = alias.lower()
-                    canonical_match = alias in body_keys
-                    if canonical_match or alias_lower in body.lower():
-                        # Boost weight for canonical matches, slightly lower for raw matches
-                        weight = 1.0 if canonical_match else 0.9
-                        edges.append(Edge(
-                            section_id,
-                            target_id,
-                            "explains",
-                            weight=weight,
-                            confidence=0.8,
-                            provenance="doc_reference",
-                            source_location=doc.rel,
-                        ))
+                for target_id, weight in _bounded_symbol_references(
+                    body,
+                    body_keys,
+                    symbol_map,
+                    exclude=doc.file_node_id,
+                    limit=max_explains_per_section,
+                ):
+                    edges.append(Edge(
+                        section_id,
+                        target_id,
+                        "explains",
+                        weight=weight,
+                        confidence=0.8,
+                        provenance="doc_reference",
+                        source_location=doc.rel,
+                    ))
 
             for file_label, target_id in label_to_file.items():
                 # Word-boundary match, not raw substring: file stems are
@@ -196,6 +195,42 @@ def extract_document_context(
         if node.kind != "concept" or node_id in incident_nodes
     }
     return nodes, deduped_edges
+
+
+def _bounded_symbol_references(
+    body: str,
+    body_keys: set[str],
+    symbol_map: dict[str, str],
+    *,
+    exclude: str,
+    limit: int,
+) -> list[tuple[str, float]]:
+    """Return the strongest bounded symbol references in a doc section.
+
+    The old all-alias substring loop linked short names such as ``run`` inside
+    unrelated prose and could emit thousands of explains edges per document.
+    Token boundaries remove those false positives; one best alias per target
+    and a section-local cap keep the semantic layer useful and sublinear.
+    """
+    normalized_body = term_key(body)
+    best: dict[str, tuple[tuple[int, int, int, str], float]] = {}
+    for alias, target_id in symbol_map.items():
+        if not alias or target_id == exclude:
+            continue
+        normalized_alias = term_key(alias)
+        if len(normalized_alias) < 3:
+            continue
+        canonical = normalized_alias in body_keys
+        pattern = rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])"
+        occurrences = len(re.findall(pattern, normalized_body))
+        if not canonical and occurrences == 0:
+            continue
+        rank = (1 if canonical else 0, min(occurrences, 9), len(normalized_alias), normalized_alias)
+        candidate = (rank, 1.0 if canonical else 0.9)
+        if target_id not in best or candidate[0] > best[target_id][0]:
+            best[target_id] = candidate
+    ranked = sorted(best.items(), key=lambda item: item[1][0], reverse=True)
+    return [(target_id, value[1]) for target_id, value in ranked[:max(0, limit)]]
 
 
 def _sections(doc: DocumentInput) -> list[tuple[int, str, int, int]]:

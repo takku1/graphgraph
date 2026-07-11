@@ -6,15 +6,18 @@ from __future__ import annotations
 # fit on the residual actual - fact_token_proxy. Coefficients are an ordinary
 # least-squares fit over 270 subgraphs across 15 real projects, validated by
 # leave-one-project-out (benchmarks/context_graph/token_surface_refit.py):
-# out-of-sample packet-winner agreement 90.4% -> 98.5%, mean abs error
-# 186.8 -> 143.2, with the runtime-critical zero-edge semantic/gg decision
-# preserved at 100%. Refit here whenever new project graphs are added.
+# After compact packets gained source paths, lines, and definition signatures,
+# the prior surface materially undercounted per-node cost. The current refit
+# improves out-of-sample packet-winner agreement 61.1% -> 93.7% and mean
+# absolute error 280.9 -> 147.5, while preserving the runtime-critical
+# zero-edge semantic/gg decision at 100%. Refit whenever packet syntax or the
+# real-project calibration corpus changes.
 PACKET_TOKEN_SURFACE = {
-    "gg_max": (14.5022, 1.6839, 5.2418),
+    "gg_max": (6.6316, 11.9975, 5.1632),
     "semantic_arrow": (7.2784, 3.3447, 11.2080),
     "sql": (17.9379, 15.2861, 10.1090),
     "lowlevel": (31.7781, 3.3877, 9.2161),
-    "gg_max_hybrid": (15.3985, 4.7098, 5.1553),
+    "gg_max_hybrid": (8.1675, 14.3447, 5.0622),
 }
 
 

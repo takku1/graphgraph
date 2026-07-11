@@ -24,6 +24,7 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 3. For focused implementation work, add `--scope src/path` or use `search_nodes` before `final_packet`.
 4. Validate saved graph files with `graphgraph validate-graph`; validate rendered packets with `graphgraph validate`.
 5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.
+6. **grep vs. GraphGraph (measured, see `docs/retrieval-confidence-routing.md`):** if you already have an exact known symbol/string and don't need relationships, `grep`/`git grep` is equally valid -- GraphGraph isn't trying to win that case. Reach for GraphGraph specifically when the question is about callers, dependents, blast radius, or "how does X work" with no exact symbol given -- that's the case grep structurally cannot answer. `search_nodes` also returns `top_score_gap_ratio`/`ambiguous`: a large gap means the top hit is a confident single answer; `ambiguous: true` means treat the result list as several real candidates, not one answer.
 
 ## MCP Tools
 
@@ -32,9 +33,13 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 | `query_context` | Natural-language query -> anchors -> compressed packet. Best default. |
 | `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |
 | `final_packet` | Render a packet from known node IDs. |
+| `full_graph` | Every active node/edge, no query. Rarely the right tool -- refuses above a token guard by default. |
+| `source_snippets` | Bounded source excerpts for node IDs/labels/paths; use after `query_context` for exact lines. |
 | `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |
 | `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs` and `include_dirs`. |
-| `validate_packet` | Validate a rendered packet, not a saved graph JSON file. |
+| `update_graph_files` / `remove_graph_files` | Splice specific edited/deleted files into an existing graph, no full rescan. |
+| `validate_packet` | Validate a rendered packet, or omit `packet` (+ optional `graph_path`) to validate the saved graph file instead. |
+| `describe_formats` / `describe_ontology` / `describe_frontends` / `describe_traversal` | Introspect packet formats, edge ontology, extraction frontends, traversal policy. |
 
 ## CLI Commands (the real subcommands)
 
@@ -50,7 +55,7 @@ The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands wit
 Notes: `--starts` exists only on `final` and `render`. `context`/`query` take free text and discover anchors themselves; use `--show-anchors` to see what they picked. Other helpers:
 
 - Project status: `graphgraph status --probe`
-- Force rebuild: `graphgraph context "<query>" --rebuild --scan-max-nodes 5000 --show-stats`
+- Force rebuild on a large repo: `graphgraph context "<query>" --rebuild --scan-max-nodes 20000 --show-stats`
 - Focus scope: `graphgraph context "<query>" --scope src/graphgraph/retrieval --query-class blast_radius`
 - Dynamic sizing: omit `--max-nodes` for production context packets; use `--scan-max-nodes` only to control how much of the repo is indexed.
 - Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects the native graph under `.graphgraph/`)
@@ -67,6 +72,7 @@ Notes: `--starts` exists only on `final` and `render`. `context`/`query` take fr
 | `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |
 | `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |
 | `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |
+| `recent_changes` | What recent fix commits touched this file/subsystem? | 1 | `gg_max` | commit/fixes evidence. Requires the graph to have been scanned with `--history` -- otherwise there are no commit nodes to surface. |
 
 Format note: `gg_max`/`gg_max_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg_max` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.
 

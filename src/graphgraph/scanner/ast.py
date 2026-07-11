@@ -15,6 +15,13 @@ from ..graph.core import Edge, Node
 MAX_REFERENCE_PATTERN_NAMES = 5000
 
 
+def _definition_summary(text: str, line: int) -> str:
+    lines = text.splitlines()
+    excerpt = lines[line - 1].strip() if 0 < line <= len(lines) else ""
+    excerpt = re.sub(r"\s+", " ", excerpt)[:160]
+    return f"L{line} {excerpt}".rstrip()
+
+
 # ── definition patterns per language ────────────────────────────────────────
 
 # Existing regex patterns retained for non-AST fallback (unused for .py now)
@@ -444,7 +451,7 @@ def extract_symbols(
                 label=d.name,
                 kind=d.kind,
                 path=rel,
-                summary=f"L{d.line}",
+                summary=_definition_summary(text, d.line),
                 facts=tuple(facts),
             )
             all_symbol_nodes[sym_id] = symbol_nodes[sym_id]

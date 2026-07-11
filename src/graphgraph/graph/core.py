@@ -466,6 +466,16 @@ class Graph:
             "scores": scores,
         }
 
+    def recompute_centrality(
+        self,
+        damping: float = 0.85,
+        max_iter: int = 20,
+        tol: float = 1e-4,
+    ) -> dict[str, float]:
+        """Discard persisted ranking state and compute fresh PageRank."""
+        self._pagerank_cache = None
+        return self.pagerank(damping=damping, max_iter=max_iter, tol=tol, use_cache=True)
+
     def seed_pagerank_cache(self, payload: dict[str, object]) -> bool:
         if payload.get("algorithm") != "pagerank" or payload.get("version") != 1:
             return False

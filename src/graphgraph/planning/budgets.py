@@ -54,6 +54,9 @@ DEFAULT_NODE_BUDGETS = {
     # (see choose_packet's negative_query branch). 8 is enough to surface
     # real direct evidence of use without ballooning into a full expansion.
     "negative_query": 8,
+    # Exact/high-confidence summaries remain recall-first. Natural-language
+    # queries without a targeted anchor receive a smaller runtime cap after
+    # anchor discovery (retrieval/context.py).
     "subsystem_summary": 120,
     "blast_radius": 120,
     "spreading_activation": 120,

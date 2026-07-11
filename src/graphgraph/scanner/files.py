@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
+from pathspec import GitIgnoreSpec
 
 
 @dataclass(frozen=True)
@@ -30,12 +33,22 @@ SKIP_DIRS = frozenset({
     "dist", "build", "out", "target",
     ".graphgraph", ".cache", "coverage", ".next", ".nuxt",
     "graphify-out", ".code-review-graph",
+    # Agent configuration and prompt trees are execution context, not project
+    # source. Indexing them makes implementation queries anchor on the tool's
+    # own instructions and can expose local MCP configuration.
+    ".agents", ".claude", ".codex", ".cursor", ".gemini",
     "archive", "archives", "vendor", "third_party", "third-party", "external",
     "tmp", "temp", "temporary", "scratch",
     # Generated agent/run artifacts should not feed back into future answers.
     "evidence", "artifacts", ".artifacts", "run_outputs", "run-output", "run-outputs",
     # Common names for cloned/vendored external repos that should never pollute the graph
     "repos", "references", "references_temp", "reference", "ref", "deps",
+})
+
+SKIP_FILE_NAMES = frozenset({
+    ".gitignore", ".ignore",
+    ".mcp.json", "mcp.json",
+    "agents.md", "claude.md", "gemini.md",
 })
 
 SKIP_SUFFIXES = frozenset({
@@ -135,33 +148,47 @@ def collect_files(
 
     staged_posix: set[str] = git_staged or set()
 
-    for path in sorted(root.rglob("*"), key=lambda p: p.as_posix()):
-        if not path.is_file():
-            continue
-        # Only components *within* the scanned tree count against skip rules.
-        # Checking the absolute path's parts would skip everything whenever
-        # any ancestor directory (e.g. a checkout under ~/repos/myproject or
-        # /tmp/anything) happens to share a name with a skip-listed dir.
-        parts = path.relative_to(root).parts
-        if any(
-            part in skip
-            or part.startswith("target")
-            or part.endswith(".egg-info")
-            for part in parts
-        ):
-            continue
-        if path.suffix in SKIP_SUFFIXES:
-            continue
-        suffix_l = path.suffix.lower()
-        rel = path.relative_to(root).as_posix()
-        if rel in staged_posix:
-            priority_files.append(path)
-        elif suffix_l in SOURCE_SUFFIXES:
-            code_files.append(path)
-        elif suffix_l in DOC_SUFFIXES or path.name.lower() == "readme.md":
-            doc_files.append(path)
-        else:
-            other_files.append(path)
+    # Each ignore file is evaluated relative to its own directory. Applying
+    # ancestor specs in order preserves gitignore's last-match-wins behavior,
+    # including nested negations, without trying to rewrite patterns.
+    ignore_specs: dict[Path, tuple[GitIgnoreSpec, ...]] = {}
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        directory = Path(dirpath)
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in skip and not d.startswith("target") and not d.endswith(".egg-info")
+        )
+        filenames.sort()
+
+        specs: list[GitIgnoreSpec] = []
+        for ignore_name in (".gitignore", ".ignore"):
+            ignore_path = directory / ignore_name
+            if not ignore_path.is_file():
+                continue
+            try:
+                specs.append(GitIgnoreSpec.from_lines(ignore_path.read_text(encoding="utf-8", errors="replace").splitlines()))
+            except OSError:
+                continue
+        if specs:
+            ignore_specs[directory] = tuple(specs)
+
+        for filename in filenames:
+            path = directory / filename
+            if _default_file_skip(filename) or path.suffix.lower() in SKIP_SUFFIXES:
+                continue
+            if _ignored_by_specs(path, root, ignore_specs):
+                continue
+            suffix_l = path.suffix.lower()
+            rel = path.relative_to(root).as_posix()
+            if rel in staged_posix:
+                priority_files.append(path)
+            elif suffix_l in SOURCE_SUFFIXES:
+                code_files.append(path)
+            elif suffix_l in DOC_SUFFIXES or path.name.lower() == "readme.md":
+                doc_files.append(path)
+            else:
+                other_files.append(path)
 
     ordered = priority_files + code_files + doc_files + other_files
     return CollectFilesResult(
@@ -169,3 +196,31 @@ def collect_files(
         truncated=len(ordered) > max_nodes,
         total_matched=len(ordered),
     )
+
+
+def _default_file_skip(filename: str) -> bool:
+    lower = filename.lower()
+    # Environment files are secret-bearing machine configuration. Examples
+    # are excluded too: they add little implementation topology and keeping a
+    # single rule avoids accidentally indexing a newly named environment file.
+    return lower in SKIP_FILE_NAMES or lower == ".env" or lower.startswith(".env.")
+
+
+def _ignored_by_specs(path: Path, root: Path, specs: dict[Path, tuple[GitIgnoreSpec, ...]]) -> bool:
+    ignored = False
+    # Path.parents is nearest-first; evaluate root-to-leaf so nested ignore
+    # files override parent rules exactly as git does.
+    ordered = [root]
+    if path.parent != root:
+        parts = path.parent.relative_to(root).parts
+        ordered.extend(root.joinpath(*parts[:i]) for i in range(1, len(parts) + 1))
+    for directory in ordered:
+        try:
+            relative = path.relative_to(directory).as_posix()
+        except ValueError:
+            continue
+        for spec in specs.get(directory, ()):
+            result = spec.check_file(relative)
+            if result.include is not None:
+                ignored = bool(result.include)
+    return ignored

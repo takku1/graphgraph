@@ -851,9 +851,24 @@ def retrieve_context(
         personalize=True,
         scopes=scopes,
     )
+    if (
+        query_class in {"blast_radius", "subsystem_summary"}
+        and max_nodes is None
+        and not any(_is_targeted_symbol_anchor(match) for match in matches[:3])
+        and plan.node_budget is not None
+    ):
+        # Keep exact-symbol impact analysis recall-first, but ambiguous prose
+        # should be an orientation packet. Otherwise several loose anchors can
+        # each contribute a two-hop neighborhood and consume ~100 nodes.
+        plan = replace(
+            plan,
+            node_budget=min(plan.node_budget, 48),
+            reason=f"{plan.reason}; ambiguous broad-query cap",
+            planner_version=f"{plan.planner_version}_broad_query_cap",
+        )
     effective_anchor_limit = (
         _adaptive_anchor_limit(matches, plan, query)
-        if query_class in STRUCTURAL_QUERY_CLASSES or query_class == "direct_lookup"
+        if query_class in STRUCTURAL_QUERY_CLASSES or query_class in {"direct_lookup", "subsystem_summary"}
         else plan.anchor_limit
     )
     selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class, doc_intensity >= 0.35)
@@ -896,11 +911,12 @@ def retrieve_context(
 
 def apply_shape_budget(graph: Graph, plan: ContextPlan, query: str) -> ContextPlan:
     recommendation = recommend_node_budget(plan.query_class, query, profile_graph_shape(graph))
-    if recommendation.recommended_budget == plan.node_budget:
+    recommended_budget = recommendation.recommended_budget
+    if recommended_budget == plan.node_budget:
         return plan
     return replace(
         plan,
-        node_budget=recommendation.recommended_budget,
+        node_budget=recommended_budget,
         reason=f"{plan.reason}; shape budget: {recommendation.reason}",
         planner_version=f"{plan.planner_version}_shape_budget",
     )
@@ -918,6 +934,20 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
 
     if top.node.kind in {"concept", "section"}:
         return min(limit, 2)
+
+    if plan.query_class == "subsystem_summary":
+        # Summary queries often contain several implementation nouns. The old
+        # term_count*3 default could turn each loose lexical hit into a start,
+        # mixing unrelated same-word functions before traversal even began.
+        # Let the score distribution choose a small evidence set instead.
+        threshold_count = sum(
+            1 for match in matches[: min(12, len(matches))]
+            if top.score > 0 and match.score / top.score >= 0.55
+        )
+        shaped = max(2, min(6, threshold_count))
+        if _is_high_confidence_exact_anchor(top):
+            shaped = min(shaped, 3)
+        return min(limit, shaped)
 
     if term_count == 1:
         if plan.query_class == "direct_lookup":
@@ -1034,6 +1064,15 @@ def _is_file_like_anchor(node: object) -> bool:
 def _is_high_confidence_exact_anchor(match: Match) -> bool:
     return any(
         reason in {"label_exact_terms", "label_all_terms", "basename_exact_terms", "basename_all_terms"}
+        for reason in match.reasons
+    )
+
+
+def _is_targeted_symbol_anchor(match: Match) -> bool:
+    if match.node.kind not in {"function", "method", "class", "struct", "trait", "enum", "field"}:
+        return False
+    return _is_high_confidence_exact_anchor(match) or any(
+        reason.startswith(("id:", "label_exact:")) or reason == "basename_stem_exact"
         for reason in match.reasons
     )
 
