@@ -53,8 +53,13 @@ same evaluation signal as the accuracy gates below.
    bytes, fact bytes, relation-map cardinality, and packet fixed overhead.
 3. Replace manually chosen query-class lambda values only if leave-one-project-out
    validation beats the current regularized budget with no evidence failures.
-4. Test beam search or Lagrangian relaxation for multi-hop connected selection.
-   Greedy is unsafe there because a low-value parent can unlock valuable descendants.
+4. Beam search now reserves the strongest bounded path between anchors
+   (`_beam_best_path`): level-synchronous so length stays minimal, but the
+   equal-length tie-break maximises cumulative edge strength instead of taking
+   whatever the adjacency yields first. Still open: the connected-selection
+   *partition* keeps exact tree-knapsack DP for `multi_hop_path`; evaluate
+   Lagrangian relaxation there only if a case shows DP is too slow or the tree
+   restriction drops a valuable non-tree route.
 5. Calibrate local PPR tolerance and push limits by graph size and seed confidence,
    using top-k agreement and latency Pareto fronts rather than one fixed threshold.
 6. Add latency and memory constraints to the budget objective. Token-only optima

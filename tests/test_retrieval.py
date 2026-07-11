@@ -622,6 +622,29 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn(("MID", "TARGET", "calls"), edge_keys)
         self.assertLessEqual(len(nodes), 20)
 
+    def test_multi_hop_path_beam_reserves_strongest_equal_length_path(self) -> None:
+        # Two equally short START->TARGET routes: a weak one (low-confidence
+        # references) and a strong one (high-confidence calls). Beam search must
+        # reserve the strong route, not whichever the adjacency yields first.
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import expand_context
+
+        graph = Graph(
+            nodes={k: Node(k, k, "function", f"{k}.py") for k in ("START", "W", "S", "TARGET")},
+            edges=[
+                Edge("START", "W", "references", confidence=0.3),
+                Edge("W", "TARGET", "references", confidence=0.3),
+                Edge("START", "S", "calls", confidence=1.0),
+                Edge("S", "TARGET", "calls", confidence=1.0),
+            ],
+        )
+        plan = plan_context("multi_hop_path", max_nodes=20)
+        nodes, edges = expand_context(graph, ("START", "TARGET"), plan)
+        edge_keys = {(edge.source, edge.target, edge.type) for edge in edges}
+        self.assertIn("S", nodes)
+        self.assertIn(("START", "S", "calls"), edge_keys)
+        self.assertIn(("S", "TARGET", "calls"), edge_keys)
+
     def test_subsystem_summary_reserves_relation_family_evidence(self) -> None:
         from graphgraph.planning import plan_context
         from graphgraph.retrieval.context import expand_context

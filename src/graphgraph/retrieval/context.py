@@ -212,6 +212,77 @@ def expand_context(
     return enrich_runtime_context(graph, nodes, edges, max_nodes=effective_node_budget)
 
 
+PATH_BEAM_WIDTH = 32
+# How strongly a policy-preferred relation is favoured over an unrecognized one
+# when scoring a path edge. Large enough that a path made of recognized
+# relations outranks a same-length path through incidental edges, but finite so
+# a non-preferred edge is still usable when it is the only available route --
+# the graded form of the old `recognized or candidates` hard fallback.
+PATH_PREFERRED_RELATION_BONUS = 6.0
+
+
+def _path_edge_strength(edge: Edge, policy) -> float:
+    """Evidence strength of a single edge for path scoring (higher is better)."""
+    strength = max(edge.traversal_val, 1e-6) * provenance_confidence(edge.provenance) * edge.confidence
+    if edge.type in policy.preferred_relations:
+        strength *= PATH_PREFERRED_RELATION_BONUS
+    return strength
+
+
+def _beam_best_path(
+    graph: Graph,
+    root: str,
+    target: str,
+    hops: int,
+    policy,
+    outgoing: dict[str, list[Edge]],
+    incoming: dict[str, list[Edge]],
+    beam_width: int = PATH_BEAM_WIDTH,
+) -> tuple[Edge, ...]:
+    """Strongest shortest path from root to target within `hops`, via beam search.
+
+    Level-synchronous: it explores hop by hop, so the returned path is still of
+    minimal length (like the previous BFS). The improvement is the tie-break --
+    among equally short paths it keeps the one with the greatest cumulative edge
+    strength (confidence x provenance x traversal value, with policy-preferred
+    relations favoured) instead of whichever the adjacency happened to yield
+    first. The beam bounds width to the top `beam_width` partial paths per level
+    so cost stays linear in hops, not exponential.
+    """
+    # Each beam entry: (cumulative_log_strength, node, path_edges). Log-space so
+    # per-edge strengths combine additively and long products stay stable.
+    beam: list[tuple[float, str, tuple[Edge, ...]]] = [(0.0, root, ())]
+    for _ in range(hops):
+        completions: list[tuple[float, tuple[Edge, ...]]] = []
+        next_best: dict[str, tuple[float, tuple[Edge, ...]]] = {}
+        for score, current, path in beam:
+            for edge in outgoing.get(current, []) + incoming.get(current, []):
+                neighbor = edge.target if edge.source == current else edge.source
+                if neighbor not in graph.nodes or not graph.nodes[neighbor].active:
+                    continue
+                if any(neighbor in (e.source, e.target) for e in path) or neighbor == root:
+                    continue  # no cycles back through the path or root
+                new_score = score + math.log(_path_edge_strength(edge, policy))
+                new_path = (*path, edge)
+                if neighbor == target:
+                    completions.append((new_score, new_path))
+                    continue
+                best = next_best.get(neighbor)
+                if best is None or new_score > best[0]:
+                    next_best[neighbor] = (new_score, new_path)
+        if completions:
+            # Target reached at this (minimal) depth: return the strongest.
+            return max(completions, key=lambda item: item[0])[1]
+        if not next_best:
+            break
+        beam = sorted(
+            ((score, node, path) for node, (score, path) in next_best.items()),
+            key=lambda item: item[0],
+            reverse=True,
+        )[:beam_width]
+    return ()
+
+
 def _reserve_paths_between_starts(
     graph: Graph,
     nodes: set[str],
@@ -219,7 +290,7 @@ def _reserve_paths_between_starts(
     starts: tuple[str, ...],
     plan: ContextPlan,
 ) -> tuple[set[str], list[Edge]]:
-    """Reserve bounded shortest paths from the first anchor to other anchors."""
+    """Reserve the strongest bounded path from the first anchor to each other."""
     root = starts[0]
     policy = traversal_policy(plan.query_class)
     outgoing = graph.outgoing()
@@ -228,26 +299,7 @@ def _reserve_paths_between_starts(
     reserved_edges: list[Edge] = []
 
     for target in starts[1:]:
-        queue: list[tuple[str, tuple[Edge, ...]]] = [(root, ())]
-        visited = {root}
-        head = 0
-        found: tuple[Edge, ...] = ()
-        while head < len(queue):
-            current, path = queue[head]
-            head += 1
-            if current == target:
-                found = path
-                break
-            if len(path) >= plan.hops:
-                continue
-            candidates = outgoing.get(current, []) + incoming.get(current, [])
-            recognized = [edge for edge in candidates if edge.type in policy.preferred_relations]
-            for edge in recognized or candidates:
-                neighbor = edge.target if edge.source == current else edge.source
-                if neighbor in visited or neighbor not in graph.nodes or not graph.nodes[neighbor].active:
-                    continue
-                visited.add(neighbor)
-                queue.append((neighbor, (*path, edge)))
+        found = _beam_best_path(graph, root, target, plan.hops, policy, outgoing, incoming)
         for edge in found:
             reserved_edges.append(edge)
             reserved_nodes.update((edge.source, edge.target))
