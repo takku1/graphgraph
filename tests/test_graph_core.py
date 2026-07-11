@@ -454,6 +454,41 @@ class GraphCoreTest(unittest.TestCase):
         self.assertGreater(scores["N0"], scores.get("N39", 0.0))
         self.assertAlmostEqual(sum(scores.values()), 1.0, places=6)
 
+    def test_adaptive_local_ppr_params_scale_with_size_and_seeds(self) -> None:
+        from graphgraph.graph.core import adaptive_local_ppr_params
+
+        small = adaptive_local_ppr_params(1_000, 1)
+        large = adaptive_local_ppr_params(100_000, 1)
+        # Tolerance sharpens (decreases) as the graph grows so ~1/N-scale PPR
+        # values stay separable; the explored frontier and push budget grow.
+        self.assertLess(large[0], small[0])
+        self.assertGreater(large[1], small[1])
+        self.assertGreaterEqual(large[2], small[2])
+        # More seeds widen the frontier at a fixed graph size.
+        self.assertGreater(
+            adaptive_local_ppr_params(10_000, 5)[1],
+            adaptive_local_ppr_params(10_000, 1)[1],
+        )
+        # All outputs stay within the documented clamps regardless of extremes.
+        for n_nodes in (1, 10, 10_000_000):
+            tol, max_nodes, max_pushes = adaptive_local_ppr_params(n_nodes, 1)
+            self.assertTrue(1e-6 <= tol <= 3e-4)
+            self.assertTrue(256 <= max_nodes <= 8192)
+            self.assertTrue(1024 <= max_pushes <= 65536)
+
+    def test_localized_ppr_auto_params_match_explicit_derivation(self) -> None:
+        from graphgraph.graph.core import adaptive_local_ppr_params
+
+        nodes = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(1000)}
+        edges = [Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(999)]
+        graph = Graph(nodes=nodes, edges=edges)
+        tol, max_nodes, max_pushes = adaptive_local_ppr_params(len(graph.nodes), 1)
+        auto = graph.localized_personalized_pagerank({"N0": 1.0})
+        explicit = graph.localized_personalized_pagerank(
+            {"N0": 1.0}, tolerance=tol, max_nodes=max_nodes, max_pushes=max_pushes
+        )
+        self.assertEqual(auto, explicit)
+
     def test_large_graph_personalized_search_uses_local_ppr(self) -> None:
         from graphgraph.retrieval import search_nodes
 

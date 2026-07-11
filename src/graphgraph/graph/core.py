@@ -12,6 +12,34 @@ from .ontology import provenance_confidence, traversal_strength
 _LINE_RE = re.compile(r"\bL(\d+)\b")
 
 
+def adaptive_local_ppr_params(n_nodes: int, n_seeds: int) -> tuple[float, int, int]:
+    """Size- and seed-adaptive limits for local personalized PageRank.
+
+    A single fixed tolerance/push budget is wrong at both ends of the scale: too
+    coarse to separate the top-k on a large graph (PPR mass scales ~1/N, so the
+    values to resolve shrink as the graph grows), and needlessly heavy on a
+    small one. These formulas replace the constants with graph-aware curves:
+
+    - ``tolerance ~ c / N`` sharpens the residual cutoff on larger graphs so the
+      ranking stays separable, clamped so tiny graphs keep a sane floor and huge
+      graphs do not chase negligible mass.
+    - ``max_nodes`` (the explored frontier) grows with ``sqrt(N)`` -- sublinear,
+      because personalized mass stays local -- and with seed count, since more
+      seeds spread probability over more nodes. Bounded top and bottom.
+    - ``max_pushes`` tracks the node frontier with a per-node fan factor.
+
+    Anchored to reproduce the previously hand-set limits near N~3000 so existing
+    behaviour is preserved, while scaling correctly away from that point.
+    """
+    n_nodes = max(1, n_nodes)
+    n_seeds = max(1, n_seeds)
+    tolerance = min(3e-4, max(1e-6, 0.4 / n_nodes))
+    seed_factor = 1.0 + 0.25 * (n_seeds - 1)
+    max_nodes = int(min(8192, max(256, round(9.0 * (n_nodes ** 0.5) * seed_factor))))
+    max_pushes = int(min(65536, max(1024, 8 * max_nodes)))
+    return tolerance, max_nodes, max_pushes
+
+
 @dataclass(frozen=True)
 class Node:
     id: str
@@ -308,9 +336,9 @@ class Graph:
         self,
         personalization: dict[str, float],
         damping: float = 0.85,
-        tolerance: float = 1e-4,
-        max_nodes: int = 512,
-        max_pushes: int = 4096,
+        tolerance: float | None = None,
+        max_nodes: int | None = None,
+        max_pushes: int | None = None,
     ) -> dict[str, float]:
         """Approximate personalized PageRank with bounded residual pushes.
 
@@ -318,6 +346,10 @@ class Graph:
         lexical and modified-file seeds. A full power iteration touches the
         entire graph for every query; this pushes only residual probability
         reachable from those seeds and stops at explicit work limits.
+
+        When a limit is left as ``None`` it is derived from graph size and seed
+        count by ``adaptive_local_ppr_params`` rather than a fixed constant, so
+        approximation quality tracks graph scale. Explicit values still win.
         """
         active_seeds = {
             node_id: max(0.0, weight)
@@ -327,6 +359,14 @@ class Graph:
         total = sum(active_seeds.values())
         if total <= 0.0:
             return self.pagerank()
+
+        if tolerance is None or max_nodes is None or max_pushes is None:
+            auto_tol, auto_nodes, auto_pushes = adaptive_local_ppr_params(
+                len(self.nodes), len(active_seeds)
+            )
+            tolerance = auto_tol if tolerance is None else tolerance
+            max_nodes = auto_nodes if max_nodes is None else max_nodes
+            max_pushes = auto_pushes if max_pushes is None else max_pushes
 
         residual = {node_id: weight / total for node_id, weight in active_seeds.items()}
         scores: dict[str, float] = {}

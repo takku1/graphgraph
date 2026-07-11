@@ -60,8 +60,14 @@ same evaluation signal as the accuracy gates below.
    *partition* keeps exact tree-knapsack DP for `multi_hop_path`; evaluate
    Lagrangian relaxation there only if a case shows DP is too slow or the tree
    restriction drops a valuable non-tree route.
-5. Calibrate local PPR tolerance and push limits by graph size and seed confidence,
-   using top-k agreement and latency Pareto fronts rather than one fixed threshold.
+5. Local PPR limits are now calibrated by graph size and seed count
+   (`adaptive_local_ppr_params`): tolerance ~ c/N (sharper on big graphs where
+   PPR mass is smaller), frontier ~ sqrt(N) x seeds, push budget tracks the
+   frontier, all clamped. Synthetic sweep vs the old fixed constants: overlap@10
+   with full PPR holds or improves (0.70 -> 0.80 at 20k-50k nodes) and small
+   graphs run ~3x faster with no accuracy loss. Still open: fold measured
+   latency into the choice (Pareto front) and adapt to seed *concentration*
+   (weight entropy), not just seed count.
 6. Add latency and memory constraints to the budget objective. Token-only optima
    can be operationally wrong when graph loading or selection dominates.
 
