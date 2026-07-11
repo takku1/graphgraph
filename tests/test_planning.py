@@ -232,13 +232,13 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(recommendation.base_budget, 80)
         # lambda_ = 0.05 * 1.2 (doc_node_ratio>=0.65) * 1.25 (nodes<=500) = 0.075
         # density = 0.8 * (1.0 + 0.30*0.8333 + 0.20*0.6667) = 1.106664 -> clipped to 1.106664 (<1.5)
-        # tau = 1.496 + 6.215*1.106664 = 8.37391676
-        # n* = (1/0.075) * ln(max(1.1, 0.075/(1e-4*8.37391676))) = 60
-        self.assertEqual(recommendation.recommended_budget, 60)
+        # tau = 1.6839 + 5.2418*1.106664 = 7.4848113552 (gg_max surface, LOPO refit)
+        # n* = (1/0.075) * ln(max(1.1, 0.075/(1e-4*7.4848113552))) = 61
+        self.assertEqual(recommendation.recommended_budget, 61)
         self.assertEqual(recommendation.mode, "candidate")
         self.assertEqual(
             recommendation.reason,
-            "Regularized budget: n*=60 (lambda=0.075, tau=8.374); "
+            "Regularized budget: n*=61 (lambda=0.075, tau=7.485); "
             "doc-heavy graph trims structural noise; "
             "warning: import topology looks under-extracted",
         )

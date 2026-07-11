@@ -1045,7 +1045,9 @@ Find the AuthService implementation.
         node_start = lines.index("[n]") + 1
         edge_start = lines.index("[e]")
         node_rows = [line for line in lines[node_start:edge_start] if not line.startswith("# ")]
-        self.assertEqual(len(node_rows), 70)
+        # Budget tracks the gg_max token surface; the LOPO-refit lowered the
+        # per-edge cost, so the same token budget now admits a few more nodes.
+        self.assertEqual(len(node_rows), 72)
 
     def test_render_full_graph_includes_every_active_node_and_edge(self) -> None:
         # The explicit "give me everything, no query scoping" escape hatch

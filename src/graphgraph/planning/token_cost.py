@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+# Per-packet token surface: (intercept, node_cost, edge_cost). A packet's
+# planning token proxy is intercept + node_cost*nodes + edge_cost*edges;
+# gg_max_hybrid adds a separate fact-token term at runtime, so its surface is
+# fit on the residual actual - fact_token_proxy. Coefficients are an ordinary
+# least-squares fit over 270 subgraphs across 15 real projects, validated by
+# leave-one-project-out (benchmarks/context_graph/token_surface_refit.py):
+# out-of-sample packet-winner agreement 90.4% -> 98.5%, mean abs error
+# 186.8 -> 143.2, with the runtime-critical zero-edge semantic/gg decision
+# preserved at 100%. Refit here whenever new project graphs are added.
 PACKET_TOKEN_SURFACE = {
-    "gg_max": (11.74, 1.496, 6.215),
-    "semantic_arrow": (-0.27, 3.029, 11.273),
-    "sql": (25.60, 14.471, 10.797),
-    "lowlevel": (24.67, 3.086, 9.296),
-    "gg_max_hybrid": (-7.46, 9.103, 6.665),
+    "gg_max": (14.5022, 1.6839, 5.2418),
+    "semantic_arrow": (7.2784, 3.3447, 11.2080),
+    "sql": (17.9379, 15.2861, 10.1090),
+    "lowlevel": (31.7781, 3.3877, 9.2161),
+    "gg_max_hybrid": (15.3985, 4.7098, 5.1553),
 }
 
 
