@@ -68,7 +68,9 @@ DOC_NODE_BUDGET = 12
 
 def default_anchor_limit(query: str, query_class: str) -> int:
     term_count = len(plan_terms(query))
-    if query_class in {"direct_lookup", "reverse_lookup"} and any("_" in raw for raw in PLAN_TOKEN.findall(query)):
+    if query_class in {"direct_lookup", "reverse_lookup", "blast_radius"} and any(
+        "_" in raw for raw in PLAN_TOKEN.findall(query)
+    ):
         return 1
     if query_class in {"direct_lookup", "reverse_lookup"}:
         return max(3, min(6, term_count + 1))

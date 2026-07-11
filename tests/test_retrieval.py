@@ -207,9 +207,8 @@ class RetrievalTest(unittest.TestCase):
                 result = retrieve_context(graph, "widget", "recent_changes", hops=1)
                 self.assertNotIn("unrelated_py", result.starts)
 
-                # Confirm the injection is genuinely still active for other
-                # query classes -- this guard is scoped to recent_changes
-                # only, not a regression of the session-layer feature itself.
+                # Exact structural queries must not gain unrelated traversal
+                # starts merely because the worktree is dirty.
                 graph2 = Graph(
                     nodes={
                         "TARGET": Node("TARGET", "widget", "function", "widget.py"),
@@ -217,7 +216,12 @@ class RetrievalTest(unittest.TestCase):
                     }
                 )
                 result2 = retrieve_context(graph2, "widget", "blast_radius", hops=1)
-                self.assertIn("unrelated_py", result2.starts)
+                self.assertNotIn("unrelated_py", result2.starts)
+
+                # The session layer remains available for exploratory status
+                # queries where current edits are useful ambient context.
+                result3 = retrieve_context(graph2, "widget", "subsystem_summary", hops=1)
+                self.assertIn("unrelated_py", result3.starts)
 
     def test_search_prefers_source_over_tests_unless_query_mentions_tests(self) -> None:
         graph = Graph(
@@ -524,6 +528,134 @@ class RetrievalTest(unittest.TestCase):
         result = retrieve_context(graph, "what calls compile_rules_slice", "reverse_lookup", hops=1, max_nodes=5)
         self.assertIn("C", result.nodes)
 
+    def test_blast_radius_prioritizes_incoming_impact_over_outgoing_context(self) -> None:
+        from graphgraph.planning.types import ContextPlan
+        from graphgraph.retrieval.context import expand_context
+
+        nodes = {"T": Node("T", "Target")}
+        nodes.update({f"I{i}": Node(f"I{i}", f"Incoming {i}") for i in range(30)})
+        nodes.update({f"O{i}": Node(f"O{i}", f"Outgoing {i}") for i in range(30)})
+        nodes["CFG"] = Node("CFG", "Config")
+        edges = [Edge(f"I{i}", "T", "calls") for i in range(30)]
+        edges += [Edge("T", f"O{i}", "calls") for i in range(30)]
+        edges.append(Edge("CFG", "T", "configures"))
+        graph = Graph(nodes=nodes, edges=edges)
+        plan = ContextPlan(
+            query_class="blast_radius",
+            hops=2,
+            direction="both",
+            packet="gg_max",
+            node_budget=20,
+            anchor_limit=1,
+            weak_edge_limit=20,
+            min_confidence=0.0,
+            reason="test",
+        )
+
+        selected, _edges = expand_context(graph, ("T",), plan)
+        incoming = sum(node_id.startswith("I") for node_id in selected)
+        outgoing = sum(node_id.startswith("O") for node_id in selected)
+        self.assertGreater(incoming, outgoing)
+        self.assertIn("CFG", selected)
+        self.assertLessEqual(len(selected), 20)
+
+    def test_subsystem_summary_expands_high_degree_anchor(self) -> None:
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import expand_context
+
+        leaves = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(200)}
+        graph = Graph(
+            nodes={"HUB": Node("HUB", "Subsystem", "class"), **leaves},
+            edges=[Edge("HUB", node_id, "contains") for node_id in leaves],
+        )
+        plan = plan_context("subsystem_summary", max_nodes=40)
+
+        nodes, edges = expand_context(graph, ("HUB",), plan)
+
+        self.assertEqual(len(nodes), plan.node_budget)
+        self.assertTrue(edges)
+
+    def test_multi_hop_path_reserves_connection_across_high_fanout(self) -> None:
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import expand_context
+
+        leaves = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(100)}
+        graph = Graph(
+            nodes={
+                "START": Node("START", "Start"),
+                "MID": Node("MID", "Middle"),
+                "TARGET": Node("TARGET", "Target"),
+                **leaves,
+            },
+            edges=[
+                *(Edge("START", node_id, "contains") for node_id in leaves),
+                Edge("START", "MID", "calls"),
+                Edge("MID", "TARGET", "calls"),
+            ],
+        )
+        plan = plan_context("multi_hop_path", max_nodes=20)
+
+        nodes, edges = expand_context(graph, ("START", "TARGET"), plan)
+        edge_keys = {(edge.source, edge.target, edge.type) for edge in edges}
+
+        self.assertIn("MID", nodes)
+        self.assertIn(("START", "MID", "calls"), edge_keys)
+        self.assertIn(("MID", "TARGET", "calls"), edge_keys)
+        self.assertLessEqual(len(nodes), 20)
+
+    def test_subsystem_summary_reserves_relation_family_evidence(self) -> None:
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import expand_context
+
+        leaves = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(100)}
+        graph = Graph(
+            nodes={"HUB": Node("HUB", "Subsystem"), "DOC": Node("DOC", "Docs"), **leaves},
+            edges=[
+                *(Edge("HUB", node_id, "contains") for node_id in leaves),
+                Edge("DOC", "HUB", "explains"),
+            ],
+        )
+        plan = plan_context("subsystem_summary", max_nodes=20)
+
+        _nodes, edges = expand_context(graph, ("HUB",), plan)
+
+        self.assertIn("contains", {edge.type for edge in edges})
+        self.assertIn("explains", {edge.type for edge in edges})
+
+    def test_doc_summary_file_anchor_retrieves_section_contents(self) -> None:
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import expand_context
+
+        graph = Graph(
+            nodes={
+                "DOC": Node("DOC", "Coverage Matrix", "markdown", "docs/coverage-matrix.md"),
+                "ROADMAP": Node(
+                    "ROADMAP",
+                    "Roadmap",
+                    "section",
+                    "docs/coverage-matrix.md",
+                    summary="Prioritized parser and retrieval work.",
+                ),
+                "STATUS": Node(
+                    "STATUS",
+                    "Current Coverage",
+                    "section",
+                    "docs/coverage-matrix.md",
+                    summary="Current language coverage by frontend.",
+                ),
+            },
+            edges=[
+                Edge("ROADMAP", "DOC", "section_of"),
+                Edge("STATUS", "DOC", "section_of"),
+            ],
+        )
+        plan = plan_context("doc_summary", "coverage matrix roadmap")
+
+        nodes, edges = expand_context(graph, ("DOC",), plan)
+
+        self.assertEqual(nodes, {"DOC", "ROADMAP", "STATUS"})
+        self.assertEqual({edge.type for edge in edges}, {"section_of"})
+
     def test_render_query_context_show_anchors_includes_line_number(self) -> None:
         # The text-mode ANCHORS listing (used by `graphgraph query
         # --show-anchors`) previously showed only the file path, never the
@@ -550,6 +682,66 @@ class RetrievalTest(unittest.TestCase):
             )
             self.assertIn("app.py:5", packet)
 
+    def test_render_query_context_cache_hit_skips_retrieval(self) -> None:
+        from graphgraph.runtime.cache import TopologicalKVCache
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            cache = TopologicalKVCache(root / "cache.json")
+            with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
+                first = render_query_context(
+                    query="auth service",
+                    query_class="direct_lookup",
+                    graph_path=graph_path,
+                    cache_namespace="early_query_cache",
+                )
+                with patch(
+                    "graphgraph.services.context.retrieve_context",
+                    side_effect=AssertionError("retrieval ran on a cache hit"),
+                ), patch(
+                    "graphgraph.services.context._load_graph_cached",
+                    side_effect=AssertionError("graph loaded on a cache hit"),
+                ):
+                    second = render_query_context(
+                        query="auth service",
+                        query_class="direct_lookup",
+                        graph_path=graph_path,
+                        cache_namespace="early_query_cache",
+                    )
+            self.assertEqual(first, second)
+
+    def test_render_final_packet_cache_hit_skips_expansion(self) -> None:
+        from graphgraph.runtime.cache import TopologicalKVCache
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            cache = TopologicalKVCache(root / "cache.json")
+            with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
+                first = render_final_packet(
+                    starts=["N1"],
+                    query_class="direct_lookup",
+                    graph_path=graph_path,
+                    cache_namespace="early_final_cache",
+                )
+                with patch(
+                    "graphgraph.services.context.expand_context",
+                    side_effect=AssertionError("expansion ran on a cache hit"),
+                ), patch(
+                    "graphgraph.services.context._load_graph_cached",
+                    side_effect=AssertionError("graph loaded on a cache hit"),
+                ):
+                    second = render_final_packet(
+                        starts=["N1"],
+                        query_class="direct_lookup",
+                        graph_path=graph_path,
+                        cache_namespace="early_final_cache",
+                    )
+            self.assertEqual(first, second)
+
     def test_render_query_context_honors_hops_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"
@@ -563,6 +755,26 @@ class RetrievalTest(unittest.TestCase):
             self.assertIn("AuthService", packet)
             self.assertNotIn("TokenStore", packet)
             self.assertNotIn("reads", packet)
+
+    def test_explicit_identifier_blast_radius_uses_one_anchor(self) -> None:
+        graph = Graph(
+            nodes={
+                "SRC": Node("SRC", "render_packet", "function", "src/packets.py"),
+                "BENCH": Node("BENCH", "render_packet", "function", "benchmarks/protocol.py"),
+                "CALLER": Node("CALLER", "build_packet", "function", "src/context.py"),
+            },
+            edges=[Edge("CALLER", "SRC", "calls")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "blast radius changing render_packet",
+            "blast_radius",
+            hops=2,
+        )
+
+        self.assertEqual(result.starts, ("SRC",))
+        self.assertIn("CALLER", result.nodes)
 
     def test_render_source_snippets_uses_node_line_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

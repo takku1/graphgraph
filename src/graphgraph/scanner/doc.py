@@ -188,7 +188,14 @@ def extract_document_context(
                 or not edge.source.startswith(doc.file_node_id + "__section_")
             ]
 
-    return nodes, _dedupe_edges(edges)
+    deduped_edges = _dedupe_edges(edges)
+    incident_nodes = {edge.source for edge in deduped_edges} | {edge.target for edge in deduped_edges}
+    nodes = {
+        node_id: node
+        for node_id, node in nodes.items()
+        if node.kind != "concept" or node_id in incident_nodes
+    }
+    return nodes, deduped_edges
 
 
 def _sections(doc: DocumentInput) -> list[tuple[int, str, int, int]]:

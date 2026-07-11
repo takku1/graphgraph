@@ -5,7 +5,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -13,10 +12,15 @@ if str(SRC) not in sys.path:
 
 from graphgraph.core import Edge, Graph  # noqa: E402
 from graphgraph.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.traversal import traversal_policy  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
-from graphgraph.planning import PacketChoice, choose_packet_for_subgraph, compute_subgraph_stats, plan_context  # noqa: E402
-
+from graphgraph.planning import (  # noqa: E402
+    PacketChoice,
+    choose_packet_for_subgraph,
+    compute_subgraph_stats,
+    plan_context,
+)
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out"
 REAL_GRAPHS = OUT / "real_projects" / "graphs"
@@ -59,9 +63,14 @@ def make_tasks(graph: Graph) -> list[Task]:
 
     hub = max(active_nodes, key=lambda nid: degree.get(nid, 0))
     sparse = min(active_nodes, key=lambda nid: degree.get(nid, 0))
+    isolated = next((nid for nid in active_nodes if degree.get(nid, 0) == 0), None)
     direct = first_with(outgoing)
     reverse = first_with(incoming)
-    path_start, path_edges = two_edge_path(graph, direct)
+    path_start, path_edges = two_edge_path(
+        graph,
+        direct,
+        allowed_relations=frozenset(traversal_policy("multi_hop_path").preferred_relations),
+    )
     if not path_edges:
         path_start = direct
         path_edges = tuple(edge_key(edge) for edge in outgoing.get(direct, [])[:1])
@@ -73,25 +82,52 @@ def make_tasks(graph: Graph) -> list[Task]:
     direct_edges = tuple(edge_key(edge) for edge in outgoing.get(direct, [])[:3])
     reverse_edges = tuple(edge_key(edge) for edge in incoming.get(reverse, [])[:3])
 
+    if isolated is not None:
+        negative_start = isolated
+        negative_edges: tuple[tuple[str, str, str], ...] = ()
+        negative = True
+    else:
+        negative_start = sparse
+        incident = outgoing.get(sparse, []) + incoming.get(sparse, [])
+        negative_edges = tuple(dict.fromkeys(edge_key(edge) for edge in incident[:3]))
+        negative = False
+
     return [
         Task("direct_lookup", (direct,), nodes_from_edges(direct, direct_edges), frozenset(direct_edges)),
         Task("reverse_lookup", (reverse,), nodes_from_edges(reverse, reverse_edges), frozenset(reverse_edges)),
         Task("subsystem_summary", (hub,), frozenset(summary_nodes), frozenset(edge_key(edge) for edge in summary_edges)),
         Task("blast_radius", (hub,), frozenset(blast_nodes), frozenset(edge_key(edge) for edge in blast_edges)),
         Task("multi_hop_path", path_anchors, nodes_from_edge_keys(path_start, path_edges), frozenset(path_edges)),
-        Task("negative_query", (sparse,), frozenset({sparse}), frozenset(), negative=True),
+        Task(
+            "negative_query",
+            (negative_start,),
+            nodes_from_edges(negative_start, negative_edges),
+            frozenset(negative_edges),
+            negative=negative,
+        ),
     ]
 
 
-def two_edge_path(graph: Graph, start: str) -> tuple[str, tuple[tuple[str, str, str], ...]]:
+def two_edge_path(
+    graph: Graph,
+    start: str,
+    allowed_relations: frozenset[str] | None = None,
+) -> tuple[str, tuple[tuple[str, str, str], ...]]:
     outgoing = graph.outgoing()
-    for first in outgoing.get(start, []):
-        for second in outgoing.get(first.target, []):
+
+    def eligible(node_id: str) -> list[Edge]:
+        edges = outgoing.get(node_id, [])
+        if allowed_relations is None:
+            return edges
+        return [edge for edge in edges if edge.type in allowed_relations]
+
+    for first in eligible(start):
+        for second in eligible(first.target):
             if second.target != start:
                 return start, (edge_key(first), edge_key(second))
     for node_id in graph.nodes:
-        for first in outgoing.get(node_id, []):
-            for second in outgoing.get(first.target, []):
+        for first in eligible(node_id):
+            for second in eligible(first.target):
                 if second.target != node_id:
                     return node_id, (edge_key(first), edge_key(second))
     return start, ()
@@ -245,19 +281,21 @@ def write(rows: list[dict[str, object]]) -> None:
     winner_token_avg = avg(winner_rows, "tokens")
 
     lines = [
-        "# Real Project Answerability Limit",
+        "# Raw Structural Policy Limit",
         "",
-        "This benchmark generates structural answer keys from saved real-project graphs and compares packet policies by whether they contain the required evidence.",
+        "This benchmark applies raw Graph.expand candidates to synthetic exact-edge",
+        "fixtures. It fits planner lower bounds; it does not execute the production",
+        "retrieval pipeline. See production_retrieval_benchmark.py for that gate.",
         "",
         f"Cases: `{len(current_rows)}` tasks",
-        f"Production default policy answerable: `{current_answerable}/{len(current_rows)}` (`{pct(current_answerable, len(current_rows)):.1f}%`)",
+        f"Planner-default raw expansion contains fixture evidence: `{current_answerable}/{len(current_rows)}` (`{pct(current_answerable, len(current_rows)):.1f}%`)",
         f"Uniform `{MAX_NODES}` node policy answerable: `{current_120_answerable}/{len(current_120_rows)}` (`{pct(current_120_answerable, len(current_120_rows)):.1f}%`)",
         f"Unbounded policy answerable: `{current_unbounded_answerable}/{len(current_unbounded_rows)}` (`{pct(current_unbounded_answerable, len(current_unbounded_rows)):.1f}%`)",
-        f"Production default avg tokens: `{current_token_avg:.1f}`",
+        f"Planner-default raw expansion avg tokens: `{current_token_avg:.1f}`",
         f"Uniform `{MAX_NODES}` avg tokens: `{current_120_token_avg:.1f}`",
         f"Current unbounded avg tokens: `{current_unbounded_token_avg:.1f}`",
         f"Cheapest answerable avg tokens: `{winner_token_avg:.1f}`",
-        f"Production default premium vs cheapest answerable: `{((current_token_avg / winner_token_avg) - 1.0) * 100.0 if winner_token_avg else 0.0:.3f}%`",
+        f"Planner-default premium vs cheapest fixture-complete candidate: `{((current_token_avg / winner_token_avg) - 1.0) * 100.0 if winner_token_avg else 0.0:.3f}%`",
         "",
         "## Cheapest Answerable By Query Class",
         "",
@@ -358,7 +396,7 @@ def write(rows: list[dict[str, object]]) -> None:
         "",
         "## Operational Read",
         "",
-        "- This is an evidence-containment oracle, not live model comprehension.",
+        "- This is a raw-expansion fixture-containment oracle, not production retrieval or live model comprehension.",
         "- If current routing is answerable and near the cheapest answerable policy, the token frontier is structurally defensible.",
         "- Any cheaper failing policy is below the mathematical limit because it omits required answer evidence.",
         "",
@@ -442,7 +480,7 @@ def main() -> None:
         RESULTS_CSV.parent.mkdir(parents=True, exist_ok=True)
         RESULTS_CSV.write_text("", encoding="utf-8")
         SUMMARY_MD.write_text(
-            "# Real Project Answerability Limit\n\n"
+            "# Raw Structural Policy Limit\n\n"
             "Skipped: no saved real-project graph files were found. "
             "Run `real_project_packet_balance.py` first.\n",
             encoding="utf-8",

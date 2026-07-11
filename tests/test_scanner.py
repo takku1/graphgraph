@@ -248,6 +248,35 @@ class ScannerTest(unittest.TestCase):
             }
             self.assertNotIn(("examine", "count"), calls, f"found Rust->C cross-language call edge: {calls}")
 
+    def test_tree_sitter_resolves_calls_through_python_package_reexports(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/pkg/renderers.py": "def render_packet():\n    return 'ok'\n",
+            "src/pkg/__init__.py": "from .renderers import render_packet\n",
+            "src/consumer.py": "from pkg import render_packet\n\ndef run():\n    return render_packet()\n",
+            "bench/fixture.py": "def render_packet():\n    return 'fixture'\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, source_text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(source_text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), source_text))
+
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+            calls = [
+                edge
+                for edge in result.edges
+                if edge.type == "calls"
+                and result.nodes[edge.source].label == "run"
+                and result.nodes[edge.target].label == "render_packet"
+            ]
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(result.nodes[calls[0].target].path, "src/pkg/renderers.py")
+
     def test_tree_sitter_does_not_link_qualified_method_calls_to_free_functions(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
@@ -861,6 +890,22 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(len(token_nodes), 1)
             discusses = [edge for edge in edges if edge.type == "discusses" and edge.target == token_nodes[0].id]
             self.assertEqual(len(discusses), 1)
+
+    def test_document_context_prunes_concepts_removed_by_fanout_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "README.md"
+            concepts = " ".join(f"`TechnicalConcept{i}`" for i in range(12))
+            doc.write_text(f"# Concepts\n\n{concepts}\n", encoding="utf-8")
+            nodes, edges = extract_document_context(
+                [DocumentInput(doc, "README.md", "README_md", doc.read_text(encoding="utf-8"))],
+                {"README.md": "README_md"},
+                max_concepts_per_doc=3,
+            )
+            document_concepts = [node for node in nodes.values() if node.kind == "concept"]
+            incident = {edge.source for edge in edges} | {edge.target for edge in edges}
+            self.assertLessEqual(len(document_concepts), 3)
+            self.assertTrue(all(node.id in incident for node in document_concepts))
 
     def test_scanner_docs_flag_adds_concepts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import re
 from dataclasses import dataclass, field
@@ -303,6 +304,79 @@ class Graph:
 
         return {nid: pr_arr[i] for i, nid in enumerate(active_nodes)}
 
+    def localized_personalized_pagerank(
+        self,
+        personalization: dict[str, float],
+        damping: float = 0.85,
+        tolerance: float = 1e-4,
+        max_nodes: int = 512,
+        max_pushes: int = 4096,
+    ) -> dict[str, float]:
+        """Approximate personalized PageRank with bounded residual pushes.
+
+        Query-time personalization is usually concentrated on a handful of
+        lexical and modified-file seeds. A full power iteration touches the
+        entire graph for every query; this pushes only residual probability
+        reachable from those seeds and stops at explicit work limits.
+        """
+        active_seeds = {
+            node_id: max(0.0, weight)
+            for node_id, weight in personalization.items()
+            if weight > 0.0 and node_id in self.nodes and self.nodes[node_id].active
+        }
+        total = sum(active_seeds.values())
+        if total <= 0.0:
+            return self.pagerank()
+
+        residual = {node_id: weight / total for node_id, weight in active_seeds.items()}
+        scores: dict[str, float] = {}
+        queue = [(-mass, node_id) for node_id, mass in residual.items()]
+        heapq.heapify(queue)
+        discovered = set(residual)
+        outgoing = self.outgoing()
+        pushes = 0
+
+        while queue and pushes < max_pushes:
+            _neg_mass, node_id = heapq.heappop(queue)
+            mass = residual.pop(node_id, 0.0)
+            if mass < tolerance:
+                scores[node_id] = scores.get(node_id, 0.0) + mass
+                continue
+            pushes += 1
+
+            retained = (1.0 - damping) * mass
+            scores[node_id] = scores.get(node_id, 0.0) + retained
+            distributable = damping * mass
+            transitions = [
+                (edge.target, edge.weight * traversal_strength(edge.type))
+                for edge in outgoing.get(node_id, ())
+                if edge.target in self.nodes and self.nodes[edge.target].active
+            ]
+            denominator = sum(weight for _target, weight in transitions)
+            if denominator <= 0.0:
+                scores[node_id] += distributable
+                continue
+
+            undistributed = 0.0
+            for target, weight in transitions:
+                share = distributable * weight / denominator
+                if target not in discovered and len(discovered) >= max_nodes:
+                    undistributed += share
+                    continue
+                discovered.add(target)
+                residual[target] = residual.get(target, 0.0) + share
+                if residual[target] >= tolerance:
+                    heapq.heappush(queue, (-residual[target], target))
+            if undistributed:
+                scores[node_id] += undistributed
+
+        for node_id, mass in residual.items():
+            scores[node_id] = scores.get(node_id, 0.0) + mass
+        score_total = sum(scores.values())
+        if score_total > 0.0:
+            scores = {node_id: score / score_total for node_id, score in scores.items()}
+        return scores
+
     def _pagerank_cache_key(self, damping: float, max_iter: int, tol: float) -> tuple[object, ...]:
         return damping, max_iter, tol, self.structural_signature()
 
@@ -377,6 +451,7 @@ class Graph:
         scopes: tuple[str, ...] = (),
         direction: str = "both",
         decay_hubs: bool = False,
+        allowed_relations: set[str] | frozenset[str] | None = None,
     ) -> tuple[set[str], list[Edge]]:
         if direction not in {"both", "out", "in"}:
             raise ValueError(f"unknown traversal direction: {direction}")
@@ -430,6 +505,10 @@ class Graph:
                     candidate_edges = incoming.get(nid, [])
                 else:
                     candidate_edges = outgoing.get(nid, []) + incoming.get(nid, [])
+                if allowed_relations is not None:
+                    gated_edges = [edge for edge in candidate_edges if edge.type in allowed_relations]
+                    if gated_edges:
+                        candidate_edges = gated_edges
                 for edge in candidate_edges:
                     ekey = (edge.source, edge.target, edge.type)
                     if ekey not in seen_edges:

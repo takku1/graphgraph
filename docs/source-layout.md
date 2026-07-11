@@ -13,7 +13,8 @@ implementation now lives in domain packages.
 - `concepts/`: concept normalization, doc/code alignment, and typed
   interpretation-layer registry.
 - `retrieval/`: lexical search, context expansion, activation, budget shaping,
-  and tree-knapsack partitioning.
+  and connected selection (`selection.py`). `tree_knapsack.py` remains a
+  compatibility import for older integrations.
 - `planning/`: query plans, packet choices, budgets, graph-shape budgets, and
   policy selection.
 - `packets/`: packet renderers and packet/graph validation.

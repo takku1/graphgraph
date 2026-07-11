@@ -670,10 +670,12 @@ def _add_tree_sitter_calls(
         name: ids[0] for name, ids in name_to_symbols.items()
         if len(ids) == 1 and nodes[ids[0]].kind in {"function", "method"}
     }
+    reexports = _reexported_symbols(defs_by_file, nodes, edges)
 
     for source, defs, root in defs_by_file:
         suffix = source.path.suffix.lower()
         imported_sources = _imported_symbol_sources(suffix, source.text)
+        src_lang = _lang_family(source.rel)
         
         # Build local resolutions dictionary starting with globally unique callables
         local_resolutions = dict(unique_callables)
@@ -682,23 +684,16 @@ def _add_tree_sitter_calls(
         all_imported = _imported_symbol_names(suffix, source.text)
         for name in all_imported:
             targets = name_to_symbols.get(name, [])
-            if len(targets) == 1:
-                local_resolutions[name] = targets[0]
-            elif len(targets) > 1:
-                # Disambiguate by matching import stem (e.g. 'helper') to target file stem
-                stem = imported_sources.get(name)
-                if stem:
-                    matching = []
-                    for tgt_id in targets:
-                        node = nodes.get(tgt_id)
-                        if node:
-                            node_stem = Path(node.path).stem
-                            if node_stem.lower() == stem.lower():
-                                matching.append(tgt_id)
-                    if len(matching) == 1:
-                        local_resolutions[name] = matching[0]
-
-        src_lang = _lang_family(source.rel)
+            target = _select_import_target(
+                name,
+                targets,
+                imported_sources.get(name),
+                nodes,
+                src_lang,
+                reexports,
+            )
+            if target:
+                local_resolutions[name] = target
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
         for d in callable_defs:
             src_id = f"{source.file_node_id}__{d.name}"
@@ -727,6 +722,7 @@ def _add_imports_from(
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
 ) -> None:
+    unresolved: list[tuple[SourceFile, str, list[str], str | None, str | None]] = []
     for source, _defs, _root in defs_by_file:
         suffix = source.path.suffix.lower()
         src_lang = _lang_family(source.rel)
@@ -735,26 +731,8 @@ def _add_imports_from(
 
         for name in imported_names:
             targets = name_to_symbols.get(name, [])
-            target = None
-            if len(targets) == 1:
-                candidate = targets[0]
-                candidate_node = nodes.get(candidate)
-                candidate_lang = _lang_family(candidate_node.path) if candidate_node else None
-                if src_lang is None or candidate_lang is None or src_lang == candidate_lang:
-                    target = candidate
-            elif len(targets) > 1:
-                # Disambiguate by matching import stem to target file stem
-                stem = imported_sources.get(name)
-                if stem:
-                    matching = []
-                    for tgt_id in targets:
-                        node = nodes.get(tgt_id)
-                        if node:
-                            node_stem = Path(node.path).stem
-                            if node_stem.lower() == stem.lower():
-                                matching.append(tgt_id)
-                    if len(matching) == 1:
-                        target = matching[0]
+            stem = imported_sources.get(name)
+            target = _select_import_target(name, targets, stem, nodes, src_lang, {})
 
             if target and not target.startswith(source.file_node_id + "__"):
                 edges.append(Edge(
@@ -765,6 +743,69 @@ def _add_imports_from(
                     provenance="tree_sitter",
                     source_location=source.rel,
                 ))
+            elif targets:
+                unresolved.append((source, name, targets, stem, src_lang))
+
+    reexports = _reexported_symbols(defs_by_file, nodes, edges)
+    for source, name, targets, stem, src_lang in unresolved:
+        target = _select_import_target(name, targets, stem, nodes, src_lang, reexports)
+        if target and not target.startswith(source.file_node_id + "__"):
+            edges.append(Edge(
+                source.file_node_id,
+                target,
+                "imports_from",
+                confidence=0.85,
+                provenance="tree_sitter_reexport",
+                source_location=source.rel,
+            ))
+
+
+def _select_import_target(
+    name: str,
+    targets: list[str],
+    stem: str | None,
+    nodes: dict[str, Node],
+    src_lang: str | None,
+    reexports: dict[tuple[str, str], str],
+) -> str | None:
+    compatible = [
+        target
+        for target in targets
+        if (node := nodes.get(target)) is not None
+        and (src_lang is None or _lang_family(node.path) in {None, src_lang})
+    ]
+    if len(compatible) == 1:
+        return compatible[0]
+    if not stem:
+        return None
+
+    matching = [target for target in compatible if Path(nodes[target].path).stem.casefold() == stem.casefold()]
+    if len(matching) == 1:
+        return matching[0]
+
+    reexport = reexports.get((stem.casefold(), name))
+    return reexport if reexport in compatible else None
+
+
+def _reexported_symbols(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    nodes: dict[str, Node],
+    edges: list[Edge],
+) -> dict[tuple[str, str], str]:
+    source_paths = {source.file_node_id: source.rel for source, _defs, _root in defs_by_file}
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for edge in edges:
+        if edge.type != "imports_from":
+            continue
+        source_path = source_paths.get(edge.source, "").replace("\\", "/")
+        if not source_path.endswith("/__init__.py"):
+            continue
+        target = nodes.get(edge.target)
+        if target is None:
+            continue
+        package = Path(source_path).parent.name.casefold()
+        grouped.setdefault((package, target.label), []).append(edge.target)
+    return {key: values[0] for key, values in grouped.items() if len(set(values)) == 1}
 
 
 def _imported_symbol_names(suffix: str, text: str) -> set[str]:

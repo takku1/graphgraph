@@ -12,10 +12,13 @@ from ..planning.policies import render_policy_packet, select_policies
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 
+_GRAPH_CACHE: dict[Path, tuple[int, int, Graph]] = {}
+_GRAPH_CACHE_LIMIT = 4
+
 
 def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg_max") -> str:
     resolved_graph_path = graph_path or find_graph_path()
-    graph = load_any(resolved_graph_path)
+    graph = _load_graph_cached(resolved_graph_path)
     pr = graph.pagerank()
     top_nodes = sorted(pr, key=pr.get, reverse=True)[:max_nodes]
     top_set = set(top_nodes)
@@ -59,7 +62,7 @@ def render_full_graph(
     the guard entirely.
     """
     resolved_graph_path = graph_path or find_graph_path()
-    graph = load_any(resolved_graph_path)
+    graph = _load_graph_cached(resolved_graph_path)
     all_nodes = {node_id for node_id, node in graph.nodes.items() if node.active}
     all_edges = [edge for edge in graph.edges if edge.active]
     rendered = render_packet(graph, all_nodes, all_edges, packet)
@@ -88,13 +91,27 @@ def render_final_packet(
     resolved_graph_path = graph_path or find_graph_path()
     resolved_policies_path = policies_path if policies_path is not None else find_policies_path()
 
-    graph = load_any(resolved_graph_path)
     plan = plan_context(query_class, query_text, max_nodes=max_nodes, packet=packet)
+    lessons_path = find_lessons_path()
+    cache = TopologicalKVCache()
+    cache_key = compute_cache_key(
+        starts,
+        query_class,
+        plan.hops,
+        (
+            f"request_v2|{resolved_graph_path.resolve()}|{packet or 'auto'}|{plan.packet}|"
+            f"{cache_namespace}|{plan.planner_version}|{query_text}|{paths}|{tags}|"
+            f"{plan.node_budget}|{plan.direction}|{tuple(starts)}|{_session_signature()}|"
+            f"{_file_signature(resolved_policies_path)}|{_file_signature(lessons_path)}"
+        ),
+    )
+    cached_packet = cache.get(resolved_graph_path, cache_key)
+    if cached_packet:
+        return cached_packet
+
+    graph = _load_graph_cached(resolved_graph_path)
     if max_nodes is None:
         plan = apply_shape_budget(graph, plan, query_text)
-    policies = load_policies(resolved_policies_path) if resolved_policies_path else []
-    query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)
-
     resolved_starts = resolve_start_nodes(graph, starts)
     if not resolved_starts:
         # Build a helpful diagnostic: search the graph for candidates
@@ -115,25 +132,11 @@ def render_final_packet(
             "   3. Re-scan if the file was recently added: graphgraph scan --depth symbols --docs"
         )
     nodes, edges = expand_context(graph, tuple(resolved_starts), plan)
-
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
-
-    cache = TopologicalKVCache()
-    cache_key = compute_cache_key(
-        resolved_starts,
-        query_class,
-        plan.hops,
-        (
-            f"{plan.packet}|{cache_namespace}|{plan.planner_version}|{query_text}|"
-            f"{paths}|{tags}|{plan.node_budget}|{plan.direction}|{tuple(starts)}"
-        ),
-    )
-    cached_packet = cache.get(resolved_graph_path, cache_key)
-    if cached_packet:
-        return cached_packet
+    policies = load_policies(resolved_policies_path) if resolved_policies_path else []
+    query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)
 
     # 5. Read lessons/reflections if available
-    lessons_path = find_lessons_path()
     lessons_packet = ""
     if lessons_path:
         try:
@@ -273,8 +276,30 @@ def render_query_context(
     json_anchors: bool = False,
 ) -> str:
     resolved_graph_path = graph_path or find_graph_path()
-    graph = load_any(resolved_graph_path)
-    plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
+    plan = plan_context(
+        query_class,
+        query,
+        anchor_limit=anchor_limit,
+        max_nodes=max_nodes,
+        hops=hops,
+        packet=packet,
+    )
+    cache = TopologicalKVCache()
+    cache_key = compute_cache_key(
+        [query],
+        query_class,
+        plan.hops,
+        (
+            f"request_v2|{resolved_graph_path.resolve()}|{cache_namespace}|{plan.planner_version}|"
+            f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|"
+            f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|{_session_signature()}"
+        ),
+    )
+    cached_packet = cache.get(resolved_graph_path, cache_key)
+    if cached_packet:
+        return cached_packet
+
+    graph = _load_graph_cached(resolved_graph_path)
     if max_nodes is None:
         plan = apply_shape_budget(graph, plan, query)
     result = retrieve_context(
@@ -293,24 +318,6 @@ def render_query_context(
 
     if packet is None:
         plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, result.nodes, result.edges))
-    else:
-        plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops, packet=packet)
-        if max_nodes is None:
-            plan = apply_shape_budget(graph, plan, query)
-
-    cache = TopologicalKVCache()
-    cache_key = compute_cache_key(
-        [query],
-        query_class,
-        plan.hops,
-        (
-            f"{cache_namespace}|{plan.planner_version}|{anchor_limit}|{max_nodes}|"
-            f"{plan.node_budget}|{plan.direction}|{scopes}|{plan.packet}|{show_anchors}|{json_anchors}"
-        ),
-    )
-    cached_packet = cache.get(resolved_graph_path, cache_key)
-    if cached_packet:
-        return cached_packet
 
     graph_packet = render_packet(graph, result.nodes, result.edges, plan.packet)
     _raise_if_invalid(graph_packet)
@@ -371,3 +378,38 @@ def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
             if (node := graph.nodes.get(node_id)) is not None and node.path
         )
     )
+
+
+def _session_signature() -> tuple[tuple[str, int, int, int], ...]:
+    from ..retrieval.git_utils import get_git_modified_files
+
+    signature = []
+    for path, change_count in get_git_modified_files().items():
+        source_path = Path(path)
+        try:
+            stat = source_path.stat()
+            signature.append((path, change_count, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            signature.append((path, change_count, 0, 0))
+    return tuple(sorted(signature))
+
+
+def _file_signature(path: Path | None) -> tuple[str, int, int] | None:
+    if path is None or not path.exists():
+        return None
+    stat = path.stat()
+    return str(path.resolve()), stat.st_mtime_ns, stat.st_size
+
+
+def _load_graph_cached(path: Path) -> Graph:
+    resolved = path.resolve()
+    stat = resolved.stat()
+    fingerprint = (stat.st_mtime_ns, stat.st_size)
+    cached = _GRAPH_CACHE.get(resolved)
+    if cached is not None and cached[:2] == fingerprint:
+        return cached[2]
+    graph = load_any(resolved)
+    _GRAPH_CACHE[resolved] = (*fingerprint, graph)
+    while len(_GRAPH_CACHE) > _GRAPH_CACHE_LIMIT:
+        _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)))
+    return graph

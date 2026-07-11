@@ -6,7 +6,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 ANSWERABILITY_CSV = OUT / "real_project_answerability_limit.csv"
@@ -358,7 +357,9 @@ def write_results(fits: list[FitRow], token_models: list[dict[str, object]], per
         "",
         "This report fits simple planner families against saved empirical rows.",
         "",
-        "The oracle is the cheapest candidate that still contains all required structural evidence for each task. It is an empirical lower bound for the current candidate set, not a proof that a live model will answer correctly.",
+        "The oracle is the cheapest raw Graph.expand candidate that contains each",
+        "synthetic fixture's exact structural evidence. It is a planner lower bound,",
+        "not the production retrieval gate or a model-answering result.",
         "",
         "## Summary",
         "",
@@ -408,7 +409,7 @@ def write_results(fits: list[FitRow], token_models: list[dict[str, object]], per
             "",
             "## Read",
             "",
-            "- The answerability oracle defines the current structural ceiling: any cheaper row that is not answerable omits required evidence.",
+            "- The fixture oracle defines a raw-expansion lower bound; production behavior is gated separately.",
             "- The packet selector fit tests the piecewise rule and a smooth activation-style rule over edge count.",
             "- If the best activation fit collapses to the same hard edge threshold, there is no current evidence that a softer packet selector buys tokens.",
             "- A lower per-class candidate fit is a planner-change candidate only if its semantics match the query class, not merely because the synthetic oracle accepts it.",

@@ -20,11 +20,57 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from graphgraph.benchmark.bench_utils import estimate_token_size
-from graphgraph.core import Graph
+from graphgraph.core import Edge, Graph, Node
 from graphgraph.scanner.ast import extract_symbols
 
 
 class BenchmarkExtractionTest(unittest.TestCase):
+    def test_negative_query_benchmark_uses_real_isolation_state(self):
+        from benchmarks.context_graph.real_project_answerability_limit import make_tasks
+
+        connected = Graph(
+            nodes={"A": Node("A", "A"), "B": Node("B", "B")},
+            edges=[Edge("A", "B", "calls")],
+        )
+        connected_task = next(task for task in make_tasks(connected) if task.query_class == "negative_query")
+        self.assertFalse(connected_task.negative)
+        self.assertEqual(connected_task.expected_edges, frozenset({("A", "B", "calls")}))
+
+        with_isolated = Graph(
+            nodes={"A": Node("A", "A"), "B": Node("B", "B"), "C": Node("C", "C")},
+            edges=[Edge("A", "B", "calls")],
+        )
+        isolated_task = next(task for task in make_tasks(with_isolated) if task.query_class == "negative_query")
+        self.assertTrue(isolated_task.negative)
+        self.assertEqual(isolated_task.starts, ("C",))
+        self.assertFalse(isolated_task.expected_edges)
+
+    def test_production_evidence_requirements_follow_query_semantics(self):
+        from benchmarks.context_graph.production_retrieval_benchmark import production_evidence_requirements
+        from benchmarks.context_graph.real_project_answerability_limit import Task
+
+        graph = Graph(
+            nodes={name: Node(name, name) for name in ("TARGET", "CALLER", "TEST", "IMPL", "DOC")},
+            edges=[
+                Edge("CALLER", "TARGET", "calls"),
+                Edge("TEST", "TARGET", "tests"),
+                Edge("TARGET", "IMPL", "calls"),
+                Edge("DOC", "TARGET", "mentions"),
+            ],
+        )
+        task = Task("blast_radius", ("TARGET",), frozenset(), frozenset())
+
+        groups = production_evidence_requirements(graph, task)
+
+        self.assertEqual(
+            groups,
+            (
+                frozenset({("CALLER", "TARGET", "calls"), ("TEST", "TARGET", "tests")}),
+                frozenset({("TEST", "TARGET", "tests")}),
+                frozenset({("TARGET", "IMPL", "calls")}),
+            ),
+        )
+
     def test_extraction_and_token_estimation(self):
         # Scan the source directory for code files
         src_dir = Path(__file__).parents[1] / "src"

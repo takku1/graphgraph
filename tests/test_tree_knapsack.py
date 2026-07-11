@@ -10,6 +10,39 @@ from graphgraph import (
 
 
 class TreeKnapsackTest(unittest.TestCase):
+    def test_connected_greedy_respects_budget_and_parent_connectivity(self) -> None:
+        from graphgraph.retrieval.tree_knapsack import connected_greedy_context_partition, packet_node_costs
+
+        graph = Graph(
+            nodes={name: Node(name, name) for name in ("A", "B", "C", "D")},
+            edges=[Edge("A", "B", "calls"), Edge("B", "C", "calls"), Edge("A", "D", "calls")],
+        )
+        values = {"A": 1.0, "B": 0.9, "C": 10.0, "D": 0.2}
+        costs = packet_node_costs(
+            graph,
+            set(graph.nodes),
+            graph.edges,
+            packet="gg_max",
+            token_budget=60,
+            max_nodes=3,
+        )
+
+        selected = connected_greedy_context_partition(
+            graph,
+            ("A",),
+            set(graph.nodes),
+            values,
+            60,
+            edges=graph.edges,
+            max_nodes=3,
+        )
+
+        self.assertIn("A", selected)
+        if "C" in selected:
+            self.assertIn("B", selected)
+        self.assertLessEqual(sum(costs[node_id] for node_id in selected), 60)
+        self.assertLessEqual(len(selected), 3)
+
     def test_tree_knapsack_context_partition(self) -> None:
         from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
 
@@ -28,17 +61,41 @@ class TreeKnapsackTest(unittest.TestCase):
         )
         values = {"A": 10.0, "B": 5.0, "C": 8.0}
 
-        # Test 1: Budget weight = 2 (approx 80 tokens). Fits A (w=1) + B (w=1). C (w=2) cannot fit with A.
-        selected = tree_knapsack_context_partition(g, ("A",), {"A", "B", "C"}, values, 80)
-        self.assertIn("A", selected)
-        self.assertIn("B", selected)
-        self.assertNotIn("C", selected)
-
-        # Test 2: Budget weight = 3 (approx 120 tokens). Fits A (w=1) + C (w=2) because 10+8=18 > A+B=15.
-        selected = tree_knapsack_context_partition(g, ("A",), {"A", "B", "C"}, values, 120)
+        # A two-node ceiling keeps the anchor and the stronger of its two children.
+        selected = tree_knapsack_context_partition(g, ("A",), {"A", "B", "C"}, values, 80, max_nodes=2)
         self.assertIn("A", selected)
         self.assertIn("C", selected)
         self.assertNotIn("B", selected)
+
+        # A three-node ceiling can retain the whole connected neighborhood.
+        selected = tree_knapsack_context_partition(g, ("A",), {"A", "B", "C"}, values, 120, max_nodes=3)
+        self.assertIn("A", selected)
+        self.assertIn("C", selected)
+        self.assertIn("B", selected)
+
+    def test_tree_knapsack_charges_dense_nodes_for_packet_edges(self) -> None:
+        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+
+        graph = Graph(
+            nodes={"A": Node("A", "A"), "B": Node("B", "B"), "C": Node("C", "C")}
+            | {f"D{i}": Node(f"D{i}", f"D{i}") for i in range(8)},
+            edges=[Edge("A", "B", "calls"), Edge("A", "C", "calls")]
+            + [Edge("C", f"D{i}", "calls") for i in range(8)],
+        )
+        candidates = set(graph.nodes)
+        values = {node_id: 1.0 for node_id in candidates} | {"A": 10.0, "B": 5.0, "C": 5.0}
+        selected = tree_knapsack_context_partition(
+            graph,
+            ("A",),
+            candidates,
+            values,
+            80,
+            edges=graph.edges,
+            packet="gg_max",
+            max_nodes=2,
+        )
+        self.assertIn("B", selected)
+        self.assertNotIn("C", selected)
 
     def test_build_bfs_tree_handles_start_node_outside_candidates(self) -> None:
         # Regression: tree was pre-seeded with keys only for `candidates`, but

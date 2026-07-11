@@ -162,6 +162,18 @@ class PlanningTest(unittest.TestCase):
         self.assertLess(structural["gg_max"], structural["semantic_arrow"])
         self.assertLess(structural["gg_max"], structural["sql"])
 
+    def test_subgraph_relation_entropy_is_normalized_shannon_entropy(self) -> None:
+        from graphgraph.planning import compute_subgraph_stats
+
+        graph = Graph(
+            nodes={"A": Node("A", "A"), "B": Node("B", "B"), "C": Node("C", "C")},
+            edges=[Edge("A", "B", "calls"), Edge("A", "C", "imports")],
+        )
+        balanced = compute_subgraph_stats(graph, set(graph.nodes), graph.edges)
+        single = compute_subgraph_stats(graph, {"A", "B"}, [graph.edges[0]])
+        self.assertAlmostEqual(balanced.relation_entropy, 1.0)
+        self.assertEqual(single.relation_entropy, 0.0)
+
     def test_graph_shape_budget_recommendations_are_candidate_only(self) -> None:
         graph = Graph(
             nodes={

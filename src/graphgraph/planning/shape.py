@@ -5,14 +5,15 @@ from collections import Counter
 from dataclasses import dataclass
 
 from ..graph.core import Graph
+from ..graph.ontology import is_weak_relation
 from .budgets import default_node_budget, is_doc_query
+from .token_cost import estimate_surface_tokens, nodes_for_surface_budget, packet_marginal_costs
+
+LOCAL_EDGE_DENSITY_CAP = 1.5
 
 SOURCE_KINDS = {"python", "typescript", "javascript", "rust", "go", "java", "c", "cpp", "header", "lean"}
 SYMBOL_KINDS = {"function", "method", "class", "struct", "enum", "trait", "theorem"}
 DOC_KINDS = {"markdown", "rst", "text", "section", "concept"}
-WEAK_RELATIONS = {"references", "links", "mentions", "discusses", "section_of"}
-
-
 @dataclass(frozen=True)
 class GraphShape:
     nodes: int
@@ -65,7 +66,7 @@ def profile_graph_shape(graph: Graph) -> GraphShape:
     import_edges = relations.get("imports", 0)
     calls_edges = relations.get("calls", 0)
     explains_edges = relations.get("explains", 0)
-    weak_edges = sum(count for relation, count in relations.items() if relation in WEAK_RELATIONS)
+    weak_edges = sum(count for relation, count in relations.items() if is_weak_relation(relation))
     return GraphShape(
         nodes=nodes,
         edges=edges,
@@ -133,7 +134,8 @@ def recommend_node_budget(query_class: str, query: str, shape: GraphShape) -> Bu
 
     # 3. Dynamic marginal token cost per node (tau) from fitted regression surface
     density = adjusted_edge_density(shape)
-    tau = 1.496 + 6.215 * density
+    node_cost, edge_cost = packet_marginal_costs("gg_max")
+    tau = node_cost + edge_cost * density
 
     # 4. Coarse Planning: Regularized Budget Heuristic:
     # Objective: Maximize expected information gain minus token cost:
@@ -339,25 +341,19 @@ def context_node_bounds(query_class: str, shape: GraphShape) -> tuple[int, int]:
 
 
 def nodes_for_token_target(target_tokens: int, shape: GraphShape) -> int:
-    intercept = 11.74
-    node_coef = 1.496
-    edge_coef = 6.215
-    density = adjusted_edge_density(shape)
-    per_node = max(1.0, node_coef + edge_coef * density)
-    return max(1, int((target_tokens - intercept) / per_node))
+    return nodes_for_surface_budget("gg_max", target_tokens, adjusted_edge_density(shape))
 
 
 def estimate_gg_max_tokens(nodes: int, shape: GraphShape) -> int:
     density = adjusted_edge_density(shape)
     edges = int(math.ceil(nodes * density))
-    return max(0, int(round(11.74 + 1.496 * nodes + 6.215 * edges)))
+    return estimate_surface_tokens("gg_max", nodes, edges)
 
 
 def adjusted_edge_density(shape: GraphShape) -> float:
     noise_factor = 1.0 + 0.30 * shape.weak_edge_ratio + 0.20 * shape.doc_node_ratio
     raw_density = shape.edge_density * noise_factor
-    # Local density is capped at 1.5 by the Edge Density Throttle at runtime
-    return max(0.05, min(1.5, raw_density))
+    return max(0.05, min(LOCAL_EDGE_DENSITY_CAP, raw_density))
 
 
 def recommend_facts_per_node(node_count: int, max_facts: int = 5) -> int:

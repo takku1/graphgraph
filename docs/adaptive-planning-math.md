@@ -47,7 +47,7 @@ Subject to:
 
 ```text
 packet_validate(p, Gq) == pass
-negative_query => edge_count(Gq) == 0
+negative_query => inspect one-hop connectivity; an empty result supports isolation
 token_cost <= budget
 ```
 
@@ -59,11 +59,11 @@ driven by deterministic benchmarks and packet validation.
 The current production policy is intentionally simple:
 
 ```text
-negative_query:     h=0, d=both, p=semantic_arrow, n=1
+negative_query:     h=1, d=both, p=semantic_arrow, n=8
 direct_lookup:      h=1, d=out,  p=gg_max,         n=80
 reverse_lookup:     h=1, d=in,   p=gg_max,         n=80
 subsystem_summary:  h=1, d=both, p=gg_max,         n=120
-blast_radius:       h=2, d=both, p=gg_max,         n=120
+blast_radius:       h=2, d=partitioned, p=gg_max,  n=120
 multi_hop_path:     h=2, d=both, p=gg_max,         n=80
 docs/install usage: h=1, d=both, p=doc_summary,    n=12
 ```
@@ -220,7 +220,7 @@ The planner also computes descriptive statistics on the retrieved subgraph:
 ```text
 density = edge_count / node_count
 factful_node_ratio = nodes_with_summary_or_facts / node_count
-relation_entropy = distinct_relation_types / edge_count
+relation_entropy = -sum_r p(r) log p(r) / log(distinct_relation_types)
 weak_edge_ratio = weak_edges / edge_count
 ```
 
@@ -341,3 +341,17 @@ Run the structural gate with:
 ```text
 python benchmarks/context_graph/promote_check.py
 ```
+
+## Connected Selection Policy
+
+Over-budget neighborhoods use a query-class hybrid. Direct, reverse, blast, and
+summary retrieval use a connected marginal-value-per-token greedy frontier.
+Multi-hop paths retain bucketed tree-knapsack DP because a low-value intermediate
+node can unlock a high-value descendant, a precedence case where greedy performed
+poorly on real-project neighborhoods. The connected-selection benchmark is the
+promotion artifact for this choice.
+
+The production retrieval benchmark derives minimum semantic evidence groups
+independently from retrieval output and runs shape-budgeted `expand_context`.
+Raw-neighborhood completeness remains a separate diagnostic; neither metric is a
+substitute for live-model answer scoring.

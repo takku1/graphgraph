@@ -5,7 +5,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -15,7 +14,7 @@ from graphgraph.core import Edge, Graph  # noqa: E402
 from graphgraph.eval import estimate_tokens  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
-
+from graphgraph.planning import plan_context  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out"
 REAL_GRAPHS = OUT / "real_projects" / "graphs"
@@ -26,16 +25,6 @@ MAX_HOPS = 5
 MAX_NODES = 160
 PACKET = "gg_max"
 THRESHOLDS = (0.5, 1.0, 2.0, 5.0, 10.0)
-FIXED_HOPS = {
-    "direct_lookup": 1,
-    "reverse_lookup": 1,
-    "negative_query": 0,
-    "subsystem_summary": 1,
-    "blast_radius": 2,
-    "multi_hop_path": 2,
-}
-
-
 @dataclass(frozen=True)
 class Task:
     query_class: str
@@ -77,7 +66,8 @@ def expand_stats(graph: Graph, start: str, hops: int) -> dict[str, float]:
 
 def choose_adaptive_hop(graph: Graph, task: Task, threshold: float, max_hops: int = MAX_HOPS) -> tuple[int, str]:
     if task.query_class == "negative_query":
-        return 0, "negative_query stays at anchor-only evidence"
+        fixed = plan_context("negative_query").hops
+        return min(fixed, max_hops), "negative_query keeps one-hop connectivity evidence"
 
     previous = expand_stats(graph, task.start, 0)
     selected = 0
@@ -103,7 +93,7 @@ def run() -> list[dict[str, object]]:
     for graph_path in sorted(REAL_GRAPHS.glob("*.json")):
         graph = load_any(graph_path)
         for task in make_tasks(graph):
-            fixed_hops = FIXED_HOPS[task.query_class]
+            fixed_hops = plan_context(task.query_class).hops
             fixed = expand_stats(graph, task.start, fixed_hops)
             for threshold in THRESHOLDS:
                 for policy, max_hops in (("uncapped", MAX_HOPS), ("capped_to_fixed", fixed_hops)):

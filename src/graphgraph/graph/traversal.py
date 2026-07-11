@@ -23,12 +23,20 @@ DEFAULT_POLICY = TraversalPolicy(
     min_confidence=0.0,
 )
 
+BLAST_IMPACT_RELATIONS = frozenset({"calls", "imports", "imports_from", "tests", "implements", "references"})
+BLAST_SUPPORT_RELATIONS = frozenset({"tests", "configures", "contains", "references", "fixes", "explains"})
+BLAST_OUTGOING_RELATIONS = frozenset(
+    {"calls", "imports", "imports_from", "reads", "writes", "uses", "implements", "contains"}
+)
+BLAST_IMPACT_SHARE = 0.65
+BLAST_SUPPORT_SHARE = 0.20
+
 
 POLICIES: dict[str, TraversalPolicy] = {
     "direct_lookup": TraversalPolicy(
         "direct_lookup",
         ("hierarchy", "dependency", "execution", "document"),
-        ("contains", "imports", "calls", "references", "links"),
+        ("contains", "imports", "imports_from", "calls", "references", "links"),
         weak_edge_limit=8,
         min_confidence=0.0,
         direction="out",
@@ -36,7 +44,7 @@ POLICIES: dict[str, TraversalPolicy] = {
     "reverse_lookup": TraversalPolicy(
         "reverse_lookup",
         ("dependency", "execution", "document", "hierarchy"),
-        ("imports", "calls", "references", "links", "tests"),
+        ("imports", "imports_from", "calls", "references", "links", "tests", "contains"),
         weak_edge_limit=12,
         min_confidence=0.0,
         direction="in",
@@ -44,28 +52,36 @@ POLICIES: dict[str, TraversalPolicy] = {
     "multi_hop_path": TraversalPolicy(
         "multi_hop_path",
         ("execution", "dependency", "dataflow", "type"),
-        ("calls", "imports", "imports_from", "reads", "writes", "implements", "uses"),
+        ("calls", "imports", "imports_from", "reads", "writes", "implements", "uses", "contains", "references"),
         weak_edge_limit=6,
         min_confidence=0.2,
     ),
     "blast_radius": TraversalPolicy(
         "blast_radius",
         ("execution", "dependency", "dataflow", "validation", "configuration", "type", "interpretation"),
-        ("calls", "imports", "imports_from", "reads", "writes", "tests", "configures", "implements", "formalizes", "implements_algorithm"),
+        ("calls", "imports", "imports_from", "reads", "writes", "tests", "configures", "implements", "formalizes", "implements_algorithm", "contains", "references"),
         weak_edge_limit=10,
         min_confidence=0.0,
     ),
     "subsystem_summary": TraversalPolicy(
         "subsystem_summary",
         ("hierarchy", "dependency", "execution", "interpretation", "document", "type"),
-        ("contains", "imports", "calls", "formalizes", "implements_algorithm", "links", "references", "implements"),
+        ("contains", "imports", "imports_from", "calls", "formalizes", "implements_algorithm", "links", "references", "implements", "explains", "discusses", "mentions", "section_of"),
         weak_edge_limit=20,
         min_confidence=0.0,
+    ),
+    "doc_summary": TraversalPolicy(
+        "doc_summary",
+        ("document", "hierarchy", "interpretation"),
+        ("section_of", "contains", "explains", "discusses", "mentions", "links", "references"),
+        weak_edge_limit=20,
+        min_confidence=0.0,
+        direction="both",
     ),
     "negative_query": TraversalPolicy(
         "negative_query",
         ("execution", "dependency", "hierarchy"),
-        ("calls", "imports", "contains", "references"),
+        ("calls", "imports", "imports_from", "contains", "references"),
         weak_edge_limit=8,
         min_confidence=0.3,
     ),

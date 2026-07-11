@@ -290,6 +290,28 @@ class GraphCoreTest(unittest.TestCase):
         self.assertEqual(nodes, {"N1"})
         self.assertEqual(edges, [])
 
+    def test_graph_expansion_relation_gate_prefers_recognized_edges(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "A"),
+                "B": Node("B", "B"),
+                **{f"D{i}": Node(f"D{i}", f"Doc {i}") for i in range(20)},
+            },
+            edges=[Edge("A", "B", "calls")] + [Edge("A", f"D{i}", "explains") for i in range(20)],
+        )
+        nodes, edges = graph.expand(["A"], hops=1, max_nodes=5, allowed_relations={"calls"})
+        self.assertEqual(nodes, {"A", "B"})
+        self.assertEqual([(edge.source, edge.target, edge.type) for edge in edges], [("A", "B", "calls")])
+
+    def test_graph_expansion_relation_gate_falls_back_for_custom_only_frontier(self) -> None:
+        graph = Graph(
+            nodes={"A": Node("A", "A"), "B": Node("B", "B")},
+            edges=[Edge("A", "B", "custom_relation")],
+        )
+        nodes, edges = graph.expand(["A"], hops=1, allowed_relations={"calls"})
+        self.assertEqual(nodes, {"A", "B"})
+        self.assertEqual([edge.type for edge in edges], ["custom_relation"])
+
     def test_graph_expansion_with_energy_decay(self) -> None:
         nodes = {
             "A": Node("A", "A"),
@@ -371,11 +393,22 @@ class GraphCoreTest(unittest.TestCase):
         ret_nodes, ret_edges = expand_context(graph, ("N0",), plan)
 
         kept = {rel: len([e for e in ret_edges if e.type == rel]) for rel in {"calls", "references"}}
-        # "calls" is not a limited relation type -- unaffected by any edge budget.
-        self.assertEqual(kept["calls"], 29)
-        # Retained density = (29+13)/30 = 1.4, engaging the throttle (>1.0 scale-down
-        # region relative to the untouched max_nodes//2==17 cap it would otherwise get).
-        self.assertEqual(kept["references"], 13)
+        # Initial density is 57/30=1.9, so the effective node budget is
+        # floor(34 * 1.5/1.9)=26. Packet-aware partitioning may trim further
+        # when incident edge rows consume the token budget.
+        self.assertLessEqual(len(ret_nodes), 26)
+        self.assertLessEqual(kept["references"], kept["calls"])
+        reachable = {"N0"}
+        while True:
+            expanded = reachable | {
+                edge.target if edge.source in reachable else edge.source
+                for edge in ret_edges
+                if edge.source in reachable or edge.target in reachable
+            }
+            if expanded == reachable:
+                break
+            reachable = expanded
+        self.assertTrue(ret_nodes <= reachable)
 
     def test_personalized_pagerank(self) -> None:
         from graphgraph.core import Edge, Graph, Node
@@ -405,6 +438,54 @@ class GraphCoreTest(unittest.TestCase):
         # Test personalized search
         matches = search_nodes(g, "AuthService", personalize=True)
         self.assertEqual(matches[0].node.id, "A")
+
+    def test_localized_personalized_pagerank_is_bounded_and_seeded(self) -> None:
+        nodes = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(1000)}
+        edges = [Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(999)]
+        graph = Graph(nodes=nodes, edges=edges)
+
+        scores = graph.localized_personalized_pagerank(
+            {"N0": 1.0},
+            max_nodes=40,
+            max_pushes=200,
+        )
+
+        self.assertLessEqual(len(scores), 40)
+        self.assertGreater(scores["N0"], scores.get("N39", 0.0))
+        self.assertAlmostEqual(sum(scores.values()), 1.0, places=6)
+
+    def test_large_graph_personalized_search_uses_local_ppr(self) -> None:
+        from graphgraph.retrieval import search_nodes
+
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", "Target" if i == 0 else f"Node {i}") for i in range(600)},
+            edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(599)],
+        )
+        with patch.object(
+            graph,
+            "personalized_pagerank",
+            side_effect=AssertionError("full personalized PageRank ran for a large graph"),
+        ):
+            matches = search_nodes(graph, "Target", personalize=True)
+        self.assertEqual(matches[0].node.id, "N0")
+
+    def test_large_graph_broad_query_does_not_use_local_ppr(self) -> None:
+        from graphgraph.retrieval import search_nodes
+
+        graph = Graph(
+            nodes={
+                f"N{i}": Node(f"N{i}", "Retrieval" if i == 0 else f"Node {i}")
+                for i in range(600)
+            },
+            edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(599)],
+        )
+        with patch.object(
+            graph,
+            "localized_personalized_pagerank",
+            side_effect=AssertionError("local PPR ran for a broad natural-language query"),
+        ):
+            matches = search_nodes(graph, "retrieval anchor scoring", personalize=True)
+        self.assertEqual(matches[0].node.id, "N0")
 
     def test_personalization_lexical_score_constants(self) -> None:
         from graphgraph.core import Graph, Node

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass
 
 from ..graph.core import Graph, Node
+from . import git_utils
 from .models import Match
 from .text import node_search_text, tokenize
 
 DEPENDENCY_QUERY_TERMS = {"dependency", "dependencies", "external", "import", "imports", "module", "package", "vendor"}
+LOCAL_PPR_GRAPH_THRESHOLD = 512
 
 # Generic/placeholder identifier names that don't indicate a well-formed,
 # descriptive symbol even if they technically have multiple characters.
@@ -73,8 +76,11 @@ def search_nodes(
     doc_intensity: float = 0.0,
     personalize: bool = False,
     scopes: tuple[str, ...] = (),
+    ppr_mode: str = "auto",
 ) -> tuple[Match, ...]:
     """Rank graph nodes with a deterministic lexical score."""
+    if ppr_mode not in {"auto", "exact", "local"}:
+        raise ValueError(f"unknown personalized PageRank mode: {ppr_mode}")
     terms = tokenize(query)
     if not terms:
         return ()
@@ -110,21 +116,36 @@ def search_nodes(
                 personalization[node_id_case] = score
                 
         # Discover git-modified files and change counts (Session Layer)
-        import math
-
-        from .git_utils import get_git_modified_files, resolve_modified_node_ids
         session_weights = {}
-        modified_paths = get_git_modified_files()
-        resolved = resolve_modified_node_ids(graph, modified_paths)
+        modified_paths = git_utils.get_git_modified_files()
+        resolved = git_utils.resolve_modified_node_ids(graph, modified_paths)
         for path, change_count in modified_paths.items():
             for node_id in resolved.get(path, []):
                 session_weights[node_id] = math.log2(change_count + 2) * 2.0
 
 
         for node_id, weight in session_weights.items():
-            personalization[node_id] = personalization.get(node_id, 0.0) + weight
-            
-        pagerank_scores = graph.personalized_pagerank(personalization)
+                personalization[node_id] = personalization.get(node_id, 0.0) + weight
+
+        exact_seed = any(
+            any(
+                term == row.node_id
+                or (term == row.label and (len(terms) == 1 or "_" in term))
+                for term in terms
+            )
+            or (len(terms) == 1 and terms[0] == row.path_stem)
+            for row in rows
+        )
+        use_local_ppr = ppr_mode == "local" or (
+            ppr_mode == "auto"
+            and len(graph.nodes) > LOCAL_PPR_GRAPH_THRESHOLD
+            and exact_seed
+        )
+        pagerank_scores = (
+            graph.localized_personalized_pagerank(personalization)
+            if use_local_ppr
+            else graph.personalized_pagerank(personalization)
+        )
     else:
         pagerank_scores = graph.pagerank()
     matches: list[Match] = []

@@ -4,7 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent
 
 SCRIPTS = [
@@ -21,6 +20,8 @@ SCRIPTS = [
     "final_packet_benchmark.py",
     "live_graph_shape.py",
     "search_hot_path_benchmark.py",
+    "packet_cache_benchmark.py",
+    "local_ppr_benchmark.py",
     "minmax_analysis.py",
     "adaptive_threshold_sweep.py",
     "mathematical_limit_search.py",
@@ -32,6 +33,8 @@ SCRIPTS = [
     "dynamic_budget_benchmark.py",
     "planner_fit_benchmark.py",
     "frontier_policy_benchmark.py",
+    "production_retrieval_benchmark.py",
+    "connected_selection_benchmark.py",
     "doc_code_pairing_benchmark.py",
     "integration_inventory.py",
 ]
