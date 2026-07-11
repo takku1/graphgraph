@@ -1048,3 +1048,73 @@ Find the AuthService implementation.
             # must render regardless of size.
             packet = render_full_graph(graph_path, max_tokens=None)
             self.assertIn("node_number_0_with_a_longer_label", packet)
+
+
+class QueryConditionedSectionRelevanceTest(unittest.TestCase):
+    """P0 #2: document section retrieval must rank sections by query relevance,
+    not by graph shape, when a document has more sections than the budget."""
+
+    def _doc_graph(self) -> Graph:
+        # One markdown document with six distinctly-themed sections, each
+        # attached to the doc by a section_of edge (section -> doc), mirroring
+        # the real scanner layout. Bodies carry topic terms so BM25 has signal.
+        nodes = {
+            "doc": Node("doc", "guide.md", "markdown", "docs/guide.md"),
+        }
+        sections = {
+            "sec_install": ("Installation", "install the package with pip and configure the virtualenv"),
+            "sec_auth": ("Authentication", "configure oauth tokens and api keys for login credentials"),
+            "sec_deploy": ("Deployment", "deploy to kubernetes with docker containers and helm charts"),
+            "sec_metrics": ("Metrics", "prometheus scrapes latency and throughput gauges and counters"),
+            "sec_backup": ("Backups", "snapshot the database to s3 and restore from archived dumps"),
+            "sec_upgrade": ("Upgrades", "migrate the schema and roll forward version pins during upgrade"),
+        }
+        edges = []
+        for sid, (label, body) in sections.items():
+            nodes[sid] = Node(sid, label, "section", "docs/guide.md", facts=(body,))
+            edges.append(Edge(sid, "doc", "section_of"))
+        return Graph(nodes=nodes, edges=edges)
+
+    def _retained_sections(self, graph: Graph, query: str, budget: int) -> set[str]:
+        from dataclasses import replace
+
+        from graphgraph.planning import plan_context
+        from graphgraph.planning.budgets import plan_terms
+        from graphgraph.retrieval.context import expand_context
+
+        plan = replace(plan_context("doc_summary", query, max_nodes=budget), node_budget=budget)
+        nodes, _ = expand_context(graph, ("doc",), plan, query_terms=plan_terms(query))
+        return {n for n in nodes if n.startswith("sec_")}
+
+    def test_query_selects_its_own_section_within_a_tight_budget(self) -> None:
+        graph = self._doc_graph()
+        # Budget holds the doc + 3 of 6 sections. Each query must surface the
+        # section that answers it -- proving selection tracks the query, not
+        # graph shape (all sections are one hop with identical edge weight).
+        deploy = self._retained_sections(graph, "deploy kubernetes docker containers", budget=4)
+        self.assertIn("sec_deploy", deploy)
+
+        backup = self._retained_sections(graph, "restore database backup from s3 snapshot", budget=4)
+        self.assertIn("sec_backup", backup)
+
+        # Different queries yield different survivors: the feature is doing work.
+        self.assertNotEqual(deploy, backup)
+
+    def test_bm25_ranks_heading_and_body_matches_above_unrelated(self) -> None:
+        from graphgraph.retrieval.relevance import bm25_scores
+
+        graph = self._doc_graph()
+        sections = [graph.nodes[n] for n in graph.nodes if n.startswith("sec_")]
+        scores = bm25_scores(sections, ("deploy", "kubernetes", "docker"))
+        top = max(scores, key=scores.__getitem__)
+        self.assertEqual(top, "sec_deploy")
+        # An unrelated section scores zero against these terms.
+        self.assertEqual(scores["sec_install"], 0.0)
+
+    def test_empty_query_is_a_no_op_multiplier(self) -> None:
+        from graphgraph.retrieval.relevance import relevance_multipliers, section_priority_bias
+
+        graph = self._doc_graph()
+        sections = [graph.nodes[n] for n in graph.nodes if n.startswith("sec_")]
+        self.assertEqual(relevance_multipliers(sections, ()), {})
+        self.assertEqual(section_priority_bias(graph, ("doc",), ()), {})

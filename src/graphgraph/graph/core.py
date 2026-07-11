@@ -452,6 +452,7 @@ class Graph:
         direction: str = "both",
         decay_hubs: bool = False,
         allowed_relations: set[str] | frozenset[str] | None = None,
+        priority_bias: dict[str, float] | None = None,
     ) -> tuple[set[str], list[Edge]]:
         if direction not in {"both", "out", "in"}:
             raise ValueError(f"unknown traversal direction: {direction}")
@@ -539,7 +540,19 @@ class Graph:
                 break
 
             # Rank candidates by cumulative weighted score (sum, not max), apply budget.
-            ranked = sorted(scores, key=scores.__getitem__, reverse=True)
+            # An optional priority bias multiplies a candidate's score by
+            # (1 + bias): callers supply a normalized query-relevance signal so
+            # the budget truncation below keeps the most relevant frontier
+            # nodes (e.g. the document sections that answer the query) instead
+            # of ranking on graph shape alone. Absent/zero bias is a no-op.
+            if priority_bias:
+                ranked = sorted(
+                    scores,
+                    key=lambda nid: scores[nid] * (1.0 + priority_bias.get(nid, 0.0)),
+                    reverse=True,
+                )
+            else:
+                ranked = sorted(scores, key=scores.__getitem__, reverse=True)
             if max_nodes is not None:
                 available = max_nodes - len(included)
                 if available <= 0:

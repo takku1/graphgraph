@@ -51,11 +51,25 @@ def expand_context(
     starts: tuple[str, ...],
     plan: ContextPlan,
     scopes: tuple[str, ...] = (),
+    query_terms: tuple[str, ...] = (),
 ) -> tuple[set[str], list[Edge]]:
     policy = traversal_policy(plan.query_class)
     if plan.query_class == "blast_radius" and plan.node_budget is not None:
         nodes, edges = _expand_blast_radius(graph, starts, plan, scopes)
     else:
+        # `graph.expand` truncates the frontier to the node budget by edge
+        # weight, which is query-blind: a document with more sections than the
+        # budget loses sections by graph shape alone, so which ones survive is
+        # unrelated to what was asked. For document-oriented retrieval, bias the
+        # frontier ranking by each candidate section's BM25 relevance to the
+        # query so the truncation keeps the sections that actually answer it.
+        priority_bias: dict[str, float] = {}
+        doc_oriented = bool(query_terms) and (
+            plan.packet == "doc_summary" or plan.query_class == "doc_summary"
+        )
+        if doc_oriented:
+            from .relevance import section_priority_bias
+            priority_bias = section_priority_bias(graph, starts, query_terms)
         nodes, edges = graph.expand(
             list(starts),
             hops=plan.hops,
@@ -64,6 +78,7 @@ def expand_context(
             direction=plan.direction,
             decay_hubs=(plan.query_class == "blast_radius"),
             allowed_relations=set(policy.preferred_relations),
+            priority_bias=priority_bias or None,
         )
     if plan.query_class == "multi_hop_path" and len(starts) >= 2:
         nodes, edges = _reserve_paths_between_starts(graph, nodes, edges, starts, plan)
@@ -138,7 +153,22 @@ def expand_context(
                     node_values[neighbor] = max(node_values.get(neighbor, 0.0), 1.5)
                 elif edge.target in start_set:
                     node_values[neighbor] = max(node_values.get(neighbor, 0.0), 1.1)
-                    
+
+        # Query-conditioned section ranking: when a document contributes more
+        # sections than the budget can hold, graph distance alone gives every
+        # same-hop section the same value, so the survivors are effectively
+        # arbitrary. Modulate doc/section node values by their BM25 relevance to
+        # the query so the sections that actually answer it win the connected
+        # selection below. Structural nodes get a 1.0 multiplier (no-op).
+        if query_terms:
+            from .relevance import relevance_multipliers
+            candidate_nodes = [graph.nodes[nid] for nid in nodes if nid in graph.nodes]
+            multipliers = relevance_multipliers(candidate_nodes, query_terms)
+            start_set = set(starts)
+            for node_id, factor in multipliers.items():
+                if node_id not in start_set:
+                    node_values[node_id] = node_values.get(node_id, 0.85) * factor
+
         partition_edges = list(edges)
         current_tokens = stats.estimated_tokens_by_packet.get(plan.packet, max(1, len(nodes) * 8))
         token_budget = max(
@@ -807,7 +837,7 @@ def retrieve_context(
             previous_activation=prev_state,
         )
     else:
-        nodes, edges = expand_context(graph, starts, plan, scopes=scopes)
+        nodes, edges = expand_context(graph, starts, plan, scopes=scopes, query_terms=plan_terms(query))
         nodes, edges = reserve_query_named_siblings(graph, nodes, edges, starts, query, plan)
     return RetrievalResult(starts=starts, matches=matches, nodes=nodes, edges=edges)
 

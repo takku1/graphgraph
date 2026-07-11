@@ -8,6 +8,7 @@ from ..io import find_graph_path, find_lessons_path, find_policies_path, load_an
 from ..packets import render_packet
 from ..packets.validation import validate_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
+from ..planning.budgets import plan_terms
 from ..planning.policies import render_policy_packet, select_policies
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
@@ -131,7 +132,9 @@ def render_final_packet(
             "   2. Use 'query_context' tool with a natural-language query — no node IDs needed.\n"
             "   3. Re-scan if the file was recently added: graphgraph scan --depth symbols --docs"
         )
-    nodes, edges = expand_context(graph, tuple(resolved_starts), plan)
+    nodes, edges = expand_context(
+        graph, tuple(resolved_starts), plan, query_terms=plan_terms(query_text)
+    )
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
     policies = load_policies(resolved_policies_path) if resolved_policies_path else []
     query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)

@@ -13,14 +13,20 @@ that a particular model will interpret every packet correctly.
 - Selection policy: greedy for direct/reverse/blast/summary; DP for multi-hop path.
 - Personalized PageRank: confidence-routed local PPR retains exact-identifier speedups.
 - Document summaries: explicit document traversal now follows `section_of` edges.
+- Section ranking: document section retrieval is query-conditioned. `graph.expand`
+  accepts a `priority_bias`, and doc-oriented plans feed it heading-weighted BM25
+  relevance so the budget keeps the sections that answer the query, not whichever
+  sections graph shape favours (P0 #2, done).
 
 ## P0: Accuracy Gates
 
 1. Run frozen prompts through at least two live model families and score factual
    answers, citations, caller completeness, and blast-radius branch coverage.
-2. Add query-conditioned section ordering for documents with more sections than
-   the document node budget. The current policy retrieves sections, but graph
-   traversal alone does not rank section text against the query.
+2. Extend query-conditioned ranking beyond a document's own sections: rank
+   cross-document section matches and long-fact bodies against the query, and
+   fold in an embedding fallback for synonym queries that share no lexical
+   terms with the section text. (Heading-weighted BM25 section ranking within
+   the budget is done; see baseline.)
 3. Add adversarial ambiguity cases: duplicate symbols, generated sources,
    overloaded methods, re-exports, and mixed documentation/code anchors.
 4. Measure completeness expectations separately from minimum evidence. A bounded
