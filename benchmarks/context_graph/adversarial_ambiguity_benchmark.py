@@ -104,6 +104,49 @@ def mixed_doc_code_structural() -> Case:
     return _g(nodes), nodes  # type: ignore[return-value]
 
 
+def many_file_collision_with_scope() -> Case:
+    # The same symbol name defined in eight files; only the query's path term
+    # ("database") should decide which one wins. Tests that path relevance, not
+    # arbitrary order or degree, breaks a large collision.
+    nodes = []
+    for pkg in ("http", "cache", "auth", "queue", "render", "parser", "config", "database"):
+        nodes.append(Node(f"{pkg}_handler", "handler", "function", f"src/{pkg}/handler.py",
+                          summary=f"{pkg} request handler"))
+    return Case("many_file_collision_with_scope", _g(nodes), "database handler", "database_handler")
+
+
+def cyclic_reexport_chain() -> Case:
+    # Definition re-exported through a two-hop package facade that also cycles
+    # back. Resolving the symbol must land on the real definition (a function),
+    # not a facade __init__ file, and must not be confused by the cycle.
+    nodes = [
+        Node("core_connect", "connect", "function", "src/db/core.py",
+             summary="open a database connection"),
+        Node("db_init", "__init__.py", "python", "src/db/__init__.py",
+             summary="from .core import connect", facts=("connect",)),
+        Node("pkg_init", "__init__.py", "python", "src/__init__.py",
+             summary="from .db import connect", facts=("connect",)),
+    ]
+    edges = [
+        Edge("db_init", "core_connect", "imports_from"),
+        Edge("pkg_init", "db_init", "imports_from"),
+        Edge("db_init", "pkg_init", "imports_from"),  # cycle
+    ]
+    return Case("cyclic_reexport_chain", _g(nodes, edges), "connect", "core_connect")
+
+
+def overload_by_signature() -> Case:
+    # Two same-named methods separated only by what their bodies mention; the
+    # query names a parameter that disambiguates them.
+    nodes = [
+        Node("connect_retries", "connect", "method", "src/client/a.py", parent="ClientA",
+             summary="connect", facts=("retries the connection with backoff",)),
+        Node("connect_timeout", "connect", "method", "src/client/b.py", parent="ClientB",
+             summary="connect", facts=("applies a socket timeout to the connection",)),
+    ]
+    return Case("overload_by_signature", _g(nodes), "connect with retries backoff", "connect_retries")
+
+
 def build_cases() -> list[Case]:
     code_nodes = mixed_doc_code_structural()[1]
     code_graph = _g(code_nodes)
@@ -116,6 +159,9 @@ def build_cases() -> list[Case]:
              doc_intensity=0.0, note="structural intent -> code anchor"),
         Case("mixed_doc_code__doc", code_graph, "authentication", "auth_doc",
              doc_intensity=1.0, note="doc intent -> section anchor"),
+        many_file_collision_with_scope(),
+        cyclic_reexport_chain(),
+        overload_by_signature(),
     ]
 
 
