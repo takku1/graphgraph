@@ -814,7 +814,14 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("[Optional External Benchmark Credentials]", proc.stdout)
         self.assertIn("Local GraphGraph scan/query/packet workflows do not require provider API keys.", proc.stdout)
-        self.assertIn("OpenAI API Key: Not configured (OK; external OpenAI benchmarks will be skipped)", proc.stdout)
+        # Which rendering appears depends on whether a keyring backend exists:
+        # dev machines have one and list each provider key as "Not configured
+        # (OK...)", while a bare CI runner has none and reports the credential
+        # lookup was skipped. Both frame missing keys as OK -- the invariant this
+        # test guards -- so accept either, and never the alarming "Not found".
+        per_provider = "OpenAI API Key: Not configured (OK; external OpenAI benchmarks will be skipped)" in proc.stdout
+        lookup_skipped = "Credential lookup skipped/failed (OK for local GraphGraph use)" in proc.stdout
+        self.assertTrue(per_provider or lookup_skipped, proc.stdout)
         self.assertNotIn("OpenAI API Key: Not found", proc.stdout)
 
     def test_cmd_install_project(self) -> None:
