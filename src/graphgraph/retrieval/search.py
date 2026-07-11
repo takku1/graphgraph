@@ -42,6 +42,22 @@ _GENERATED_QUERY_TERMS = frozenset({
 })
 
 
+def saturating_boost(value: float, cap: float) -> float:
+    """Smoothly bound a non-negative boost to ``cap`` without a hard cliff.
+
+    A hard ``min(value, cap)`` collapses every input above the threshold to the
+    same score, erasing all ordering among high-centrality nodes -- the exact
+    nodes a ranking most needs to separate. ``cap * tanh(value / cap)`` is the
+    smooth counterpart: it is ~``value`` while ``value << cap`` (so ordinary
+    nodes are unaffected), rises monotonically, and asymptotes to ``cap`` so a
+    single hub can never dominate. Being differentiable and cliff-free, it also
+    keeps the score well-behaved if these weights are later calibrated to data.
+    """
+    if cap <= 0.0 or value <= 0.0:
+        return 0.0
+    return cap * math.tanh(value / cap)
+
+
 def identifier_quality_bonus(label: str) -> float:
     """Reward well-formed, multi-segment identifiers over short/generic ones.
 
@@ -311,9 +327,9 @@ def search_nodes(
                     pr_boost *= (1.0 - doc_intensity * 0.85)
                 if node.kind == "external" and not (external_exact and dependency_query):
                     pr_boost *= 0.25
-                score += min(pr_boost, 8.0)
+                score += saturating_boost(pr_boost, 8.0)
             else:
-                deg_boost = min(degree.get(node.id, 0), 25) * 0.05
+                deg_boost = saturating_boost(degree.get(node.id, 0) * 0.05, 1.25)
                 is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
                 if not is_doc_node:
                     deg_boost *= (1.0 - doc_intensity * 0.85)
