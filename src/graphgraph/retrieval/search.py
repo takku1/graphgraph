@@ -24,6 +24,23 @@ _GENERIC_IDENTIFIER_TOKENS = frozenset({
 
 _CAMEL_CASE_SEGMENT = re.compile(r"[A-Z]?[a-z0-9]+|[A-Z]+(?![a-z])")
 
+# Directory segments and filename markers that identify machine-generated or
+# vendored sources rather than a project's source of truth. A query that lands
+# on both a hand-written definition and its generated stub (e.g. a protobuf
+# `*_pb2.py`) should prefer the source the author actually maintains.
+_GENERATED_DIR_SEGMENTS = frozenset({
+    "generated", "__generated__", "node_modules", "vendor",
+    "third_party", "__pycache__", "site-packages",
+})
+_GENERATED_NAME_MARKERS = (
+    "_pb2", ".pb.", ".generated.", "_generated.", ".min.", ".g.dart", ".designer.",
+)
+# Terms that signal the caller actually wants the generated artifact, which
+# suppresses the penalty (mirrors how the test penalty yields to test queries).
+_GENERATED_QUERY_TERMS = frozenset({
+    "generated", "proto", "protobuf", "grpc", "pb2", "stub", "codegen", "autogen",
+})
+
 
 def identifier_quality_bonus(label: str) -> float:
     """Reward well-formed, multi-segment identifiers over short/generic ones.
@@ -94,6 +111,7 @@ def search_nodes(
     terms_with_stopwords = tokenize(query, keep_stopwords=True)
     query_terms = set(terms)
     test_query = bool(query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"})
+    generated_query = bool(query_terms & _GENERATED_QUERY_TERMS)
     dependency_query = bool(query_terms & DEPENDENCY_QUERY_TERMS)
 
     degree = graph.degree()
@@ -261,6 +279,9 @@ def search_nodes(
             if _is_test_node(node) and not test_query:
                 score *= 0.55
                 reasons.append("test_context_penalty")
+            if _is_generated_node(node) and not generated_query:
+                score *= 0.5
+                reasons.append("generated_source_penalty")
             if node.kind == "concept" and doc_intensity < 0.5:
                 score *= 0.45
                 reasons.append("concept_status_penalty")
@@ -394,6 +415,16 @@ def _is_test_node(node: Node) -> bool:
         or label.startswith("test_")
         or label.endswith("_test")
     )
+
+
+def _is_generated_node(node: Node) -> bool:
+    path = node.path.replace("\\", "/").lower() if node.path else ""
+    if not path:
+        return False
+    if set(path.split("/")) & _GENERATED_DIR_SEGMENTS:
+        return True
+    name = path.rsplit("/", 1)[-1]
+    return any(marker in name for marker in _GENERATED_NAME_MARKERS)
 
 
 def _external_exact_match(node: Node, terms: tuple[str, ...]) -> bool:

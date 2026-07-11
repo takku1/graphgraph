@@ -233,6 +233,25 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(search_nodes(graph, "scan directory", limit=2)[0].node.id, "SRC")
         self.assertEqual(search_nodes(graph, "test scan directory", limit=2)[0].node.id, "TEST")
 
+    def test_search_prefers_handwritten_source_over_generated_stub(self) -> None:
+        # Adversarial: identical text, and the generated protobuf stub is more
+        # connected (higher degree/PPR). Only a generated-source signal can
+        # keep the hand-written source of truth on top -- and a query that
+        # explicitly asks for the generated artifact must lift the penalty.
+        nodes = {
+            "SRC": Node("SRC", "User", "class", "src/models/user.py", summary="user record"),
+            "GEN": Node("GEN", "User", "class", "build/generated/user_pb2.py", summary="user record"),
+        }
+        edges = []
+        for i in range(6):
+            nodes[f"C{i}"] = Node(f"C{i}", f"caller_{i}", "function", f"src/c{i}.py")
+            edges.append(Edge(f"C{i}", "GEN", "imports_from"))
+        graph = Graph(nodes=nodes, edges=edges)
+        self.assertEqual(search_nodes(graph, "User", limit=3, personalize=True)[0].node.id, "SRC")
+        self.assertEqual(
+            search_nodes(graph, "User protobuf", limit=3, personalize=True)[0].node.id, "GEN"
+        )
+
     def test_search_nodes_penalizes_external_nodes_unless_intent_gate_matches(self) -> None:
         graph = Graph(
             nodes={
