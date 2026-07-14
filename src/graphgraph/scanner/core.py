@@ -517,6 +517,12 @@ def _build_graph_from_split(
                 context_nodes=context_symbol_nodes,
             )
             metadata["frontend"] = extraction.frontend
+            if extraction.fallback_files:
+                metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
+                metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
+            if extraction.failed_files:
+                metadata["frontend_failure_count"] = str(len(extraction.failed_files))
+                metadata["frontend_failures"] = ",".join(extraction.failed_files)
             nodes.update(extraction.nodes)
             existing = {(e.source, e.target, e.type) for e in edges}
             for e in extraction.edges:
@@ -642,58 +648,12 @@ def _build_graph_from_split(
         if manifest_path is not None:
             manifest.save(manifest_path)
 
-    graph = Graph(nodes=nodes, edges=edges, metadata=metadata)
-    # Adjust confidence for edges using node centrality (degree) and visibility modifiers
-    deg = graph.degree()
-
-    # Calculate max degree per node kind
-    max_deg_by_kind = {}
-    for nid, node in graph.nodes.items():
-        k = node.kind
-        d = deg.get(nid, 0)
-        if k not in max_deg_by_kind or d > max_deg_by_kind[k]:
-            max_deg_by_kind[k] = d
-
-    adjusted_edges = []
-    for e in graph.edges:
-        tgt_node = graph.nodes.get(e.target)
-        if tgt_node and tgt_node.kind not in {"file", "package", "concept", "section", "unknown"}:
-            confidence_adj = 0.0
-
-            # 1. Centrality Boost (for explains/references/calls edges)
-            if e.type in {"explains", "references", "calls"}:
-                kind = tgt_node.kind
-                max_kind_deg = max_deg_by_kind.get(kind, 1) or 1
-                node_deg = deg.get(e.target, 0)
-                # Boost up to +20% based on normalized degree centrality within the same kind
-                confidence_adj += 0.2 * (node_deg / max_kind_deg)
-
-            # 2. Visibility penalty
-            if "modifier:private" in tgt_node.facts or "modifier:local" in tgt_node.facts:
-                confidence_adj -= 0.15
-            elif "modifier:protected" in tgt_node.facts:
-                confidence_adj -= 0.05
-
-            new_conf = min(1.0, max(0.0, e.confidence + confidence_adj))
-            adjusted_edges.append(
-                Edge(
-                    source=e.source,
-                    target=e.target,
-                    type=e.type,
-                    weight=e.weight,
-                    confidence=new_conf,
-                    provenance=e.provenance,
-                    evidence=e.evidence,
-                    source_location=e.source_location,
-                    valid_from=e.valid_from,
-                    valid_to=e.valid_to,
-                    active=e.active,
-                )
-            )
-        else:
-            adjusted_edges.append(e)
-    graph = Graph(nodes=graph.nodes, edges=adjusted_edges, metadata=graph.metadata)
-    return graph
+    # Edge confidence is epistemic: it records how trustworthy the extraction
+    # is. Centrality and symbol visibility are relevance signals, not evidence
+    # that an edge exists, so applying them here made confidence change when an
+    # unrelated file was added or removed. Keep those signals in retrieval-time
+    # ranking and preserve the frontend/provenance calibration in the graph.
+    return Graph(nodes=nodes, edges=edges, metadata=metadata)
 
 
 def _symbol_aliases(node: Node) -> tuple[str, ...]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
@@ -54,6 +55,8 @@ class ExtractionResult:
     edges: list[Edge]
     frontend: str
     truncated: bool = False
+    fallback_files: tuple[str, ...] = ()
+    failed_files: tuple[str, ...] = ()
 
 
 class Extractor(Protocol):
@@ -88,6 +91,10 @@ class TreeSitterExtractor:
     name = "tree_sitter"
     confidence = 0.95
 
+    def __init__(self, *, fallback_on_error: bool = False, parse_timeout_micros: int = 2_000_000) -> None:
+        self.fallback_on_error = fallback_on_error
+        self.parse_timeout_micros = max(0, parse_timeout_micros)
+
     def extract_symbols(
         self,
         files: list[SourceFile],
@@ -101,6 +108,8 @@ class TreeSitterExtractor:
         name_to_symbols: dict[str, list[str]] = {}
         total = 0
         truncated = False
+        fallback_sources: list[SourceFile] = []
+        failed_files: list[str] = []
 
         for node_id, node in nodes.items():
             if _is_context_symbol(node):
@@ -109,9 +118,24 @@ class TreeSitterExtractor:
         for source in files:
             parser = _parser_for_suffix(source.path.suffix.lower())
             if parser is None:
+                if self.fallback_on_error:
+                    fallback_sources.append(source)
                 continue
             text_bytes = source.text.encode("utf-8", errors="replace")
-            tree = parser.parse(text_bytes)
+            try:
+                tree = _parse_with_timeout(parser, text_bytes, self.parse_timeout_micros)
+                if tree is None:
+                    raise TimeoutError(f"Tree-sitter parse timed out after {self.parse_timeout_micros} microseconds")
+            except Exception as exc:
+                try:
+                    parser.reset()
+                except Exception:
+                    pass
+                if not self.fallback_on_error:
+                    raise RuntimeError(f"Tree-sitter failed for {source.rel}: {exc}") from exc
+                fallback_sources.append(source)
+                failed_files.append(f"{source.rel}:{type(exc).__name__}")
+                continue
             root = tree.root_node
             defs = _collect_defs(source, root, text_bytes)
             defs_by_file.append((source, defs, root))
@@ -152,8 +176,55 @@ class TreeSitterExtractor:
         _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
         _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
         _add_tree_sitter_callback_references(defs_by_file, nodes, name_to_symbols, edges)
+
+        if fallback_sources:
+            remaining = max(0, max_total_symbols - total)
+            fallback = RegexExtractor().extract_symbols(
+                fallback_sources,
+                max_total_symbols=remaining,
+                context_nodes=nodes,
+            )
+            nodes.update(fallback.nodes)
+            edges.extend(fallback.edges)
+            truncated = truncated or fallback.truncated
+
         new_nodes = {node_id: node for node_id, node in nodes.items() if node_id not in context_ids}
-        return ExtractionResult(nodes=new_nodes, edges=_dedupe_edges(edges), frontend=self.name, truncated=truncated)
+        frontend = "tree_sitter+regex" if fallback_sources else self.name
+        return ExtractionResult(
+            nodes=new_nodes,
+            edges=_dedupe_edges(edges),
+            frontend=frontend,
+            truncated=truncated,
+            fallback_files=tuple(source.rel for source in fallback_sources),
+            failed_files=tuple(failed_files),
+        )
+
+
+def _parse_with_timeout(parser: Any, text: bytes, timeout_micros: int) -> Any | None:
+    """Parse one file with Tree-sitter's native cancellation boundary.
+
+    ``timeout_micros`` exists in supported py-tree-sitter releases but is
+    deprecated in some newer bindings in favour of progress callbacks.  Keep
+    the compatibility branch local so a binding without the attribute still
+    parses correctly; it simply cannot provide the native timeout guarantee.
+    """
+    previous_timeout: Any = None
+    # py-tree-sitter 0.25 still exposes the only usable parse-cancellation API
+    # as ``timeout_micros`` while warning that a future release will replace it
+    # with a progress callback. Isolate that compatibility warning here; once
+    # the callback lands in the public parse signature this is the only helper
+    # that needs to change.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Use the progress_callback in parse", category=DeprecationWarning)
+        timeout_supported = timeout_micros > 0 and hasattr(parser, "timeout_micros")
+        if timeout_supported:
+            previous_timeout = parser.timeout_micros
+            parser.timeout_micros = timeout_micros
+        try:
+            return parser.parse(text)
+        finally:
+            if timeout_supported:
+                parser.timeout_micros = previous_timeout
 
 
 def tree_sitter_available() -> bool:
@@ -192,7 +263,7 @@ def select_extractor(prefer: str = "auto") -> Extractor:
             raise RuntimeError("tree_sitter is not installed.")
         return TreeSitterExtractor()
     if prefer == "auto" and tree_sitter_available():
-        return TreeSitterExtractor()
+        return TreeSitterExtractor(fallback_on_error=True)
     return RegexExtractor()
 
 

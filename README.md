@@ -112,8 +112,12 @@ instead of the installed console script, run
 graphgraph scan --directory . --depth symbols --output .graphgraph/graph.gg
 
 # Ask a question — discovers anchors and renders a packet in one step
-graphgraph context "what is the blast radius of auth changes" --query-class blast_radius --show-stats
+graphgraph context "what is the blast radius of auth changes" --show-stats
 ```
+
+`context` and `query` route natural-language intent automatically with a
+deterministic, no-I/O classifier. Explicit `--query-class` remains available
+for repeatable benchmarks and callers that already know the policy they need.
 
 Scans honor repository and nested `.gitignore`/`.ignore` rules (including
 negation), and exclude secret-bearing environment files plus local agent/MCP

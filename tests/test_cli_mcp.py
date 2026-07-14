@@ -382,6 +382,31 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(data["anchors"][0]["id"], "N1")
             self.assertIn("[e]", data["packet"])
 
+    def test_mcp_query_context_auto_routes_when_class_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 560,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_context",
+                        "arguments": {
+                            "query": "what calls AuthService",
+                            "graph_path": str(graph_path),
+                            "show_anchors": True,
+                        },
+                    },
+                }
+            )
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertEqual(data["query_class"], "reverse_lookup")
+            self.assertEqual(data["routing"]["version"], "query_router_v1")
+            self.assertIn("reverse dependency intent", data["routing"]["reasons"])
+
     def test_mcp_query_context_honors_hops_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"

@@ -19,6 +19,7 @@ from graphgraph.planning import (
     recommend_context_window,
     recommend_node_budget,
     recommend_observed_context_window,
+    route_query,
 )
 from graphgraph.retrieval import (
     default_anchor_limit,
@@ -31,6 +32,36 @@ from graphgraph.retrieval.models import Match
 
 
 class PlanningTest(unittest.TestCase):
+    def test_query_router_maps_agent_intents_without_graph_io(self) -> None:
+        cases = {
+            "where is render_packet defined": "direct_lookup",
+            "what calls validate_packet and where is it tested": "reverse_lookup",
+            "trace request parsing through planning to packet rendering": "multi_hop_path",
+            "what is the blast radius if Edge changes": "blast_radius",
+            "how does retrieval work": "subsystem_summary",
+            "README installation and usage guide": "doc_summary",
+            "is legacy_cache unused and does it have no callers": "negative_query",
+            "what changed recently in scanner": "recent_changes",
+        }
+        for query, expected in cases.items():
+            with self.subTest(query=query):
+                route = route_query(query)
+                self.assertEqual(route.query_class, expected)
+                self.assertTrue(route.reasons)
+
+    def test_query_router_keeps_explicit_policy_and_ambiguous_queries_broad(self) -> None:
+        explicit = route_query("what calls validate_packet", "direct_lookup")
+        self.assertEqual(explicit.query_class, "direct_lookup")
+        self.assertEqual(explicit.reasons, ("explicit query class",))
+
+        ambiguous = route_query("auth service")
+        self.assertEqual(ambiguous.query_class, "subsystem_summary")
+
+    def test_query_router_prefers_reverse_intent_over_broad_work_language(self) -> None:
+        route = route_query("how does packet validation work and what calls it")
+        self.assertEqual(route.query_class, "reverse_lookup")
+        self.assertGreater(route.margin, 0.0)
+
     def test_path_matches_leading_wildcard_requires_literal_segment(self) -> None:
         # Regression: path_matches computed the prefix as
         # pattern.split("**", 1)[0] and did path.startswith(prefix). That's

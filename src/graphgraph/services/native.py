@@ -434,7 +434,7 @@ def _runtime_notes(probes: list[dict[str, object]]) -> list[str]:
 def render_native_context(
     *,
     query: str,
-    query_class: str = "subsystem_summary",
+    query_class: str = "auto",
     directory: Path = Path("."),
     graph_path: Path | None = None,
     rebuild: bool = False,

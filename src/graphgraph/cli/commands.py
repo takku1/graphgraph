@@ -604,6 +604,14 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print(f"  Excluded dirs: {', '.join(all_skip)}")
     if include_dirs:
         print(f"  Force-included: {', '.join(include_dirs)}")
+    fallback_count = int(graph.metadata.get("frontend_fallback_count", "0"))
+    if fallback_count:
+        print(
+            f"  Parse fallback: {fallback_count} file(s) used regex (unsupported, failed, or timed out)"
+        )
+        print(f"  Fallback files: {graph.metadata.get('frontend_fallback_files', '')}")
+    if graph.metadata.get("frontend_failures"):
+        print(f"  Parse reasons : {graph.metadata['frontend_failures']}")
     # Surface default-skip directories that actually held content, so real
     # project dirs literally named e.g. `build`/`out` are not dropped silently.
     # Never-real infra/VCS/tooling dirs are excluded from the note to keep it

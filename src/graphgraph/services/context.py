@@ -7,7 +7,7 @@ from ..graph.core import Graph, Query
 from ..io import find_graph_path, find_lessons_path, find_policies_path, load_any, load_policies
 from ..packets import render_packet
 from ..packets.validation import validate_packet
-from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
+from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph, route_query
 from ..planning.budgets import plan_terms
 from ..planning.policies import render_policy_packet, select_policies
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context
@@ -267,7 +267,7 @@ def _start_key(value: str) -> str:
 def render_query_context(
     *,
     query: str,
-    query_class: str = "blast_radius",
+    query_class: str = "auto",
     graph_path: Path | None = None,
     packet: str | None = None,
     hops: int | None = None,
@@ -278,6 +278,8 @@ def render_query_context(
     cache_namespace: str = "query",
     json_anchors: bool = False,
 ) -> str:
+    route = route_query(query, query_class)
+    query_class = route.query_class
     resolved_graph_path = graph_path or find_graph_path()
     plan = plan_context(
         query_class,
@@ -341,13 +343,24 @@ def render_query_context(
                     }
                     for match in result.matches[:limit]
                 ],
+                "query_class": query_class,
+                "routing": {
+                    "confidence": route.confidence,
+                    "margin": route.margin,
+                    "reasons": list(route.reasons),
+                    "version": route.router_version,
+                },
                 "packet": graph_packet,
             },
             indent=2,
         )
     elif show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
-        out_lines = ["ANCHORS:"]
+        out_lines = [
+            f"ROUTE: {query_class} confidence={route.confidence:.3f} margin={route.margin:.3f} "
+            f"reason={'; '.join(route.reasons)}",
+            "ANCHORS:",
+        ]
         for match in result.matches[:limit]:
             node = match.node
             location = f"{node.path}:{node.line}" if node.line else node.path

@@ -28,6 +28,40 @@ from graphgraph.services.context import resolve_start_nodes
 
 
 class RetrievalTest(unittest.TestCase):
+    def test_reverse_lookup_preserves_multi_identifier_contract_intent(self) -> None:
+        graph = Graph(
+            nodes={
+                "TRAIT": Node("TRAIT", "DiscoveryPipeline", "trait", "core/pipeline.rs"),
+                "TYPE": Node("TYPE", "LocusEngine", "struct", "pipeline/lib.rs"),
+                "DECL_SEARCH": Node("DECL_SEARCH", "search_candidates", "method", "core/pipeline.rs"),
+                "DECL_VALIDATE": Node("DECL_VALIDATE", "validate_candidates", "method", "core/pipeline.rs"),
+                "IMPL_SEARCH": Node("IMPL_SEARCH", "search_candidates", "function", "pipeline/lib.rs"),
+                "IMPL_VALIDATE": Node("IMPL_VALIDATE", "validate_candidates", "function", "pipeline/lib.rs"),
+                "TEST": Node("TEST", "pipeline_behavior", "function", "pipeline/tests/pipeline.rs"),
+            },
+            edges=[
+                Edge("TYPE", "TRAIT", "implements", confidence=0.95, provenance="tree_sitter"),
+                Edge("TRAIT", "DECL_SEARCH", "contains", confidence=0.95, provenance="tree_sitter"),
+                Edge("TRAIT", "DECL_VALIDATE", "contains", confidence=0.95, provenance="tree_sitter"),
+                Edge("TEST", "TYPE", "imports_from", confidence=0.95, provenance="tree_sitter"),
+                Edge("TEST", "IMPL_SEARCH", "calls", confidence=0.95, provenance="tree_sitter"),
+                Edge("TEST", "IMPL_VALIDATE", "calls", confidence=0.95, provenance="tree_sitter"),
+            ],
+        )
+        result = retrieve_context(
+            graph,
+            "Which type implements DiscoveryPipeline, and where are search_candidates and validate_candidates tested?",
+            "reverse_lookup",
+            hops=1,
+        )
+
+        self.assertIn("TRAIT", result.starts)
+        self.assertIn("DECL_SEARCH", result.starts)
+        self.assertIn("IMPL_SEARCH", result.starts)
+        self.assertIn("TYPE", result.starts)
+        self.assertIn("TYPE", result.nodes)
+        self.assertIn("TEST", result.nodes)
+        self.assertTrue(any(edge.type == "implements" for edge in result.edges))
     def test_spreading_activation_retrieval(self) -> None:
         graph = sample_graph()
         from graphgraph.retrieval.activation import ActivationStateCache

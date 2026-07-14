@@ -71,10 +71,15 @@ DOC_NODE_BUDGET = 12
 
 def default_anchor_limit(query: str, query_class: str) -> int:
     term_count = len(plan_terms(query))
-    if query_class in {"direct_lookup", "reverse_lookup", "blast_radius"} and any(
-        "_" in raw for raw in PLAN_TOKEN.findall(query)
-    ):
-        return 1
+    identifiers = explicit_query_identifiers(query)
+    if query_class in {"direct_lookup", "reverse_lookup", "blast_radius"} and identifiers:
+        # A single exact symbol should stay surgical. Contract/test questions
+        # often name several exact methods plus a CamelCase type or trait; the
+        # old any-underscore gate collapsed those multi-entity queries to one
+        # anchor and made the other requested evidence unreachable.
+        if len(identifiers) == 1:
+            return 1
+        return min(8, max(3, len(identifiers) * 2))
     if query_class in {"direct_lookup", "reverse_lookup"}:
         return max(3, min(6, term_count + 1))
     if is_doc_query(query_class, query):
@@ -123,3 +128,16 @@ def doc_intensity_score(query_class: str, query: str) -> float:
 def plan_terms(text: str) -> tuple[str, ...]:
     terms = [term.lower().strip("_") for term in PLAN_TOKEN.findall(text)]
     return tuple(dict.fromkeys(term for term in terms if len(term) >= 2 and term not in QUERY_STOPWORDS))
+
+
+def explicit_query_identifiers(text: str) -> tuple[str, ...]:
+    """Return code-shaped identifiers explicitly named by the user."""
+    identifiers = []
+    for raw in PLAN_TOKEN.findall(text):
+        has_mixed_case = any(char.islower() for char in raw) and any(char.isupper() for char in raw)
+        if "_" not in raw and not has_mixed_case:
+            continue
+        folded = raw.casefold()
+        if len(folded.strip("_")) >= 2 and folded not in identifiers:
+            identifiers.append(folded)
+    return tuple(identifiers)

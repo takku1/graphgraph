@@ -96,7 +96,7 @@ TOOLS = [
         "name": "query_context",
         "description": (
             "Native graphgraph retrieval: find graph anchors from a natural-language query, "
-            "expand the graph, and render the chosen compact packet. Use this when the caller "
+            "automatically route its structural intent, expand the graph, and render the chosen compact packet. Use this when the caller "
             "does not already know node IDs."
         ),
         "inputSchema": {
@@ -104,7 +104,7 @@ TOOLS = [
             "properties": {
                 "graph_path": {"type": "string", "description": "Path to native graphgraph graph; auto-detected if omitted."},
                 "query": {"type": "string"},
-                "query_class": {"type": "string", "description": "direct_lookup, reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query, recent_changes."},
+                "query_class": {"type": "string", "description": "Optional override. Default: auto. Choices: direct_lookup, reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, doc_summary, negative_query, recent_changes."},
                 "packet": {"type": "string", "description": "Optional packet override."},
                 "hops": {"type": "integer", "description": "Override traversal radius. Default: measured by query class."},
                 "anchor_limit": {"type": "integer", "description": "Max anchor nodes before expansion. Default: adaptive by query class."},
@@ -450,7 +450,7 @@ def build_query_context(args: dict[str, Any]) -> str:
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
     return render_query_context(
         query=str(args["query"]),
-        query_class=str(args.get("query_class") or "blast_radius"),
+        query_class=str(args.get("query_class") or "auto"),
         graph_path=graph_path,
         packet=str(args["packet"]) if args.get("packet") else None,
         hops=int(args["hops"]) if args.get("hops") is not None else None,

@@ -19,6 +19,7 @@ from graphgraph.doc_scanner import DocumentInput, extract_document_context
 from graphgraph.frontends import (
     RegexExtractor,
     SourceFile,
+    TreeSitterExtractor,
     _imported_symbol_names,
     available_frontends,
     select_extractor,
@@ -60,6 +61,18 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(result.frontend, "regex")
             self.assertTrue(any(node.label == "helper" for node in result.nodes.values()))
 
+    def test_scan_preserves_extraction_confidence_independent_of_centrality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "main.py").write_text(
+                "def _private(): pass\ndef public():\n    _private()\n",
+                encoding="utf-8",
+            )
+            graph = scan_directory(root, depth="symbols", frontend="regex")
+            call = next(edge for edge in graph.edges if edge.type == "calls")
+            self.assertEqual(call.provenance, "regex_ast")
+            self.assertEqual(call.confidence, 0.75)
+
     def test_select_extractor_regex_forced(self) -> None:
         self.assertIsInstance(select_extractor("regex"), RegexExtractor)
 
@@ -67,6 +80,47 @@ class ScannerTest(unittest.TestCase):
         if not tree_sitter_available():
             with self.assertRaises(RuntimeError):
                 select_extractor("tree_sitter")
+
+    def test_auto_tree_sitter_falls_back_per_file_and_records_reason(self) -> None:
+        class TimedOutParser:
+            timeout_micros = 0
+
+            def parse(self, _text):
+                return None
+
+            def reset(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_path = root / "slow.rs"
+            text = "pub struct Recovered;\n"
+            source_path.write_text(text, encoding="utf-8")
+            source = SourceFile(source_path, "slow.rs", "slow_rs", text)
+            extractor = TreeSitterExtractor(fallback_on_error=True, parse_timeout_micros=1234)
+
+            with patch("graphgraph.scanner.frontends._parser_for_suffix", return_value=TimedOutParser()):
+                result = extractor.extract_symbols([source], max_total_symbols=20)
+
+            self.assertEqual(result.frontend, "tree_sitter+regex")
+            self.assertEqual(result.fallback_files, ("slow.rs",))
+            self.assertEqual(result.failed_files, ("slow.rs:TimeoutError",))
+            self.assertTrue(any(node.label == "Recovered" for node in result.nodes.values()))
+
+    def test_explicit_tree_sitter_surfaces_file_failure(self) -> None:
+        class BrokenParser:
+            timeout_micros = 0
+
+            def parse(self, _text):
+                raise ValueError("bad parser state")
+
+            def reset(self):
+                return None
+
+        source = SourceFile(Path("broken.rs"), "broken.rs", "broken_rs", "pub struct Broken;\n")
+        with patch("graphgraph.scanner.frontends._parser_for_suffix", return_value=BrokenParser()):
+            with self.assertRaisesRegex(RuntimeError, "broken.rs"):
+                TreeSitterExtractor().extract_symbols([source], max_total_symbols=20)
 
     def test_tree_sitter_extractor_captures_rust_trait_methods(self) -> None:
         if not tree_sitter_available():
@@ -93,6 +147,71 @@ class ScannerTest(unittest.TestCase):
             method_ids = {nid for nid, node in result.nodes.items() if node.label in {"visit_expr", "visit_condition"}}
             nested = {(edge.source, edge.target, edge.type) for edge in result.edges}
             self.assertTrue(all((trait_id, method_id, "contains") in nested for method_id in method_ids))
+
+    def test_regex_extractor_links_locus_style_cross_crate_rust_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trait_path = root / "locus-core" / "src" / "pipeline.rs"
+            impl_path = root / "locus-pipeline" / "src" / "lib.rs"
+            trait_path.parent.mkdir(parents=True)
+            impl_path.parent.mkdir(parents=True)
+            trait_text = "pub trait DiscoveryPipeline { fn search_candidates(&self); }\n"
+            impl_text = (
+                "pub struct LocusEngine;\n"
+                "impl DiscoveryPipeline for LocusEngine { fn search_candidates(&self) {} }\n"
+            )
+            trait_path.write_text(trait_text, encoding="utf-8")
+            impl_path.write_text(impl_text, encoding="utf-8")
+            files = [
+                SourceFile(trait_path, "locus-core/src/pipeline.rs", "trait_file", trait_text),
+                SourceFile(impl_path, "locus-pipeline/src/lib.rs", "impl_file", impl_text),
+            ]
+
+            result = RegexExtractor().extract_symbols(files, max_total_symbols=100)
+            nodes = result.nodes
+            contracts = {
+                (nodes[edge.source].label, nodes[edge.target].label)
+                for edge in result.edges
+                if edge.type == "implements" and edge.source in nodes and edge.target in nodes
+            }
+            self.assertIn(("LocusEngine", "DiscoveryPipeline"), contracts)
+
+    def test_incremental_regex_scan_preserves_cross_file_rust_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trait_path = root / "core.rs"
+            impl_path = root / "engine.rs"
+            trait_path.write_text("pub trait DiscoveryPipeline { fn run(&self); }\n", encoding="utf-8")
+            impl_path.write_text(
+                "pub struct LocusEngine;\nimpl DiscoveryPipeline for LocusEngine { fn run(&self) {} }\n",
+                encoding="utf-8",
+            )
+            graph_path = root / "graph.gg"
+            manifest_path = root / "manifest.json"
+            graph = scan_directory(root, depth="symbols", frontend="regex", manifest_path=manifest_path)
+            save_graph(graph, graph_path)
+
+            impl_path.write_text(
+                "pub struct LocusEngine;\nimpl DiscoveryPipeline for LocusEngine { fn run(&self) { } }\n",
+                encoding="utf-8",
+            )
+            updated = update_paths(
+                root,
+                ["engine.rs"],
+                depth="symbols",
+                frontend="regex",
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+            labels = updated.nodes
+            self.assertTrue(
+                any(
+                    edge.type == "implements"
+                    and labels[edge.source].label == "LocusEngine"
+                    and labels[edge.target].label == "DiscoveryPipeline"
+                    for edge in updated.edges
+                )
+            )
 
     def test_tree_sitter_extractor_captures_rust_fields_and_returns(self) -> None:
         if not tree_sitter_available():

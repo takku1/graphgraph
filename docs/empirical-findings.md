@@ -287,6 +287,26 @@ expected. So for a single CLI invocation, the latency budget is roughly:
 in-process queries (the MCP server path) pay startup/load once and then run
 at the ~38ms/query cached rate above.
 
+## Automatic Query Routing
+
+`benchmarks/context_graph/query_router_benchmark.py` measures the deterministic,
+no-I/O router used when CLI/MCP callers omit `query_class`.
+
+| Metric | Result |
+| --- | ---: |
+| Labeled agent intents | 16 |
+| Correct routes | 16/16 |
+| Timed routes | 100,000 |
+| Average route latency | 22.8 microseconds |
+
+The router scores explicit intent cues for direct, reverse, path, impact,
+summary, documentation, negative, and recent-change queries. Strong compound
+cues resolve by deterministic precedence; weak or ambiguous input remains a
+`subsystem_summary`. Explicit query classes bypass the router. At roughly
+`0.023ms`, routing is negligible beside loaded-graph search (~38ms) and removes
+the previous inconsistent CLI defaults (`query=blast_radius`,
+`context=subsystem_summary`).
+
 ## Storage Backend Bake-Off
 
 The storage bake-off was stopped after 13 completed projects rather than

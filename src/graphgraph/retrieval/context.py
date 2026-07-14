@@ -17,7 +17,7 @@ from ..graph.traversal import (
     traversal_policy,
 )
 from ..planning import ContextPlan, compute_subgraph_stats, plan_context
-from ..planning.budgets import doc_intensity_score, plan_terms
+from ..planning.budgets import doc_intensity_score, explicit_query_identifiers, plan_terms
 from ..planning.shape import LOCAL_EDGE_DENSITY_CAP, profile_graph_shape, recommend_node_budget
 from .budgeting import budget_edges, enrich_runtime_context
 from .models import Match, RetrievalResult
@@ -871,8 +871,16 @@ def retrieve_context(
         if query_class in STRUCTURAL_QUERY_CLASSES or query_class in {"direct_lookup", "subsystem_summary"}
         else plan.anchor_limit
     )
-    selected_matches = select_anchor_matches(matches, effective_anchor_limit, query_class, doc_intensity >= 0.35)
+    selected_matches = select_anchor_matches(
+        matches,
+        effective_anchor_limit,
+        query_class,
+        doc_intensity >= 0.35,
+        query=query,
+    )
     starts_list = list(match.node.id for match in selected_matches)
+    if query_class == "reverse_lookup":
+        starts_list = list(reserve_reverse_contract_starts(graph, tuple(starts_list)))
 
     # Discover git-modified files (active session context / Ephemeral Session Layer).
     # Dirty files are useful ambient context for exploratory summaries and
@@ -931,6 +939,10 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
     query_terms = plan_terms(query)
     term_count = len(query_terms)
     limit = plan.anchor_limit
+
+    identifiers = explicit_query_identifiers(query)
+    if len(identifiers) >= 2 and plan.query_class in STRUCTURAL_QUERY_CLASSES:
+        return min(limit, max(len(identifiers), min(8, len(identifiers) * 2)))
 
     if top.node.kind in {"concept", "section"}:
         return min(limit, 2)
@@ -1082,7 +1094,30 @@ def select_anchor_matches(
     anchor_limit: int,
     query_class: str,
     doc_intent: bool = False,
+    query: str = "",
 ) -> tuple[Match, ...]:
+    # Preserve explicit multi-entity intent before generic score ordering.
+    # Reserve up to two exact matches per snake_case identifier (declaration
+    # and implementation commonly share a label) and one per CamelCase type.
+    explicit = explicit_query_identifiers(query)
+    if explicit:
+        reserved: list[Match] = []
+        seen_reserved: set[str] = set()
+        for identifier in explicit:
+            per_identifier = 2 if "_" in identifier else 1
+            found = 0
+            for match in matches:
+                if match.node.label.casefold() != identifier or match.node.id in seen_reserved:
+                    continue
+                reserved.append(match)
+                seen_reserved.add(match.node.id)
+                found += 1
+                if len(reserved) >= anchor_limit or found >= per_identifier:
+                    break
+            if len(reserved) >= anchor_limit:
+                return tuple(reserved)
+        if reserved:
+            matches = tuple(reserved + [match for match in matches if match.node.id not in seen_reserved])
     if doc_intent:
         doc_matches = [match for match in matches if match.node.kind in NON_STRUCTURAL_KINDS]
         if doc_matches:
@@ -1115,6 +1150,32 @@ def select_anchor_matches(
         if len(selected) >= anchor_limit:
             break
     return tuple(selected)
+
+
+def reserve_reverse_contract_starts(graph: Graph, starts: tuple[str, ...]) -> tuple[str, ...]:
+    """Promote both sides of a named contract before one-hop reverse lookup.
+
+    A trait's implementor is one hop away and tests importing that implementor
+    are another. Making the verified ``implements`` counterpart a start keeps
+    reverse lookup at its measured one-hop policy while exposing direct users
+    of both the declaration and concrete type.
+    """
+    out = list(starts)
+    seen = set(starts)
+    for edge in graph.edges:
+        if not edge.active or edge.type != "implements":
+            continue
+        counterpart = None
+        if edge.target in seen:
+            counterpart = edge.source
+        elif edge.source in seen:
+            counterpart = edge.target
+        if counterpart and counterpart in graph.nodes and counterpart not in seen:
+            out.append(counterpart)
+            seen.add(counterpart)
+        if len(out) >= 12:
+            break
+    return tuple(out)
 
 
 def reserve_query_named_siblings(

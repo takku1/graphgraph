@@ -12,7 +12,7 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 > The `graphgraph/*` MCP tools only exist if a graphgraph MCP server is registered for *this* client. Many sessions (e.g. Claude Code without project `.mcp.json`) have **no** graphgraph MCP server even when Claude Desktop does. Before following any MCP step, confirm a tool named `graphgraph/query_context` (or similar) is actually available. **If it is not, silently switch to the CLI path below -- do NOT try to translate MCP tool names into CLI flags.** Run `graphgraph doctor` to see per-client MCP status.
 
 > **DEFAULT PATH**
-> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context "<query>" --query-class <class>`; it builds `.graphgraph/graph.gg` if missing, then returns a packet. Leave `max_nodes` unset for normal use so GraphGraph can choose the dynamic query-class and graph-shape budget; pass an explicit cap only for repeatable tests or intentionally small packets.
+> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context "<query>"`; it builds `.graphgraph/graph.gg` if missing, routes the query class automatically, and returns a packet. Leave `query_class` and `max_nodes` unset for normal use; pass explicit values only for repeatable tests or a known policy override.
 
 > **BENCHMARK DISCIPLINE**
 > Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.
@@ -20,7 +20,7 @@ GraphGraph is installed for native codebase context retrieval across coding agen
 ## Decision Rules
 
 1. For natural-language codebase questions, call `graphgraph/query_context` first. Do not preselect node IDs unless the user supplied exact files/symbols.
-2. If no graph exists or MCP is unavailable, run `graphgraph context "<query>" --query-class subsystem_summary --show-stats`.
+2. If no graph exists or MCP is unavailable, run `graphgraph context "<query>" --show-stats`.
 3. For focused implementation work, add `--scope src/path` or use `search_nodes` before `final_packet`.
 4. Validate saved graph files with `graphgraph validate-graph`; validate rendered packets with `graphgraph validate`.
 5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.
@@ -47,8 +47,8 @@ The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands wit
 
 | Need | Subcommand | Anchors | Example |
 |------|-----------|---------|---------|
-| Ask a natural-language question (auto-finds anchors) | `context` | auto | `graphgraph context "how does retrieval work" --query-class subsystem_summary --show-stats` |
-| Same, on an existing graph only (no auto-build) | `query` | auto | `graphgraph query "callers of retrieve_context" --query-class reverse_lookup --show-anchors` |
+| Ask a natural-language question (auto-routes and finds anchors) | `context` | auto | `graphgraph context "how does retrieval work" --show-stats` |
+| Same, on an existing graph only (no auto-build) | `query` | auto | `graphgraph query "callers of retrieve_context" --show-anchors` |
 | Render from node IDs you already know | `final` | `--starts <id>...` | `graphgraph final --query-class blast_radius --starts src_graphgraph_retrieval_context_py` |
 | Low-level render from known IDs (no policies) | `render` | `--starts <id>...` | `graphgraph render --query-class direct_lookup --starts <id>` |
 

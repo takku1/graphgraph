@@ -43,8 +43,8 @@ POLICIES: dict[str, TraversalPolicy] = {
     ),
     "reverse_lookup": TraversalPolicy(
         "reverse_lookup",
-        ("dependency", "execution", "document", "hierarchy"),
-        ("imports", "imports_from", "calls", "references", "links", "tests", "contains"),
+        ("dependency", "execution", "type", "validation", "document", "hierarchy"),
+        ("imports", "imports_from", "calls", "implements", "tests", "references", "links", "contains"),
         weak_edge_limit=12,
         min_confidence=0.0,
         direction="in",

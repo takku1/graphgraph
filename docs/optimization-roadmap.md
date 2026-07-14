@@ -12,6 +12,8 @@ that a particular model will interpret every packet correctly.
 - Connected selection: greedy is roughly 93x faster than bucketed DP overall.
 - Selection policy: greedy for direct/reverse/blast/summary; DP for multi-hop path.
 - Personalized PageRank: confidence-routed local PPR retains exact-identifier speedups.
+- Query routing: deterministic no-I/O auto routing passes 16/16 labeled agent
+  intents at about 22.8 microseconds per route; explicit classes remain overrides.
 - Document summaries: explicit document traversal now follows `section_of` edges.
 - Section ranking: document section retrieval is query-conditioned. `graph.expand`
   accepts a `priority_bias`, and doc-oriented plans feed it heading-weighted BM25
