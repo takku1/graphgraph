@@ -122,7 +122,16 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--show-anchors", action="store_true")
     context.add_argument("--source-mode", choices=["auto", "off", "all"], default="auto")
     context.add_argument("--memory-scope", action="append", default=[])
-    context.add_argument("--json", action="store_true", help="Emit one machine-readable refresh/query/validation envelope.")
+    context.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit compact actionable refresh/query/validation JSON.",
+    )
+    context.add_argument(
+        "--details",
+        action="store_true",
+        help="With --json, include the full packet, anchors, and provenance-heavy retrieval receipt.",
+    )
     context.add_argument("--validate", action="store_true", help="Print the already-enforced packet validation receipt.")
     context.add_argument("--show-stats", action="store_true", help="Print graph load/build shape metrics to stderr.")
     context.set_defaults(func=cmd_context)

@@ -122,9 +122,9 @@ class GraphRuntime:
     def compile(self, program: GraphProgram) -> CompilationResult:
         graph = self.graph
         source_seed_ids: tuple[str, ...] = ()
-        source_preferred_paths: tuple[str, ...] = ()
+        source_preferred_paths: tuple[str, ...] = program.anchor_paths
         source_receipt: dict[str, object] = {}
-        if self.source_planner is not None:
+        if self.source_planner is not None and not program.anchor_paths:
             source_plan = self.source_planner.plan(
                 graph,
                 program.query,
@@ -135,6 +135,15 @@ class GraphRuntime:
             source_seed_ids = source_plan.seed_ids
             source_preferred_paths = source_plan.preferred_paths
             source_receipt = receipt_data(source_plan)
+        elif program.anchor_paths:
+            source_receipt = {
+                "mode": "exact_paths",
+                "lexical_strength": 0.0,
+                "seed_ids": [],
+                "sources": ["changed_paths"],
+                "preferred_paths": list(program.anchor_paths),
+                "warnings": [],
+            }
         provider_receipts: tuple[CapabilityReceipt, ...] = ()
         applied: list[str] = []
         warnings: list[str] = []

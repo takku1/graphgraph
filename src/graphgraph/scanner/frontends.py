@@ -550,10 +550,22 @@ def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, 
         max(0, int(node.start_byte) - 256),
         int(node.start_byte),
     )
+    facts: list[str] = []
     test_attribute = r"#\s*\[\s*(?:tokio::)?test(?:\s*\([^]]*\))?\s*\]"
     if re.search(test_attribute, snippet) or re.search(test_attribute + r"\s*$", prefix):
-        return ("role:test", "rust_attribute:test")
-    return ()
+        facts.extend(("role:test", "rust_attribute:test"))
+    # These are deliberately operator-level IR facts, not inferred business
+    # claims. They translate stable source primitives into tokens an LLM can
+    # retrieve without guessing that "each target once" means deduplication or
+    # that a pinned-count contract is implemented with `!=`.
+    if re.search(r"(?:==|!=|\bassert_(?:eq|ne)!\s*\()", snippet):
+        facts.append("semantic_operator:equality")
+    if (
+        re.search(r"\b(?:BTreeSet|HashSet)\s*::\s*(?:new|default)\s*\(", snippet)
+        and re.search(r"\.insert\s*\(", snippet)
+    ):
+        facts.extend(("collection_contract:unique", "semantic_operation:deduplication"))
+    return tuple(dict.fromkeys(facts))
 
 
 def _attach_lexical_method_owners(defs: list[_TsDef]) -> list[_TsDef]:

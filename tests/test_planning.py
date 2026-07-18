@@ -38,6 +38,8 @@ class PlanningTest(unittest.TestCase):
             "where are facet coverage and answerability reconciled": "direct_lookup",
             "what calls validate_packet and where is it tested": "reverse_lookup",
             "which tests cover run_formula_yield_benchmark and should run": "affected_tests",
+            "Which exact direct and transitive tests are affected after adding planner deduplication?": "affected_tests",
+            "Return minimal runnable Cargo test commands for the direct behavioral tests": "affected_tests",
             "trace request parsing through planning to packet rendering": "multi_hop_path",
             "how does run_formula_yield_benchmark depend on validate_candidates_detailed": "multi_hop_path",
             "what is the blast radius if Edge changes": "blast_radius",

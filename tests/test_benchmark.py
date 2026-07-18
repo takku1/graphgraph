@@ -117,7 +117,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
         # count), not a packet budget. Bumped as the codebase grows; raise it
         # again if a legitimate expansion trips it rather than treating it as a
         # regression.
-        self.assertLess(token_est, 92000, f"Token estimate too high: {token_est}")
+        self.assertLess(token_est, 93000, f"Token estimate too high: {token_est}")
 
         print(
             f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, edges: {len(symbol_edges)}, token_estimate: {token_est}"

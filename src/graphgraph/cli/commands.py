@@ -460,6 +460,7 @@ def cmd_context(args: argparse.Namespace) -> None:
         deleted_paths=tuple(args.deleted),
         sync_git=args.sync == "git",
         json_output=args.json,
+        json_details=args.details,
         source_mode=args.source_mode,
         memory_scopes=tuple(args.memory_scope) or ("project", "session"),
     )

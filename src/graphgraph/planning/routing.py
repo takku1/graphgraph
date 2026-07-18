@@ -19,7 +19,11 @@ _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
     ("affected_tests", 7.0, "affected-test intent", re.compile(
         r"\b(affected tests?|which tests? (?:are affected|cover|exercise|should run|to run)|"
         r"what tests? (?:are affected|cover|exercise|should run|to run)|"
-        r"tests? (?:cover|exercise|should run|to run)|test selection)\b"
+        r"tests? (?:cover|exercise|should run|to run)|test selection|"
+        r"(?:direct|transitive|behavioral|affected) tests?|"
+        r"(?:which|what|identify|find|list|return).{0,80}\btests?\b.{0,80}"
+        r"(?:affected|cover|exercise|direct|transitive|should run|to run)|"
+        r"(?:minimal runnable )?(?:cargo )?test commands?)\b"
     )),
     ("recent_changes", 6.0, "recent/history intent", re.compile(
         r"\b(recent(?:ly)? changed|change history|git history|last commits?|recent commits?|what changed|modified recently)\b"

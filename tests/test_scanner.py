@@ -868,6 +868,33 @@ class ScannerTest(unittest.TestCase):
         )
         self.assertTrue(all(edge.confidence == 0.94 for edge in references))
 
+    def test_tree_sitter_projects_rust_operators_into_semantic_ir_facts(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "use std::collections::BTreeSet;\n"
+            "pub fn plan_writes(paths: &[String]) -> Vec<String> {\n"
+            "    let mut seen = BTreeSet::new();\n"
+            "    paths.iter().filter(|path| seen.insert((*path).clone())).cloned().collect()\n"
+            "}\n"
+            "pub fn pinned_count(actual: usize, expected: usize) -> bool {\n"
+            "    actual != expected\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "planner.rs"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "src/planner.rs", "src_planner_rs", text)],
+                max_total_symbols=100,
+            )
+
+        plan = next(node for node in result.nodes.values() if node.label == "plan_writes")
+        pinned = next(node for node in result.nodes.values() if node.label == "pinned_count")
+        self.assertIn("collection_contract:unique", plan.facts)
+        self.assertIn("semantic_operation:deduplication", plan.facts)
+        self.assertIn("semantic_operator:equality", pinned.facts)
+
     def test_incremental_scan_preserves_global_member_quality_and_reports_update_delta(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")

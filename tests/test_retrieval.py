@@ -1744,6 +1744,105 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
             ["cargo test -p locus-engine scheduling::tests --lib"],
         )
 
+    def test_affected_tests_recovers_inline_rust_tests_from_legacy_graph_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-frontends"
+            source = crate / "src" / "planner.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-frontends"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "src" / "lib.rs").write_text("mod planner;\n", encoding="utf-8")
+            source.write_text(
+                "fn plan_writes() {}\n"
+                "#[cfg(test)] mod tests {\n"
+                "    #[test]\n"
+                "    fn plan_writes_reports_each_target_once() { plan_writes(); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            graph = Graph(
+                nodes={
+                    "PLAN": Node(
+                        "PLAN",
+                        "plan_writes",
+                        "function",
+                        "crates/locus-frontends/src/planner.rs",
+                    ),
+                    "TEST": Node(
+                        "TEST",
+                        "plan_writes_reports_each_target_once",
+                        "function",
+                        "crates/locus-frontends/src/planner.rs",
+                        summary="L4",
+                        source=str(source),
+                    ),
+                },
+                edges=[Edge("TEST", "PLAN", "calls", provenance="tree_sitter")],
+            )
+            result = retrieve_context(
+                graph,
+                "which direct tests cover plan_writes",
+                "affected_tests",
+                hops=2,
+                anchor_paths=("crates/locus-frontends/src/planner.rs",),
+            )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertIn(
+            "cargo test -p locus-frontends planner::tests --lib",
+            affected["commands"],
+        )
+
+    def test_changed_integration_test_path_emits_command_on_uncertain_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-engine"
+            source = crate / "tests" / "suite" / "groebner_test.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-engine"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (source.parent / "main.rs").write_text("mod groebner_test;\n", encoding="utf-8")
+            source.write_text("#[test]\nfn reports_fragment_boundary() {}\n", encoding="utf-8")
+            graph = Graph(
+                nodes={
+                    "TEST": Node(
+                        "TEST",
+                        "reports_fragment_boundary",
+                        "function",
+                        "crates/locus-engine/tests/suite/groebner_test.rs",
+                        source=str(source),
+                    ),
+                }
+            )
+            result = retrieve_context(
+                graph,
+                "finite field fragment provenance",
+                "subsystem_summary",
+                hops=1,
+                anchor_paths=("crates/locus-engine/tests/suite/groebner_test.rs",),
+            )
+
+        self.assertEqual(
+            result.metadata["affected_tests"]["commands"],
+            ["cargo test -p locus-engine --test suite groebner_test"],
+        )
+        self.assertEqual(
+            result.metadata["affected_tests"]["commands_by_role"]["changed_path_regression"],
+            ["cargo test -p locus-engine --test suite groebner_test"],
+        )
+
+    def test_test_path_does_not_turn_file_fields_or_locals_into_test_cases(self) -> None:
+        from graphgraph.retrieval.context import _is_test_node
+
+        path = "crates/locus-engine/tests/suite/groebner_test.rs"
+        self.assertFalse(_is_test_node(Node("FILE", "groebner_test.rs", "rust", path)))
+        self.assertFalse(_is_test_node(Node("FIELD", "value", "field", path)))
+        self.assertTrue(_is_test_node(Node("TEST", "reports_boundary", "function", path)))
+
     def test_exact_changed_paths_compile_to_primary_per_file_anchors(self) -> None:
         graph = Graph(
             nodes={
@@ -1752,6 +1851,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                     "evidence_is_consistent",
                     "method",
                     "crates/locus-core/src/finding.rs",
+                    facts=("domain:obligation",),
                 ),
                 "ENGINE": Node(
                     "ENGINE",
@@ -1764,6 +1864,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                     "resolve_project_effects",
                     "function",
                     "crates/locus-frontends/src/source/effects.rs",
+                    facts=("semantic_scope:interprocedural", "policy:conservative"),
                 ),
                 "NOISE": Node(
                     "NOISE",
@@ -1798,7 +1899,12 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         graph = Graph(
             nodes={
                 "ANCHOR": Node("ANCHOR", "preferred_path_anchor_matches", "function", path),
-                "RECEIPT": Node("RECEIPT", "reconcile_retrieval_receipt", "function", path),
+                "RECEIPT": Node(
+                    "RECEIPT",
+                    "reconcile_semantic_retrieval_receipt",
+                    "function",
+                    path,
+                ),
                 "NOISE": Node("NOISE", "unrelated_helper", "function", path),
             }
         )
@@ -1813,6 +1919,202 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
 
         self.assertTrue({"ANCHOR", "RECEIPT"} <= set(result.starts))
         self.assertNotIn("NOISE", result.starts)
+
+    def test_exact_changed_path_uses_file_node_for_unmatched_fallback(self) -> None:
+        path = "src/planner.rs"
+        graph = Graph(
+            nodes={
+                "FILE": Node("FILE", "planner.rs", "rust", path),
+                "UNRELATED": Node("UNRELATED", "minimal_reduced", "function", path),
+            },
+            edges=[Edge("FILE", "UNRELATED", "contains")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "finite field fragment boundary",
+            "affected_tests",
+            hops=1,
+            anchor_paths=(path,),
+        )
+
+        self.assertEqual(result.starts, ("FILE",))
+        self.assertEqual(result.metadata["anchor_paths"][0]["role"], "file_fallback")
+
+    def test_preferred_path_anchors_do_not_repeat_global_search_per_facet(self) -> None:
+        from graphgraph.retrieval.context import preferred_path_anchor_matches
+
+        path = "src/planner.rs"
+        graph = Graph(
+            nodes={
+                "FILE": Node("FILE", "planner.rs", "rust", path),
+                "PLAN": Node("PLAN", "plan_writes", "method", path),
+            },
+            edges=[Edge("FILE", "PLAN", "contains")],
+        )
+
+        with patch(
+            "graphgraph.retrieval.context.search_nodes",
+            side_effect=AssertionError("exact-path anchoring must stay path-local"),
+        ):
+            matches = preferred_path_anchor_matches(
+                graph,
+                "planner write deduplication",
+                "affected_tests",
+                (path,),
+                (("planner write deduplication", ("planner", "write", "deduplication")),),
+            )
+
+        self.assertEqual(matches[0].node.id, "PLAN")
+        with patch(
+            "graphgraph.retrieval.context.search_nodes",
+            side_effect=AssertionError("exact-path retrieval must not run global search"),
+        ):
+            result = retrieve_context(
+                graph,
+                "planner write deduplication",
+                "affected_tests",
+                hops=1,
+                anchor_paths=(path,),
+            )
+        self.assertEqual(result.starts, ("PLAN",))
+
+    def test_exact_path_keeps_one_symbol_winner_per_facet_not_every_owner_member(self) -> None:
+        path = "src/planner.rs"
+        graph = Graph(
+            nodes={
+                "OWNER": Node("OWNER", "TransformPlanner", "struct", path),
+                "PLAN": Node(
+                    "PLAN",
+                    "plan_writes",
+                    "method",
+                    path,
+                    summary="impl TransformPlanner; reports each target once",
+                ),
+                "NOISE": Node(
+                    "NOISE",
+                    "affected_packages",
+                    "method",
+                    path,
+                    summary="impl TransformPlanner",
+                ),
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "TransformPlanner plan deduplication",
+            "affected_tests",
+            hops=1,
+            anchor_paths=(path,),
+        )
+
+        self.assertEqual(set(result.starts), {"OWNER", "PLAN"})
+        self.assertNotIn("NOISE", result.starts)
+
+    def test_facet_parser_drops_output_instructions_and_connective_phrases(self) -> None:
+        from graphgraph.retrieval.context import query_facets
+
+        facets = query_facets(
+            "After adding TransformPlanner plan deduplication, return minimal runnable Cargo commands "
+            "for direct behavioral tests, then focus on its own step."
+        )
+
+        self.assertEqual(
+            facets,
+            (
+                ("TransformPlanner", ("transform", "planner")),
+                ("plan deduplication", ("plan", "deduplication")),
+            ),
+        )
+        self.assertNotIn(
+            "paths",
+            {
+                label
+                for label, _terms in query_facets(
+                    "For the exact changed paths, identify TransformPlanner plan deduplication."
+                )
+            },
+        )
+
+    def test_facet_coverage_translates_behavior_words_to_code_level_forms(self) -> None:
+        from graphgraph.retrieval.context import facet_coverage
+
+        graph = Graph(
+            nodes={
+                "PLAN_TEST": Node(
+                    "PLAN_TEST",
+                    "plan_writes_reports_each_target_once",
+                    "function",
+                    "src/planner.rs",
+                ),
+                "PINNED": Node(
+                    "PINNED",
+                    "evaluate_pinned_corpus",
+                    "method",
+                    "src/yield.rs",
+                    facts=("requires exact case and file counts",),
+                ),
+            },
+        )
+
+        coverage = facet_coverage(
+            graph,
+            set(graph.nodes),
+            (
+                ("plan deduplication", ("plan", "deduplication")),
+                ("pinned corpus equality", ("pinned", "corpus", "equality")),
+            ),
+        )
+
+        self.assertEqual(coverage["unfulfilled"], [])
+
+    def test_semantic_reconciliation_fulfills_direct_and_command_output_facets(self) -> None:
+        from graphgraph.planning import QueryRoute
+        from graphgraph.retrieval import reconcile_retrieval_receipt
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "evaluate_pinned_corpus", "method", "src/yield.rs"),
+                "TEST": Node("TEST", "representative_corpus", "function", "tests/yield.rs"),
+            },
+            edges=[Edge("TEST", "TARGET", "calls", provenance="tree_sitter_type_resolved")],
+        )
+        result = retrieve_context(
+            graph,
+            "which direct tests cover evaluate_pinned_corpus and what cargo runs",
+            "affected_tests",
+            hops=2,
+        )
+        result.metadata["facet_coverage"] = {
+            "fulfilled": [],
+            "unfulfilled": ["direct", "cargo runs"],
+            "coverage_ratio": 0.0,
+            "warning": "unfulfilled query facets",
+        }
+        result.metadata["answerability"] = {
+            "status": "incomplete",
+            "abstained": False,
+            "reason": "unfulfilled query facets",
+        }
+        result.metadata["affected_tests"]["commands"] = ["cargo test -p locus-pipeline --test yield_benchmark"]
+        result.metadata["affected_tests"]["command_provenance"] = [{
+            "command": "cargo test -p locus-pipeline --test yield_benchmark",
+            "tests": [{"id": "TEST"}],
+        }]
+
+        errors = reconcile_retrieval_receipt(
+            graph,
+            result,
+            route=QueryRoute("affected_tests", 1.0, 1.0, ("explicit query class",)),
+            automatic_route=False,
+        )
+
+        self.assertEqual(errors, ())
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+        self.assertFalse(result.metadata["answerability"]["abstained"])
+        self.assertTrue(result.metadata["semantic_validation"]["ok"])
 
     def test_packet_quality_reports_query_specific_topology_trust(self) -> None:
         graph = Graph(

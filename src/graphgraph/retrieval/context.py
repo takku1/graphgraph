@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 
 try:
@@ -933,64 +934,141 @@ def preferred_path_anchor_matches(
 ) -> tuple[Match, ...]:
     """Compile exact edited paths into bounded per-file/per-facet anchor hints."""
     anchor_query = structural_anchor_query(query, query_class)
-    facet_queries = tuple(
-        candidate
+    # Exact-path locality is already strong evidence. Retain process terms
+    # here (for example ``receipt consistency`` -> ``reconcile_*_receipt``)
+    # so a relevant symbol can win without allowing those generic terms to
+    # become global anchors.
+    term_groups = list(facets)
+    if not term_groups:
+        terms = plan_terms(anchor_query)
+        if terms:
+            term_groups = [(anchor_query, terms)]
+    named_owner_groups = tuple(
+        terms
         for label, terms in facets
-        for evidence_terms in (_facet_evidence_terms(terms),)
-        for candidate in facet_search_queries(" ".join(evidence_terms) or label, evidence_terms)
+        if "_" in label or any(char.isupper() for char in label[1:])
     )
-    queries = tuple(dict.fromkeys((anchor_query, *facet_queries)))
+    named_owner_terms = tuple(dict.fromkeys(
+        term for terms in named_owner_groups for term in terms
+    ))
     degree: dict[str, int] = {}
     for edge in graph.edges:
         if edge.active:
             degree[edge.source] = degree.get(edge.source, 0) + 1
             degree[edge.target] = degree.get(edge.target, 0) + 1
+    max_degree = max(degree.values(), default=0)
 
+    normalized_paths = tuple(
+        dict.fromkeys(path.replace("\\", "/").strip("/") for path in paths)
+    )
+    nodes_by_path: dict[str, list[object]] = {path: [] for path in normalized_paths}
+    for node in graph.nodes.values():
+        normalized = node.path.replace("\\", "/").strip("/")
+        if node.active and normalized in nodes_by_path:
+            nodes_by_path[normalized].append(node)
+
+    file_node_kinds = {
+        "python", "rust", "javascript", "typescript", "go", "java", "c", "cpp",
+        "csharp", "ruby", "php", "kotlin", "scala", "swift",
+    }
     per_path: list[list[Match]] = []
-    for raw_path in dict.fromkeys(paths):
-        normalized = raw_path.replace("\\", "/").strip("/")
+    for normalized in normalized_paths:
+        path_nodes = nodes_by_path.get(normalized, ())
+        file_nodes = [node for node in path_nodes if node.kind in file_node_kinds]
+        eligible_nodes = [
+            node
+            for node in path_nodes
+            if node.kind not in file_node_kinds
+            if query_class == "doc_summary" or node.kind not in NON_STRUCTURAL_KINDS
+            if not (query_class == "affected_tests" and _is_test_node(node))
+        ]
         candidates: dict[str, Match] = {}
         query_winners: list[str] = []
-        for candidate_query in queries:
-            scoped = [
-                match
-                for match in search_nodes(
-                graph,
-                candidate_query,
-                limit=8,
-                doc_intensity=0.0,
-                personalize=False,
-                scopes=(normalized,),
+        for label, terms in term_groups:
+            if not terms:
+                continue
+            local_matches: list[Match] = []
+            for node in eligible_nodes:
+                hits = _facet_matched_terms(node, terms)
+                if not hits:
+                    continue
+                label_hits = _facet_label_matched_terms(node, terms)
+                owner_hits = _facet_matched_text_terms(
+                    term_key(str(getattr(node, "id", ""))),
+                    named_owner_terms,
                 )
-                if match.node.path.replace("\\", "/").strip("/") == normalized
-                if not (
-                    query_class == "affected_tests" and _is_test_node(match.node)
+                owner_supported = any(
+                    set(owner_terms) <= owner_hits
+                    for owner_terms in named_owner_groups
                 )
-                if match.node.kind not in {
-                    "python", "rust", "javascript", "typescript", "go", "java", "c", "cpp",
-                }
-            ]
-            if scoped:
+                required_hits = max(1, math.floor(len(terms) / 2) + 1)
+                if len(hits) < required_hits:
+                    # One generic word from a compound facet is not enough to
+                    # make an exact-path symbol relevant (for example an
+                    # `ideals_equal` helper answering "pinned corpus
+                    # equality"). Fall back to the file when no symbol reaches
+                    # this bounded evidence threshold.
+                    continue
+                if (
+                    len(normalized_paths) > 1
+                    and named_owner_groups
+                    and not owner_supported
+                    and not hits <= label_hits
+                ):
+                    # In a multi-slice request, a behavior word found only in
+                    # a summary/fact does not bind that facet to every changed
+                    # file. Require a named owner in the node identity or keep
+                    # every matched behavior term in the symbol identity.
+                    continue
+                term_count = max(1, len(terms))
+                coverage = len(hits) / term_count
+                identity_coverage = len(label_hits) / term_count
+                owner_coverage = max(
+                    (
+                        len(set(owner_terms) & owner_hits) / max(1, len(owner_terms))
+                        for owner_terms in named_owner_groups
+                    ),
+                    default=0.0,
+                )
+                centrality = (
+                    math.log2(degree.get(node.id, 0) + 1)
+                    / math.log2(max_degree + 1)
+                    if max_degree > 0
+                    else 0.0
+                )
+                # Dimensionless evidence score: semantic coverage, identity
+                # coverage, owner coherence, then a query-complexity-damped
+                # topology tie-breaker. No repository-specific tuned weights.
+                score = coverage + identity_coverage + owner_coverage + centrality / term_count
+                local_matches.append(Match(
+                    node,
+                    score,
+                    ("exact_changed_path_terms", f"facet:{label}"),
+                ))
+            if local_matches:
                 winner = max(
-                    scoped,
-                    key=lambda match: (match.score, degree.get(match.node.id, 0), match.node.id),
+                    local_matches,
+                    key=lambda match: (
+                        match.score,
+                        degree.get(match.node.id, 0),
+                        match.node.id,
+                    ),
                 )
                 query_winners.append(winner.node.id)
-            for match in scoped:
-                prior = candidates.get(match.node.id)
-                if prior is None or match.score > prior.score:
-                    candidates[match.node.id] = match
+                # A path is a hard locality constraint, not evidence that every
+                # symbol in the file answers the facet. Keep one winner per
+                # facet/path; traversal can recover its real neighbors.
+                prior = candidates.get(winner.node.id)
+                if prior is None or winner.score > prior.score:
+                    candidates[winner.node.id] = winner
         if not candidates:
-            for node in graph.nodes.values():
-                if not node.active or node.path.replace("\\", "/").strip("/") != normalized:
-                    continue
-                if query_class == "affected_tests" and _is_test_node(node):
-                    continue
-                if node.kind in NON_STRUCTURAL_KINDS | {
-                    "python", "rust", "javascript", "typescript", "go", "java", "c", "cpp",
-                }:
-                    continue
-                candidates[node.id] = Match(node, 0.0, ("path_fallback",))
+            fallback = max(
+                file_nodes,
+                key=lambda node: (degree.get(node.id, 0), node.id),
+                default=None,
+            )
+            if fallback is not None:
+                candidates[fallback.id] = Match(fallback, 0.0, ("file_fallback",))
         if not candidates:
             continue
         winner_ids = set(query_winners)
@@ -1025,7 +1103,8 @@ def preferred_path_anchor_matches(
             ))
     ordered.extend(ranked[0] for ranked in per_path if ranked)
     depth = 1
-    while len(ordered) < len(candidate_pool):
+    max_depth = max((len(ranked) for ranked in per_path), default=0)
+    while depth < max_depth:
         added = False
         for ranked in per_path:
             if depth < len(ranked):
@@ -1043,7 +1122,7 @@ def preferred_path_anchor_matches(
         seen.add(match.node.id)
         preferred.append(Match(
             match.node,
-            max(100.0 - len(preferred), match.score + 20.0),
+            match.score,
             tuple(dict.fromkeys(("exact_changed_path", *match.reasons))),
         ))
         if len(preferred) >= 12:
@@ -1083,7 +1162,14 @@ def retrieve_context(
     if query_class == "direct_lookup" and len(plan_terms(query)) == 1:
         candidate_limit = max(candidate_limit, 24)
     anchor_query = structural_anchor_query(query, query_class)
-    matches = search_nodes(
+    path_matches = preferred_path_anchor_matches(
+        graph,
+        query,
+        query_class,
+        anchor_paths,
+        facets,
+    )
+    matches = path_matches or search_nodes(
         graph,
         anchor_query,
         limit=max(candidate_limit, 1),
@@ -1100,20 +1186,13 @@ def retrieve_context(
         for node_id in dict.fromkeys(seed_ids)
         if node_id in graph.nodes and graph.nodes[node_id].active
     )
-    path_matches = preferred_path_anchor_matches(
-        graph,
-        query,
-        query_class,
-        anchor_paths,
-        facets,
-    )
     priority_matches = (*path_matches, *source_matches)
     if priority_matches:
         priority_ids = {match.node.id for match in priority_matches}
         matches = priority_matches + tuple(
             match for match in matches if match.node.id not in priority_ids
         )
-    if facets:
+    if facets and not path_matches:
         # A single bag-of-words search for a conjunction is dominated by nodes
         # that repeat the query's common subsystem terms. Search each facet
         # independently, then merge its best evidence into the candidate pool
@@ -1178,7 +1257,7 @@ def retrieve_context(
         )
     if path_matches:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(path_matches)))
-    if facets:
+    if facets and not path_matches:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(facets)))
     selected_matches = select_anchor_matches(
         matches,
@@ -1189,7 +1268,7 @@ def retrieve_context(
         graph=graph,
         dominant_scope=inferred_scope,
     )
-    if facets:
+    if facets and not path_matches:
         selected_matches = reserve_facet_matches(
             selected_matches,
             matches,
@@ -1314,6 +1393,13 @@ def retrieve_context(
                 "role": (
                     "test_evidence_candidate"
                     if query_class == "affected_tests" and _is_test_path(path)
+                    else "file_fallback"
+                    if any(
+                        match.node.path.replace("\\", "/").strip("/")
+                        == path.replace("\\", "/").strip("/")
+                        and "file_fallback" in match.reasons
+                        for match in selected_matches
+                    )
                     else "primary_root"
                 ),
                 "anchors": [
@@ -1359,9 +1445,36 @@ def retrieve_context(
             "abstained": False,
             "reason": "",
         }
+    changed_path_tests = changed_path_test_recommendations(graph, anchor_paths)
     if query_class == "affected_tests":
-        metadata["affected_tests"] = affected_test_recommendations(graph, starts, nodes)
+        affected = affected_test_recommendations(graph, starts, nodes)
+        if changed_path_tests["commands"]:
+            affected["commands"] = list(dict.fromkeys((
+                *affected["commands"],
+                *changed_path_tests["commands"],
+            )))
+            affected["commands_by_role"]["changed_path_regression"] = changed_path_tests["commands"]
+            affected["command_provenance"] = [
+                *affected["command_provenance"],
+                *changed_path_tests["command_provenance"],
+            ]
+            affected["changed_path_candidates"] = changed_path_tests["candidates"]
+        metadata["affected_tests"] = affected
         metadata["hybrid_intents"] = ["multi_hop_path", "affected_tests"]
+    elif changed_path_tests["commands"]:
+        metadata["affected_tests"] = {
+            "direct": [],
+            "transitive": [],
+            "commands": changed_path_tests["commands"],
+            "commands_by_role": {
+                "direct_behavior_or_contract": [],
+                "transitive_regression": [],
+                "changed_path_regression": changed_path_tests["commands"],
+            },
+            "command_provenance": changed_path_tests["command_provenance"],
+            "changed_path_candidates": changed_path_tests["candidates"],
+            "omitted_transitive": 0,
+        }
     if query_class == "doc_summary" and not any(
         node.kind in {"section", "paragraph"} for node in graph.nodes.values()
     ):
@@ -1524,16 +1637,55 @@ def _is_test_node(node: object) -> bool:
         str(fact).casefold()
         for fact in (getattr(node, "facts", ()) or ())
     }
-    return _is_test_path(str(getattr(node, "path", ""))) or bool(
-        facts & {"role:test", "rust_attribute:test"}
+    if facts & {"role:test", "rust_attribute:test"}:
+        return True
+    if _is_test_path(str(getattr(node, "path", ""))) and str(
+        getattr(node, "kind", "")
+    ) in {"function", "method"}:
+        return True
+    source = str(getattr(node, "source", ""))
+    line = getattr(node, "line", None)
+    return bool(
+        source
+        and isinstance(line, int)
+        and _source_declares_rust_test(source, line)
     )
+
+
+@lru_cache(maxsize=8192)
+def _source_declares_rust_test(source: str, line: int) -> bool:
+    """Recover inline-test identity for graphs built before test-role IR facts."""
+    path = Path(source)
+    if path.suffix.casefold() != ".rs" or not path.is_file():
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    start = max(0, line - 5)
+    end = min(len(lines), line + 1)
+    declaration_prefix = "\n".join(lines[start:end])
+    return bool(re.search(
+        r"#\s*\[\s*(?:tokio::)?test(?:\s*\([^]]*\))?\s*\]",
+        declaration_prefix,
+    ))
 
 
 def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     facets: list[tuple[str, tuple[str, ...]]] = []
     seen: set[tuple[str, ...]] = set()
+    facet_query = re.sub(
+        r"\b(?:the\s+)?(?:exact\s+)?changed[-\s]+(?:file[-\s]+)?paths\b",
+        " ",
+        query,
+        flags=re.I,
+    )
     qualified = _qualified_query_symbols(query)
     qualified_owners = {owner.casefold() for owner, _member in qualified}
+    raw_identifiers = {
+        raw.casefold(): raw
+        for raw in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query)
+    }
     for owner, member in qualified:
         terms = tuple(term_key(f"{owner} {member}").split())
         if terms and terms not in seen:
@@ -1542,9 +1694,10 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     for identifier in explicit_query_identifiers(query):
         if identifier.casefold() in qualified_owners:
             continue
-        terms = tuple(part for part in term_key(identifier).split() if len(part) >= 2)
+        display = raw_identifiers.get(identifier.casefold(), identifier)
+        terms = tuple(part for part in term_key(display).split() if len(part) >= 2)
         if terms and terms not in seen:
-            facets.append((identifier, terms))
+            facets.append((display, terms))
             seen.add(terms)
     identifiers = explicit_query_identifiers(query)
     identifier_terms = {
@@ -1567,14 +1720,25 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "evaluate", "evaluates", "evaluated", "evaluating",
         "assess", "assesses", "assessed", "assessing",
         "gate", "gates", "gated", "gating",
-        "directly", "validate", "validates", "validated", "validating", "validation",
+        "direct", "directly", "transitive",
+        "validate", "validates", "validated", "validating", "validation",
         "identify", "identifies", "identified", "identifying",
         "exact", "command", "commands",
+        "add", "adds", "added", "adding", "after", "before",
+        "behavioral", "focus", "focused", "minimal", "runnable", "return", "returns",
+        "own", "step", "steps", "according", "md",
+        "then",
+        "it", "its", "them", "their", "these", "those",
+        "cargo",
         "where", "what", "why", "who", "when", "is", "are", "was", "were",
         "the", "a", "an", "from", "into", "flow", "flows",
         "nonexistent", "missing", "implemented", "implements",
     }
-    for clause in re.split(r"\s*(?:,|;|\band\b|\bplus\b|\bwhich\b)\s*", query, flags=re.I):
+    for clause in re.split(
+        r"\s*(?:,|;|\band\b|\bplus\b|\bwhich\b)\s*",
+        facet_query,
+        flags=re.I,
+    ):
         for identifier in identifiers:
             clause = re.sub(rf"\b{re.escape(identifier)}\b", " ", clause, flags=re.I)
         for owner, member in qualified:
@@ -1742,7 +1906,7 @@ _FACET_PROCESS_TERMS = {
     "discovery", "equivalence", "rationalization", "implementation", "implementations",
     "measurement", "measurements",
     "anchoring", "calibrated", "calibration", "consistency", "query", "readiness",
-    "selection", "specific",
+    "reconciliation", "selection", "specific",
 }
 
 
@@ -1759,6 +1923,15 @@ def _facet_term_forms(term: str) -> set[str]:
         "synchronization": {"sync", "synchronize", "synchronized", "syncing"},
         "synchronize": {"sync", "synchronization", "synchronized", "syncing"},
         "synchronized": {"sync", "synchronization", "synchronize", "syncing"},
+        "anchoring": {"anchor", "anchored"},
+        "consistency": {"consistent"},
+        "deduplication": {
+            "dedup", "deduplicate", "deduplicated", "duplicate", "duplicates",
+            "unique", "once",
+        },
+        "equality": {"equal", "equals", "exact", "exactly"},
+        "readiness": {"ready"},
+        "reconciliation": {"reconcile", "reconciled"},
     }
     forms.update(aliases.get(term, ()))
     if term.endswith("ies") and len(term) > 4:
@@ -1810,7 +1983,7 @@ def _facet_matches_node(node: object, terms: tuple[str, ...]) -> bool:
     return any(
         all(
             tokens & (forms := _facet_term_forms(term))
-            or any(len(form) >= 4 and form in compact for form in forms)
+            or any(len(form) >= 5 and form in compact for form in forms)
             for term in query_terms
         )
         for query_terms in _facet_evidence_queries(terms)
@@ -1818,7 +1991,19 @@ def _facet_matches_node(node: object, terms: tuple[str, ...]) -> bool:
 
 
 def _facet_matched_terms(node: object, terms: tuple[str, ...]) -> set[str]:
-    token_list = re.findall(r"[a-z0-9]+", _facet_node_text(node))
+    return _facet_matched_text_terms(_facet_node_text(node), terms)
+
+
+def _facet_label_matched_terms(node: object, terms: tuple[str, ...]) -> set[str]:
+    """Return facet hits from symbol identity, excluding summary/body context."""
+    return _facet_matched_text_terms(
+        term_key(str(getattr(node, "label", ""))),
+        terms,
+    )
+
+
+def _facet_matched_text_terms(text: str, terms: tuple[str, ...]) -> set[str]:
+    token_list = re.findall(r"[a-z0-9]+", text)
     tokens = set(token_list)
     compact = "".join(token_list)
     return {
@@ -1826,7 +2011,7 @@ def _facet_matched_terms(node: object, terms: tuple[str, ...]) -> set[str]:
         for term in terms
         if (
             tokens & (forms := _facet_term_forms(term))
-            or any(len(form) >= 4 and form in compact for form in forms)
+            or any(len(form) >= 5 and form in compact for form in forms)
         )
     }
 
@@ -1948,6 +2133,127 @@ def _test_command(path: str, source: str = "", *, inline_test: bool = False) -> 
     if normalized.endswith((".ts", ".tsx", ".js", ".jsx")):
         return f"npm test -- {normalized}"
     return ""
+
+
+def changed_path_test_recommendations(
+    graph: Graph,
+    paths: tuple[str, ...],
+) -> dict[str, object]:
+    """Derive deterministic regression commands from explicit changed test paths."""
+    normalized_paths = tuple(
+        dict.fromkeys(path.replace("\\", "/").strip("/") for path in paths)
+    )
+    candidates: list[dict[str, object]] = []
+    commands: list[str] = []
+    provenance: list[dict[str, object]] = []
+    for path in normalized_paths:
+        path_nodes = [
+            node
+            for node in graph.nodes.values()
+            if node.active and node.path.replace("\\", "/").strip("/") == path
+        ]
+        test_nodes = [node for node in path_nodes if _is_test_node(node)]
+        command_tests: dict[str, list[dict[str, object]]] = {}
+        for node in test_nodes:
+            command = _test_command(
+                path,
+                node.source,
+                inline_test=not _is_test_path(path),
+            )
+            if not command:
+                continue
+            candidate = {
+                "id": node.id,
+                "label": node.label,
+                "path": path,
+                "role": "changed_path_regression",
+            }
+            candidates.append(candidate)
+            command_tests.setdefault(command, []).append(candidate)
+        if not command_tests and _is_test_path(path):
+            source = next(
+                (node.source for node in path_nodes if node.source),
+                "",
+            )
+            command = _test_command(path, source)
+            if command:
+                file_candidate = {
+                    "id": next((node.id for node in path_nodes), ""),
+                    "label": Path(path).name,
+                    "path": path,
+                    "role": "changed_path_regression",
+                }
+                candidates.append(file_candidate)
+                command_tests[command] = [file_candidate]
+        for command, tests in command_tests.items():
+            if command not in commands:
+                commands.append(command)
+                provenance.append({
+                    "command": command,
+                    "role": "changed_path_regression",
+                    "tests": tests,
+                })
+    return {
+        "candidates": candidates,
+        "commands": commands,
+        "command_provenance": provenance,
+    }
+
+
+_AFFECTED_OUTPUT_TERMS = {
+    "affected", "behavioral", "cargo", "command", "commands", "direct", "exact",
+    "focused", "minimal", "return", "runnable", "run", "runs", "test", "tests",
+    "transitive",
+}
+
+
+def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, ...]:
+    """Fulfill output-contract facets from the affected-test receipt itself."""
+    coverage = metadata.get("facet_coverage")
+    affected = metadata.get("affected_tests")
+    if not isinstance(coverage, dict) or not isinstance(affected, dict):
+        return ()
+    direct = [item for item in affected.get("direct", ()) if isinstance(item, dict)]
+    transitive = [item for item in affected.get("transitive", ()) if isinstance(item, dict)]
+    commands = [str(item) for item in affected.get("commands", ()) if item]
+    fulfilled = list(coverage.get("fulfilled", ()))
+    remaining: list[str] = []
+    repaired: list[str] = []
+    for raw_label in coverage.get("unfulfilled", ()):
+        label = str(raw_label)
+        terms = set(term_key(label).split())
+        if not terms or terms - _AFFECTED_OUTPUT_TERMS:
+            remaining.append(label)
+            continue
+        evidence: list[str] = []
+        if "direct" in terms and direct:
+            evidence = [f"affected_tests.direct:{item.get('id', '')}" for item in direct[:5]]
+        elif "transitive" in terms and transitive:
+            evidence = [f"affected_tests.transitive:{item.get('id', '')}" for item in transitive[:5]]
+        elif terms & {"cargo", "command", "commands", "runnable", "run", "runs"} and commands:
+            evidence = [f"affected_tests.command:{command}" for command in commands[:5]]
+        elif terms & {"affected", "behavioral", "test", "tests"} and (direct or transitive):
+            evidence = [
+                f"affected_tests.test:{item.get('id', '')}"
+                for item in (*direct, *transitive)[:5]
+            ]
+        if evidence:
+            fulfilled.append({
+                "facet": label,
+                "evidence": evidence,
+                "source": "affected_tests_receipt",
+            })
+            repaired.append(label)
+        else:
+            remaining.append(label)
+    total = len(fulfilled) + len(remaining)
+    coverage.update({
+        "fulfilled": fulfilled,
+        "unfulfilled": remaining,
+        "coverage_ratio": round(len(fulfilled) / max(1, total), 4),
+        "warning": "unfulfilled query facets" if remaining else "",
+    })
+    return tuple(repaired)
 
 
 def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selected_nodes: set[str]) -> dict[str, object]:
@@ -2116,7 +2422,9 @@ def reconcile_semantic_retrieval_receipt(
     answerability = dict(metadata.get("answerability", {}))
     status = str(answerability.get("status", "unknown"))
     abstained = bool(answerability.get("abstained", False))
-    reasons = [str(answerability.get("reason", "")).strip()]
+    original_reason = str(answerability.get("reason", "")).strip()
+    repaired_facets = reconcile_affected_output_facets(metadata)
+    reasons = [original_reason]
 
     facet_coverage = metadata.get("facet_coverage", {})
     structural_coverage = metadata.get("structural_facet_coverage", {})
@@ -2138,6 +2446,15 @@ def reconcile_semantic_retrieval_receipt(
             )
         ),
     ]
+    if (
+        repaired_facets
+        and not unfulfilled
+        and status == "incomplete"
+        and original_reason == "unfulfilled query facets"
+    ):
+        status = "answerable"
+        abstained = False
+        reasons = []
     if unfulfilled:
         if status != "unanswerable":
             status = "incomplete"
@@ -2227,6 +2544,35 @@ def reconcile_semantic_retrieval_receipt(
         if missing_provenance:
             errors.append(
                 "affected-test commands lack provenance: " + ", ".join(missing_provenance)
+            )
+        remaining_output_facets: list[str] = []
+        for raw_label in (
+            facet_coverage.get("unfulfilled", ())
+            if isinstance(facet_coverage, dict)
+            else ()
+        ):
+            label = str(raw_label)
+            terms = set(term_key(label).split())
+            if not terms or terms - _AFFECTED_OUTPUT_TERMS:
+                continue
+            contradicted = (
+                ("direct" in terms and bool(affected.get("direct")))
+                or ("transitive" in terms and bool(affected.get("transitive")))
+                or (
+                    bool(terms & {"cargo", "command", "commands", "runnable", "run", "runs"})
+                    and bool(commands)
+                )
+                or (
+                    bool(terms & {"affected", "behavioral", "test", "tests"})
+                    and bool(recommended_ids)
+                )
+            )
+            if contradicted:
+                remaining_output_facets.append(label)
+        if remaining_output_facets:
+            errors.append(
+                "affected-test evidence contradicts unfulfilled output facets: "
+                + ", ".join(remaining_output_facets)
             )
 
     metadata["semantic_validation"] = {

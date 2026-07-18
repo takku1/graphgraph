@@ -490,6 +490,30 @@ class PlatformTest(unittest.TestCase):
         self.assertTrue(result.packet.startswith("#gg"))
         self.assertTrue(result.receipt.provider_receipts)
 
+    def test_runtime_exact_paths_bypass_auxiliary_source_planning(self) -> None:
+        class UnexpectedSourcePlanner:
+            def plan(self, *_args: object, **_kwargs: object) -> object:
+                raise AssertionError("exact paths must bypass global source planning")
+
+        graph = Graph(nodes={
+            "PLAN": Node("PLAN", "plan_writes", "method", "src/planner.rs"),
+        })
+        result = GraphRuntime(
+            graph,
+            source_planner=UnexpectedSourcePlanner(),  # type: ignore[arg-type]
+        ).compile(GraphProgram(
+            "plan write deduplication",
+            query_class="direct_lookup",
+            anchor_paths=("src/planner.rs",),
+        ))
+
+        self.assertEqual(result.retrieval.starts, ("PLAN",))
+        self.assertEqual(result.receipt.source_receipt["mode"], "exact_paths")
+        self.assertEqual(
+            result.receipt.source_receipt["preferred_paths"],
+            ["src/planner.rs"],
+        )
+
     def test_change_packet_reports_breaking_symbol_and_impact(self) -> None:
         before = platform_graph()
         after = Graph({key: value for key, value in before.nodes.items() if key != "query"}, [

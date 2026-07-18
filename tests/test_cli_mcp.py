@@ -75,6 +75,17 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(args.changed, ["src/a.py"])
         self.assertEqual(args.deleted, ["src/old.py"])
 
+    def test_context_cli_compact_json_defaults_and_detailed_opt_in(self) -> None:
+        from graphgraph.cli.parser import build_parser
+
+        compact = build_parser().parse_args(["context", "what changed", "--json"])
+        detailed = build_parser().parse_args(
+            ["context", "what changed", "--json", "--details"]
+        )
+
+        self.assertFalse(compact.details)
+        self.assertTrue(detailed.details)
+
     def test_mcp_plan_context(self) -> None:
         response = dispatch(
             {
@@ -1026,6 +1037,39 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(validation["status"], "packet_and_receipt_pass")
         self.assertEqual(validation["scope"], "packet_and_receipt")
 
+    def test_native_compact_json_keeps_actionable_tests_and_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tests").mkdir()
+            (root / "tests" / "test_app.py").write_text(
+                "def test_compile_formula():\n"
+                "    assert compile_formula()\n",
+                encoding="utf-8",
+            )
+            (root / "app.py").write_text(
+                "def compile_formula():\n"
+                "    return True\n",
+                encoding="utf-8",
+            )
+            packet, _status = render_native_context(
+                query="which direct tests cover compile_formula",
+                directory=root,
+                graph_path=root / ".graphgraph" / "graph.json",
+                query_class="affected_tests",
+                json_output=True,
+                json_details=False,
+                max_nodes=20,
+            )
+
+        payload = json.loads(packet)
+        self.assertEqual(payload["details"]["included"], False)
+        self.assertIn("--json --details", payload["details"]["hint"])
+        self.assertNotIn("packet", payload)
+        self.assertNotIn("retrieval", payload)
+        self.assertIn("direct", payload["actionable"]["tests"])
+        self.assertIn("transitive", payload["actionable"]["tests"])
+        self.assertIn("packet_validation", payload["workflow"])
+
     def test_project_status_cold_repo_returns_graceful_no_graph_status(self) -> None:
         # Slice-round finding (docs/bugs/2026-07-17-locus-blackbox-slice-implementation-round.md):
         # project_status on a cold repo hard-errored (MCP -32000) instead of an
@@ -1450,7 +1494,10 @@ class CliMcpTest(unittest.TestCase):
                 self.assertIn("--test-command", skill_content)
                 skill_harness = Path(".agents") / "skills" / "graphgraph" / "scripts" / "validate_live.py"
                 self.assertTrue(skill_harness.exists())
-                self.assertIn("graphgraph.live_validation", skill_harness.read_text(encoding="utf-8"))
+                harness_content = skill_harness.read_text(encoding="utf-8")
+                self.assertIn("graphgraph.live_validation", harness_content)
+                self.assertIn('shutil.which("graphgraph")', harness_content)
+                self.assertIn("owning_python", harness_content)
 
                 # Check complete Codex plugin bundle and marketplace.json
                 plugin_json = Path("plugins") / "graphgraph" / ".codex-plugin" / "plugin.json"
@@ -1510,6 +1557,118 @@ class CliMcpTest(unittest.TestCase):
 
         self.assertEqual(status["status"], "skipped")
         self.assertIn("--saved-reports", status["reason"])
+
+    def test_live_validation_reports_exclusion_and_truncation_evidence(self) -> None:
+        from graphgraph.live_validation import scan_policy_receipt
+
+        graph = Graph(
+            nodes={"APP": Node("APP", "app", "python", "src/app.py")},
+            metadata={"symbols_truncated": "true", "docs_truncated_count": "2"},
+        )
+
+        receipt = scan_policy_receipt(graph, 1800)
+
+        self.assertTrue(receipt["exclusions_valid"])
+        self.assertTrue(all(row["indexed_nodes"] == 0 for row in receipt["exclusions"]))
+        self.assertEqual(receipt["max_files"], 1800)
+        self.assertFalse(receipt["truncation"]["files"])
+        self.assertTrue(receipt["truncation"]["symbols"])
+        self.assertEqual(receipt["truncation"]["docs_count"], 2)
+
+    def test_live_validation_custom_queries_auto_route_and_check_actionability(self) -> None:
+        from types import SimpleNamespace
+
+        from graphgraph.live_validation import validate_queries
+
+        query = "Which direct tests cover TransformPlanner and what Cargo command should run?"
+        response = json.dumps({
+            "query_class": "affected_tests",
+            "anchors": [{"id": "PLAN"}],
+            "packet": "#gg/v1",
+            "retrieval": {
+                "semantic_validation": {"ok": True, "errors": []},
+                "affected_tests": {
+                    "direct": [{"id": "TEST"}],
+                    "transitive": [],
+                    "commands": ["cargo test -p locus-frontends planner::tests --lib"],
+                },
+            },
+            "actionable": {"status": "ready", "missing_evidence": []},
+        })
+        with (
+            patch("graphgraph.services.render_query_context", return_value=response) as render,
+            patch(
+                "graphgraph.validate.validate_packet",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    format="gg",
+                    node_count=2,
+                    edge_count=1,
+                    errors=(),
+                ),
+            ),
+        ):
+            rows = validate_queries(sample_graph(), Path("live.graph.json"), [query])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(render.call_args.kwargs["query_class"], "auto")
+        self.assertEqual(rows[0]["query_class"], "affected_tests")
+        self.assertTrue(rows[0]["query_valid"])
+        self.assertTrue(rows[0]["actionable_valid"])
+        self.assertEqual(rows[0]["direct_tests"], 1)
+        self.assertEqual(len(rows[0]["commands"]), 1)
+
+    def test_live_validation_rejects_structurally_valid_but_inactionable_test_answer(self) -> None:
+        from graphgraph.live_validation import validate_query_actionability
+
+        errors = validate_query_actionability(
+            "Return direct behavioral tests and minimal runnable Cargo commands.",
+            {
+                "retrieval": {
+                    "affected_tests": {
+                        "direct": [],
+                        "transitive": [{"id": "TRANSITIVE"}],
+                        "commands": [],
+                    },
+                },
+            },
+        )
+
+        self.assertIn("query requests direct tests but affected_tests.direct is empty", errors)
+        self.assertIn("query requests runnable commands but affected_tests.commands is empty", errors)
+
+    def test_live_validation_gate_failures_explain_expectation_mismatches(self) -> None:
+        from types import SimpleNamespace
+
+        from graphgraph.live_validation import validate_gate_packets
+
+        graph = Graph(
+            nodes={
+                "A": Node("A", "source", "function", "src/a.py"),
+                "B": Node("B", "target", "function", "src/b.py"),
+            },
+            edges=[Edge("A", "B", "calls")],
+        )
+        with (
+            patch("graphgraph.services.render_final_packet", return_value="GRAPH:\n#gg/v1"),
+            patch(
+                "graphgraph.validate.validate_packet",
+                return_value=SimpleNamespace(
+                    ok=True,
+                    format="gg",
+                    node_count=1,
+                    edge_count=0,
+                    errors=(),
+                ),
+            ),
+        ):
+            rows = validate_gate_packets(graph, Path("live.graph.json"))
+
+        self.assertTrue(rows)
+        self.assertTrue(all(not row["ok"] for row in rows))
+        self.assertTrue(all(row["failure_reason"] for row in rows))
+        self.assertIn("expected packet format semantic_arrow", rows[0]["failure_reason"])
+        self.assertIn("expected at least one structural edge", rows[1]["failure_reason"])
 
     def test_cmd_install_claude_code_project(self) -> None:
         import os

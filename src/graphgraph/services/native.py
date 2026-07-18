@@ -776,6 +776,7 @@ def render_native_context(
     deleted_paths: tuple[str, ...] = (),
     sync_git: bool = False,
     json_output: bool = False,
+    json_details: bool = True,
     source_mode: str = "auto",
     memory_scopes: tuple[str, ...] = ("project", "session"),
 ) -> tuple[str, GraphBuildStatus]:
@@ -889,6 +890,17 @@ def render_native_context(
                 "status": "not_applicable",
                 "scope": "packet_structure_only",
                 "errors": [],
+            }
+        if not json_details:
+            payload = {
+                "actionable": payload.get("actionable", {}),
+                "query_class": payload.get("query_class", query_class),
+                "routing": payload.get("routing", {}),
+                "workflow": payload.get("workflow", {}),
+                "details": {
+                    "included": False,
+                    "hint": "rerun with --json --details for packet, anchors, and full provenance",
+                },
             }
         packet_text = json.dumps(payload, indent=2, ensure_ascii=False)
     return packet_text, status

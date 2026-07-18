@@ -459,6 +459,23 @@ def _actionable_receipt(
             freshness = workflow.get("freshness", {})
         if not freshness:
             freshness = response_metadata.get("freshness", {})
+    def compact_tests(role: str) -> list[dict[str, object]]:
+        if not isinstance(affected, dict):
+            return []
+        return [
+            {
+                "id": item.get("id"),
+                "label": item.get("label"),
+                "path": item.get("path"),
+                "covers": [
+                    covered.get("id")
+                    for covered in item.get("covers", ())
+                    if isinstance(covered, dict) and covered.get("id")
+                ],
+            }
+            for item in affected.get(role, ())
+            if isinstance(item, dict)
+        ]
     return {
         "status": answerability.get("status", "unknown"),
         "change_points": [
@@ -474,6 +491,8 @@ def _actionable_receipt(
         if isinstance(facet_coverage, dict)
         else [],
         "tests": {
+            "direct": compact_tests("direct"),
+            "transitive": compact_tests("transitive"),
             "commands_by_role": affected.get("commands_by_role", {})
             if isinstance(affected, dict)
             else {},

@@ -177,6 +177,35 @@ def summarize_graph(graph: Any) -> dict[str, Any]:
     }
 
 
+def scan_policy_receipt(graph: Any, max_nodes: int) -> dict[str, Any]:
+    """Report exclusion and collection-cap evidence for the live scan."""
+    active_paths = [
+        str(node.path).replace("\\", "/").strip("/")
+        for node in graph.nodes.values()
+        if getattr(node, "active", True) and getattr(node, "path", "")
+    ]
+    exclusions = []
+    for name in DEFAULT_SKIP_DIRS:
+        indexed = sum(1 for path in active_paths if name in path.split("/"))
+        exclusions.append({
+            "name": name,
+            "indexed_nodes": indexed,
+            "passed": indexed == 0,
+        })
+    metadata = getattr(graph, "metadata", {}) or {}
+    return {
+        "max_files": max_nodes,
+        "skip_dirs": list(DEFAULT_SKIP_DIRS),
+        "exclusions": exclusions,
+        "exclusions_valid": all(item["passed"] for item in exclusions),
+        "truncation": {
+            "files": str(metadata.get("files_truncated", "")).casefold() == "true",
+            "symbols": str(metadata.get("symbols_truncated", "")).casefold() == "true",
+            "docs_count": int(str(metadata.get("docs_truncated_count", "0")) or "0"),
+        },
+    }
+
+
 def derived_queries(graph: Any) -> list[tuple[str, str]]:
     outgoing = graph.outgoing()
     candidates = [
@@ -217,7 +246,7 @@ def validate_queries(graph: Any, graph_path: Path, query_texts: Sequence[str]) -
     from graphgraph.services import render_query_context
     from graphgraph.validate import validate_packet
 
-    queries = [(query, "blast_radius") for query in query_texts] if query_texts else derived_queries(graph)
+    queries = [(query, "auto") for query in query_texts] if query_texts else derived_queries(graph)
     rows: list[dict[str, Any]] = []
     for query, query_class in queries:
         try:
@@ -232,16 +261,39 @@ def validate_queries(graph: Any, graph_path: Path, query_texts: Sequence[str]) -
             data = json.loads(raw)
             packet = data.get("packet", "")
             validation = validate_packet(packet) if packet else None
+            retrieval = data.get("retrieval", {})
+            semantic = retrieval.get("semantic_validation", {})
+            actionable = data.get("actionable", {})
+            affected = retrieval.get("affected_tests", {})
+            actionability_errors = validate_query_actionability(query, data)
+            packet_errors = list(validation.errors) if validation else ["no packet"]
+            semantic_valid = bool(semantic.get("ok", False))
+            actionable_valid = not actionability_errors
+            packet_valid = bool(validation and validation.ok)
             rows.append(
                 {
                     "query": query,
-                    "query_class": query_class,
+                    "query_class": str(data.get("query_class") or query_class),
                     "anchors": len(data.get("anchors", [])),
                     "packet_format": validation.format if validation else "",
-                    "packet_valid": bool(validation and validation.ok),
+                    "packet_valid": packet_valid,
+                    "semantic_valid": semantic_valid,
+                    "actionable_valid": actionable_valid,
+                    "query_valid": packet_valid and semantic_valid and actionable_valid,
+                    "actionable_status": str(actionable.get("status", "unknown")),
+                    "direct_tests": len(affected.get("direct", ())) if isinstance(affected, dict) else 0,
+                    "transitive_tests": len(affected.get("transitive", ())) if isinstance(affected, dict) else 0,
+                    "commands": list(affected.get("commands", ())) if isinstance(affected, dict) else [],
+                    "missing_evidence": list(actionable.get("missing_evidence", ()))
+                    if isinstance(actionable, dict)
+                    else [],
                     "packet_nodes": validation.node_count if validation else 0,
                     "packet_edges": validation.edge_count if validation else 0,
-                    "errors": list(validation.errors) if validation else ["no packet"],
+                    "errors": [
+                        *packet_errors,
+                        *([] if semantic_valid else list(semantic.get("errors", ("semantic validation failed",)))),
+                        *actionability_errors,
+                    ],
                 }
             )
         except Exception as exc:
@@ -252,12 +304,47 @@ def validate_queries(graph: Any, graph_path: Path, query_texts: Sequence[str]) -
                     "anchors": 0,
                     "packet_format": "",
                     "packet_valid": False,
+                    "semantic_valid": False,
+                    "actionable_valid": False,
+                    "query_valid": False,
+                    "actionable_status": "error",
+                    "direct_tests": 0,
+                    "transitive_tests": 0,
+                    "commands": [],
+                    "missing_evidence": [],
                     "packet_nodes": 0,
                     "packet_edges": 0,
                     "errors": [f"{exc.__class__.__name__}: {exc}"],
                 }
             )
     return rows
+
+
+def validate_query_actionability(query: str, data: dict[str, Any]) -> list[str]:
+    """Validate implementation-facing evidence requested by a live query."""
+    errors: list[str] = []
+    retrieval = data.get("retrieval", {})
+    normalized = " ".join(query.casefold().split())
+    asks_tests = bool(re.search(
+        r"\b(tests?|affected tests?|which .{0,60} tests?|tests? .{0,60} cover)\b",
+        normalized,
+    ))
+    asks_direct = bool(re.search(r"\bdirect(?: behavioral)? tests?\b", normalized))
+    asks_commands = bool(re.search(r"\b(cargo|runnable|test commands?|commands? to run)\b", normalized))
+    affected = retrieval.get("affected_tests", {})
+    if asks_tests:
+        if not isinstance(affected, dict):
+            errors.append("query requests tests but affected_tests receipt is absent")
+            return errors
+        direct = list(affected.get("direct", ()))
+        transitive = list(affected.get("transitive", ()))
+        if not direct and not transitive:
+            errors.append("query requests tests but no direct or transitive test evidence was selected")
+        if asks_direct and not direct:
+            errors.append("query requests direct tests but affected_tests.direct is empty")
+        if asks_commands and not affected.get("commands"):
+            errors.append("query requests runnable commands but affected_tests.commands is empty")
+    return list(dict.fromkeys(errors))
 
 
 def validate_gate_packets(graph: Any, graph_path: Path) -> list[dict[str, Any]]:
@@ -272,10 +359,15 @@ def validate_gate_packets(graph: Any, graph_path: Path) -> list[dict[str, Any]]:
     ]
     candidates.sort(key=lambda node_id: (-len(outgoing[node_id]), node_id))
     if not candidates:
-        return [{"case": "structural_start", "ok": False, "errors": ["graph has no connected structural node"]}]
+        return [{
+            "case": "structural_start",
+            "ok": False,
+            "failure_reason": "graph has no connected structural node",
+            "errors": ["graph has no connected structural node"],
+        }]
     start = candidates[0]
     cases = [
-        ("negative_query_zero_edge", "negative_query", "semantic_arrow", 0),
+        ("negative_query_semantic_format", "negative_query", "semantic_arrow", None),
         ("direct_lookup_structural", "direct_lookup", "gg", None),
     ]
     rows: list[dict[str, Any]] = []
@@ -293,6 +385,19 @@ def validate_gate_packets(graph: Any, graph_path: Path) -> list[dict[str, Any]]:
             edge_ok = expected_edges is None or validation.edge_count == expected_edges
             if case == "direct_lookup_structural":
                 edge_ok = validation.edge_count > 0
+            errors = list(validation.errors)
+            if validation.format != expected_format:
+                errors.append(
+                    f"expected packet format {expected_format}, got {validation.format or 'unknown'}"
+                )
+            if not edge_ok:
+                if expected_edges is None:
+                    errors.append("expected at least one structural edge")
+                else:
+                    errors.append(
+                        f"expected {expected_edges} edge(s), got {validation.edge_count}"
+                    )
+            ok = validation.ok and validation.format == expected_format and edge_ok
             rows.append(
                 {
                     "case": case,
@@ -302,8 +407,9 @@ def validate_gate_packets(graph: Any, graph_path: Path) -> list[dict[str, Any]]:
                     "expected_edges": expected_edges,
                     "edges": validation.edge_count,
                     "nodes": validation.node_count,
-                    "ok": validation.ok and validation.format == expected_format and edge_ok,
-                    "errors": list(validation.errors),
+                    "ok": ok,
+                    "failure_reason": "" if ok else "; ".join(errors),
+                    "errors": errors,
                 }
             )
         except Exception as exc:
@@ -317,6 +423,7 @@ def validate_gate_packets(graph: Any, graph_path: Path) -> list[dict[str, Any]]:
                     "edges": 0,
                     "nodes": 0,
                     "ok": False,
+                    "failure_reason": f"{exc.__class__.__name__}: {exc}",
                     "errors": [f"{exc.__class__.__name__}: {exc}"],
                 }
             )
@@ -351,15 +458,29 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         f"- Doc-like nodes: `{report['graph']['doc_like_nodes']}`",
         f"- Code-like nodes: `{report['graph']['code_like_nodes']}`",
         "",
+        "## Scan policy",
+        "",
+        f"- File collection cap: `{report['scan_policy']['max_files']}`",
+        f"- Audited exclusions valid: `{report['scan_policy']['exclusions_valid']}`",
+        f"- Truncation receipt: `{json.dumps(report['scan_policy']['truncation'], sort_keys=True)}`",
+        "",
+        "| Exclusion | Indexed nodes | Valid |",
+        "| --- | ---: | --- |",
+    ]
+    for row in report["scan_policy"]["exclusions"]:
+        lines.append(f"| `{row['name']}` | {row['indexed_nodes']} | `{row['passed']}` |")
+    lines.extend([
+        "",
         "## Query packet validation",
         "",
-        "| Query | Class | Anchors | Format | Valid | Nodes | Edges |",
-        "| --- | --- | ---: | --- | --- | ---: | ---: |",
-    ]
+        "| Query | Class | Anchors | Format | Packet | Semantic | Actionable | Direct | Commands |",
+        "| --- | --- | ---: | --- | --- | --- | --- | ---: | ---: |",
+    ])
     for row in report["queries"]:
         lines.append(
             f"| {row['query']} | `{row['query_class']}` | {row['anchors']} | `{row['packet_format']}` | "
-            f"`{row['packet_valid']}` | {row['packet_nodes']} | {row['packet_edges']} |"
+            f"`{row['packet_valid']}` | `{row['semantic_valid']}` | `{row['actionable_valid']}` | "
+            f"{row['direct_tests']} | {len(row['commands'])} |"
         )
     lines.extend(
         [
@@ -375,6 +496,13 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             f"| `{row['case']}` | `{row['expected_format']}` | `{row['format']}` | "
             f"`{row['ok']}` | {row['nodes']} | {row['edges']} |"
         )
+    gate_failures = [
+        f"- `{row['case']}` failure: {row['failure_reason']}"
+        for row in report["gate_checks"]
+        if not row["ok"] and row.get("failure_reason")
+    ]
+    if gate_failures:
+        lines.extend(["", "### Gate failures", "", *gate_failures])
     if tests.get("tail"):
         lines.extend(["", "## Test tail", "", "```text", tests["tail"], "```"])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -413,6 +541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "repo": str(repo),
         "graph_path": str(graph_path),
         "graph": summarize_graph(graph),
+        "scan_policy": scan_policy_receipt(graph, args.max_nodes),
         "queries": validate_queries(graph, graph_path, args.query),
         "gate_checks": validate_gate_packets(graph, graph_path),
         "saved_reports": load_saved_reports(repo, args.saved_reports),
@@ -426,17 +555,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         "report": str(markdown_path),
         "nodes": report["graph"]["nodes"],
         "edges": report["graph"]["edges"],
-        "queries_valid": sum(row["packet_valid"] for row in report["queries"]),
+        "packets_valid": sum(row["packet_valid"] for row in report["queries"]),
+        "packets_total": len(report["queries"]),
+        "queries_valid": sum(row["query_valid"] for row in report["queries"]),
         "queries_total": len(report["queries"]),
         "gates_valid": sum(row["ok"] for row in report["gate_checks"]),
         "gates_total": len(report["gate_checks"]),
         "tests_status": tests["status"],
     }
-    print(json.dumps(summary, indent=2))
+    summary["packet_status"] = (
+        "passed" if summary["packets_valid"] == summary["packets_total"] else "failed"
+    )
+    summary["gate_status"] = (
+        "passed" if summary["gates_valid"] == summary["gates_total"] else "failed"
+    )
+    summary["query_status"] = (
+        "passed" if summary["queries_valid"] == summary["queries_total"] else "failed"
+    )
     structural_ok = (
         summary["queries_valid"] == summary["queries_total"]
         and summary["gates_valid"] == summary["gates_total"]
     )
     tests_ok = tests["ok"] is not False
-    return 0 if structural_ok and tests_ok else 1
+    summary["overall_ok"] = structural_ok and tests_ok
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["overall_ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
