@@ -1,0 +1,34 @@
+{
+  "projects": {
+    "api": "../../api/.graphgraph/graph.gg",
+    "worker": "../../worker/.graphgraph/graph.gg"
+  },
+  "source_mode": "off",
+  "warmups": 1,
+  "repeats": 3,
+  "gates": {
+    "min_projects": 2,
+    "min_pass_rate": 1.0,
+    "min_mean_recall": 0.9,
+    "min_relation_recall": 0.9,
+    "max_p95_latency_ms": 3000.0,
+    "max_mean_tokens": 2000.0,
+    "require_valid": true
+  },
+  "cases": [
+    {
+      "project": "api",
+      "query": "request authentication dispatch",
+      "expected_nodes": ["src/auth.py"],
+      "expected_relations": ["calls", "imports"],
+      "max_tokens": 2500
+    },
+    {
+      "project": "worker",
+      "query": "queue retry handler",
+      "expected_nodes": ["src/worker.py"],
+      "expected_relations": ["calls"],
+      "max_latency_ms": 2000.0
+    }
+  ]
+}
