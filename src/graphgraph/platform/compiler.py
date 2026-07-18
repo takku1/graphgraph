@@ -14,7 +14,13 @@ from ..planning import (
     refine_plan_for_subgraph,
     route_query,
 )
-from ..retrieval import RetrievalResult, apply_shape_budget, retrieve_context, search_nodes
+from ..retrieval import (
+    RetrievalResult,
+    apply_shape_budget,
+    reconcile_semantic_retrieval_receipt,
+    retrieve_context,
+    search_nodes,
+)
 from .contracts import CapabilityReceipt, EvidenceProvider, ProviderRegistry
 from .evidence_store import EvidenceStore
 from .inference import DEFAULT_RULES, infer_edges
@@ -35,6 +41,7 @@ class GraphProgram:
     hops: int | None = None
     anchor_limit: int | None = None
     scope_mode: str = "strict"
+    anchor_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,7 @@ class CompilationReceipt:
     edges: int
     valid: bool
     structural_validation: str = "not_applicable"
+    semantic_validation: str = "not_applicable"
     answerability: str = "unknown"
     provider_receipts: tuple[dict[str, object], ...] = field(default_factory=tuple)
     source_receipt: dict[str, object] = field(default_factory=dict)
@@ -179,8 +187,15 @@ class GraphRuntime:
             scopes=program.scopes,
             scope_mode=program.scope_mode,
             seed_ids=source_seed_ids,
+            anchor_paths=program.anchor_paths,
         )
         retrieval.metadata["sources"] = source_receipt
+        semantic_errors = reconcile_semantic_retrieval_receipt(
+            graph,
+            retrieval,
+            route=route,
+            automatic_route=(program.query_class or "auto").strip().lower() == "auto",
+        )
         if program.packet is None:
             plan = refine_plan_for_subgraph(
                 plan,
@@ -198,6 +213,7 @@ class GraphRuntime:
             else "fail" if validation is not None
             else "not_applicable"
         )
+        semantic_validation = "pass" if not semantic_errors else "fail"
         answerability = str(
             retrieval.metadata.get("answerability", {}).get("status", "unknown")
         )
@@ -208,12 +224,17 @@ class GraphRuntime:
             anchors=retrieval.starts,
             nodes=len(retrieval.nodes),
             edges=len(retrieval.edges),
-            valid=validation.ok if validation is not None else True,
+            valid=(validation.ok if validation is not None else True) and not semantic_errors,
             structural_validation=structural_validation,
+            semantic_validation=semantic_validation,
             answerability=answerability,
             provider_receipts=tuple(asdict(item) for item in provider_receipts),
             source_receipt=source_receipt,
-            warnings=tuple(warnings) + (validation.errors if validation is not None else ()),
+            warnings=(
+                tuple(warnings)
+                + (validation.errors if validation is not None else ())
+                + tuple(semantic_errors)
+            ),
         )
         return CompilationResult(packet, receipt, graph, route, plan, retrieval)
 

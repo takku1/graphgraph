@@ -12,7 +12,7 @@ class QueryRoute:
     confidence: float
     margin: float
     reasons: tuple[str, ...]
-    router_version: str = "query_router_v2_scope_tests"
+    router_version: str = "query_router_v3_calibrated_recovery"
 
 
 _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
@@ -42,10 +42,10 @@ _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
         r"before (?:new )?capabilit)\b"
     )),
     ("direct_lookup", 4.0, "definition/location intent", re.compile(
-        r"\b(where is|locate|find (?:the )?(?:definition|implementation)|defined in|definition of|show (?:me )?(?:the )?(?:source|definition))\b"
+        r"\b(where (?:is|are)|locate|find (?:the )?(?:definition|implementation)|defined in|definition of|show (?:me )?(?:the )?(?:source|definition))\b"
     )),
     ("subsystem_summary", 3.0, "architecture/overview intent", re.compile(
-        r"\b(architecture|overview|subsystem|how does .{0,80}\bwork|design of|project status|what remains|unfinished|roadmap)\b"
+        r"\b(architecture|overview|subsystem|how (?:does|is|are) .{0,80}\b(?:work|designed|structured)|design of|project status|what remains|unfinished|roadmap)\b"
     )),
 )
 

@@ -24,11 +24,27 @@ from graphgraph.packets import (
     render_gg_max,
 )
 from graphgraph.scanner import scan_directory
-from graphgraph.services.native import graph_shape, render_native_context
+from graphgraph.services.native import graph_shape, render_native_context, scope_freshness
 from graphgraph.validate import validate_graph_json
 
 
 class CliMcpTest(unittest.TestCase):
+    def test_scope_freshness_separates_requested_slice_from_repository_drift(self) -> None:
+        freshness = scope_freshness(
+            {
+                "fresh": False,
+                "changed_count": 1,
+                "deleted_count": 0,
+                "changed_paths": ["src/unrelated.py"],
+                "deleted_paths": [],
+            },
+            ("src/requested.py",),
+        )
+
+        self.assertTrue(freshness["requested_scope_fresh"])
+        self.assertFalse(freshness["repository_fresh"])
+        self.assertEqual(freshness["unrelated_changed_paths"], ["src/unrelated.py"])
+
     def test_cli_version_is_discoverable(self) -> None:
         proc = subprocess.run(
             [sys.executable, "-m", "graphgraph.cli", "--version"],
@@ -488,7 +504,12 @@ class CliMcpTest(unittest.TestCase):
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["query_class"], "reverse_lookup")
-            self.assertEqual(data["routing"]["version"], "query_router_v2_scope_tests")
+            self.assertEqual(data["routing"]["version"], "query_router_v3_calibrated_recovery")
+            self.assertEqual(
+                data["actionable"]["status"],
+                data["retrieval"]["answerability"]["status"],
+            )
+            self.assertTrue(data["actionable"]["change_points"])
             self.assertIn("reverse dependency intent", data["routing"]["reasons"])
 
     def test_mcp_query_context_honors_hops_override(self) -> None:
@@ -569,6 +590,7 @@ class CliMcpTest(unittest.TestCase):
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["anchors"][0]["label"], "fused_fresh_handler")
             self.assertIn("fused_fresh_handler", data["packet"])
+            self.assertTrue(data["actionable"]["freshness"]["requested_scope_fresh"])
 
             refreshed = load_any(graph_path)
             labels = {node.label for node in refreshed.nodes.values()}
@@ -980,6 +1002,29 @@ class CliMcpTest(unittest.TestCase):
         self.assertTrue(payload["retrieval"]["answerability"]["abstained"])
         self.assertIsNone(payload["workflow"]["packet_validation"]["ok"])
         self.assertEqual(payload["workflow"]["packet_validation"]["status"], "not_applicable")
+
+    def test_native_json_validation_covers_packet_and_semantic_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text(
+                "def compile_formula():\n    return 'ok'\n",
+                encoding="utf-8",
+            )
+            packet, _status = render_native_context(
+                query="where is compile_formula",
+                directory=root,
+                graph_path=root / ".graphgraph" / "graph.json",
+                query_class="direct_lookup",
+                json_output=True,
+                max_nodes=20,
+            )
+
+        payload = json.loads(packet)
+        validation = payload["workflow"]["packet_validation"]
+        self.assertTrue(validation["ok"])
+        self.assertEqual(validation["status"], "packet_and_receipt_pass")
+        self.assertEqual(validation["scope"], "packet_and_receipt")
 
     def test_project_status_cold_repo_returns_graceful_no_graph_status(self) -> None:
         # Slice-round finding (docs/bugs/2026-07-17-locus-blackbox-slice-implementation-round.md):

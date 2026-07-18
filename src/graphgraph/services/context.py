@@ -288,6 +288,7 @@ def render_query_context(
     response_metadata: dict[str, object] | None = None,
     source_mode: str = "auto",
     memory_scopes: tuple[str, ...] = ("project", "session"),
+    anchor_paths: tuple[str, ...] = (),
 ) -> str:
     requested_query_class = query_class
     route = route_query(query, query_class)
@@ -312,6 +313,7 @@ def render_query_context(
             f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
             f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"
             f"{response_metadata}|{source_mode}|{memory_scopes}|{source_signature}|{_session_signature()}"
+            f"|{anchor_paths}"
         ),
     )
     # A caller-provided graph is the result of an in-process refresh. Query it
@@ -333,6 +335,7 @@ def render_query_context(
         ),
         source_mode=source_mode,
         memory_scopes=memory_scopes,
+        changed_paths=anchor_paths,
     ).compile(GraphProgram(
         query=query,
         query_class=requested_query_class,
@@ -342,6 +345,7 @@ def render_query_context(
         hops=hops,
         anchor_limit=anchor_limit,
         scope_mode=scope_mode,
+        anchor_paths=anchor_paths,
     ))
     graph = compiled.graph
     route = compiled.route
@@ -354,6 +358,7 @@ def render_query_context(
         message = f"GraphGraph abstained: {reason}."
         if json_anchors:
             payload: dict[str, object] = {
+                "actionable": _actionable_receipt(result, response_metadata),
                 "anchors": [],
                 "packet": "",
                 "query_class": query_class,
@@ -373,10 +378,17 @@ def render_query_context(
 
     graph_packet = compiled.packet
     _raise_if_invalid(graph_packet)
+    answerability = result.metadata.get("answerability", {})
+    partial_message = (
+        f"GraphGraph partial result: {answerability.get('reason', 'receipt is incomplete')}."
+        if answerability.get("abstained")
+        else ""
+    )
 
     if json_anchors and show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         payload = {
+                "actionable": _actionable_receipt(result, response_metadata),
                 "anchors": [
                     {
                         "id": match.node.id,
@@ -399,12 +411,15 @@ def render_query_context(
                 "retrieval": result.metadata,
                 "packet": graph_packet,
             }
+        if partial_message:
+            payload["message"] = partial_message
         if response_metadata:
             payload.update(response_metadata)
         response = json.dumps(payload, indent=2)
     elif show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         out_lines = [
+            *([partial_message] if partial_message else []),
             f"ROUTE: {query_class} confidence={route.confidence:.3f} margin={route.margin:.3f} "
             f"reason={'; '.join(route.reasons)}",
             f"PLAN: {json.dumps(result.metadata, separators=(',', ':'), ensure_ascii=False)}",
@@ -417,7 +432,7 @@ def render_query_context(
         out_lines.extend(["\nGRAPH:", graph_packet])
         response = "\n".join(out_lines)
     else:
-        response = graph_packet
+        response = f"{partial_message}\n\n{graph_packet}" if partial_message else graph_packet
 
     cache.set(
         resolved_graph_path,
@@ -427,6 +442,48 @@ def render_query_context(
         paths=_node_paths(graph, result.nodes),
     )
     return response
+
+
+def _actionable_receipt(
+    result: object,
+    response_metadata: dict[str, object] | None,
+) -> dict[str, object]:
+    metadata = getattr(result, "metadata", {})
+    answerability = metadata.get("answerability", {})
+    affected = metadata.get("affected_tests", {})
+    facet_coverage = metadata.get("facet_coverage", {})
+    freshness: object = {}
+    if response_metadata:
+        workflow = response_metadata.get("workflow", {})
+        if isinstance(workflow, dict):
+            freshness = workflow.get("freshness", {})
+        if not freshness:
+            freshness = response_metadata.get("freshness", {})
+    return {
+        "status": answerability.get("status", "unknown"),
+        "change_points": [
+            {
+                "id": match.node.id,
+                "label": match.node.label,
+                "path": match.node.path,
+                "line": match.node.line,
+            }
+            for match in getattr(result, "matches", ())[:5]
+        ],
+        "missing_evidence": list(facet_coverage.get("unfulfilled", ()))
+        if isinstance(facet_coverage, dict)
+        else [],
+        "tests": {
+            "commands_by_role": affected.get("commands_by_role", {})
+            if isinstance(affected, dict)
+            else {},
+            "commands": list(affected.get("commands", ()))
+            if isinstance(affected, dict)
+            else [],
+        },
+        "freshness": freshness,
+        "semantic_validation": metadata.get("semantic_validation", {}),
+    }
 
 
 def _raise_if_invalid(packet: str) -> None:

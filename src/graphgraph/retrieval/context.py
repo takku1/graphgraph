@@ -924,6 +924,133 @@ def _context_node_score(node_id: str, edge_scores: dict[str, float], path: str) 
     return score
 
 
+def preferred_path_anchor_matches(
+    graph: Graph,
+    query: str,
+    query_class: str,
+    paths: tuple[str, ...],
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple[Match, ...]:
+    """Compile exact edited paths into bounded per-file/per-facet anchor hints."""
+    anchor_query = structural_anchor_query(query, query_class)
+    facet_queries = tuple(
+        candidate
+        for label, terms in facets
+        for evidence_terms in (_facet_evidence_terms(terms),)
+        for candidate in facet_search_queries(" ".join(evidence_terms) or label, evidence_terms)
+    )
+    queries = tuple(dict.fromkeys((anchor_query, *facet_queries)))
+    degree: dict[str, int] = {}
+    for edge in graph.edges:
+        if edge.active:
+            degree[edge.source] = degree.get(edge.source, 0) + 1
+            degree[edge.target] = degree.get(edge.target, 0) + 1
+
+    per_path: list[list[Match]] = []
+    for raw_path in dict.fromkeys(paths):
+        normalized = raw_path.replace("\\", "/").strip("/")
+        candidates: dict[str, Match] = {}
+        query_winners: list[str] = []
+        for candidate_query in queries:
+            scoped = [
+                match
+                for match in search_nodes(
+                graph,
+                candidate_query,
+                limit=8,
+                doc_intensity=0.0,
+                personalize=False,
+                scopes=(normalized,),
+                )
+                if match.node.path.replace("\\", "/").strip("/") == normalized
+                if not (
+                    query_class == "affected_tests" and _is_test_node(match.node)
+                )
+                if match.node.kind not in {
+                    "python", "rust", "javascript", "typescript", "go", "java", "c", "cpp",
+                }
+            ]
+            if scoped:
+                winner = max(
+                    scoped,
+                    key=lambda match: (match.score, degree.get(match.node.id, 0), match.node.id),
+                )
+                query_winners.append(winner.node.id)
+            for match in scoped:
+                prior = candidates.get(match.node.id)
+                if prior is None or match.score > prior.score:
+                    candidates[match.node.id] = match
+        if not candidates:
+            for node in graph.nodes.values():
+                if not node.active or node.path.replace("\\", "/").strip("/") != normalized:
+                    continue
+                if query_class == "affected_tests" and _is_test_node(node):
+                    continue
+                if node.kind in NON_STRUCTURAL_KINDS | {
+                    "python", "rust", "javascript", "typescript", "go", "java", "c", "cpp",
+                }:
+                    continue
+                candidates[node.id] = Match(node, 0.0, ("path_fallback",))
+        if not candidates:
+            continue
+        winner_ids = set(query_winners)
+        ranked = sorted(
+            candidates.values(),
+            key=lambda match: (
+                match.node.id not in winner_ids,
+                -match.score,
+                -degree.get(match.node.id, 0),
+                match.node.id,
+            ),
+        )
+        per_path.append(ranked)
+
+    candidate_pool = {
+        match.node.id: match
+        for ranked in per_path
+        for match in ranked
+    }
+    ordered: list[Match] = []
+    for _label, terms in facets:
+        evidence_terms = _facet_evidence_terms(terms)
+        eligible = [
+            match
+            for match in candidate_pool.values()
+            if _facet_matches_node(match.node, evidence_terms)
+        ]
+        if eligible:
+            ordered.append(max(
+                eligible,
+                key=lambda match: (match.score, degree.get(match.node.id, 0), match.node.id),
+            ))
+    ordered.extend(ranked[0] for ranked in per_path if ranked)
+    depth = 1
+    while len(ordered) < len(candidate_pool):
+        added = False
+        for ranked in per_path:
+            if depth < len(ranked):
+                ordered.append(ranked[depth])
+                added = True
+        if not added:
+            break
+        depth += 1
+
+    preferred: list[Match] = []
+    seen: set[str] = set()
+    for match in ordered:
+        if match.node.id in seen:
+            continue
+        seen.add(match.node.id)
+        preferred.append(Match(
+            match.node,
+            max(100.0 - len(preferred), match.score + 20.0),
+            tuple(dict.fromkeys(("exact_changed_path", *match.reasons))),
+        ))
+        if len(preferred) >= 12:
+            break
+    return tuple(preferred)
+
+
 def retrieve_context(
     graph: Graph,
     query: str,
@@ -934,12 +1061,13 @@ def retrieve_context(
     scopes: tuple[str, ...] = (),
     scope_mode: str = "strict",
     seed_ids: tuple[str, ...] = (),
+    anchor_paths: tuple[str, ...] = (),
 ) -> RetrievalResult:
     if scope_mode not in {"strict", "expand"}:
         raise ValueError(f"unknown scope mode: {scope_mode}")
     query = sanitize_query(query)
     identifiers = explicit_query_identifiers(query)
-    facet_aware = query_class in {"affected_tests", "multi_hop_path", "negative_query"} or (
+    facet_aware = query_class in {"affected_tests", "multi_hop_path", "negative_query", "doc_summary"} or (
         query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers)
     )
     facets = query_facets(query) if facet_aware else ()
@@ -972,10 +1100,18 @@ def retrieve_context(
         for node_id in dict.fromkeys(seed_ids)
         if node_id in graph.nodes and graph.nodes[node_id].active
     )
-    if source_matches:
-        source_ids = {match.node.id for match in source_matches}
-        matches = source_matches + tuple(
-            match for match in matches if match.node.id not in source_ids
+    path_matches = preferred_path_anchor_matches(
+        graph,
+        query,
+        query_class,
+        anchor_paths,
+        facets,
+    )
+    priority_matches = (*path_matches, *source_matches)
+    if priority_matches:
+        priority_ids = {match.node.id for match in priority_matches}
+        matches = priority_matches + tuple(
+            match for match in matches if match.node.id not in priority_ids
         )
     if facets:
         # A single bag-of-words search for a conjunction is dominated by nodes
@@ -1040,6 +1176,8 @@ def retrieve_context(
             effective_anchor_limit,
             min(12, len(source_matches) + plan.anchor_limit),
         )
+    if path_matches:
+        effective_anchor_limit = max(effective_anchor_limit, min(12, len(path_matches)))
     if facets:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(facets)))
     selected_matches = select_anchor_matches(
@@ -1059,6 +1197,11 @@ def retrieve_context(
             graph=graph,
             prefer_code=query_class == "multi_hop_path",
         )
+    if path_matches:
+        # Exact edited paths are an explicit ANCHOR instruction. They define
+        # roots; ordinary lexical matches may still enter through structural
+        # expansion, but cannot become competing roots.
+        selected_matches = path_matches[:effective_anchor_limit]
     if query_class == "negative_query" and facets:
         selected_ids = {match.node.id for match in selected_matches}
         anchor_coverage = facet_coverage(
@@ -1165,6 +1308,23 @@ def retrieve_context(
         "planner_version": plan.planner_version,
         "node_budget": plan.node_budget,
         "anchor_limit": effective_anchor_limit,
+        "anchor_paths": [
+            {
+                "path": path,
+                "role": (
+                    "test_evidence_candidate"
+                    if query_class == "affected_tests" and _is_test_path(path)
+                    else "primary_root"
+                ),
+                "anchors": [
+                    match.node.id
+                    for match in selected_matches
+                    if match.node.path.replace("\\", "/").strip("/")
+                    == path.replace("\\", "/").strip("/")
+                ],
+            }
+            for path in dict.fromkeys(anchor_paths)
+        ],
     })
     if facets:
         coverage = facet_coverage(graph, nodes, facets)
@@ -1274,6 +1434,7 @@ def packet_quality_metadata(
     }
     doc_nodes = [graph.nodes[node_id] for node_id in nodes if graph.nodes[node_id].kind in NON_STRUCTURAL_KINDS]
     grounded_doc_nodes = sum(1 for node in doc_nodes if node.facts)
+    topology_trust = query_topology_trust(edges)
     return {
         "quality": {
             "nodes": len(nodes),
@@ -1286,7 +1447,38 @@ def packet_quality_metadata(
             "grounded_doc_nodes": grounded_doc_nodes,
             "ungrounded_doc_nodes": len(doc_nodes) - grounded_doc_nodes,
             "document_warning": "no grounded document body content" if doc_nodes and grounded_doc_nodes == 0 else "",
+            "topology_trust": topology_trust,
         }
+    }
+
+
+def query_topology_trust(edges: list[Edge]) -> dict[str, object]:
+    """Calibrate topology claims against only the selected packet's call edges."""
+    call_edges = [edge for edge in edges if edge.type == "calls"]
+    ambiguous_calls = [
+        edge for edge in call_edges
+        if "ambiguous" in edge.provenance.casefold() or edge.confidence < 0.6
+    ]
+    trusted_calls = [
+        edge for edge in call_edges
+        if edge not in ambiguous_calls
+        and edge.confidence * provenance_confidence(edge.provenance) >= 0.7
+    ]
+    topology_status = (
+        "not_applicable"
+        if not call_edges
+        else "low"
+        if ambiguous_calls and len(ambiguous_calls) > len(trusted_calls)
+        else "mixed"
+        if ambiguous_calls
+        else "high"
+    )
+    return {
+        "status": topology_status,
+        "call_edges": len(call_edges),
+        "trusted_call_edges": len(trusted_calls),
+        "ambiguous_call_edges": len(ambiguous_calls),
+        "scope": "selected_packet",
     }
 
 
@@ -1327,6 +1519,16 @@ def _is_test_path(path: str) -> bool:
     return "/tests/" in f"/{normalized}" or name.startswith("test_") or name.endswith(("_test.py", ".test.ts", ".spec.ts"))
 
 
+def _is_test_node(node: object) -> bool:
+    facts = {
+        str(fact).casefold()
+        for fact in (getattr(node, "facts", ()) or ())
+    }
+    return _is_test_path(str(getattr(node, "path", ""))) or bool(
+        facts & {"role:test", "rust_attribute:test"}
+    )
+
+
 def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     facets: list[tuple[str, tuple[str, ...]]] = []
     seen: set[tuple[str, ...]] = set()
@@ -1357,6 +1559,8 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "reports", "show", "shows", "including", "include", "through", "chain",
         "every", "each", "all", "part", "parts", "entire", "whole", "requested", "above",
         "positive", "negative",
+        "documentation", "documents", "document", "docs", "doc",
+        "say", "says", "said", "under",
         "affected", "affecting", "impact", "impacted",
         "consume", "consumes", "consumed", "consumer", "use", "uses", "used",
         "should", "if", "change", "changes", "changed", "changing", "behavior", "behaviour",
@@ -1364,6 +1568,8 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "assess", "assesses", "assessed", "assessing",
         "gate", "gates", "gated", "gating",
         "directly", "validate", "validates", "validated", "validating", "validation",
+        "identify", "identifies", "identified", "identifying",
+        "exact", "command", "commands",
         "where", "what", "why", "who", "when", "is", "are", "was", "were",
         "the", "a", "an", "from", "into", "flow", "flows",
         "nonexistent", "missing", "implemented", "implements",
@@ -1535,6 +1741,8 @@ def reserve_facet_matches(
 _FACET_PROCESS_TERMS = {
     "discovery", "equivalence", "rationalization", "implementation", "implementations",
     "measurement", "measurements",
+    "anchoring", "calibrated", "calibration", "consistency", "query", "readiness",
+    "selection", "specific",
 }
 
 
@@ -1630,8 +1838,8 @@ def _qualified_query_symbols(query: str) -> tuple[tuple[str, str], ...]:
     ))
 
 
-def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
-    """Return (package, integration target, optional module filter)."""
+def _cargo_source_context(source: str) -> tuple[str, Path, Path] | None:
+    """Return package, manifest directory, and source-relative path."""
     if not source:
         return None
     source_path = Path(source)
@@ -1649,7 +1857,23 @@ def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
         relative = source_path.resolve().relative_to(manifest.parent.resolve())
     except (OSError, ValueError, tomllib.TOMLDecodeError):
         return None
-    if not package or not relative.parts or relative.parts[0] != "tests" or source_path.suffix != ".rs":
+    if not package or not relative.parts or source_path.suffix != ".rs":
+        return None
+    return package, manifest.parent, relative
+
+
+def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
+    """Return (package, integration target, optional module filter)."""
+    context = _cargo_source_context(source)
+    if context is None:
+        return None
+    package, manifest_dir, relative = context
+    if relative.parts[0] != "tests":
+        return None
+    source_path = manifest_dir / relative
+    try:
+        data = tomllib.loads((manifest_dir / "Cargo.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
         return None
 
     # Explicit [[test]] targets are authoritative. A consolidated harness may
@@ -1660,13 +1884,13 @@ def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
         target_path = str(target.get("path", "")).strip()
         if not target_name or not target_path:
             continue
-        harness = (manifest.parent / target_path).resolve()
+        harness = (manifest_dir / target_path).resolve()
         if source_path.resolve() == harness:
             return package, target_name, ""
         if harness.name in {"main.rs", "lib.rs"} and harness.parent in source_path.resolve().parents:
             return package, target_name, source_path.stem
 
-    tests_root = manifest.parent / "tests"
+    tests_root = manifest_dir / "tests"
     nested = relative.parts[1:]
     if len(nested) == 1:
         return package, source_path.stem, ""
@@ -1680,9 +1904,35 @@ def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
     return None
 
 
-def _test_command(path: str, source: str = "") -> str:
+def _cargo_inline_rust_test_target(source: str) -> tuple[str, str, str] | None:
+    """Return package, module filter, and Cargo target for an inline Rust test."""
+    context = _cargo_source_context(source)
+    if context is None:
+        return None
+    package, manifest_dir, relative = context
+    if relative.parts[0] != "src":
+        return None
+    if (manifest_dir / "src" / "lib.rs").is_file():
+        target = "--lib"
+    else:
+        return None
+    module_parts = list(relative.parts[1:])
+    filename = module_parts.pop() if module_parts else ""
+    stem = Path(filename).stem
+    if stem not in {"lib", "main", "mod"}:
+        module_parts.append(stem)
+    module_filter = "::".join((*module_parts, "tests"))
+    return package, module_filter, target
+
+
+def _test_command(path: str, source: str = "", *, inline_test: bool = False) -> str:
     normalized = path.replace("\\", "/")
     parts = normalized.split("/")
+    if inline_test and normalized.endswith(".rs"):
+        cargo_target = _cargo_inline_rust_test_target(source)
+        if cargo_target is not None:
+            package, module_filter, target = cargo_target
+            return f"cargo test -p {package} {module_filter} {target}"
     if len(parts) >= 4 and parts[0] == "crates" and "tests" in parts and normalized.endswith(".rs"):
         cargo_target = _cargo_test_target(source)
         if cargo_target is not None:
@@ -1741,7 +1991,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
     transitive: list[dict[str, object]] = []
     for node_id, distance in sorted(distances.items(), key=lambda item: (item[1], item[0])):
         node = graph.nodes.get(node_id)
-        if distance == 0 or node is None or not _is_test_path(node.path):
+        if distance == 0 or node is None or not _is_test_node(node):
             continue
         evidence_edges = evidence_by_node.get(node_id, ())
         item = {
@@ -1810,7 +2060,13 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         return list(dict.fromkeys(
             command
             for item in items
-            if (command := _test_command(str(item["path"]), graph.nodes[str(item["id"])].source))
+            if (
+                command := _test_command(
+                    str(item["path"]),
+                    graph.nodes[str(item["id"])].source,
+                    inline_test=not _is_test_path(str(item["path"])),
+                )
+            )
         ))
 
     direct_commands = commands_for(direct)
@@ -1826,7 +2082,11 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
                     "root_paths": item["root_paths"],
                 }
                 for item in all_items
-                if _test_command(str(item["path"]), graph.nodes[str(item["id"])].source) == command
+                if _test_command(
+                    str(item["path"]),
+                    graph.nodes[str(item["id"])].source,
+                    inline_test=not _is_test_path(str(item["path"])),
+                ) == command
             ],
         }
         for command in dict.fromkeys((*direct_commands, *transitive_commands))
@@ -1842,6 +2102,144 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         "command_provenance": command_provenance,
         "omitted_transitive": omitted_transitive,
     }
+
+
+def reconcile_semantic_retrieval_receipt(
+    graph: Graph,
+    result: RetrievalResult,
+    *,
+    route: object,
+    automatic_route: bool,
+) -> tuple[str, ...]:
+    """Type-check and calibrate the agent-facing retrieval receipt."""
+    metadata = result.metadata
+    answerability = dict(metadata.get("answerability", {}))
+    status = str(answerability.get("status", "unknown"))
+    abstained = bool(answerability.get("abstained", False))
+    reasons = [str(answerability.get("reason", "")).strip()]
+
+    facet_coverage = metadata.get("facet_coverage", {})
+    structural_coverage = metadata.get("structural_facet_coverage", {})
+    unfulfilled = [
+        *(
+            str(item)
+            for item in (
+                facet_coverage.get("unfulfilled", ())
+                if isinstance(facet_coverage, dict)
+                else ()
+            )
+        ),
+        *(
+            str(item)
+            for item in (
+                structural_coverage.get("unfulfilled", ())
+                if isinstance(structural_coverage, dict)
+                else ()
+            )
+        ),
+    ]
+    if unfulfilled:
+        if status != "unanswerable":
+            status = "incomplete"
+        abstained = True
+        reasons.append("unfulfilled requested facets: " + ", ".join(dict.fromkeys(unfulfilled)))
+
+    query_class = str(getattr(route, "query_class", ""))
+    route_confidence = float(getattr(route, "confidence", 1.0))
+    if automatic_route and route_confidence < 0.25:
+        status = "incomplete"
+        abstained = True
+        reasons.append(f"automatic routing confidence is low ({route_confidence:.3f})")
+        metadata["routing_recovery"] = {
+            "strategy": "calibrated_abstention",
+            "confidence": route_confidence,
+            "suggestions": [
+                "add an exact symbol or path",
+                f"retry with an explicit query_class instead of {query_class or 'auto'}",
+                "split compound requests into one bounded facet per query",
+            ],
+        }
+
+    affected = metadata.get("affected_tests")
+    if query_class == "affected_tests" and isinstance(affected, dict):
+        recommendations = [
+            *affected.get("direct", ()),
+            *affected.get("transitive", ()),
+        ]
+        if not recommendations:
+            status = "incomplete"
+            abstained = True
+            reasons.append("no affected-test evidence was found")
+
+    quality = metadata.get("quality", {})
+    document_warning = str(quality.get("document_warning", "")) if isinstance(quality, dict) else ""
+    if document_warning:
+        if status != "unanswerable":
+            status = "incomplete"
+        abstained = True
+        reasons.append(document_warning)
+
+    answerability = {
+        "status": status,
+        "abstained": abstained,
+        "reason": "; ".join(dict.fromkeys(reason for reason in reasons if reason)),
+    }
+    metadata["answerability"] = answerability
+
+    errors: list[str] = []
+    if status == "answerable" and unfulfilled:
+        errors.append("answerable receipt has unfulfilled facets")
+    if status in {"incomplete", "unanswerable"} and not abstained:
+        errors.append(f"{status} receipt must set abstained=true")
+    if document_warning and status == "answerable":
+        errors.append("document warning cannot coexist with answerable status")
+
+    if query_class == "affected_tests" and isinstance(affected, dict):
+        recommended_ids = {
+            str(item.get("id"))
+            for role in ("direct", "transitive")
+            for item in affected.get(role, ())
+            if isinstance(item, dict) and item.get("id")
+        }
+        packet_direct_tests = {
+            edge.source
+            for edge in graph.edges
+            if edge.active
+            and edge.type in {"calls", "references", "tests"}
+            and edge.source in result.nodes
+            and edge.target in result.starts
+            and edge.source in graph.nodes
+            and _is_test_node(graph.nodes[edge.source])
+        }
+        missing = sorted(packet_direct_tests - recommended_ids)
+        if missing:
+            errors.append(
+                "packet contains direct test evidence omitted from affected_tests: "
+                + ", ".join(missing)
+            )
+        commands = [str(item) for item in affected.get("commands", ())]
+        provenance_commands = {
+            str(item.get("command"))
+            for item in affected.get("command_provenance", ())
+            if isinstance(item, dict) and item.get("command")
+        }
+        missing_provenance = sorted(set(commands) - provenance_commands)
+        if missing_provenance:
+            errors.append(
+                "affected-test commands lack provenance: " + ", ".join(missing_provenance)
+            )
+
+    metadata["semantic_validation"] = {
+        "ok": not errors,
+        "status": "semantic_pass" if not errors else "semantic_fail",
+        "scope": "packet_receipt_consistency",
+        "errors": errors,
+    }
+    return tuple(errors)
+
+
+# Compatibility name for callers that adopted the first public spelling.
+reconcile_retrieval_receipt = reconcile_semantic_retrieval_receipt
 
 
 def reserve_affected_test_evidence(
@@ -1872,7 +2270,7 @@ def reserve_affected_test_evidence(
     out_nodes = {
         node_id
         for node_id in nodes
-        if not _is_test_path(graph.nodes[node_id].path) or node_id in retained_tests
+        if not _is_test_node(graph.nodes[node_id]) or node_id in retained_tests
     }
     protected = set(starts) | set(direct_ids)
     for node_id in direct_ids:
@@ -2166,13 +2564,17 @@ def select_anchor_matches(
     if query_class == "affected_tests":
         implementation = [
             match for match in matches
-            if not _is_test_path(match.node.path)
+            if not _is_test_node(match.node)
             and match.node.kind not in NON_STRUCTURAL_KINDS
             and not _unrequested_identifier_sibling(match.node.label, explicit)
         ]
         if implementation:
-            selected: list[Match] = []
-            seen: set[str] = set()
+            selected = [
+                match
+                for match in implementation
+                if "exact_changed_path" in match.reasons
+            ][:anchor_limit]
+            seen = {match.node.id for match in selected}
             adjacency: dict[str, set[str]] = {}
             if graph is not None:
                 for edge in graph.edges:

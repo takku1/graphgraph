@@ -177,6 +177,7 @@ class TreeSitterExtractor:
                     kind=d.kind,
                     path=source.rel,
                     summary=summary,
+                    facts=d.facts,
                     source=str(source.path),
                     confidence=self.confidence,
                 )
@@ -307,6 +308,7 @@ class _TsDef:
     line: int
     extra: tuple[str, ...] = ()
     owner: str = ""
+    facts: tuple[str, ...] = ()
 
 
 def _definition_impl_qualifier(definition: _TsDef) -> str:
@@ -517,6 +519,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             start=int(node.start_byte),
             end=int(node.end_byte),
             line=int(node.start_point[0]) + 1,
+            facts=_definition_facts(source, node, text),
         ))
     if source.path.suffix.lower() != ".rs":
         return _attach_lexical_method_owners(defs)
@@ -535,6 +538,22 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
         parent = min(parents, key=lambda item: item.end - item.start)
         owned.append(replace(definition, kind="method", owner=parent.extra[1], extra=parent.extra))
     return owned
+
+
+def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, ...]:
+    """Project language attributes into small, queryable normalized-IR facts."""
+    if source.path.suffix.lower() != ".rs" or node.type not in {"function_item", "function_signature_item"}:
+        return ()
+    snippet = _node_text(node, text)
+    prefix = _node_text_range(
+        text,
+        max(0, int(node.start_byte) - 256),
+        int(node.start_byte),
+    )
+    test_attribute = r"#\s*\[\s*(?:tokio::)?test(?:\s*\([^]]*\))?\s*\]"
+    if re.search(test_attribute, snippet) or re.search(test_attribute + r"\s*$", prefix):
+        return ("role:test", "rust_attribute:test")
+    return ()
 
 
 def _attach_lexical_method_owners(defs: list[_TsDef]) -> list[_TsDef]:

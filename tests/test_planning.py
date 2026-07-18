@@ -35,12 +35,14 @@ class PlanningTest(unittest.TestCase):
     def test_query_router_maps_agent_intents_without_graph_io(self) -> None:
         cases = {
             "where is render_packet defined": "direct_lookup",
+            "where are facet coverage and answerability reconciled": "direct_lookup",
             "what calls validate_packet and where is it tested": "reverse_lookup",
             "which tests cover run_formula_yield_benchmark and should run": "affected_tests",
             "trace request parsing through planning to packet rendering": "multi_hop_path",
             "how does run_formula_yield_benchmark depend on validate_candidates_detailed": "multi_hop_path",
             "what is the blast radius if Edge changes": "blast_radius",
             "how does retrieval work": "subsystem_summary",
+            "how is the low-level graph IR designed and structured": "subsystem_summary",
             "README installation and usage guide": "doc_summary",
             "What is the ordered execution backlog and what happens next before new capability development?": "doc_summary",
             "is legacy_cache unused and does it have no callers": "negative_query",

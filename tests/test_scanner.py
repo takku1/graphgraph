@@ -857,6 +857,8 @@ class ScannerTest(unittest.TestCase):
             if edge.type == "references"
             and result.nodes[edge.source].label == "validates_report"
         ]
+        test_node = next(node for node in result.nodes.values() if node.label == "validates_report")
+        self.assertEqual(test_node.facts, ("role:test", "rust_attribute:test"))
         self.assertEqual(
             {result.nodes[edge.target].label for edge in references},
             {"timings_ms", "candidate_generation", "extraction_only"},

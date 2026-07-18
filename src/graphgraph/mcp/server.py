@@ -33,6 +33,7 @@ from ..services.native import (
     refresh_saved_graph,
     remove_paths_validated_graph,
     scan_validated_graph,
+    scope_freshness,
     update_paths_validated_graph,
 )
 
@@ -683,6 +684,9 @@ def build_query_context(args: dict[str, Any]) -> str:
             "deleted_paths": list(status.deleted_paths),
             "repaired": status.repaired,
         }
+        anchor_paths = tuple(dict.fromkeys((*changed_paths, *status.changed_paths)))
+    else:
+        anchor_paths = ()
     freshness = (
         {"fresh": True, "changed_count": 0, "deleted_count": 0, "changed_paths": [], "deleted_paths": []}
         if sync_git
@@ -691,7 +695,12 @@ def build_query_context(args: dict[str, Any]) -> str:
             output_path=graph_path,
         )
     )
-    metadata: dict[str, object] = {"freshness": freshness}
+    metadata: dict[str, object] = {
+        "freshness": scope_freshness(
+            freshness,
+            tuple(dict.fromkeys((*changed_paths, *deleted_paths))),
+        )
+    }
     if refresh_metadata is not None:
         metadata["refresh"] = refresh_metadata
     return render_query_context(
@@ -711,6 +720,7 @@ def build_query_context(args: dict[str, Any]) -> str:
         response_metadata=metadata,
         source_mode=str(args.get("source_mode") or "auto"),
         memory_scopes=tuple(str(scope) for scope in args.get("memory_scopes") or ("project", "session")),
+        anchor_paths=anchor_paths,
     )
 
 

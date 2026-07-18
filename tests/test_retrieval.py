@@ -1694,6 +1694,158 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual(affected["commands"], ["cargo test -p locus-frontends --test suite fpcore_test"])
         self.assertEqual(affected["direct"][0]["covers"], [{"id": "RUN", "label": "parse_fpcore"}])
 
+    def test_affected_tests_treats_inline_rust_test_facts_as_direct_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-engine"
+            source = crate / "src" / "scheduling.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-engine"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "src" / "lib.rs").write_text("mod scheduling;\n", encoding="utf-8")
+            source.write_text(
+                "fn schedule_candidates_for_expr() {}\n"
+                "#[cfg(test)] mod tests {\n"
+                "    #[test] fn reports_template() { schedule_candidates_for_expr(); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            graph = Graph(
+                nodes={
+                    "RUN": Node(
+                        "RUN",
+                        "schedule_candidates_for_expr",
+                        "function",
+                        "crates/locus-engine/src/scheduling.rs",
+                    ),
+                    "TEST": Node(
+                        "TEST",
+                        "reports_template",
+                        "function",
+                        "crates/locus-engine/src/scheduling.rs",
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                },
+                edges=[Edge("TEST", "RUN", "calls", provenance="tree_sitter")],
+            )
+            result = retrieve_context(
+                graph,
+                "which tests cover schedule_candidates_for_expr",
+                "affected_tests",
+                hops=2,
+            )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertEqual(
+            affected["commands"],
+            ["cargo test -p locus-engine scheduling::tests --lib"],
+        )
+
+    def test_exact_changed_paths_compile_to_primary_per_file_anchors(self) -> None:
+        graph = Graph(
+            nodes={
+                "CORE": Node(
+                    "CORE",
+                    "evidence_is_consistent",
+                    "method",
+                    "crates/locus-core/src/finding.rs",
+                ),
+                "ENGINE": Node(
+                    "ENGINE",
+                    "ScheduleArtifactStatus",
+                    "enum",
+                    "crates/locus-engine/src/scheduling.rs",
+                ),
+                "FRONTEND": Node(
+                    "FRONTEND",
+                    "resolve_project_effects",
+                    "function",
+                    "crates/locus-frontends/src/source/effects.rs",
+                ),
+                "NOISE": Node(
+                    "NOISE",
+                    "obligation_consistency_schedule_effects",
+                    "function",
+                    "src/unrelated_scope_consistency.rs",
+                    summary="obligation consistency schedule artifact effects",
+                ),
+            },
+        )
+        result = retrieve_context(
+            graph,
+            (
+                "Validate obligation consistency, schedule artifact readiness, "
+                "and conservative interprocedural effects; identify affected tests."
+            ),
+            "affected_tests",
+            hops=1,
+            anchor_paths=(
+                "crates/locus-core/src/finding.rs",
+                "crates/locus-engine/src/scheduling.rs",
+                "crates/locus-frontends/src/source/effects.rs",
+            ),
+        )
+
+        self.assertTrue({"CORE", "ENGINE", "FRONTEND"} <= set(result.starts))
+        self.assertNotIn("NOISE", result.starts)
+        self.assertTrue(all(item["anchors"] for item in result.metadata["anchor_paths"]))
+
+    def test_exact_changed_path_reserves_multiple_query_facets_in_one_file(self) -> None:
+        path = "src/graphgraph/retrieval/context.py"
+        graph = Graph(
+            nodes={
+                "ANCHOR": Node("ANCHOR", "preferred_path_anchor_matches", "function", path),
+                "RECEIPT": Node("RECEIPT", "reconcile_retrieval_receipt", "function", path),
+                "NOISE": Node("NOISE", "unrelated_helper", "function", path),
+            }
+        )
+
+        result = retrieve_context(
+            graph,
+            "Validate exact path anchoring and semantic receipt consistency.",
+            "multi_hop_path",
+            hops=1,
+            anchor_paths=(path,),
+        )
+
+        self.assertTrue({"ANCHOR", "RECEIPT"} <= set(result.starts))
+        self.assertNotIn("NOISE", result.starts)
+
+    def test_packet_quality_reports_query_specific_topology_trust(self) -> None:
+        graph = Graph(
+            nodes={
+                "ENTRY": Node("ENTRY", "entry", "function", "src/app.py"),
+                "TRUSTED": Node("TRUSTED", "trusted", "function", "src/app.py"),
+                "AMBIGUOUS": Node("AMBIGUOUS", "ambiguous", "method", "src/app.py"),
+            },
+            edges=[
+                Edge(
+                    "ENTRY",
+                    "TRUSTED",
+                    "calls",
+                    confidence=0.95,
+                    provenance="tree_sitter_type_resolved",
+                ),
+                Edge(
+                    "ENTRY",
+                    "AMBIGUOUS",
+                    "calls",
+                    confidence=0.35,
+                    provenance="tree_sitter_ambiguous_call",
+                ),
+            ],
+        )
+
+        result = retrieve_context(graph, "how does entry work", "subsystem_summary", hops=1)
+
+        topology = result.metadata["quality"]["topology_trust"]
+        self.assertEqual(topology["status"], "mixed")
+        self.assertEqual(topology["trusted_call_edges"], 1)
+        self.assertEqual(topology["ambiguous_call_edges"], 1)
+
     def test_qualified_method_query_selects_only_its_own_test(self) -> None:
         path = "crates/locus-pipeline/src/yield_benchmark.rs"
         graph = Graph(
@@ -2021,6 +2173,110 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual(result.metadata["answerability"]["status"], "unanswerable")
         self.assertIn("quantum banana scheduler", result.metadata["facet_coverage"]["unfulfilled"])
         self.assertEqual(result.metadata["mention_coverage"]["coverage_ratio"], 1.0)
+
+    def test_compiler_abstains_on_low_confidence_automatic_route(self) -> None:
+        from graphgraph.platform import GraphProgram, GraphRuntime
+
+        graph = Graph(
+            nodes={
+                "RECEIPT": Node(
+                    "RECEIPT",
+                    "receipt consistency",
+                    "paragraph",
+                    "docs/architecture.md",
+                    summary="Facet coverage and answerability telemetry.",
+                )
+            }
+        )
+
+        compiled = GraphRuntime(graph).compile(
+            GraphProgram(query="facet coverage answerability reconciliation")
+        )
+
+        self.assertLess(compiled.route.confidence, 0.25)
+        self.assertEqual(compiled.retrieval.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(compiled.retrieval.metadata["answerability"]["abstained"])
+        self.assertEqual(
+            compiled.retrieval.metadata["routing_recovery"]["strategy"],
+            "calibrated_abstention",
+        )
+        self.assertEqual(compiled.receipt.semantic_validation, "pass")
+
+    def test_semantic_validation_rejects_packet_tests_omitted_from_receipt(self) -> None:
+        from graphgraph.planning import QueryRoute
+        from graphgraph.retrieval import reconcile_retrieval_receipt
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "compile_formula", "function", "src/compiler.py"),
+                "TEST": Node("TEST", "test_compile_formula", "function", "tests/test_compiler.py"),
+            },
+            edges=[Edge("TEST", "TARGET", "calls", provenance="tree_sitter")],
+        )
+        result = retrieve_context(
+            graph,
+            "which tests cover compile_formula",
+            "affected_tests",
+            hops=2,
+        )
+        result.metadata["affected_tests"]["direct"] = []
+        result.metadata["affected_tests"]["transitive"] = []
+
+        errors = reconcile_retrieval_receipt(
+            graph,
+            result,
+            route=QueryRoute("affected_tests", 1.0, 1.0, ("explicit query class",)),
+            automatic_route=False,
+        )
+
+        self.assertTrue(errors)
+        self.assertFalse(result.metadata["semantic_validation"]["ok"])
+        self.assertIn("TEST", " ".join(errors))
+
+    def test_doc_summary_reserves_each_requested_heading_facet(self) -> None:
+        graph = Graph(
+            nodes={
+                "DOC": Node("DOC", "audit.md", "markdown", "docs/audit.md"),
+                "GAPS": Node(
+                    "GAPS",
+                    "Major Remaining Gaps",
+                    "section",
+                    "docs/audit.md",
+                    facts=("Affected-test selection is incomplete.",),
+                ),
+                "ORDER": Node(
+                    "ORDER",
+                    "Recommended Build Order",
+                    "section",
+                    "docs/audit.md",
+                    facts=("First enforce receipt consistency.",),
+                ),
+                "HEADER": Node(
+                    "HEADER",
+                    "GraphGraph audit",
+                    "section",
+                    "docs/audit.md",
+                    facts=("Historical status.",),
+                ),
+            },
+            edges=[
+                Edge("GAPS", "DOC", "section_of"),
+                Edge("ORDER", "DOC", "section_of"),
+                Edge("HEADER", "DOC", "section_of"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "What are the Major Remaining Gaps and Recommended Build Order in the documentation?",
+            "doc_summary",
+            hops=1,
+            max_nodes=4,
+        )
+
+        self.assertTrue({"GAPS", "ORDER"} <= result.nodes)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
 
     def test_multihop_query_reserves_and_reports_every_requested_facet(self) -> None:
         graph = Graph(

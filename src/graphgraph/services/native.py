@@ -302,6 +302,37 @@ def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict
     }
 
 
+def scope_freshness(
+    freshness: dict[str, object],
+    requested_paths: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Project repository drift into task-scope and unrelated freshness."""
+    requested = {
+        path.replace("\\", "/").strip("/")
+        for path in requested_paths
+        if path
+    }
+    stale_changed = [
+        str(path).replace("\\", "/").strip("/")
+        for path in freshness.get("changed_paths", ())
+    ]
+    stale_deleted = [
+        str(path).replace("\\", "/").strip("/")
+        for path in freshness.get("deleted_paths", ())
+    ]
+    stale = set((*stale_changed, *stale_deleted))
+    repository_fresh = bool(freshness.get("fresh", not stale))
+    enriched = dict(freshness)
+    enriched.update({
+        "requested_scope_fresh": repository_fresh if not requested else not bool(stale & requested),
+        "repository_fresh": repository_fresh,
+        "requested_paths": sorted(requested),
+        "unrelated_changed_paths": sorted(path for path in stale_changed if path not in requested),
+        "unrelated_deleted_paths": sorted(path for path in stale_deleted if path not in requested),
+    })
+    return enriched
+
+
 def _worktree_sync_candidate(rel_path: str) -> bool:
     path = Path(rel_path)
     lower_name = path.name.lower()
@@ -782,6 +813,12 @@ def render_native_context(
         )
     refresh_ms = round((time.monotonic() - refresh_started) * 1000, 3)
     query_started = time.monotonic()
+    requested_anchor_paths = tuple(dict.fromkeys((*changed_paths, *status.changed_paths)))
+    repository_freshness = (
+        {"fresh": True, "changed_count": 0, "deleted_count": 0, "changed_paths": [], "deleted_paths": []}
+        if sync_git
+        else inspect_saved_graph_freshness(directory=directory, output_path=status.path)
+    )
     workflow_metadata = {
         "workflow": {
             "refresh": {
@@ -794,10 +831,9 @@ def render_native_context(
                 "ok": bool(status.validation.ok) if status.validation else True,
                 "format": status.validation.format if status.validation else "existing_valid_graph",
             },
-            "freshness": (
-                {"fresh": True, "changed_count": 0, "deleted_count": 0, "changed_paths": [], "deleted_paths": []}
-                if sync_git
-                else inspect_saved_graph_freshness(directory=directory, output_path=status.path)
+            "freshness": scope_freshness(
+                repository_freshness,
+                tuple(dict.fromkeys((*changed_paths, *deleted_paths))),
             ),
         }
     }
@@ -817,6 +853,7 @@ def render_native_context(
         response_metadata=workflow_metadata,
         source_mode=source_mode,
         memory_scopes=memory_scopes,
+        anchor_paths=requested_anchor_paths,
     )
     if json_output:
         payload = json.loads(packet_text)
@@ -825,11 +862,26 @@ def render_native_context(
         rendered_packet = str(payload.get("packet", ""))
         if rendered_packet:
             packet_validation = validate_any(rendered_packet)
+            semantic_validation = payload.get("retrieval", {}).get(
+                "semantic_validation",
+                {"ok": True, "errors": []},
+            )
+            semantic_ok = bool(semantic_validation.get("ok", True))
+            combined_ok = packet_validation.ok and semantic_ok
             payload["workflow"]["packet_validation"] = {
-                "ok": packet_validation.ok,
-                "status": "structural_pass" if packet_validation.ok else "structural_fail",
-                "scope": "packet_structure_only",
-                "errors": list(packet_validation.errors),
+                "ok": combined_ok,
+                "status": (
+                    "semantic_fail"
+                    if packet_validation.ok and not semantic_ok
+                    else "packet_and_receipt_pass"
+                    if combined_ok
+                    else "structural_fail"
+                ),
+                "scope": "packet_and_receipt",
+                "errors": [
+                    *packet_validation.errors,
+                    *semantic_validation.get("errors", ()),
+                ],
             }
         else:
             payload["workflow"]["packet_validation"] = {
