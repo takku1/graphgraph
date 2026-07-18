@@ -25,7 +25,7 @@ def _has_marker_line(text: str, marker: str) -> bool:
     doc-scanned string like "a packet ending in \\n[e]", captured verbatim
     as a concept label) would corrupt parsing for the entire rest of the
     packet -- confirmed with a real repro: rendering this project's own
-    full graph unfiltered produced exactly such a node and broke gg_max
+    full graph unfiltered produced exactly such a node and broke gg
     validation for ~250 nodes downstream of it.
     """
     return re.search(rf"^\s*{re.escape(marker)}\s*$", text, re.MULTILINE) is not None
@@ -53,8 +53,8 @@ def validate_packet(packet: str) -> ValidationResult:
         return _require_nonempty_nodes(validate_gg_max(text))
     if text.startswith("@nodes") or "@nodes" in text:
         return _require_nonempty_nodes(validate_semantic_arrow(text))
-    if text.startswith("[d]"):
-        return _require_nonempty_nodes(validate_doc_summary(text))
+    if text.startswith("[d]") or _has_marker_line(text, "[d]"):
+        return _require_nonempty_nodes(validate_doc_summary(_from_marker_line(text, "[d]")))
     return ValidationResult(False, "unknown", 0, 0, ("unknown packet format",))
 
 
@@ -68,6 +68,11 @@ def _require_nonempty_nodes(result: ValidationResult) -> ValidationResult:
             result.errors + ("empty packet: no nodes",),
         )
     return result
+
+
+def _from_marker_line(text: str, marker: str) -> str:
+    match = re.search(rf"^\s*{re.escape(marker)}\s*$", text, re.MULTILINE)
+    return text[match.start():] if match is not None else text
 
 
 def validate_graph_json(graph_json: str) -> ValidationResult:
@@ -187,7 +192,7 @@ def validate_gg_max(packet: str) -> ValidationResult:
 
     if not (_has_marker_line(packet, "[r]") and _has_marker_line(packet, "[n]") and _has_marker_line(packet, "[e]")):
         errors.append("missing [r], [n], or [e] sections")
-        fmt = "gg_max_hybrid" if "summary:" in packet else "gg_max"
+        fmt = "gg_hybrid" if "summary:" in packet else "gg"
         return ValidationResult(False, fmt, 0, 0, tuple(errors))
 
     rn_part, edges_part = _split_on_marker_line(packet, "[e]")
@@ -258,9 +263,15 @@ def validate_gg_max(packet: str) -> ValidationResult:
     # "Getting Started") and can contain spaces, so anchoring the regex to
     # "^\S+\s+\S+\s+\[" (idx, exactly one token, then bracket) silently failed to
     # match whenever a hybrid node's label had more than one word, misclassifying
-    # a real gg_max_hybrid/gg_lex_hybrid packet as plain gg_max/gg_lex.
-    is_lex = any(not nid.isdigit() for nid in nodes)
-    is_hybrid = (
+    # a real gg_hybrid/gg_lex_hybrid packet as plain gg/gg_lex.
+    explicit_format = next(
+        (line.strip()[1:] for line in packet.splitlines() if line.strip() in {
+            "#gg", "#gg_hybrid", "#gg_lex", "#gg_lex_hybrid",
+        }),
+        "",
+    )
+    is_lex = explicit_format.startswith("gg_lex") if explicit_format else any(not nid.isdigit() for nid in nodes)
+    is_hybrid = explicit_format.endswith("_hybrid") if explicit_format else (
         "summary:" in packet
         or bool(re.search(r"\[[A-Za-z_][\w-]*\]", nodes_part))
         or bool(re.search(r"^[ \t]+\S", nodes_part, re.MULTILINE))
@@ -268,7 +279,7 @@ def validate_gg_max(packet: str) -> ValidationResult:
     if is_lex:
         fmt = "gg_lex_hybrid" if is_hybrid else "gg_lex"
     else:
-        fmt = "gg_max_hybrid" if is_hybrid else "gg_max"
+        fmt = "gg_hybrid" if is_hybrid else "gg"
     return ValidationResult(not errors, fmt, len(nodes), len(edges), tuple(errors))
 
 

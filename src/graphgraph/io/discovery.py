@@ -34,9 +34,14 @@ def find_graph_path(workspace_root: Path = Path("."), *, include_external: bool 
     candidates = [workspace_root / c for c in _NATIVE_GRAPH_CANDIDATES]
     if include_external:
         candidates.extend(workspace_root / c for c in _EXTERNAL_GRAPH_CANDIDATES)
-    for c in candidates:
-        if c.exists():
-            return c
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    if len(existing) == 1:
+        return existing[0]
+    if len(existing) > 1:
+        raise RuntimeError(
+            "Multiple GraphGraph files are present; refusing ambiguous auto-detection: "
+            f"{[str(path) for path in existing]}. Specify --graph/--output explicitly or remove the stale artifact."
+        )
     raise FileNotFoundError(
         "Could not find a native GraphGraph file in default paths: "
         f"{[str(c) for c in candidates]}. Run `graphgraph scan --output .graphgraph/graph.gg` "

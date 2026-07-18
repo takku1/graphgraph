@@ -10,6 +10,133 @@ from typing import Callable
 from .ontology import provenance_confidence, traversal_strength
 
 _LINE_RE = re.compile(r"\bL(\d+)\b")
+_MISSING = object()
+
+
+class _RevisionedDict(dict):
+    """Dictionary with an O(1) mutation register for derived-state caches.
+
+    Graph nodes are public and intentionally mutable for compatibility. The
+    revision is the graph-level equivalent of a CPU state/version register:
+    every store/delete instruction advances it, so caches can compare one
+    integer instead of rescanning every node to infer whether state changed.
+    """
+
+    def __init__(self, values=()):
+        super().__init__(values)
+        self.revision = 0
+
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        self.revision += 1
+
+    def __delitem__(self, key) -> None:
+        super().__delitem__(key)
+        self.revision += 1
+
+    def clear(self) -> None:
+        if self:
+            super().clear()
+            self.revision += 1
+
+    def pop(self, key, default=_MISSING):
+        if key in self:
+            value = super().pop(key)
+            self.revision += 1
+            return value
+        if default is _MISSING:
+            raise KeyError(key)
+        return default
+
+    def popitem(self):
+        value = super().popitem()
+        self.revision += 1
+        return value
+
+    def setdefault(self, key, default=None):
+        if key in self:
+            return self[key]
+        super().__setitem__(key, default)
+        self.revision += 1
+        return default
+
+    def update(self, *args, **kwargs) -> None:
+        if not args and not kwargs:
+            return
+        # Decode the complete write set before mutating so a failing iterator
+        # cannot leave changed state behind without advancing the revision.
+        incoming = dict(*args, **kwargs)
+        if not incoming:
+            return
+        super().update(incoming)
+        self.revision += 1
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+
+class _RevisionedList(list):
+    """List with an O(1) mutation register for edge-derived caches."""
+
+    def __init__(self, values=()):
+        super().__init__(values)
+        self.revision = 0
+
+    def __setitem__(self, key, value) -> None:
+        super().__setitem__(key, value)
+        self.revision += 1
+
+    def __delitem__(self, key) -> None:
+        super().__delitem__(key)
+        self.revision += 1
+
+    def append(self, value) -> None:
+        super().append(value)
+        self.revision += 1
+
+    def extend(self, values) -> None:
+        # Materialize first for the same instruction-level atomicity as update.
+        decoded = list(values)
+        if not decoded:
+            return
+        super().extend(decoded)
+        self.revision += 1
+
+    def insert(self, index, value) -> None:
+        super().insert(index, value)
+        self.revision += 1
+
+    def pop(self, index=-1):
+        value = super().pop(index)
+        self.revision += 1
+        return value
+
+    def remove(self, value) -> None:
+        super().remove(value)
+        self.revision += 1
+
+    def clear(self) -> None:
+        if self:
+            super().clear()
+            self.revision += 1
+
+    def reverse(self) -> None:
+        super().reverse()
+        self.revision += 1
+
+    def sort(self, *args, **kwargs) -> None:
+        super().sort(*args, **kwargs)
+        self.revision += 1
+
+    def __iadd__(self, values):
+        self.extend(values)
+        return self
+
+    def __imul__(self, value):
+        super().__imul__(value)
+        self.revision += 1
+        return self
 
 
 def adaptive_local_ppr_params(n_nodes: int, n_seeds: int) -> tuple[float, int, int]:
@@ -144,6 +271,28 @@ class Graph:
     _search_token_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
     _search_index_by_id_cache: tuple[tuple[object, ...], dict[str, object]] | None = field(default=None, init=False, repr=False)
 
+    def __post_init__(self) -> None:
+        # Always copy into independent mutation-tracked containers. Reusing a
+        # wrapper from another Graph would couple their revision registers.
+        self.nodes = _RevisionedDict(self.nodes)
+        self.edges = _RevisionedList(self.edges)
+
+    @property
+    def mutation_revision(self) -> tuple[int, int]:
+        """Current node/edge store revisions for O(1) cache validation."""
+        return (
+            getattr(self.nodes, "revision", 0),
+            getattr(self.edges, "revision", 0),
+        )
+
+    @property
+    def node_revision(self) -> int:
+        return getattr(self.nodes, "revision", 0)
+
+    @property
+    def edge_revision(self) -> int:
+        return getattr(self.edges, "revision", 0)
+
     def _edges_by_key(self, key_fn: Callable[[Edge], str]) -> dict[str, list[Edge]]:
         grouped: dict[str, list[Edge]] = {}
         for edge in self.edges:
@@ -158,11 +307,11 @@ class Graph:
     ) -> dict[str, list[Edge]]:
         cache = getattr(self, cache_attr, None)
         if cache is not None:
-            cache_len, grouped = cache
-            if cache_len == len(self.edges):
+            cache_revision, grouped = cache
+            if cache_revision == self.edge_revision:
                 return grouped
         grouped = self._edges_by_key(key_fn)
-        setattr(self, cache_attr, (len(self.edges), grouped))
+        setattr(self, cache_attr, (self.edge_revision, grouped))
         return grouped
 
     def outgoing(self) -> dict[str, list[Edge]]:
@@ -174,8 +323,8 @@ class Graph:
     def degree(self) -> dict[str, int]:
         cache = getattr(self, "_degree_cache_data", None)
         if cache is not None:
-            cache_len, deg = cache
-            if cache_len == len(self.edges):
+            cache_revision, deg = cache
+            if cache_revision == self.edge_revision:
                 return deg
         deg: dict[str, int] = {}
         for edge in self.edges:
@@ -183,7 +332,7 @@ class Graph:
                 continue
             deg[edge.source] = deg.get(edge.source, 0) + 1
             deg[edge.target] = deg.get(edge.target, 0) + 1
-        self._degree_cache_data = (len(self.edges), deg)
+        self._degree_cache_data = (self.edge_revision, deg)
         return deg
 
     def pagerank(
@@ -418,20 +567,14 @@ class Graph:
         return scores
 
     def _pagerank_cache_key(self, damping: float, max_iter: int, tol: float) -> tuple[object, ...]:
-        return damping, max_iter, tol, self.structural_signature()
+        return damping, max_iter, tol, self.mutation_revision
 
     def structural_signature(self) -> str:
         """Stable hash of active topology and ranking-relevant edge weights."""
         cache = getattr(self, "_structural_sig_cache", None)
-        fingerprint = (
-            len(self.nodes),
-            len(self.edges),
-            sum(hash(nid) for nid in self.nodes),
-            sum(hash(e.source) ^ hash(e.target) ^ hash(e.type) for e in self.edges)
-        )
         if cache is not None:
-            cache_fingerprint, sig = cache
-            if cache_fingerprint == fingerprint:
+            cache_revision, sig = cache
+            if cache_revision == self.mutation_revision:
                 return sig
 
         payload = {
@@ -451,7 +594,7 @@ class Graph:
         }
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         sig = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-        self._structural_sig_cache = (fingerprint, sig)
+        self._structural_sig_cache = (self.mutation_revision, sig)
         return sig
 
     def pagerank_cache_payload(self, damping: float = 0.85, max_iter: int = 20, tol: float = 1e-4) -> dict[str, object]:
@@ -490,7 +633,7 @@ class Graph:
         if signature != self.structural_signature() or not isinstance(raw_scores, dict):
             return False
         scores = {str(node_id): float(score) for node_id, score in raw_scores.items() if str(node_id) in self.nodes}
-        self._pagerank_cache = ((damping, max_iter, tol, signature), scores)
+        self._pagerank_cache = (self._pagerank_cache_key(damping, max_iter, tol), scores)
         return True
 
     def expand(

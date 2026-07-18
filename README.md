@@ -8,6 +8,11 @@ JSON and prose are high-level languages for context. `graphgraph` aims for
 the LLM equivalent of a compact instruction stream: stable node symbols,
 relation opcodes, local adjacency, and only the text a query actually needs.
 
+The advanced platform follows the same rule: memory, time, federation,
+semantic fallback, runtime traces, inference, and repair context compile into
+the native graph IR and bounded packet pipeline. They are not separate graph
+products hidden behind one CLI. See [LLM-native platform](docs/llm-native-platform.md).
+
 ## What it does
 
 - **Scans** Python, JS/TS, Go, Rust, Java, C#, C/C++, Ruby, PHP, Kotlin,
@@ -22,6 +27,12 @@ relation opcodes, local adjacency, and only the text a query actually needs.
   [Incremental updates](#incremental-updates)), and a fine-grained
   operation-logged API (`add_node`/`expire_edge`/`expire_node`/`merge_node`)
   for single-mutation edits.
+- **Compiles persisted multi-language CPG evidence** into the same graph IR:
+  bounded reads/writes/control/type/field/return relations with per-file cache
+  invalidation and exact accepted/duplicate/rejected/truncated receipts.
+- **Plans auxiliary sources at query time**: scoped memory, temporal episodes,
+  runtime traces, federated repository slices, and semantic seed IDs become
+  normal graph evidence before packet selection.
 - **Interoperates** with Graphify, code-review-graph, CSV, and other graph
   sources via `graphgraph ingest` — normalized into the same retrieval and
   packet pipeline. Nothing outside `.graphgraph/` is read by default; external
@@ -121,8 +132,17 @@ for repeatable benchmarks and callers that already know the policy they need.
 
 Scans honor repository and nested `.gitignore`/`.ignore` rules (including
 negation), and exclude secret-bearing environment files plus local agent/MCP
-configuration by default. Compact `gg_max` packets include `@path:line` and a
+configuration by default. Compact `gg` packets include `@path:line` and a
 definition-line signature when the scanner can extract one.
+
+Before an initial build, inspect the repository's ignore rules and large or
+generated paths, then pass project-specific exclusions with `--exclude` (MCP:
+`exclude_dirs`). CLI scans emit timed discovery/hash/edge/symbol/doc/concept/
+validation/save phase events to stderr and finish with an explicit receipt for
+ignore files, pruned directories, frontend/fallbacks, validation, and
+truncation. Ignore-matched directories are pruned before descent rather than
+walked file by file. MCP `build_graph` returns the same frontend and exclusion
+receipt in JSON.
 
 Broad natural-language `subsystem_summary`/`blast_radius` queries use a
 48-node orientation cap when anchor discovery cannot identify a targeted
@@ -158,6 +178,29 @@ MCP equivalents: `update_graph_files` / `remove_graph_files`, same shape as
 `build_graph`. See `docs/incremental-update-instruction-set.md` for the full
 design (profiling data, prior-art survey, correctness notes).
 
+For an MCP agent that will query immediately after editing, `query_context`
+is the lower-latency fused path. Pass `changed_paths` and/or `deleted_paths`
+with the query; GraphGraph performs one O(named paths) splice, persists it,
+and queries that exact in-memory graph without a second MCP call or disk
+reload. Omitted extraction settings inherit from the saved graph.
+
+```json
+{"query":"what should change next?","changed_paths":["src/auth/session.py"],"deleted_paths":["src/auth/legacy.py"]}
+```
+
+When the caller did not retain the exact edit list, use `sync: "git"` (MCP) or
+`--sync git` (CLI). Git supplies only candidate paths; GraphGraph hashes those
+against the manifest, reconciles paths newly covered by ignore rules, performs
+one splice if anything is stale, and queries the refreshed graph. Repeating the
+same call without another edit is a no-op.
+
+```powershell
+graphgraph context "what should change next?" --sync git --show-stats
+```
+
+See [the graph-tool usage audit](docs/graph-tool-usage-audit.md) for the
+project-loop comparison, selection math, and capability roadmap.
+
 ## Command reference
 
 | Command | Purpose |
@@ -180,6 +223,7 @@ design (profiling data, prior-art survey, correctness notes).
 | `doctor` | Full environment + MCP registration diagnostic. |
 | `cache` | Inspect/clear packet caches or recompute and persist centrality (`--recompute-centrality`). |
 | `install` | Register the skill + MCP server for a client. |
+| `platform` | Compile evidence/memory/time/federation/trace/repair workflows into native GraphGraph IR and receipts. |
 
 Run `graphgraph <command> --help` for full flags.
 
@@ -226,8 +270,21 @@ $env:GEMINI_API_KEY="your-gemini-key"
 ```powershell
 python benchmarks\context_graph\run_all.py    # full benchmark suite
 graphgraph eval --graph .graphgraph/graph.gg --tasks benchmarks/context_graph/data/locus_tasks.json --max-nodes 40
+graphgraph platform benchmark --config multi-repo-acceptance.json  # enforced multi-repo gates
 python -m pytest                              # unit tests
 ```
+
+The shared console defaults to loopback and uses POST for compiler requests:
+
+```powershell
+graphgraph platform serve --port 8765
+graphgraph platform serve --host 0.0.0.0 --token $env:GRAPHGRAPH_TOKEN --allow-origin https://client.example
+graphgraph platform migrate --directory .graphgraph
+```
+
+Remote binds require a token. Platform state uses schema-v2 atomic writes and
+cross-process locks; HTTP exposes bounded POST endpoints for query, memory,
+episodes, runtime traces, and migrations.
 
 ## Import routes
 

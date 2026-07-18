@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
+import time
+from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
 from ..concepts import link_source_interpretation_concepts
 from ..concepts.terms import term_key
@@ -14,6 +18,12 @@ from .history import extract_commit_history
 from .imports import add_file_edges
 
 logger = logging.getLogger(__name__)
+ScanProgress = Callable[[str, str], None]
+
+
+def _emit_progress(progress: ScanProgress | None, phase: str, detail: str) -> None:
+    if progress is not None:
+        progress(phase, detail)
 
 
 def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
@@ -97,6 +107,7 @@ def scan_directory(
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
     include: list[str] | None = None,
+    progress: ScanProgress | None = None,
 ) -> Graph:
     """Scan *root* and build a Graph of file-level (and optionally symbol-level) nodes.
 
@@ -112,11 +123,19 @@ def scan_directory(
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
     include_set = frozenset(include) if include else frozenset()
 
+    _emit_progress(progress, "discover", f"root={root}")
     # Gather git metadata early so staged files get scan priority.
     dirty_git, churn_git = _get_git_metadata(root)
 
     collected = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git, include=include_set)
     files = collected.files
+    _emit_progress(
+        progress,
+        "discover",
+        f"selected={len(files)} matched={collected.total_matched} "
+        f"ignore_files={len(collected.ignore_files)} ignored_files={collected.ignored_by_rules} "
+        f"ignored_dirs={len(collected.rule_pruned_dirs)} default_pruned_dirs={len(collected.default_pruned_dirs)}",
+    )
 
     file_map: dict[str, str] = {}   # rel_posix -> node_id
     for f in files:
@@ -130,6 +149,7 @@ def scan_directory(
     skipped_files: list[tuple[Path, str, str]] = []
     dirty_files: list[tuple[Path, str, str]] = []
 
+    _emit_progress(progress, "hash", f"files={len(files)} incremental={bool(manifest and previous_graph)}")
     if manifest and previous_graph:
         for f in files:
             rel = f.relative_to(root).as_posix()
@@ -148,7 +168,15 @@ def scan_directory(
             current_hash = compute_file_hash(f)
             dirty_files.append((f, rel, current_hash))
 
+    _emit_progress(progress, "hash", f"dirty={len(dirty_files)} restored={len(skipped_files)}")
+
     active_rels = {f.relative_to(root).as_posix() for f in files}
+    # Git status is gathered before collection for priority ordering, but only
+    # paths admitted by the same scan/ignore policy may enter graph metadata.
+    # Otherwise an ignored dirty packet dump leaks into the serialized graph
+    # even though it correctly has no node.
+    dirty_git.intersection_update(active_rels)
+    churn_git = {rel: count for rel, count in churn_git.items() if rel in active_rels}
 
     return _build_graph_from_split(
         root=root,
@@ -170,6 +198,11 @@ def scan_directory(
         max_history_commits=max_history_commits,
         files_truncated=collected.truncated,
         files_total_matched=collected.total_matched,
+        ignore_files=collected.ignore_files,
+        ignored_by_rules=collected.ignored_by_rules,
+        rule_pruned_dirs=collected.rule_pruned_dirs,
+        default_pruned_dirs=collected.default_pruned_dirs,
+        progress=progress,
     )
 
 
@@ -199,6 +232,7 @@ def update_paths(
     max_history_commits: int = 300,
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
+    deleted_paths: list[str] | None = None,
 ) -> Graph:
     """Re-extract exactly *paths* and splice the result into the existing graph.
 
@@ -210,7 +244,10 @@ def update_paths(
     not to repo size.
 
     Requires an existing manifest and graph (run ``scan_directory`` once
-    first). A path that no longer exists on disk is treated as a removal.
+    first). A changed path that no longer exists on disk is treated as a
+    removal. ``deleted_paths`` are removed authoritatively even if a stale
+    copy still exists on disk, allowing changed and deleted files to be
+    applied in one graph splice.
     """
     root = root.resolve()
     if not manifest_path or not previous_graph_path:
@@ -221,9 +258,14 @@ def update_paths(
             f"no existing graph/manifest at {previous_graph_path} -- run scan_directory once before update_paths"
         )
 
-    target_rels = _normalize_rels(root, paths)
-    existing_target_rels = {rel for rel in target_rels if (root / rel).exists()}
-    removed_target_rels = target_rels - existing_target_rels
+    changed_target_rels = _normalize_rels(root, paths)
+    explicit_removed_rels = _normalize_rels(root, deleted_paths or [])
+    existing_target_rels = {
+        rel
+        for rel in changed_target_rels - explicit_removed_rels
+        if (root / rel).exists()
+    }
+    removed_target_rels = explicit_removed_rels | (changed_target_rels - existing_target_rels)
 
     known_rels = (set(manifest.files.keys()) | existing_target_rels) - removed_target_rels
     active_rels = known_rels
@@ -349,6 +391,11 @@ def _build_graph_from_split(
     scope_concepts_to_dirty: bool = False,
     files_truncated: bool = False,
     files_total_matched: int = 0,
+    ignore_files: tuple[str, ...] = (),
+    ignored_by_rules: int = 0,
+    rule_pruned_dirs: tuple[str, ...] = (),
+    default_pruned_dirs: tuple[str, ...] = (),
+    progress: ScanProgress | None = None,
 ) -> Graph:
     """Shared body: given a dirty/skip split (however it was determined),
     build the resulting Graph. Used by both the full-discovery
@@ -357,6 +404,7 @@ def _build_graph_from_split(
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
     seen: set[tuple[str, str]] = set()
+    file_rel_by_node_id = {node_id: rel for rel, node_id in file_map.items()}
 
     dirty_rels = {rel for _f, rel, _fhash in dirty_files}
 
@@ -364,11 +412,7 @@ def _build_graph_from_split(
     def find_file_for_node(node_id: str) -> str | None:
         if node_id in nodes:
             return nodes[node_id].path
-        # fallback: check file_map
-        for rel, nid in file_map.items():
-            if nid == node_id:
-                return rel
-        return None
+        return file_rel_by_node_id.get(node_id)
 
     skipped_edges: list[tuple[str, str, str, Edge | None]] = []
     context_symbol_nodes: dict[str, Node] = {}
@@ -464,6 +508,7 @@ def _build_graph_from_split(
             source_location="",
         ))
 
+    _emit_progress(progress, "file_edges", f"dirty_files={len(dirty_files)}")
     add_file_edges(
         dirty_files=dirty_files,
         root=root,
@@ -475,12 +520,38 @@ def _build_graph_from_split(
 
     metadata = {
         "scan_depth": depth,
-        "frontend": "files",
+        # Default the label from the prior graph on an incremental refresh, so a
+        # scan that preserves previously-extracted symbols (no dirty files this
+        # round) does not reset `frontend` to "files" and misreport itself as a
+        # file-level graph. Fresh symbol extraction below overwrites this with
+        # the real extractor id.
+        "frontend": str(previous_graph.metadata.get("frontend", "files")) if previous_graph is not None else "files",
         "docs": str(bool(docs)).lower(),
         "history": str(bool(history)).lower(),
         "git_dirty": ",".join(dirty_git),
         "git_high_churn": ",".join(rel for rel, churn in churn_git.items() if churn >= 5),
+        "ignore_rule_files": ",".join(ignore_files),
+        "ignore_rule_file_count": str(len(ignore_files)),
+        "ignored_by_rules": str(ignored_by_rules),
+        "ignore_pruned_dir_count": str(len(rule_pruned_dirs)),
+        "ignore_pruned_dirs": ",".join(rule_pruned_dirs[:20]),
+        "default_pruned_dir_count": str(len(default_pruned_dirs)),
+        "default_pruned_dirs": ",".join(default_pruned_dirs[:20]),
     }
+    if previous_graph is not None:
+        for name in ("resolved", "ambiguous", "unresolved"):
+            prior = previous_graph.metadata.get(
+                f"member_calls_global_{name}",
+                previous_graph.metadata.get(f"member_calls_{name}", ""),
+            )
+            if prior:
+                metadata[f"member_calls_global_{name}"] = prior
+        prior_scope = previous_graph.metadata.get(
+            "member_calls_global_scope",
+            previous_graph.metadata.get("member_call_telemetry_scope", ""),
+        )
+        if prior_scope:
+            metadata["member_calls_global_scope"] = prior_scope
     if files_truncated:
         # collect_files() hit max_nodes before covering every matched file --
         # some real files were never even read, let alone symbol-extracted.
@@ -511,15 +582,41 @@ def _build_graph_from_split(
             # Still bounded (not unlimited) to protect against pathological
             # repos, but now the truncation itself is never silent (below).
             max_syms = max(500, max_nodes * 20)
+            _emit_progress(progress, "symbols", f"files={len(source_files)} cap={max_syms} frontend={frontend}")
             extraction = select_extractor(frontend).extract_symbols(
                 source_files,
                 max_total_symbols=max_syms,
                 context_nodes=context_symbol_nodes,
             )
             metadata["frontend"] = extraction.frontend
-            if extraction.fallback_files:
-                metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
-                metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
+            metadata["member_calls_resolved"] = str(extraction.resolved_member_calls)
+            metadata["member_calls_ambiguous"] = str(extraction.ambiguous_member_calls)
+            metadata["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
+            telemetry_scope = (
+                "full_scan"
+                if not scope_concepts_to_dirty and len(dirty_rels) == len(active_rels)
+                else "changed_files"
+            )
+            metadata["member_call_telemetry_scope"] = telemetry_scope
+            for name, value in (
+                ("resolved", extraction.resolved_member_calls),
+                ("ambiguous", extraction.ambiguous_member_calls),
+                ("unresolved", extraction.unresolved_member_calls),
+            ):
+                metadata[f"member_calls_last_update_{name}"] = str(value)
+                if telemetry_scope == "full_scan":
+                    metadata[f"member_calls_global_{name}"] = str(value)
+            metadata["member_calls_last_update_scope"] = telemetry_scope
+            if telemetry_scope == "full_scan":
+                metadata["member_calls_global_scope"] = "full_scan_snapshot"
+            metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
+            metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
+            metadata["frontend_unsupported_count"] = str(len(extraction.unsupported_files))
+            metadata["frontend_unsupported_files"] = ",".join(extraction.unsupported_files)
+            metadata["frontend_timeout_count"] = str(len(extraction.timeout_files))
+            metadata["frontend_timeout_files"] = ",".join(extraction.timeout_files)
+            metadata["frontend_parse_error_count"] = str(len(extraction.parse_error_files))
+            metadata["frontend_parse_error_files"] = ",".join(extraction.parse_error_files)
             if extraction.failed_files:
                 metadata["frontend_failure_count"] = str(len(extraction.failed_files))
                 metadata["frontend_failures"] = ",".join(extraction.failed_files)
@@ -530,6 +627,14 @@ def _build_graph_from_split(
                 if key not in existing:
                     existing.add(key)
                     edges.append(e)
+            _emit_progress(
+                progress,
+                "symbols",
+                f"frontend={extraction.frontend} nodes={len(extraction.nodes)} edges={len(extraction.edges)} "
+                f"fallbacks={len(extraction.fallback_files)} failures={len(extraction.failed_files)} "
+                f"member_calls={extraction.resolved_member_calls}/{extraction.ambiguous_member_calls}/"
+                f"{extraction.unresolved_member_calls} resolved/ambiguous/unresolved",
+            )
             if extraction.truncated:
                 # Symbol extraction hit max_total_symbols before every
                 # collected file's definitions could be recorded -- some
@@ -550,13 +655,23 @@ def _build_graph_from_split(
                 continue
             doc_inputs.append(DocumentInput(f, rel, file_map[rel], text))
         if doc_inputs:
+            _emit_progress(progress, "docs", f"files={len(doc_inputs)}")
+            docs_started = time.perf_counter()
+            doc_profiles: list[tuple[str, float, int, int, bool]] = []
             symbol_map: dict[str, str] = {}
             for nid, node in nodes.items():
-                if node.kind in {"file", "concept", "section"}:
+                if node.kind in {"file", "concept", "section", "paragraph"}:
                     continue
                 for alias in _symbol_aliases(node):
                     symbol_map.setdefault(alias, nid)
-            doc_nodes, doc_edges = extract_document_context(doc_inputs, file_map, symbol_map=symbol_map)
+            doc_nodes, doc_edges = extract_document_context(
+                doc_inputs,
+                file_map,
+                symbol_map=symbol_map,
+                profile=lambda rel, elapsed, sections, paragraphs, truncated: doc_profiles.append(
+                    (rel, elapsed, sections, paragraphs, truncated)
+                ),
+            )
             nodes.update(doc_nodes)
             existing = {(e.source, e.target, e.type) for e in edges}
             for e in doc_edges:
@@ -564,8 +679,30 @@ def _build_graph_from_split(
                 if key not in existing:
                     existing.add(key)
                     edges.append(e)
+            docs_ms = (time.perf_counter() - docs_started) * 1000.0
+            slowest = sorted(doc_profiles, key=lambda item: item[1], reverse=True)[:8]
+            truncated_docs = [item[0] for item in doc_profiles if item[4]]
+            metadata["docs_profile_ms"] = f"{docs_ms:.3f}"
+            metadata["docs_profile_files"] = str(len(doc_profiles))
+            metadata["docs_profile_slowest"] = json.dumps(
+                [
+                    {"path": rel, "ms": round(elapsed, 3), "sections": sections, "paragraphs": paragraphs}
+                    for rel, elapsed, sections, paragraphs, _truncated in slowest
+                ],
+                separators=(",", ":"),
+            )
+            metadata["docs_truncated_count"] = str(len(truncated_docs))
+            metadata["docs_truncated_files"] = ",".join(truncated_docs[:20])
+            _emit_progress(
+                progress,
+                "docs",
+                f"completed_ms={docs_ms:.1f} nodes={len(doc_nodes)} edges={len(doc_edges)} "
+                f"truncated={len(truncated_docs)} slowest="
+                + ",".join(f"{rel}:{elapsed:.1f}ms" for rel, elapsed, *_rest in slowest[:3]),
+            )
 
     if history:
+        _emit_progress(progress, "history", f"max_commits={max_history_commits}")
         history_nodes, history_edges = extract_commit_history(root, file_map, max_commits=max_history_commits)
         if history_nodes or history_edges:
             nodes.update(history_nodes)
@@ -590,11 +727,17 @@ def _build_graph_from_split(
         if scope_concepts_to_dirty
         else tuple(nodes.values())
     )
+    excluded_concept_kinds = {
+        "concept", "section", "paragraph", "markdown", "rst", "html", "text", "unknown", "commit",
+    }
+    eligible_concept_nodes = tuple(
+        node for node in concept_source_nodes if node.kind not in excluded_concept_kinds
+    )
     interpretation_nodes: dict[str, Node] = {}
     interpretation_edges: list[Edge] = []
-    for node in concept_source_nodes:
-        if node.kind in {"concept", "section", "markdown", "rst", "html", "text", "unknown", "commit"}:
-            continue
+    concepts_started = time.perf_counter()
+    _emit_progress(progress, "concepts", f"candidate_nodes={len(concept_source_nodes)}")
+    for node in eligible_concept_nodes:
         found_nodes, found_edges = link_source_interpretation_concepts(node, source_location=node.path)
         interpretation_nodes.update(found_nodes)
         interpretation_edges.extend(found_edges)
@@ -606,6 +749,28 @@ def _build_graph_from_split(
             if key not in existing:
                 existing.add(key)
                 edges.append(e)
+    concepts_ms = (time.perf_counter() - concepts_started) * 1000.0
+    metadata["source_concepts_profile_ms"] = f"{concepts_ms:.3f}"
+    metadata["source_concepts_candidates"] = str(len(concept_source_nodes))
+    metadata["source_concepts_eligible"] = str(len(eligible_concept_nodes))
+    metadata["source_concepts_links"] = str(len(interpretation_edges))
+    linked_source_nodes = {edge.source for edge in interpretation_edges}
+    metadata["source_concepts_linked_nodes"] = str(len(linked_source_nodes))
+    metadata["source_concepts_coverage_ratio"] = (
+        f"{len(linked_source_nodes) / max(1, len(eligible_concept_nodes)):.6f}"
+    )
+    metadata["source_concepts_mode"] = "closed_registry_exact_alias"
+    metadata["source_concepts_rejected_excluded_kind"] = str(
+        len(concept_source_nodes) - len(eligible_concept_nodes)
+    )
+    metadata["source_concepts_rejected_no_registry_alias"] = str(
+        len(eligible_concept_nodes) - len(linked_source_nodes)
+    )
+    _emit_progress(
+        progress,
+        "concepts",
+        f"completed_ms={concepts_ms:.1f} links={len(interpretation_edges)}",
+    )
 
     existing_edges = {(e.source, e.target, e.type) for e in edges}
     for src, tgt, etype, matching_edge in skipped_edges:
@@ -623,19 +788,37 @@ def _build_graph_from_split(
 
     # Update manifest for the scanned (dirty) files
     if manifest:
+        _emit_progress(progress, "manifest", f"dirty_files={len(dirty_files)} active_files={len(active_rels)}")
         # Clean up deleted files from manifest
         keys_to_delete = [k for k in manifest.files if k not in active_rels]
         for k in keys_to_delete:
             del manifest.files[k]
 
+        # Decode graph ownership once, then reuse the indexed projections for
+        # every dirty file. The previous formulation rescanned all E edges and
+        # N nodes for each of F files: O(F * (N + E)). These maps are the
+        # manifest equivalent of register decoding -- one linear pass converts
+        # graph state into direct per-file operands.
+        owned_nodes_by_path: dict[str, set[str]] = defaultdict(set)
+        edges_by_path: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+        endpoint_nodes_by_path: dict[str, set[str]] = defaultdict(set)
+        for node_id, node in nodes.items():
+            if node.path:
+                owned_nodes_by_path[node.path].add(node_id)
+        for edge in edges:
+            owner_path = find_file_for_node(edge.source)
+            if not owner_path:
+                continue
+            edge_row = (edge.source, edge.target, edge.type)
+            edges_by_path[owner_path].append(edge_row)
+            if edge.source in nodes:
+                endpoint_nodes_by_path[owner_path].add(edge.source)
+            if edge.target in nodes:
+                endpoint_nodes_by_path[owner_path].add(edge.target)
+
         for f, rel, fhash in dirty_files:
-            file_edges = [(e.source, e.target, e.type) for e in edges if find_file_for_node(e.source) == rel]
-            endpoint_nodes = {nid for edge in file_edges for nid in edge[:2] if nid in nodes}
-            file_nodes = sorted({
-                nid
-                for nid, node in nodes.items()
-                if find_file_for_node(nid) == rel or nid in endpoint_nodes
-            })
+            file_edges = edges_by_path.get(rel, [])
+            file_nodes = sorted(owned_nodes_by_path.get(rel, set()) | endpoint_nodes_by_path.get(rel, set()))
             manifest.update_file(
                 rel_path=rel,
                 file_hash=fhash,
@@ -653,6 +836,7 @@ def _build_graph_from_split(
     # that an edge exists, so applying them here made confidence change when an
     # unrelated file was added or removed. Keep those signals in retrieval-time
     # ranking and preserve the frontend/provenance calibration in the graph.
+    _emit_progress(progress, "complete", f"nodes={len(nodes)} edges={len(edges)}")
     return Graph(nodes=nodes, edges=edges, metadata=metadata)
 
 

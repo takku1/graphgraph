@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # Per-packet token surface: (intercept, node_cost, edge_cost). A packet's
 # planning token proxy is intercept + node_cost*nodes + edge_cost*edges;
-# gg_max_hybrid adds a separate fact-token term at runtime, so its surface is
+# gg_hybrid adds a separate fact-token term at runtime, so its surface is
 # fit on the residual actual - fact_token_proxy. Coefficients are an ordinary
 # least-squares fit over 270 subgraphs across 15 real projects, validated by
 # leave-one-project-out (benchmarks/context_graph/token_surface_refit.py):
@@ -13,16 +13,16 @@ from __future__ import annotations
 # zero-edge semantic/gg decision at 100%. Refit whenever packet syntax or the
 # real-project calibration corpus changes.
 PACKET_TOKEN_SURFACE = {
-    "gg_max": (6.6316, 11.9975, 5.1632),
+    "gg": (6.6316, 11.9975, 5.1632),
     "semantic_arrow": (7.2784, 3.3447, 11.2080),
     "sql": (17.9379, 15.2861, 10.1090),
     "lowlevel": (31.7781, 3.3877, 9.2161),
-    "gg_max_hybrid": (8.1675, 14.3447, 5.0622),
+    "gg_hybrid": (8.1675, 14.3447, 5.0622),
 }
 
 
 def packet_token_surface(packet: str) -> tuple[float, float, float]:
-    return PACKET_TOKEN_SURFACE.get(packet, PACKET_TOKEN_SURFACE["gg_max"])
+    return PACKET_TOKEN_SURFACE.get(packet, PACKET_TOKEN_SURFACE["gg"])
 
 
 def packet_marginal_costs(packet: str) -> tuple[float, float]:

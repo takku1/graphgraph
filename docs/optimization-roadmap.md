@@ -19,6 +19,24 @@ that a particular model will interpret every packet correctly.
   accepts a `priority_bias`, and doc-oriented plans feed it heading-weighted BM25
   relevance so the budget keeps the sections that answer the query, not whichever
   sections graph shape favours (P0 #2, done).
+- Locus source-baseline scan: 14.5s wall time / 12.2s scanner time for 10,646
+  nodes and 40,530 edges, with 2.77s document extraction and 0.71s
+  source-concept linking reported separately.
+- Compound affected-test retrieval: bounded facet searches plus graph-aware
+  anchor reservation achieved 6/6 requested-facet coverage on the Locus
+  real-source benchmark question in about 4.16s.
+- Document grounding: paragraph nodes and 1,200-character bounded facts recover
+  the answer-bearing Phase 3 body and expose truncated document names.
+- Qualified Rust identity: inherent and trait methods use owner-qualified IDs;
+  same-file `TypeA::evaluate` and `TypeB::evaluate` remain distinct through
+  full and incremental scans.
+- Affected-test precision: exact `Type::method` resolution bypasses lexical
+  candidate caps, facet anchors use owner coherence, and direction-consistent
+  60/40 incoming/outgoing expansion removed file-sibling zigzags (36 -> 14
+  nodes on the focused Locus query).
+- Test-command trust: Cargo package/target discovery understands explicit test
+  entries and aggregated `tests/<target>/main.rs` harnesses; recommendations
+  report which selected symbols each test covers.
 
 ## P0: Accuracy Gates
 
@@ -28,10 +46,12 @@ that a particular model will interpret every packet correctly.
    cross-document section matches and long-fact bodies against the query, and
    fold in an embedding fallback for synonym queries that share no lexical
    terms with the section text. (Heading-weighted BM25 section ranking within
-   the budget is done; see baseline.)
+   the budget and bounded paragraph-body indexing are done; query-time recovery
+   from over-cap paragraph spans remains open.)
 3. Extend the adversarial ambiguity suite. The initial benchmark
    (`adversarial_ambiguity_benchmark.py`, 6/6) and a generated-source ranking
-   penalty are done; still to add: name collisions across many files, cyclic
+   penalty are done; same-named Rust methods across same-file impl owners are
+   now covered. Still to add: name collisions across many files, cyclic
    re-export chains, and overloads distinguished only by signature/arity.
 4. Measure completeness expectations separately from minimum evidence. A bounded
    packet can support an answer without listing every raw neighbor.
@@ -73,12 +93,57 @@ same evaluation signal as the accuracy gates below.
 6. Add latency and memory constraints to the budget objective. Token-only optima
    can be operationally wrong when graph loading or selection dominates.
 
+## P1: Evidence-Aware Refinement
+
+1. Keep the monolithic query as the global retrieval prior, then use facets for
+   evidence verification/reranking. This matches the stage-aware result reported
+   in [When Should Queries Be Decomposed?](https://arxiv.org/abs/2606.08577):
+   early decomposition can dilute retrieval, while later constraint checks gain
+   from decomposition. GraphGraph already preserves the whole-query search and
+   adds bounded facet searches; benchmark Reciprocal Rank Fusion across those
+   ranked lists before replacing the current graph-aware reservation score.
+2. Make facet budgets adaptive only after a labeled coverage/latency set exists.
+   A useful candidate is an exploration/exploitation allocation over facets, but
+   it must beat equal reservation without starving low-frequency requested
+   evidence. The relevant primary result is
+   [MAB-DQA](https://aclanthology.org/2026.acl-long.1053/), which treats aspects
+   as bandit arms and reallocates retrieval budget from observed utility.
+3. Add an optional, query-local typed Rust refinement tier for unresolved member
+   calls. Tree-sitter remains the low-latency default; only the selected crate or
+   files should pay for compiler-grade evidence. Rust's
+   [THIR](https://rustc-dev-guide.rust-lang.org/thir.html) is the right semantic
+   target because it is post-type-checking and converts method calls/implicit
+   dereferences into explicit function calls. Measure rust-analyzer/rustc query
+   startup and cacheability before choosing the integration surface.
+4. For documents that hit paragraph caps, build a small overflow-only lexical
+   sidecar mapping terms to `(path, byte_start, byte_end)`. At query time, score
+   only those overflow spans and materialize the winning paragraph as an
+   ephemeral node. This preserves bounded graph size without making late body
+   paragraphs permanently unreachable.
+5. Fit the affected-test incoming/outgoing budget share from labeled
+   implementation-and-test queries. The current 60/40 allocation has a bounded
+   union and removed the observed direction-zigzag noise, but remains a
+   hand-set prior until cross-project recall/latency data supports a learned or
+   query-conditioned share.
+
 ## P1: Runtime Efficiency
+
+Completed platform hot-path work:
+
+- Production rendering and benchmark gates execute `GraphRuntime.compile`
+  instead of maintaining parallel route/retrieve/render implementations.
+- Evidence IR uses query-prioritized SQLite partitions with transactional
+  incremental refresh and exact aggregate receipts.
+- Semantic indexes and federated graph files are cached per process with
+  mtime/size invalidation.
+- CPG providers consume the scanner's public CST adapter, and shared state I/O
+  no longer creates a runtime-to-platform dependency.
 
 1. Build relation-indexed adjacency if hub benchmarks show repeated relation
    filtering is material after graph loading.
-2. Make graph and packet caches thread-safe before concurrent MCP requests are
-   supported. Add file locking or atomic replacement for persistent cache writes.
+2. Graph, packet, evidence, memory, temporal, semantic, and federation state now
+   use atomic replacement or locked append operations. Continue stress-testing
+   high-contention multi-process workloads and stale-lock recovery on CI hosts.
 3. Profile scanner and native graph load allocations on 10k, 100k, and 1m-node
    synthetic graphs before adding more compression formats.
 4. Track cold process startup, graph load, search, expansion, selection, rendering,

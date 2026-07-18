@@ -22,7 +22,7 @@ class TreeKnapsackTest(unittest.TestCase):
             graph,
             set(graph.nodes),
             graph.edges,
-            packet="gg_max",
+            packet="gg",
             token_budget=60,
             max_nodes=3,
         )
@@ -91,7 +91,7 @@ class TreeKnapsackTest(unittest.TestCase):
             values,
             80,
             edges=graph.edges,
-            packet="gg_max",
+            packet="gg",
             max_nodes=2,
         )
         self.assertIn("B", selected)

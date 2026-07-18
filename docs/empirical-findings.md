@@ -452,6 +452,147 @@ Report:
 
 - `benchmarks/context_graph/out/real_projects/doc_code_pairing_report.md`
 
+## Fused Incremental Query
+
+`benchmarks/context_graph/fused_query_benchmark.py` compares the previous
+three-step library path (update changed files, remove deleted files, then
+load/query) with one MCP `query_context` call carrying both path sets. On a
+500-file synthetic symbol graph, three fresh equivalent runs measured:
+
+| Path | Median |
+| --- | ---: |
+| Separate update + remove + query | 286.2 ms |
+| Fused splice + in-memory query | 167.3 ms |
+
+The fused path was **1.71x faster**. It performs one validated graph write,
+bypasses pre-refresh packet-cache reads, and passes the new graph directly to
+retrieval rather than parsing the persisted graph again. This measurement is
+local orchestration latency, not networked MCP transport latency; removing two
+external tool round trips should increase the end-to-end agent-loop advantage.
+
+The Git-derived variant was also dogfooded on this repository. The first calls
+spliced current edits and removed paths that had become ignored (including the
+local `docs/bugs/` corpus). A fourth identical `context --sync git` call made
+zero graph changes and the measured in-command context operation took about
+1.07s. This proves idempotence for the observed worktree; it is not a general
+cross-repository latency claim.
+
+Broad session retrieval now compresses dirty-file personalization/traversal
+seeds to one representative per path with
+`K=min(4, ceil(log2(changed_paths+1)))`. A focused synthetic regression with
+nine dirty files and five symbols per file selects four distinct paths and
+retains the query-matching changed symbol. Model answerability and packet-token
+impact still need promotion-benchmark coverage before tuning those coefficients.
+
+## Locus Development-Loop Acceptance (2026-07-14)
+
+A fresh installed Tree-sitter scan of the live Locus workspace, using its
+audited exclusions and a temporary output, measured 9.4s for 515 files: 6,596
+nodes, 23,551 edges, zero parse fallbacks/failures, and a valid packet graph.
+Receiver resolution reported 825 unique, 4,620 ambiguous, and 10,487 unresolved
+member calls; these counts intentionally expose the remaining type-analysis
+frontier rather than hiding it.
+
+The field-log regression query now contains a direct
+`run_formula_yield_benchmark -> validate_candidates_detailed` `calls` edge.
+Automatic scope inferred `crates/locus-pipeline`, bounded structural boundary
+crossings to five nodes, and returned no isolated/lexical-only nodes. The
+composed refresh/query/validation envelope measured about 1.03s on the saved
+graph.
+
+The affected-test route selected both direct Locus tests, including
+`detailed_validation_preserves_proved_refuted_and_unknown_outcomes`, separated
+direct from transitive tests, and produced runnable commands for the
+`yield_benchmark`, `performance_regression_test`, and `pipeline` integration
+targets. `.ignore`-excluded packet dumps no longer make freshness appear stale.
+
+These are black-box observations on one real workspace, not universal language
+resolution guarantees. Ambiguous/unresolved counts remain the evidence-led
+backlog for richer type inference.
+
+## Locus Real-Source Follow-Up Acceptance (2026-07-15)
+
+The follow-up field report measured a 169.2s fresh Locus rebuild and attributed
+141.3s to an opaque concept stage. After replacing the document-to-file
+all-pairs mention loop with a token index and separating document extraction
+from source-concept linking, the final paragraph-aware rebuild completed in
+15.4s wall time (12.8s scanner time): 10,520 nodes, 40,070 edges, 515 selected
+files, and zero Tree-sitter fallbacks/failures. This is an observed 11.0x wall-
+time improvement on the same workspace, not a cross-project throughput claim.
+
+The receipt now attributes 3.20s to 97 document files, names the slowest eight
+documents, reports one honestly truncated document, and attributes 0.76s to
+source-concept linking. Qualified Rust unit-struct receivers such as
+`locus_advisors::IdentityDiscoveryAdvisor.examine(...)` are now type-resolved;
+the same scan increased resolved member calls from 825 to 920 while retaining
+explicit ambiguous/unresolved counts.
+
+The previously failing compound implementation/test question now decomposes
+into six facets and returns evidence for all six: the exact benchmark runner,
+identity advisor, simpler-form advisor, finite-field detector, conjugate filter
+plus numerical-stability path, and successful verified applications. Its final
+packet contained 17 nodes and 22 edges with 100% edge coverage, no isolated or
+lexical-only nodes, an empty unfulfilled-facet list, and the direct Cargo test
+command. The measured query was about 4.16s, within the report's prior 5-7s
+range despite bounded per-facet searches.
+
+The roadmap acceptance query now selects paragraph nodes rather than only the
+Phase 3 heading. In 1.91s it returned `run_initial_strategy_yield_benchmark`,
+`preview_fixes`, and the complete remaining-exit sentence (representative
+real-project corpus, pinned per-strategy yield/noise thresholds, and separate
+generation-versus-extraction timing). The packet had 10 nodes, 6 edges, no
+isolated/lexical-only nodes, and seven grounded document nodes. Paragraph facts
+remain bounded at 1,200 characters and document/paragraph budget truncation is
+reported.
+
+## Locus Source-Baseline Graph-Quality Acceptance (2026-07-15)
+
+The source-baseline report exposed semantic failures that structural validation
+could not detect: two same-named Rust methods had collapsed into one valid node,
+generic parse facets escaped the requested subsystem, Cargo commands confused
+aggregated modules with integration targets, and facet telemetry contradicted
+packet evidence.
+
+Rust method identity is now owner-qualified. A fresh audited Tree-sitter scan
+of Locus completed in 14.5s wall time (12.2s scanner time) with 10,646 nodes,
+40,530 edges, 5,378 source nodes, 3,962 document nodes, no parse fallbacks or
+failures, and a valid native graph. It preserves distinct
+`YieldBaseline::evaluate` (line 127) and `SourceYieldBaseline::evaluate` (line
+512) nodes, parents, signatures, and receiver-resolved test callers. The same
+identity rule applies to every inherent/trait method in the corpus and survives
+incremental file replacement.
+
+Exact `Type::method` queries now bypass bounded lexical-candidate crowding and
+do not redundantly reserve the owner type. Affected-test expansion unions
+direction-consistent incoming and outgoing traversals under one 60/40 node
+budget; this prevents the in-then-out `method -> file -> every sibling` zigzag.
+On the focused Locus query this reduced the packet from 36 nodes to 14 while
+retaining the exact method, its direct test, 1/1 facet coverage, zero isolated
+nodes, and the runnable pipeline test command.
+
+The full source-baseline question returned all six requested facets: exact
+qualified method, strategy yield, noise, parse failures, verified source
+applications, and rejection diagnostics. It selected 23 nodes / 31 edges with
+no isolated or lexical-only nodes, recommended the direct
+`real_source_corpus_measures_all_four_initial_strategies` test, and attached a
+`covers` receipt naming the exact method. Meta-language such as “every part” is
+discarded, single meaningful facets such as “noise” are retained, and semantic
+aliases such as `preview_fixes` can satisfy verified-application evidence.
+
+Cargo commands now derive package and integration-target identity from the
+nearest `Cargo.toml`, explicit `[[test]]` entries, and `tests/<target>/main.rs`
+aggregation. GraphGraph produced
+`cargo test -p locus-frontends --test suite fpcore_test`; Cargo accepted the
+same selector with `--no-run` and reported the `suite` executable. JSON anchor
+receipts now describe selected traversal starts rather than earlier lexical
+candidates.
+
+These results close GG-SB-1 through GG-SB-4 for the observed Locus workload.
+They do not close global Rust receiver inference: the fresh scan still reports
+954 uniquely resolved, 4,544 ambiguous, and 10,526 unresolved member calls.
+That remaining uncertainty is explicitly retained rather than converted into
+false edges.
+
 ## What Is Still Unproven
 
 The remaining major proof is live model-answer scoring:

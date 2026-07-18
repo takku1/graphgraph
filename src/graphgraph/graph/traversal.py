@@ -49,6 +49,14 @@ POLICIES: dict[str, TraversalPolicy] = {
         min_confidence=0.0,
         direction="in",
     ),
+    "affected_tests": TraversalPolicy(
+        "affected_tests",
+        ("validation", "execution", "mention", "hierarchy", "dependency"),
+        ("tests", "calls", "references", "contains", "imports_from", "imports"),
+        weak_edge_limit=10,
+        min_confidence=0.0,
+        direction="both",
+    ),
     "multi_hop_path": TraversalPolicy(
         "multi_hop_path",
         ("execution", "dependency", "dataflow", "type"),

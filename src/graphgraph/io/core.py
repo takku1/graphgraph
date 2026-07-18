@@ -96,6 +96,14 @@ def load_graph(path: Path, *, normalize_external_refs: bool = False) -> Graph:
     if isinstance(centrality, dict):
         pagerank_payload = centrality.get("pagerank")
         if isinstance(pagerank_payload, dict):
+            raw_scores = pagerank_payload.get("scores")
+            if isinstance(raw_scores, list):
+                pagerank_payload = dict(pagerank_payload)
+                pagerank_payload["scores"] = {
+                    str(row["id"]): float(row["score"])
+                    for row in raw_scores
+                    if isinstance(row, dict) and "id" in row and "score" in row
+                }
             graph.seed_pagerank_cache(pagerank_payload)
     return graph
 
@@ -186,10 +194,24 @@ def graph_to_json(graph: Graph) -> str:
         ],
         "metadata": dict(graph.metadata),
         "centrality": {
-            "pagerank": graph.pagerank_cache_payload(),
+            # Rows, not an object keyed by node ID: PowerShell's standard
+            # ConvertFrom-Json treats object keys case-insensitively and fails
+            # when valid symbols differ only by case (e.g. Lane vs lane).
+            "pagerank": _portable_pagerank_payload(graph),
         },
     }
     return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def _portable_pagerank_payload(graph: Graph) -> dict[str, object]:
+    payload = graph.pagerank_cache_payload()
+    scores = payload.get("scores")
+    portable = dict(payload)
+    portable["scores"] = [
+        {"id": node_id, "score": score}
+        for node_id, score in sorted(scores.items())
+    ] if isinstance(scores, dict) else []
+    return portable
 
 
 def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:

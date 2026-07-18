@@ -11,6 +11,7 @@ from .models import Match
 from .text import node_search_text, tokenize
 
 DEPENDENCY_QUERY_TERMS = {"dependency", "dependencies", "external", "import", "imports", "module", "package", "vendor"}
+TEST_QUERY_TERMS = {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"}
 LOCAL_PPR_GRAPH_THRESHOLD = 512
 
 # Generic/placeholder identifier names that don't indicate a well-formed,
@@ -43,6 +44,7 @@ _GENERATED_QUERY_TERMS = frozenset({
 _BENCHMARK_QUERY_TERMS = frozenset({
     "benchmark", "benchmarks", "performance", "latency", "throughput", "evaluation", "eval",
 })
+_DOCUMENT_NODE_KINDS = frozenset({"section", "paragraph", "markdown", "concept", "rst", "html", "file", "text"})
 
 
 def saturating_boost(value: float, cap: float) -> float:
@@ -88,6 +90,26 @@ def identifier_quality_bonus(label: str) -> float:
     return min(3.0, 0.5 * (len(segments) - 1))
 
 
+def lexical_forms(term: str) -> set[str]:
+    """Return conservative English inflections used by lexical retrieval."""
+    forms = {term}
+    if term.endswith("ies") and len(term) > 4:
+        forms.add(term[:-3] + "y")
+    elif term.endswith("ing") and len(term) > 5:
+        stem = term[:-3]
+        forms.add(stem)
+        forms.add(stem + "e")
+    elif term.endswith("ed") and len(term) > 4:
+        stem = term[:-2]
+        forms.add(stem)
+        forms.add(stem + "e")
+    elif term.endswith("es") and len(term) > 4:
+        forms.add(term[:-2])
+    elif term.endswith("s") and not term.endswith("ss") and len(term) > 3:
+        forms.add(term[:-1])
+    return {form for form in forms if len(form) >= 3}
+
+
 @dataclass(frozen=True)
 class SearchIndexRow:
     node: Node
@@ -129,7 +151,7 @@ def search_nodes(
     # exact-sequence comparison.
     terms_with_stopwords = tokenize(query, keep_stopwords=True)
     query_terms = set(terms)
-    test_terms = query_terms & {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"}
+    test_terms = query_terms & TEST_QUERY_TERMS
     # Mentioning tests as one desired evidence type in a broad implementation
     # query should not turn every loosely matching test into a primary anchor.
     # Lift the penalty only when test vocabulary is a material part of intent.
@@ -160,10 +182,13 @@ def search_nodes(
         # Discover git-modified files and change counts (Session Layer)
         session_weights = {}
         modified_paths = git_utils.get_git_modified_files()
-        resolved = git_utils.resolve_modified_node_ids(graph, modified_paths)
-        for path, change_count in modified_paths.items():
-            for node_id in resolved.get(path, []):
-                session_weights[node_id] = math.log2(change_count + 2) * 2.0
+        selected_session_nodes = git_utils.select_modified_context_nodes(
+            graph,
+            modified_paths,
+            query,
+        )
+        for node_id, change_count in selected_session_nodes.items():
+            session_weights[node_id] = math.log2(change_count + 2) * 2.0
 
 
         for node_id, weight in session_weights.items():
@@ -207,7 +232,23 @@ def search_nodes(
         score = 0.0
         reasons: list[str] = []
         matched_terms: set[str] = set()
+        supporting_test = _is_test_node(node) and not test_query
+        document_node = node.kind in _DOCUMENT_NODE_KINDS
+        expanded_label_terms = {
+            form for token in label_terms for form in (lexical_forms(token) if document_node else {token})
+        }
+        expanded_path_terms = {
+            form for token in path_name_terms for form in (lexical_forms(token) if document_node else {token})
+        }
+        expanded_haystack_terms = {
+            form for token in haystack_terms for form in (lexical_forms(token) if document_node else {token})
+        }
         for term in terms:
+            term_forms = (
+                {term}
+                if not document_node or (supporting_test and term in TEST_QUERY_TERMS)
+                else lexical_forms(term)
+            )
             if term == node_id:
                 score += 8.0
                 reasons.append(f"id:{term}")
@@ -215,7 +256,7 @@ def search_nodes(
             if term == label:
                 if "_" in term or len(terms) == 1:
                     score += 12.0
-                elif node.kind in {"section", "markdown", "text", "rst", "html"}:
+                elif node.kind in {"section", "paragraph", "markdown", "text", "rst", "html"}:
                     score += 8.0
                 else:
                     score += 4.0
@@ -224,6 +265,10 @@ def search_nodes(
             elif term in label_terms:
                 score += 4.0
                 reasons.append(f"label:{term}")
+                matched_terms.add(term)
+            elif term_forms & expanded_label_terms:
+                score += 4.0
+                reasons.append(f"label_inflection:{term}")
                 matched_terms.add(term)
             elif len(term) >= 5 and term in label:
                 score += 4.0
@@ -237,12 +282,16 @@ def search_nodes(
                 score += 3.0
                 reasons.append(f"path:{term}")
                 matched_terms.add(term)
+            elif node.path and term_forms & expanded_path_terms:
+                score += 3.0
+                reasons.append(f"path_inflection:{term}")
+                matched_terms.add(term)
             elif node.path and len(term) >= 5 and term in path:
                 score += 3.0
                 reasons.append(f"path:{term}")
                 matched_terms.add(term)
             is_kind_match = (node.kind and term == node.kind.lower()) or (node.kind == "external" and term in DEPENDENCY_QUERY_TERMS)
-            if is_kind_match and term not in {"concept", "section", "file", "function", "method", "class"}:
+            if is_kind_match and term not in {"concept", "section", "paragraph", "file", "function", "method", "class"}:
                 score += 2.0
                 reasons.append(f"kind:{term}")
                 matched_terms.add(term)
@@ -257,6 +306,10 @@ def search_nodes(
             if term in haystack_terms and not any(reason.endswith(f":{term}") for reason in reasons):
                 score += 1.0
                 reasons.append(f"term:{term}")
+                matched_terms.add(term)
+            elif term_forms & expanded_haystack_terms and not any(reason.endswith(f":{term}") for reason in reasons):
+                score += 1.0
+                reasons.append(f"term_inflection:{term}")
                 matched_terms.add(term)
             elif len(term) >= 5 and term in haystack and not any(reason.endswith(f":{term}") for reason in reasons):
                 score += 0.5
@@ -281,8 +334,15 @@ def search_nodes(
                 elif query_terms <= label_terms:
                     score += 25.0
                     reasons.append("label_all_terms")
-                elif len(query_terms & label_terms) >= 2:
-                    score += 8.0 * (len(query_terms & label_terms) / len(query_terms))
+                elif len(label_query_matches := {
+                    term for term in query_terms
+                    if (
+                        {term}
+                        if not document_node or (supporting_test and term in TEST_QUERY_TERMS)
+                        else lexical_forms(term)
+                    ) & expanded_label_terms
+                }) >= 2:
+                    score += 8.0 * (len(label_query_matches) / len(query_terms))
                     reasons.append("label_multi_terms")
                 if (
                     terms == path_name_sequence or terms == path_name_exact_sequence
@@ -332,7 +392,7 @@ def search_nodes(
             pr_val = pagerank_scores.get(node.id, 0.0)
             if n_scores > 0:
                 pr_boost = pr_val * n_scores * 2.0
-                is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
+                is_doc_node = node.kind in _DOCUMENT_NODE_KINDS
                 if not is_doc_node:
                     pr_boost *= (1.0 - doc_intensity * 0.85)
                 if node.kind == "external" and not (external_exact and dependency_query):
@@ -340,7 +400,7 @@ def search_nodes(
                 score += saturating_boost(pr_boost, 8.0)
             else:
                 deg_boost = saturating_boost(degree.get(node.id, 0) * 0.05, 1.25)
-                is_doc_node = node.kind in {"section", "markdown", "concept", "rst", "html", "file"}
+                is_doc_node = node.kind in _DOCUMENT_NODE_KINDS
                 if not is_doc_node:
                     deg_boost *= (1.0 - doc_intensity * 0.85)
                 if node.kind == "external" and not (external_exact and dependency_query):
@@ -405,7 +465,8 @@ def _candidate_rows(graph: Graph, terms: tuple[str, ...], scopes: tuple[str, ...
     by_term = _search_token_index(graph)
     candidate_ids: set[str] = set()
     for term in terms:
-        candidate_ids.update(by_term.get(term, ()))
+        for form in lexical_forms(term):
+            candidate_ids.update(by_term.get(form, ()))
     if not candidate_ids:
         return rows
 
@@ -428,6 +489,8 @@ def _search_token_index(graph: Graph) -> dict[str, tuple[str, ...]]:
             | set(row.path_name_terms)
             | {row.node_id, row.label, row.path}
         )
+        if row.node.kind in _DOCUMENT_NODE_KINDS:
+            tokens |= {form for token in tuple(tokens) for form in lexical_forms(token)}
         for token in tokens:
             if token:
                 by_term[token].add(row.node.id)
@@ -534,7 +597,7 @@ def _search_index_by_id(graph: Graph) -> dict[str, SearchIndexRow]:
 def _search_index_key(graph: Graph) -> tuple[object, ...]:
     return (
         id(graph),
-        graph.structural_signature(),
+        graph.node_revision,
         graph.metadata.get("git_dirty", ""),
         graph.metadata.get("git_high_churn", ""),
     )

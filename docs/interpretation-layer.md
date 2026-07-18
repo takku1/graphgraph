@@ -16,7 +16,7 @@ The intended stack is:
    utility budgeting, MCTS, and geodesic attention bias tensors.
 3. **IR/execution layer**: call graph, control flow, data flow, type relations,
    and future CPG-style extraction.
-4. **Packet layer**: `gg_max`, `semantic_arrow`, `lowlevel`, `doc_summary`, and
+4. **Packet layer**: `gg`, `semantic_arrow`, `lowlevel`, `doc_summary`, and
    other model-facing serializations.
 5. **Runtime/hardware layer**: token layout, KV-cache stability, attention bias,
    and tensor-shaped graph representations.

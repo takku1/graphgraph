@@ -13,7 +13,7 @@ LOCAL_EDGE_DENSITY_CAP = 1.5
 
 SOURCE_KINDS = {"python", "typescript", "javascript", "rust", "go", "java", "c", "cpp", "header", "lean"}
 SYMBOL_KINDS = {"function", "method", "class", "struct", "enum", "trait", "theorem"}
-DOC_KINDS = {"markdown", "rst", "text", "section", "concept"}
+DOC_KINDS = {"markdown", "rst", "text", "section", "paragraph", "concept"}
 @dataclass(frozen=True)
 class GraphShape:
     nodes: int
@@ -134,7 +134,7 @@ def recommend_node_budget(query_class: str, query: str, shape: GraphShape) -> Bu
 
     # 3. Dynamic marginal token cost per node (tau) from fitted regression surface
     density = adjusted_edge_density(shape)
-    node_cost, edge_cost = packet_marginal_costs("gg_max")
+    node_cost, edge_cost = packet_marginal_costs("gg")
     tau = node_cost + edge_cost * density
 
     # 4. Coarse Planning: Regularized Budget Heuristic:
@@ -341,13 +341,13 @@ def context_node_bounds(query_class: str, shape: GraphShape) -> tuple[int, int]:
 
 
 def nodes_for_token_target(target_tokens: int, shape: GraphShape) -> int:
-    return nodes_for_surface_budget("gg_max", target_tokens, adjusted_edge_density(shape))
+    return nodes_for_surface_budget("gg", target_tokens, adjusted_edge_density(shape))
 
 
 def estimate_gg_max_tokens(nodes: int, shape: GraphShape) -> int:
     density = adjusted_edge_density(shape)
     edges = int(math.ceil(nodes * density))
-    return estimate_surface_tokens("gg_max", nodes, edges)
+    return estimate_surface_tokens("gg", nodes, edges)
 
 
 def adjusted_edge_density(shape: GraphShape) -> float:

@@ -1,6 +1,7 @@
 import argparse
 
 from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..version import package_version
 from .commands import (
     cmd_cache,
     cmd_compare,
@@ -26,10 +27,12 @@ from .commands import (
     cmd_validate,
     cmd_validate_graph,
 )
+from .platform import add_platform_parser
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="graphgraph")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     plan = sub.add_parser("plan")
@@ -56,19 +59,23 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--full-graph", action="store_true", help="Render every active node/edge with no query/budget -- an explicit escape hatch, not the default path. Refuses over --full-graph-max-tokens unless raised or disabled.")
     final.add_argument("--full-graph-max-tokens", type=int, default=20_000, help="Token guard for --full-graph (default: 20000). Pass 0 to disable.")
     final.add_argument("--max-nodes", type=int, default=None, help="Expanded node budget. Default: dynamic by query class and graph shape; stable skeleton uses 100.")
-    final.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    final.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     final.set_defaults(func=cmd_final)
 
     query = sub.add_parser("query", help="Retrieve a query-specific graph context packet without preselecting node IDs.")
     query.add_argument("query", help="Natural-language query used to find graph anchors.")
     query.add_argument("--graph")
     query.add_argument("--query-class", default="auto", help="Routing policy (default: auto; explicit classes remain supported).")
-    query.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    query.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     query.add_argument("--hops", type=int)
     query.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
     query.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     query.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
+    query.add_argument("--scope-mode", choices=["strict", "expand"], default="strict",
+                       help="strict keeps every result in scope; expand permits structurally connected boundary crossings.")
     query.add_argument("--show-anchors", action="store_true")
+    query.add_argument("--source-mode", choices=["auto", "off", "all"], default="auto")
+    query.add_argument("--memory-scope", action="append", default=[])
     query.add_argument("--show-stats", action="store_true", help="Print graph load shape metrics to stderr.")
     query.set_defaults(func=cmd_query)
 
@@ -77,12 +84,14 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--directory", "-d", help="Root directory to scan if a graph must be built (default: cwd).")
     context.add_argument("--graph", help="Graph path to read/write (default: .graphgraph/graph.gg).")
     context.add_argument("--rebuild", action="store_true", help="Force a graph rebuild before querying.")
-    context.add_argument("--scan-max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Max files/nodes collected during auto-build (default: {DEFAULT_SCAN_MAX_NODES}).")
+    context.add_argument("--scan-max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Auto-build file cap; symbol extraction has a separate proportional cap (default: {DEFAULT_SCAN_MAX_NODES} files).")
     context.add_argument("--query-class", default="auto", help="Routing policy (default: auto; explicit classes remain supported).")
-    context.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg_max", "gg_max_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    context.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
     context.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
     context.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     context.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
+    context.add_argument("--scope-mode", choices=["strict", "expand"], default="strict",
+                         help="strict keeps every result in scope; expand permits structurally connected boundary crossings.")
     context.add_argument("--skip-dirs", nargs="*", metavar="DIR", help="Additional directory names to skip during auto-build.")
     context.add_argument("--exclude", nargs="*", metavar="DIR", dest="exclude_dirs", help="Alias: extra directory names to exclude during auto-build.")
     context.add_argument("--include", nargs="*", metavar="DIR",
@@ -104,7 +113,17 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Use hash-based incremental scanner during auto-build (default: true).")
     context.add_argument("--no-incremental", action="store_false", dest="incremental",
                          help="Disable incremental scanning during auto-build.")
+    context.add_argument("--sync", choices=["none", "git"], default="none",
+                         help="Before querying, refresh only stale Git-changed paths by comparing them with the manifest.")
+    context.add_argument("--changed", "--changed-files", nargs="*", default=[], metavar="PATH", dest="changed",
+                         help="Explicit edited/created paths to splice before querying.")
+    context.add_argument("--deleted", "--deleted-files", nargs="*", default=[], metavar="PATH", dest="deleted",
+                         help="Explicit deleted/renamed-away paths to remove before querying.")
     context.add_argument("--show-anchors", action="store_true")
+    context.add_argument("--source-mode", choices=["auto", "off", "all"], default="auto")
+    context.add_argument("--memory-scope", action="append", default=[])
+    context.add_argument("--json", action="store_true", help="Emit one machine-readable refresh/query/validation envelope.")
+    context.add_argument("--validate", action="store_true", help="Print the already-enforced packet validation receipt.")
     context.add_argument("--show-stats", action="store_true", help="Print graph load/build shape metrics to stderr.")
     context.set_defaults(func=cmd_context)
 
@@ -127,13 +146,18 @@ def build_parser() -> argparse.ArgumentParser:
     validate.set_defaults(func=cmd_validate)
 
     validate_graph = sub.add_parser("validate-graph", help="Validate a saved GraphGraph JSON graph file.")
+    validate_graph.add_argument("path", nargs="?", help="Graph path (positional shorthand for --graph).")
     validate_graph.add_argument("--graph", help="Graph JSON path. Auto-detected from .graphgraph if omitted.")
     validate_graph.set_defaults(func=cmd_validate_graph)
 
     scan = sub.add_parser("scan", help="Scan a directory and build a graph from import relationships.")
     scan.add_argument("--directory", "-d", help="Root directory to scan (default: cwd).")
-    scan.add_argument("--output", "-o", help="Output graph path (default: .graphgraph/graph.gg).")
-    scan.add_argument("--max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Max nodes to collect (default: {DEFAULT_SCAN_MAX_NODES}).")
+    scan.add_argument(
+        "--output",
+        "-o",
+        help="Output graph path (default: reuse the single existing native graph; otherwise .graphgraph/graph.gg).",
+    )
+    scan.add_argument("--max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"File collection cap (default: {DEFAULT_SCAN_MAX_NODES}); with --depth symbols, the symbol cap is 20x this value.")
     scan.add_argument("--generic-mentions", action="store_true", default=False,
                       help="Add weak 'references' edges for any file that mentions another file's stem name.")
     scan.add_argument("--skip-dirs", nargs="*", metavar="DIR",
@@ -144,14 +168,19 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--include", nargs="*", metavar="DIR",
                       help="Directory names to keep even though a default skip rule would drop them "
                            "(e.g. a real project dir named 'build' or 'out'). E.g. --include build out.")
-    scan.add_argument("--depth", choices=["files", "symbols"], default="files",
-                      help="'files' (default): one node per file. 'symbols': adds function/class/struct nodes.")
-    scan.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto",
-                      help="Symbol extraction frontend for --depth symbols. auto prefers Tree-sitter when available.")
-    scan.add_argument("--docs", action="store_true", help="Extract document sections and concept nodes.")
-    scan.add_argument("--history", action="store_true", default=False,
+    scan.add_argument("--depth", choices=["files", "symbols"], default=None,
+                      help="Scan depth. Reuses the existing graph setting when omitted; new graphs default to files.")
+    scan.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default=None,
+                      help="Symbol frontend. Reuses the existing graph setting when omitted; new graphs default to auto.")
+    scan.add_argument("--docs", action="store_true", default=None,
+                      help="Extract document sections and concept nodes; reuses the existing graph setting when omitted.")
+    scan.add_argument("--no-docs", action="store_false", dest="docs",
+                      help="Disable document extraction even when the existing graph enabled it.")
+    scan.add_argument("--history", action="store_true", default=None,
                       help="Link qualifying bug-fix commits (git log, regex-classified) to the files they "
-                           "touched via a 'fixes' edge. Opt-in; requires a git repo. Default: False.")
+                           "touched via a 'fixes' edge. Reuses the existing graph setting when omitted.")
+    scan.add_argument("--no-history", action="store_false", dest="history",
+                      help="Disable history extraction even when the existing graph enabled it.")
     scan.add_argument("--incremental", action="store_true", default=True, help="Use hash-based incremental scanner (default: True).")
     scan.add_argument("--no-incremental", action="store_false", dest="incremental", help="Disable incremental scanning.")
     scan.set_defaults(func=cmd_scan)
@@ -263,5 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     install.set_defaults(func=cmd_install)
+
+    add_platform_parser(sub)
 
     return parser

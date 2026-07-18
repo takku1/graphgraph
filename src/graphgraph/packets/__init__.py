@@ -1,6 +1,7 @@
 from .renderers import (
     DEFAULT_RELATION_ORDER,
     render_doc_summary,
+    render_gg,
     render_gg_lex,
     render_gg_max,
     render_hybrid,
@@ -9,7 +10,6 @@ from .renderers import (
     render_semantic_arrow,
     render_sql,
     render_svo,
-    render_tensor_array,
 )
 from .validation import (
     ValidationResult,
@@ -30,6 +30,7 @@ __all__ = [
     "ValidationResult",
     "looks_like_graph_json",
     "render_doc_summary",
+    "render_gg",
     "render_gg_lex",
     "render_gg_max",
     "render_hybrid",
@@ -38,7 +39,6 @@ __all__ = [
     "render_semantic_arrow",
     "render_sql",
     "render_svo",
-    "render_tensor_array",
     "validate_any",
     "validate_doc_summary",
     "validate_gg_max",

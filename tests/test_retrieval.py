@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,72 @@ from graphgraph.services.context import resolve_start_nodes
 
 
 class RetrievalTest(unittest.TestCase):
+    def test_git_worktree_paths_classifies_changes_deletes_and_renames(self) -> None:
+        from graphgraph.retrieval import git_utils
+
+        diff = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=b"M\0changed.py\0R100\0old.py\0new.py\0D\0gone.py\0",
+            stderr=b"",
+        )
+        untracked = subprocess.CompletedProcess([], 0, stdout=b"new_file.py\0", stderr=b"")
+        git_utils._git_path_cache.clear()
+        with patch.object(git_utils, "_find_git_root", return_value=Path("C:/repo")), patch.object(
+            git_utils.subprocess,
+            "run",
+            side_effect=[diff, untracked],
+        ):
+            changed, deleted = git_utils.get_git_worktree_paths(Path("C:/repo"))
+
+        self.assertEqual(changed, ("changed.py", "new.py", "new_file.py"))
+        self.assertEqual(deleted, ("gone.py", "old.py"))
+
+    def test_modified_context_nodes_are_query_aware_and_path_bounded(self) -> None:
+        from graphgraph.retrieval.git_utils import select_modified_context_nodes
+
+        nodes = {}
+        edges = []
+        modified = {}
+        for file_index in range(9):
+            path = f"src/module_{file_index}.py"
+            modified[path] = file_index + 1
+            file_id = f"FILE_{file_index}"
+            nodes[file_id] = Node(file_id, f"module_{file_index}.py", "python", path)
+            for symbol_index in range(5):
+                node_id = f"S_{file_index}_{symbol_index}"
+                label = "refresh_saved_graph" if (file_index, symbol_index) == (5, 3) else f"helper_{symbol_index}"
+                nodes[node_id] = Node(node_id, label, "function", path)
+                edges.append(Edge(file_id, node_id, "contains"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        selected = select_modified_context_nodes(graph, modified, "refresh saved graph")
+
+        self.assertEqual(len(selected), 4)
+        self.assertIn("S_5_3", selected)
+        selected_paths = {graph.nodes[node_id].path for node_id in selected}
+        self.assertEqual(len(selected_paths), len(selected))
+
+    def test_modified_context_nodes_do_not_duplicate_existing_anchor_path(self) -> None:
+        from graphgraph.retrieval.git_utils import select_modified_context_nodes
+
+        graph = Graph(
+            nodes={
+                "A": Node("A", "alpha", "function", "src/a.py"),
+                "AF": Node("AF", "a.py", "python", "src/a.py"),
+                "B": Node("B", "beta", "function", "src/b.py"),
+            },
+            edges=[Edge("AF", "A", "contains")],
+        )
+        selected = select_modified_context_nodes(
+            graph,
+            {"src/a.py": 10, "src/b.py": 1},
+            "what should change next",
+            exclude=("A",),
+        )
+
+        self.assertEqual(selected, {"B": 1})
+
     def test_reverse_lookup_preserves_multi_identifier_contract_intent(self) -> None:
         graph = Graph(
             nodes={
@@ -574,6 +641,15 @@ class RetrievalTest(unittest.TestCase):
         self.assertIsNot(graph._search_index_cache, cache)
         self.assertIsNot(graph._search_token_cache, token_cache)
 
+    def test_search_index_cache_invalidates_when_node_is_replaced_under_same_id(self) -> None:
+        graph = Graph(nodes={"A": Node("A", "AlphaSearch", "function", "src/a.py")})
+        self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.label, "AlphaSearch")
+
+        graph.nodes["A"] = Node("A", "BetaSearch", "function", "src/a.py")
+
+        self.assertEqual(search_nodes(graph, "beta search", limit=1)[0].node.label, "BetaSearch")
+        self.assertTrue(all(match.node.label != "AlphaSearch" for match in search_nodes(graph, "alpha search", limit=1)))
+
     def test_retrieval_anchors_code_identifier_queries(self) -> None:
         graph = Graph(
             nodes={
@@ -622,7 +698,7 @@ class RetrievalTest(unittest.TestCase):
             query_class="blast_radius",
             hops=2,
             direction="both",
-            packet="gg_max",
+            packet="gg",
             node_budget=20,
             anchor_limit=1,
             weak_edge_limit=20,
@@ -756,6 +832,98 @@ class RetrievalTest(unittest.TestCase):
 
         self.assertEqual(nodes, {"DOC", "ROADMAP", "STATUS"})
         self.assertEqual({edge.type for edge in edges}, {"section_of"})
+
+    def test_doc_summary_deduplicates_copied_content_and_excludes_source_anchors(self) -> None:
+        from graphgraph.retrieval.context import select_anchor_matches
+        from graphgraph.retrieval.models import Match
+
+        copied_fact = "Accept a build only after checking exclusions, validation, and truncation."
+        matches = (
+            Match(Node("PLUGIN", "Acceptance", "paragraph", "plugins/skill.md", facts=(copied_fact,)), 20.0, ()),
+            Match(Node("ASSET", "Acceptance", "paragraph", "src/assets/skill.md", facts=(copied_fact,)), 19.0, ()),
+            Match(Node("GUIDE", "Build guide", "section", "docs/guide.md", facts=("Inspect build receipts.",)), 18.0, ()),
+            Match(Node("BUILD", "build_graph", "function", "src/build.py"), 17.0, ()),
+        )
+
+        selected = select_anchor_matches(
+            matches,
+            anchor_limit=4,
+            query_class="doc_summary",
+            doc_intent=True,
+        )
+
+        self.assertEqual([match.node.id for match in selected], ["PLUGIN", "GUIDE"])
+
+    def test_search_normalizes_accept_and_check_inflections_for_document_ranking(self) -> None:
+        graph = Graph(
+            nodes={
+                "ACCEPT_RULE": Node(
+                    "ACCEPT_RULE",
+                    "Accept a build only after checking validation and truncation",
+                    "paragraph",
+                    "docs/contract.md",
+                ),
+                "PREBUILD_RULE": Node(
+                    "PREBUILD_RULE",
+                    "Before the first graph build, audit exclusions",
+                    "paragraph",
+                    "docs/contract.md",
+                ),
+            }
+        )
+
+        matches = search_nodes(graph, "What must be checked before accepting a graph build?", doc_intensity=1.0)
+
+        self.assertEqual(matches[0].node.id, "ACCEPT_RULE")
+        self.assertIn("label_inflection:checked", matches[0].reasons)
+        self.assertIn("label_inflection:accepting", matches[0].reasons)
+
+    def test_document_inflections_do_not_blur_code_identifiers(self) -> None:
+        graph = Graph(
+            nodes={
+                "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/native.py"),
+                "INSPECT": Node(
+                    "INSPECT",
+                    "inspect_saved_graph_freshness",
+                    "function",
+                    "src/services/native.py",
+                ),
+                "SAVE": Node("SAVE", "save_graph", "function", "src/io/core.py"),
+            }
+        )
+
+        matches = search_nodes(
+            graph,
+            "What tests should run if I change refresh_saved_graph and changed-path synchronization behavior?",
+            limit=3,
+        )
+
+        self.assertEqual([match.node.id for match in matches[:2]], ["REFRESH", "INSPECT"])
+        self.assertFalse(any(reason == "label_inflection:saved" for reason in matches[-1].reasons))
+
+    def test_affected_test_facets_normalize_change_intent_and_sync_variants(self) -> None:
+        from graphgraph.retrieval.context import facet_coverage, query_facets
+
+        query = "What tests should run if I change refresh_saved_graph and the changed-path synchronization behavior?"
+        facets = query_facets(query)
+        self.assertEqual(
+            facets,
+            (
+                ("refresh_saved_graph", ("refresh", "saved", "graph")),
+                ("path synchronization", ("path", "synchronization")),
+            ),
+        )
+        graph = Graph(
+            nodes={
+                "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/native.py"),
+                "SYNC": Node("SYNC", "worktree_sync_candidate", "function", "src/services/native.py", summary="rel_path"),
+            }
+        )
+
+        coverage = facet_coverage(graph, {"REFRESH", "SYNC"}, facets)
+
+        self.assertEqual(coverage["unfulfilled"], [])
+        self.assertEqual(coverage["coverage_ratio"], 1.0)
 
     def test_render_query_context_show_anchors_includes_line_number(self) -> None:
         # The text-mode ANCHORS listing (used by `graphgraph query
@@ -957,6 +1125,7 @@ class RetrievalTest(unittest.TestCase):
             self.assertIn("src/auth.py:3", out)
             self.assertIn("4 | def login():", out)
             self.assertIn("5 |     token = helper()", out)
+            self.assertIn("6 |     return token", out)
             self.assertNotIn("1 | def helper", out)
 
     def test_render_source_snippets_prefers_real_code_over_doc_concept_with_same_label(self) -> None:
@@ -1029,6 +1198,46 @@ class RetrievalTest(unittest.TestCase):
         result = retrieve_context(graph, "alpha", "multi_hop_path", hops=1)
         self.assertIn("B", result.nodes)
         self.assertTrue(all(edge.target != "C" for edge in result.edges))
+
+    def test_structural_packets_drop_non_anchor_nodes_without_edges(self) -> None:
+        from graphgraph.retrieval.context import prune_unexplained_structural_nodes
+
+        nodes, edges = prune_unexplained_structural_nodes(
+            {"A", "B", "LEXICAL_ORPHAN"},
+            [Edge("A", "B", "calls")],
+            ("A",),
+        )
+        self.assertEqual(nodes, {"A", "B"})
+        self.assertEqual(len(edges), 1)
+
+    def test_ordered_doc_query_reserves_adjacent_phase_section(self) -> None:
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import reserve_ordered_doc_siblings
+
+        graph = Graph(
+            nodes={
+                "D": Node("D", "Roadmap", "markdown", "ROADMAP.md"),
+                "P1": Node("P1", "Phase 1 Documentation Reconciliation", "section", "ROADMAP.md", summary="L10"),
+                "P2": Node("P2", "Phase 2 Frozen Capability Backlog", "section", "ROADMAP.md", summary="L20"),
+                "P3": Node("P3", "Phase 3 New Capability", "section", "ROADMAP.md", summary="L30"),
+            },
+            edges=[
+                Edge("P1", "D", "section_of"),
+                Edge("P2", "D", "section_of"),
+                Edge("P3", "D", "section_of"),
+            ],
+        )
+        nodes, edges = reserve_ordered_doc_siblings(
+            graph,
+            {"P2", "D"},
+            [Edge("P2", "D", "section_of")],
+            ("P2",),
+            "what happens before phase 2 in the ordered backlog?",
+            plan_context("doc_summary", max_nodes=8),
+        )
+        self.assertIn("P1", nodes)
+        self.assertIn("P3", nodes)
+        self.assertTrue(any(edge.source == "P1" and edge.type == "section_of" for edge in edges))
 
     def test_retrieve_context_tightens_weak_edge_budget_for_noisy_subgraphs(self) -> None:
         graph = Graph(
@@ -1161,7 +1370,7 @@ Find the AuthService implementation.
         node_start = lines.index("[n]") + 1
         edge_start = lines.index("[e]")
         node_rows = [line for line in lines[node_start:edge_start] if not line.startswith("# ")]
-        # Budget tracks the path-aware gg_max token surface. Source provenance
+        # Budget tracks the path-aware gg token surface. Source provenance
         # raises per-node cost, so the same token target admits fewer nodes.
         self.assertEqual(len(node_rows), 58)
 
@@ -1208,6 +1417,504 @@ Find the AuthService implementation.
             # must render regardless of size.
             packet = render_full_graph(graph_path, max_tokens=None)
             self.assertIn("node_number_0_with_a_longer_label", packet)
+
+
+class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
+    def test_scope_mode_strict_blocks_and_expand_allows_structural_boundary(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "run_formula_yield_benchmark", "function", "crates/locus-pipeline/src/yield.rs"),
+                "B": Node("B", "external_consumer", "function", "crates/locus-engine/src/lib.rs"),
+            },
+            edges=[Edge("A", "B", "calls")],
+        )
+        strict = retrieve_context(
+            graph, "run_formula_yield_benchmark", "direct_lookup", hops=1,
+            scopes=("crates/locus-pipeline",), scope_mode="strict",
+        )
+        expanded = retrieve_context(
+            graph, "run_formula_yield_benchmark", "direct_lookup", hops=1,
+            scopes=("crates/locus-pipeline",), scope_mode="expand",
+        )
+        self.assertEqual(strict.nodes, {"A"})
+        self.assertIn("B", expanded.nodes)
+        self.assertEqual(expanded.metadata["quality"]["cross_scope_nodes"], 1)
+
+    def test_affected_tests_reports_direct_evidence_and_runnable_command(self) -> None:
+        graph = Graph(
+            nodes={
+                "RUN": Node("RUN", "run_formula_yield_benchmark", "function", "crates/locus-pipeline/src/yield.rs"),
+                "VAL": Node("VAL", "validate_candidates_detailed", "method", "crates/locus-pipeline/src/lib.rs"),
+                "TEST": Node("TEST", "pinned_formula_corpus", "function", "crates/locus-pipeline/tests/yield_benchmark.rs"),
+                "NOISE": Node("NOISE", "identity_validation", "function", "crates/locus-core/src/numerical.rs"),
+            },
+            edges=[
+                Edge("RUN", "VAL", "calls"),
+                Edge("TEST", "RUN", "calls"),
+                Edge("NOISE", "VAL", "references"),
+            ],
+        )
+        result = retrieve_context(
+            graph,
+            "which tests cover run_formula_yield_benchmark and validate_candidates_detailed",
+            "affected_tests",
+            hops=2,
+        )
+        affected = result.metadata["affected_tests"]
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertEqual(affected["commands"], ["cargo test -p locus-pipeline --test yield_benchmark"])
+        self.assertEqual(affected["direct"][0]["root_paths"][0]["root"]["id"], "RUN")
+        self.assertEqual(
+            affected["command_provenance"][0]["tests"][0]["id"],
+            "TEST",
+        )
+        self.assertEqual(
+            affected["direct"][0]["covers"],
+            [
+                {"id": "RUN", "label": "run_formula_yield_benchmark"},
+                {"id": "VAL", "label": "validate_candidates_detailed"},
+            ],
+        )
+        self.assertEqual(result.metadata["inferred_scope"], "crates/locus-pipeline")
+        self.assertNotIn("NOISE", result.starts)
+
+    def test_affected_tests_reserves_multi_field_assertion_ahead_of_generic_tests(self) -> None:
+        graph = Graph(
+            nodes={
+                "CANDIDATE": Node(
+                    "CANDIDATE",
+                    "candidate_generation",
+                    "field",
+                    "crates/locus-pipeline/src/yield_benchmark.rs",
+                ),
+                "EXTRACTION": Node(
+                    "EXTRACTION",
+                    "extraction_only",
+                    "field",
+                    "crates/locus-pipeline/src/yield_benchmark.rs",
+                ),
+                "Z_PINNED": Node(
+                    "Z_PINNED",
+                    "pinned_formula_corpus_produces_machine_readable_yield_report",
+                    "function",
+                    "crates/locus-pipeline/tests/yield_benchmark.rs",
+                ),
+                **{
+                    f"A_NOISE_{index}": Node(
+                        f"A_NOISE_{index}",
+                        f"generic_pipeline_test_{index}",
+                        "function",
+                        f"crates/locus-pipeline/tests/pipeline_{index}.rs",
+                    )
+                    for index in range(8)
+                },
+            },
+            edges=[
+                Edge(
+                    "Z_PINNED",
+                    "CANDIDATE",
+                    "references",
+                    confidence=0.94,
+                    provenance="tree_sitter_type_resolved_field_assertion",
+                ),
+                Edge(
+                    "Z_PINNED",
+                    "EXTRACTION",
+                    "references",
+                    confidence=0.94,
+                    provenance="tree_sitter_type_resolved_field_assertion",
+                ),
+                *[
+                    Edge(f"A_NOISE_{index}", "CANDIDATE", "references", confidence=0.6)
+                    for index in range(8)
+                ],
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Which tests directly validate candidate_generation and extraction_only?",
+            "affected_tests",
+            hops=2,
+            max_nodes=4,
+        )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual(affected["direct"][0]["id"], "Z_PINNED")
+        self.assertTrue(affected["direct"][0]["in_packet"])
+        self.assertIn("Z_PINNED", result.nodes)
+        self.assertEqual(result.metadata["facet_coverage"]["coverage_ratio"], 1.0)
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_affected_tests_drops_intent_word_homonym_roots(self) -> None:
+        graph = Graph(
+            nodes={
+                "BASE": Node("BASE", "SourceCaseBaseline", "struct", "crates/locus-pipeline/src/yield.rs"),
+                "EVAL": Node("EVAL", "evaluate", "method", "crates/locus-pipeline/src/yield.rs", parent="BASE"),
+                "HOMONYM": Node(
+                    "HOMONYM",
+                    "affected_packages",
+                    "method",
+                    "crates/locus-frontends/src/planner.rs",
+                ),
+                "DIRECT": Node(
+                    "DIRECT",
+                    "representative_disk_corpus_meets_all_case_expectations",
+                    "function",
+                    "crates/locus-pipeline/tests/yield_benchmark.rs",
+                ),
+                "UNRELATED": Node(
+                    "UNRELATED",
+                    "planner_test",
+                    "function",
+                    "crates/locus-frontends/tests/suite/planner_test.rs",
+                ),
+            },
+            edges=[
+                Edge("BASE", "EVAL", "defines"),
+                Edge("DIRECT", "EVAL", "calls", confidence=0.95, provenance="tree_sitter_type_resolved"),
+                Edge("UNRELATED", "HOMONYM", "calls", confidence=0.95, provenance="tree_sitter_type_resolved"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "If SourceCaseBaseline evaluate changes, which tests are affected?",
+            "affected_tests",
+            hops=2,
+        )
+
+        affected = result.metadata["affected_tests"]
+        recommended = {item["id"] for item in [*affected["direct"], *affected["transitive"]]}
+        self.assertIn("DIRECT", recommended)
+        self.assertNotIn("UNRELATED", recommended)
+        self.assertNotIn("HOMONYM", result.starts)
+
+    def test_domain_facets_credit_promotable_yield_and_parent_traversal_rejection(self) -> None:
+        from graphgraph.retrieval.context import facet_coverage
+
+        graph = Graph(
+            nodes={
+                "YIELD": Node("YIELD", "min_promotable_candidates", "field", "src/yield.rs"),
+                "UNSAFE": Node(
+                    "UNSAFE",
+                    "disk_backed_source_corpus_rejects_parent_traversal",
+                    "function",
+                    "tests/yield_benchmark.rs",
+                ),
+            }
+        )
+
+        coverage = facet_coverage(
+            graph,
+            {"YIELD", "UNSAFE"},
+            (
+                ("yield loss", ("yield", "loss")),
+                ("unsafe path rejection", ("unsafe", "path", "rejection")),
+            ),
+        )
+
+        self.assertEqual(coverage["unfulfilled"], [])
+
+    def test_code_convention_query_requires_code_not_document_mentions(self) -> None:
+        query = (
+            "Where do tests load fixture files using CARGO_MANIFEST_DIR, "
+            "include_str, read_to_string, or tests/fixtures?"
+        )
+        graph = Graph(
+            nodes={
+                "DOC": Node(
+                    "DOC",
+                    "Fixture loading notes",
+                    "paragraph",
+                    "docs/testing.md",
+                    summary="Use CARGO_MANIFEST_DIR include_str and read_to_string for tests fixtures.",
+                )
+            }
+        )
+
+        result = retrieve_context(graph, query, "direct_lookup", hops=1)
+
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(result.metadata["structural_facet_coverage"]["unfulfilled"])
+
+    def test_consumer_reverse_lookup_promotes_contract_members_and_direct_test(self) -> None:
+        graph = Graph(
+            nodes={
+                "BASE": Node("BASE", "SourceCaseBaseline", "struct", "src/yield.rs"),
+                "EVAL": Node("EVAL", "evaluate", "method", "src/yield.rs", parent="BASE"),
+                "MIN": Node("MIN", "min_promotable_candidates", "field", "src/yield.rs", parent="BASE"),
+                "TEST": Node(
+                    "TEST",
+                    "representative_disk_corpus_meets_all_case_expectations",
+                    "function",
+                    "tests/yield_benchmark.rs",
+                ),
+            },
+            edges=[
+                Edge("BASE", "EVAL", "contains"),
+                Edge("BASE", "MIN", "contains"),
+                Edge("TEST", "EVAL", "calls", confidence=0.95, provenance="tree_sitter_type_resolved"),
+            ],
+        )
+        query = "Where is SourceCaseBaseline, what metrics does it enforce, and which test consumes it?"
+
+        result = retrieve_context(graph, query, "reverse_lookup", hops=1)
+
+        self.assertTrue({"BASE", "EVAL", "MIN", "TEST"} <= result.nodes)
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_affected_tests_uses_aggregated_cargo_harness_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-frontends"
+            module = crate / "tests" / "suite" / "fpcore_test.rs"
+            module.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-frontends"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (module.parent / "main.rs").write_text("mod fpcore_test;\n", encoding="utf-8")
+            module.write_text("#[test]\nfn parses_fpcore() {}\n", encoding="utf-8")
+            graph = Graph(
+                nodes={
+                    "RUN": Node("RUN", "parse_fpcore", "function", "crates/locus-frontends/src/fpcore.rs"),
+                    "TEST": Node(
+                        "TEST",
+                        "parses_fpcore",
+                        "function",
+                        "crates/locus-frontends/tests/suite/fpcore_test.rs",
+                        source=str(module),
+                    ),
+                },
+                edges=[Edge("TEST", "RUN", "calls")],
+            )
+            result = retrieve_context(graph, "which tests cover parse_fpcore", "affected_tests", hops=2)
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual(affected["commands"], ["cargo test -p locus-frontends --test suite fpcore_test"])
+        self.assertEqual(affected["direct"][0]["covers"], [{"id": "RUN", "label": "parse_fpcore"}])
+
+    def test_qualified_method_query_selects_only_its_own_test(self) -> None:
+        path = "crates/locus-pipeline/src/yield_benchmark.rs"
+        graph = Graph(
+            nodes={
+                "OLD_TYPE": Node("OLD_TYPE", "YieldBaseline", "struct", path),
+                "NEW_TYPE": Node("NEW_TYPE", "SourceYieldBaseline", "struct", path),
+                "OLD_EVAL": Node("OLD_EVAL", "evaluate", "method", path, summary="[YieldBaseline::evaluate]"),
+                "NEW_EVAL": Node(
+                    "NEW_EVAL", "evaluate", "method", path, summary="[SourceYieldBaseline::evaluate]"
+                ),
+                "OLD_TEST": Node(
+                    "OLD_TEST", "formula_baseline", "function",
+                    "crates/locus-pipeline/tests/yield_benchmark.rs",
+                ),
+                "NEW_TEST": Node(
+                    "NEW_TEST", "source_baseline", "function",
+                    "crates/locus-pipeline/tests/source_yield.rs",
+                ),
+            },
+            edges=[
+                Edge("OLD_TYPE", "OLD_EVAL", "contains"),
+                Edge("NEW_TYPE", "NEW_EVAL", "contains"),
+                Edge("OLD_TEST", "OLD_EVAL", "calls"),
+                Edge("NEW_TEST", "NEW_EVAL", "calls"),
+            ],
+        )
+        result = retrieve_context(
+            graph,
+            "which tests cover SourceYieldBaseline::evaluate",
+            "affected_tests",
+            hops=2,
+        )
+        self.assertEqual(result.starts, ("NEW_EVAL",))
+        self.assertNotIn("OLD_EVAL", result.starts)
+        self.assertEqual(
+            [item["id"] for item in result.metadata["affected_tests"]["direct"]],
+            ["NEW_TEST"],
+        )
+
+    def test_qualified_method_bypasses_a_crowded_lexical_candidate_list(self) -> None:
+        from graphgraph.retrieval.context import select_anchor_matches
+        from graphgraph.retrieval.models import Match
+
+        owner = Node("TYPE", "SourceYieldBaseline", "struct", "src/yield.rs")
+        method = Node(
+            "EVAL", "evaluate", "method", "src/yield.rs",
+            summary="[SourceYieldBaseline::evaluate]",
+        )
+        graph = Graph(nodes={"TYPE": owner, "EVAL": method})
+
+        selected = select_anchor_matches(
+            (Match(owner, 30.0, ("label_exact:sourceyieldbaseline",)),),
+            4,
+            "affected_tests",
+            query="which tests cover SourceYieldBaseline::evaluate",
+            graph=graph,
+        )
+
+        self.assertEqual([match.node.id for match in selected], ["EVAL"])
+        self.assertEqual(selected[0].reasons, ("qualified_exact:SourceYieldBaseline::evaluate",))
+
+    def test_exact_subsystem_anchor_beats_unrelated_generic_metric(self) -> None:
+        pipeline = "crates/locus-pipeline/src/yield_benchmark.rs"
+        graph = Graph(
+            nodes={
+                "BASE": Node("BASE", "SourceYieldBaseline", "struct", pipeline),
+                "EVAL": Node("EVAL", "evaluate", "method", pipeline, summary="SourceYieldBaseline::evaluate"),
+                "PARSE_FIELD": Node("PARSE_FIELD", "max_parse_failures", "field", pipeline),
+                "HELPER": Node(
+                    "HELPER", "parse_failure_findings", "function",
+                    "crates/locus-frontends/src/normalizer.rs",
+                ),
+                "GOOD_TEST": Node(
+                    "GOOD_TEST", "source_baseline_positive", "function",
+                    "crates/locus-pipeline/tests/yield_benchmark.rs",
+                ),
+                "NOISE_TEST": Node(
+                    "NOISE_TEST", "fpcore_parse_failures", "function",
+                    "crates/locus-frontends/tests/suite/fpcore_test.rs",
+                ),
+            },
+            edges=[
+                Edge("BASE", "EVAL", "contains"),
+                Edge("BASE", "PARSE_FIELD", "contains"),
+                Edge("GOOD_TEST", "EVAL", "calls"),
+                Edge("NOISE_TEST", "HELPER", "calls"),
+            ],
+        )
+        result = retrieve_context(
+            graph,
+            "How does SourceYieldBaseline::evaluate gate parse failures, and which positive and negative tests cover it?",
+            "affected_tests",
+            hops=2,
+        )
+        self.assertIn("EVAL", result.starts)
+        self.assertNotIn("HELPER", result.starts)
+        self.assertNotIn("NOISE_TEST", result.nodes)
+        self.assertEqual(
+            [item["id"] for item in result.metadata["affected_tests"]["direct"]],
+            ["GOOD_TEST"],
+        )
+
+    def test_facet_normalization_drops_meta_language_and_accepts_verified_preview(self) -> None:
+        from graphgraph.retrieval.context import facet_coverage, query_facets
+
+        facets = query_facets("verified source applications, and which tests cover every part")
+        self.assertEqual(facets, (("verified source applications", ("verified", "source", "applications")),))
+        graph = Graph(
+            nodes={
+                "PREVIEW": Node(
+                    "PREVIEW", "preview_fixes", "function", "crates/locus-frontends/src/refactor.rs"
+                ),
+            }
+        )
+        coverage = facet_coverage(graph, {"PREVIEW"}, facets)
+        self.assertEqual(coverage["unfulfilled"], [])
+        self.assertEqual(coverage["coverage_ratio"], 1.0)
+
+    def test_facet_normalization_keeps_single_noise_and_strips_method_verbs(self) -> None:
+        from graphgraph.retrieval.context import query_facets
+
+        facets = query_facets(
+            "How does SourceYieldBaseline::evaluate assess strategy yield, noise, and parse failures?"
+        )
+
+        self.assertEqual(
+            facets,
+            (
+                ("SourceYieldBaseline::evaluate", ("source", "yield", "baseline", "evaluate")),
+                ("strategy yield", ("strategy", "yield")),
+                ("noise", ("noise",)),
+                ("parse failures", ("parse", "failures")),
+            ),
+        )
+
+    def test_facet_anchor_prefers_owner_coherent_same_file_field(self) -> None:
+        path = "crates/locus-pipeline/src/yield_benchmark.rs"
+        graph = Graph(
+            nodes={
+                "SourceYieldBaseline__evaluate": Node(
+                    "SourceYieldBaseline__evaluate", "evaluate", "method", path,
+                    summary="SourceYieldBaseline::evaluate",
+                ),
+                "YieldBenchmarkReport__field_successful_verified_applications": Node(
+                    "YieldBenchmarkReport__field_successful_verified_applications",
+                    "successful_verified_applications", "field", path,
+                ),
+                "SourceYieldBenchmarkReport__field_successful_verified_applications": Node(
+                    "SourceYieldBenchmarkReport__field_successful_verified_applications",
+                    "successful_verified_applications", "field", path,
+                ),
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "How does SourceYieldBaseline::evaluate assess verified source applications?",
+            "affected_tests",
+            hops=2,
+        )
+
+        self.assertIn(
+            "SourceYieldBenchmarkReport__field_successful_verified_applications",
+            result.starts,
+        )
+        self.assertNotIn(
+            "YieldBenchmarkReport__field_successful_verified_applications",
+            result.starts,
+        )
+
+    def test_affected_tests_preserves_compound_implementation_facets(self) -> None:
+        path = "crates/locus-pipeline/src/yield.rs"
+        graph = Graph(
+            nodes={
+                "RUN": Node("RUN", "run_initial_strategy_yield_benchmark", "function", path),
+                "OLD": Node("OLD", "run_strategy_yield_benchmark", "function", path),
+                "IDENTITY": Node(
+                    "IDENTITY", "IdentityDiscoveryAdvisor", "struct",
+                    "crates/locus-advisors/src/identity_discovery.rs",
+                ),
+                "SIMPLE": Node(
+                    "SIMPLE", "SimplerFormDiscovery", "function",
+                    "crates/locus-advisors/src/simpler_form.rs",
+                ),
+                "FINITE": Node(
+                    "FINITE", "finite_field_equivalence", "function",
+                    "crates/locus-frontends/src/cross_file.rs",
+                ),
+                "CONJ": Node(
+                    "CONJ", "conjugate_rationalization", "function",
+                    "crates/locus-advisors/src/numerical_stability.rs",
+                ),
+                "VERIFIED": Node("VERIFIED", "successful_verified_applications", "function", path),
+                "TEST": Node(
+                    "TEST",
+                    "real_source_yield_benchmark",
+                    "function",
+                    "crates/locus-pipeline/tests/yield_benchmark.rs",
+                ),
+            },
+            edges=[
+                Edge("RUN", target, "calls")
+                for target in ("IDENTITY", "SIMPLE", "FINITE", "CONJ", "VERIFIED")
+            ] + [Edge("TEST", "RUN", "calls")],
+        )
+        result = retrieve_context(
+            graph,
+            (
+                "How does run_initial_strategy_yield_benchmark measure identity discovery, "
+                "simpler form discovery, finite field equivalence, conjugate rationalization, "
+                "and successful verified applications, and which tests cover the chain?"
+            ),
+            "affected_tests",
+            hops=2,
+        )
+        self.assertNotIn("OLD", result.starts)
+        self.assertTrue({"RUN", "IDENTITY", "SIMPLE", "FINITE", "CONJ", "VERIFIED"} <= result.nodes)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["facet_coverage"]["coverage_ratio"], 1.0)
+        self.assertEqual(result.metadata["hybrid_intents"], ["multi_hop_path", "affected_tests"])
+        self.assertEqual([item["id"] for item in result.metadata["affected_tests"]["direct"]], ["TEST"])
 
 
 class QueryConditionedSectionRelevanceTest(unittest.TestCase):
@@ -1278,3 +1985,186 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         sections = [graph.nodes[n] for n in graph.nodes if n.startswith("sec_")]
         self.assertEqual(relevance_multipliers(sections, ()), {})
         self.assertEqual(section_priority_bias(graph, ("doc",), ()), {})
+
+    def test_negative_query_abstains_when_requested_entity_has_no_graph_evidence(self) -> None:
+        graph = Graph(
+            nodes={
+                "DOC": Node(
+                    "DOC",
+                    "scheduler implementation notes",
+                    "doc_section",
+                    "docs/runtime.md",
+                    summary="The worker implementation is wired into the runtime.",
+                ),
+                "WORKER": Node("WORKER", "WorkerPool", "class", "src/runtime.py"),
+                "REPORT": Node(
+                    "REPORT",
+                    "Negative query bug",
+                    "section",
+                    "docs/bugs/retrieval.md",
+                    summary="Where is the nonexistent quantum banana scheduler implemented?",
+                ),
+            },
+            edges=[Edge("DOC", "WORKER", "references"), Edge("REPORT", "DOC", "references")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Where is the nonexistent quantum banana scheduler implemented?",
+            "negative_query",
+            hops=1,
+        )
+
+        self.assertEqual(result.starts, ())
+        self.assertEqual(result.nodes, set())
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertEqual(result.metadata["answerability"]["status"], "unanswerable")
+        self.assertIn("quantum banana scheduler", result.metadata["facet_coverage"]["unfulfilled"])
+        self.assertEqual(result.metadata["mention_coverage"]["coverage_ratio"], 1.0)
+
+    def test_multihop_query_reserves_and_reports_every_requested_facet(self) -> None:
+        graph = Graph(
+            nodes={
+                "REPORT": Node("REPORT", "CandidateSearchReport", "struct", "src/search.rs"),
+                "PIPELINE": Node("PIPELINE", "DiscoveryPipeline", "struct", "src/discovery.rs"),
+                "ENGINE": Node("ENGINE", "LocusEngine", "struct", "src/engine.rs"),
+                "TIMING": Node(
+                    "TIMING",
+                    "YieldStageTimingsMs",
+                    "struct",
+                    "src/metrics.rs",
+                    summary="Candidate generation timing fields.",
+                ),
+                "BENCH": Node(
+                    "BENCH",
+                    "run_formula_yield_benchmark",
+                    "function",
+                    "src/yield_benchmark.rs",
+                    summary="Runs the deterministic formula yield corpus.",
+                ),
+                "EXTRACT": Node(
+                    "EXTRACT",
+                    "EgraphStageTimingsMs",
+                    "struct",
+                    "benches/extraction.rs",
+                    summary="Measures e-graph extraction.",
+                ),
+            },
+            edges=[
+                Edge("PIPELINE", "REPORT", "produces"),
+                Edge("REPORT", "ENGINE", "consumed_by"),
+                Edge("ENGINE", "BENCH", "calls"),
+                Edge("BENCH", "TIMING", "returns"),
+                Edge("ENGINE", "EXTRACT", "calls"),
+            ],
+        )
+        query = (
+            "How does CandidateSearchReport flow from DiscoveryPipeline through LocusEngine "
+            "into formula yield timing, and where is e-graph extraction measured?"
+        )
+
+        result = retrieve_context(graph, query, "multi_hop_path", hops=2, max_nodes=16)
+
+        coverage = result.metadata["facet_coverage"]
+        self.assertEqual(coverage["unfulfilled"], [])
+        self.assertEqual(coverage["coverage_ratio"], 1.0)
+        self.assertTrue({"REPORT", "PIPELINE", "ENGINE", "TIMING", "BENCH", "EXTRACT"} <= result.nodes)
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_multihop_prefers_distributed_code_evidence_over_full_document_match(self) -> None:
+        from graphgraph.retrieval.context import Match, reserve_facet_matches
+
+        graph = Graph(
+            nodes={
+                "DOC": Node(
+                    "DOC",
+                    "Formula yield timing roadmap",
+                    "paragraph",
+                    "docs/roadmap.md",
+                ),
+                "DOC2": Node(
+                    "DOC2",
+                    "Formula yield timing notes",
+                    "paragraph",
+                    "docs/notes.md",
+                ),
+                "BENCH": Node(
+                    "BENCH",
+                    "run_formula_yield_benchmark",
+                    "function",
+                    "src/yield_benchmark.rs",
+                ),
+                "TIMING": Node(
+                    "TIMING",
+                    "YieldStageTimingsMs",
+                    "struct",
+                    "src/yield_benchmark.rs",
+                ),
+            }
+        )
+        selected = (Match(graph.nodes["DOC"], 80.0, ()),)
+        candidates = (
+            *selected,
+            Match(graph.nodes["DOC2"], 70.0, ()),
+            Match(graph.nodes["BENCH"], 60.0, ()),
+            Match(graph.nodes["TIMING"], 50.0, ()),
+        )
+
+        reserved = reserve_facet_matches(
+            selected,
+            candidates,
+            (("formula yield timing", ("formula", "yield", "timing")),),
+            graph=graph,
+            prefer_code=True,
+        )
+
+        self.assertTrue({"BENCH", "TIMING"} <= {match.node.id for match in reserved})
+
+    def test_multihop_docs_only_mentions_are_reported_as_structurally_incomplete(self) -> None:
+        graph = Graph(
+            nodes={
+                "DOC": Node(
+                    "DOC",
+                    "CandidateSearchReport flows through DiscoveryPipeline and LocusEngine",
+                    "paragraph",
+                    "docs/bugs/timing.md",
+                    summary="formula yield timing and e-graph extraction are measured",
+                )
+            }
+        )
+        query = (
+            "How does CandidateSearchReport flow from DiscoveryPipeline through LocusEngine "
+            "into formula yield timing, and where is e-graph extraction measured?"
+        )
+
+        result = retrieve_context(graph, query, "multi_hop_path", hops=2, max_nodes=16)
+
+        self.assertEqual(result.metadata["facet_coverage"]["coverage_ratio"], 1.0)
+        self.assertEqual(result.metadata["structural_facet_coverage"]["coverage_ratio"], 0.0)
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertIn("no code or structural evidence", result.metadata["answerability"]["reason"])
+
+    def test_affected_tests_reports_direct_graph_evidence_even_if_packet_prunes_test(self) -> None:
+        from graphgraph.retrieval.context import affected_test_recommendations
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "compile_formula", "function", "src/compiler.py"),
+                "TEST": Node("TEST", "test_compile_formula", "function", "tests/test_compiler.py"),
+            },
+            edges=[
+                Edge(
+                    "TEST",
+                    "TARGET",
+                    "calls",
+                    confidence=0.97,
+                    provenance="tree_sitter_type_resolved",
+                )
+            ],
+        )
+
+        affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET"})
+
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertFalse(affected["direct"][0]["in_packet"])
+        self.assertEqual(affected["direct"][0]["evidence"][0]["provenance"], "tree_sitter_type_resolved")

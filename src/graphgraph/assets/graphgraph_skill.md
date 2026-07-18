@@ -18,9 +18,6 @@ federation, traces, and repair inputs must be projected into normal GraphGraph
 nodes/edges before retrieval; do not reason from a parallel store as if it were
 structural evidence. Inspect the returned compiler receipt and validate the
 packet.
-Normal `context`/`query` calls automatically use the bounded source planner;
-use `--source-mode off` only for a structural baseline. Evidence compilation
-uses versioned per-source CPG IR and exact merge/truncation receipts.
 
 > [!IMPORTANT]
 > **Check availability.** Use `graphgraph/query_context` when that MCP tool is
@@ -101,14 +98,13 @@ uses versioned per-source CPG IR and exact merge/truncation receipts.
 | Natural-language packet, optionally fresh | `query_context` | `context "<query>" [--sync git] [--json]` |
 | Build after exclusion audit | `build_graph` | `scan --depth symbols --docs --exclude <dirs...>` |
 | Exact edited/deleted splice | `query_context` with changed/deleted paths | `update --files ...` / `remove --files ...` |
+| Low-level splice tools | `update_graph_files` / `remove_graph_files` — both **require** a `paths` array (repo-relative or absolute) | `update --files ...` / `remove --files ...` |
 | Resolve labels/paths | `search_nodes` | `query "<text>" --show-anchors` |
 | Packet from known IDs | `final_packet` | `final --query-class <class> --starts <ids...>` |
 | Bounded exact source | `source_snippets` | `snippets --starts <ids...>` |
 | Project/install health | `project_status` | `status --probe` / `doctor` |
 | Validate | `validate_packet` | `validate-graph` / `validate` |
 | Compile advanced graph passes | `compile_context` | `platform compile` |
-| Enforce multi-repo gates | - | `platform benchmark --config <json>` |
-| Migrate platform state | - | `platform migrate --directory .graphgraph` |
 | Issue/error repair context | `repair_context` | `platform repair` |
 | Structural snapshot diff | `graph_change` | `platform change` |
 | Scoped memory | `memory_context` | `platform memory` |

@@ -66,7 +66,7 @@ def estimate_packet_tokens(nodes: int, edges: int, avg_label_len: float = 10.0, 
     estimates: dict[str, int] = {}
     for packet in PACKET_TOKEN_SURFACE:
         estimate = estimate_surface_tokens(packet, nodes, edges)
-        if packet == "gg_max_hybrid":
+        if packet == "gg_hybrid":
             estimate += fact_token_proxy
         estimates[packet] = estimate
     return estimates

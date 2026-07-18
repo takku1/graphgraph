@@ -17,6 +17,14 @@ class RelationSpec:
 
 DEFAULT_RELATIONS: dict[str, RelationSpec] = {
     "calls": RelationSpec("calls", "execution", strength=1.0, description="Source invokes target."),
+    "calls_candidate": RelationSpec(
+        "calls_candidate",
+        "execution",
+        strength=0.25,
+        traversable=False,
+        weak=True,
+        description="Source may invoke target; receiver/type evidence did not identify one unique method.",
+    ),
     "imports": RelationSpec("imports", "dependency", strength=0.95, description="Source imports target module/file."),
     "imports_from": RelationSpec("imports_from", "dependency", strength=0.95, description="Source imports symbol from target."),
     "reads": RelationSpec("reads", "dataflow", strength=0.9, description="Source reads target data."),
@@ -51,11 +59,18 @@ DEFAULT_RELATIONS: dict[str, RelationSpec] = {
     "field_of": RelationSpec("field_of", "type", strength=0.8, description="Source field belongs to target type."),
     "type_of": RelationSpec("type_of", "type", strength=0.8, description="Source has target type."),
     "returns": RelationSpec("returns", "type", strength=0.75, description="Source returns target."),
+    "observed_calls": RelationSpec("observed_calls", "execution", strength=1.0, description="Runtime trace observed source invoking target."),
+    "records": RelationSpec("records", "temporal", strength=0.75, description="Episode records evidence about target."),
+    "supersedes": RelationSpec("supersedes", "temporal", strength=0.8, description="Source replaces an older episode or assertion."),
+    "remembers": RelationSpec("remembers", "memory", strength=0.7, description="Scoped memory is grounded in target."),
+    "cross_repo": RelationSpec("cross_repo", "federation", strength=0.65, description="Evidence links matching entities across repositories."),
 }
 
 
 PROVENANCE_CONFIDENCE = {
     "tree_sitter": 0.95,
+    "tree_sitter_type_resolved": 0.98,
+    "tree_sitter_ambiguous_call": 0.35,
     "cpg": 0.95,
     "regex_ast": 0.8,
     "regex_import": 0.85,
@@ -68,6 +83,13 @@ PROVENANCE_CONFIDENCE = {
     "inferred": 0.55,
     "ambiguous": 0.35,
     "git_history": 0.75,
+    "structural_provider": 0.9,
+    "runtime_trace": 1.0,
+    "episode": 0.9,
+    "memory": 0.9,
+    "community": 0.8,
+    "federation": 0.75,
+    "python_ast_provider": 0.95,
 }
 
 

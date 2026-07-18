@@ -36,10 +36,13 @@ class PlanningTest(unittest.TestCase):
         cases = {
             "where is render_packet defined": "direct_lookup",
             "what calls validate_packet and where is it tested": "reverse_lookup",
+            "which tests cover run_formula_yield_benchmark and should run": "affected_tests",
             "trace request parsing through planning to packet rendering": "multi_hop_path",
+            "how does run_formula_yield_benchmark depend on validate_candidates_detailed": "multi_hop_path",
             "what is the blast radius if Edge changes": "blast_radius",
             "how does retrieval work": "subsystem_summary",
             "README installation and usage guide": "doc_summary",
+            "What is the ordered execution backlog and what happens next before new capability development?": "doc_summary",
             "is legacy_cache unused and does it have no callers": "negative_query",
             "what changed recently in scanner": "recent_changes",
         }
@@ -61,6 +64,14 @@ class PlanningTest(unittest.TestCase):
         route = route_query("how does packet validation work and what calls it")
         self.assertEqual(route.query_class, "reverse_lookup")
         self.assertGreater(route.margin, 0.0)
+
+    def test_query_router_consumer_wording_stays_source_orientation(self) -> None:
+        route = route_query(
+            "Where is SourceCaseBaseline, what metrics does it enforce, and which test consumes it?"
+        )
+
+        self.assertNotEqual(route.query_class, "affected_tests")
+        self.assertIn(route.query_class, {"direct_lookup", "reverse_lookup", "subsystem_summary"})
 
     def test_path_matches_leading_wildcard_requires_literal_segment(self) -> None:
         # Regression: path_matches computed the prefix as
@@ -109,18 +120,18 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(_adaptive_anchor_limit(same_stem, plan, "translate"), 4)
 
     def test_choose_packet_empirical_alignment(self) -> None:
-        # Empirical data: structural packets with edges → gg_max is the token floor.
-        self.assertEqual(choose_packet("direct_lookup").packet, "gg_max")
+        # Empirical data: structural packets with edges → gg is the token floor.
+        self.assertEqual(choose_packet("direct_lookup").packet, "gg")
         self.assertEqual(choose_packet("direct_lookup").hops, 1)
-        self.assertEqual(choose_packet("reverse_lookup").packet, "gg_max")
+        self.assertEqual(choose_packet("reverse_lookup").packet, "gg")
         self.assertEqual(choose_packet("reverse_lookup").hops, 1)
-        # blast_radius / multi_hop → gg_max 2-hop
+        # blast_radius / multi_hop → gg 2-hop
         self.assertEqual(choose_packet("blast_radius").hops, 2)
-        self.assertEqual(choose_packet("blast_radius").packet, "gg_max")
+        self.assertEqual(choose_packet("blast_radius").packet, "gg")
         self.assertEqual(choose_packet("multi_hop_path").hops, 2)
-        self.assertEqual(choose_packet("multi_hop_path").packet, "gg_max")
-        # summary → gg_max unless it is explicitly documentation-oriented.
-        self.assertEqual(choose_packet("subsystem_summary").packet, "gg_max")
+        self.assertEqual(choose_packet("multi_hop_path").packet, "gg")
+        # summary → gg unless it is explicitly documentation-oriented.
+        self.assertEqual(choose_packet("subsystem_summary").packet, "gg")
         self.assertEqual(choose_packet("subsystem_summary", "README installation usage").packet, "doc_summary")
         self.assertEqual(choose_packet("doc_summary").packet, "doc_summary")
         # negative/absence probes use 1 hop -- enough to prove real
@@ -128,15 +139,15 @@ class PlanningTest(unittest.TestCase):
         # while staying far short of a full expansion.
         self.assertEqual(choose_packet("negative_query").hops, 1)
         self.assertEqual(choose_packet("negative_query").packet, "semantic_arrow")
-        # unknown → conservative 2-hop gg_max_hybrid
+        # unknown → conservative 2-hop gg_hybrid
         self.assertEqual(choose_packet("unknown_xyz").hops, 2)
-        self.assertEqual(choose_packet("unknown_xyz").packet, "gg_max_hybrid")
+        self.assertEqual(choose_packet("unknown_xyz").packet, "gg_hybrid")
 
     def test_context_plan_unifies_runtime_policy(self) -> None:
         direct = plan_context("direct_lookup", "what does AuthService call")
         self.assertEqual(direct.hops, 1)
         self.assertEqual(direct.direction, "out")
-        self.assertEqual(direct.packet, "gg_max")
+        self.assertEqual(direct.packet, "gg")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
         self.assertIn("context_plan_v4", direct.planner_version)
@@ -158,18 +169,18 @@ class PlanningTest(unittest.TestCase):
             refine_plan_for_subgraph,
         )
 
-        refined = refine_packet_for_subgraph(PacketChoice(1, "gg_max", "test"), 0)
+        refined = refine_packet_for_subgraph(PacketChoice(1, "gg", "test"), 0)
         self.assertEqual(refined.packet, "semantic_arrow")
         self.assertEqual(refined.hops, 1)
-        unchanged = refine_packet_for_subgraph(PacketChoice(1, "gg_max", "test"), 1)
-        self.assertEqual(unchanged.packet, "gg_max")
+        unchanged = refine_packet_for_subgraph(PacketChoice(1, "gg", "test"), 1)
+        self.assertEqual(unchanged.packet, "gg")
 
         graph = sample_graph()
         stats = compute_subgraph_stats(graph, {"N1"}, [])
         self.assertEqual(stats.nodes, 1)
         self.assertEqual(stats.edges, 0)
         self.assertLessEqual(
-            stats.estimated_tokens_by_packet["semantic_arrow"], stats.estimated_tokens_by_packet["gg_max"]
+            stats.estimated_tokens_by_packet["semantic_arrow"], stats.estimated_tokens_by_packet["gg"]
         )
 
         summary_graph = Graph(
@@ -181,20 +192,20 @@ class PlanningTest(unittest.TestCase):
         )
         summary_stats = compute_subgraph_stats(summary_graph, {"A", "B"}, summary_graph.edges)
         summary_plan = refine_plan_for_subgraph(plan_context("subsystem_summary", "auth subsystem"), summary_stats)
-        self.assertEqual(summary_plan.packet, "gg_max")
+        self.assertEqual(summary_plan.packet, "gg")
 
     def test_calibrated_token_surface_preserves_density_crossover(self) -> None:
         from graphgraph.planning import estimate_packet_tokens
 
         zero_edge = estimate_packet_tokens(2, 0)
-        self.assertLessEqual(zero_edge["semantic_arrow"], zero_edge["gg_max"])
+        self.assertLessEqual(zero_edge["semantic_arrow"], zero_edge["gg"])
 
         sparse = estimate_packet_tokens(20, 10)
-        self.assertLess(sparse["semantic_arrow"], sparse["gg_max"])
+        self.assertLess(sparse["semantic_arrow"], sparse["gg"])
 
         dense = estimate_packet_tokens(20, 50)
-        self.assertLess(dense["gg_max"], dense["semantic_arrow"])
-        self.assertLess(dense["gg_max"], dense["sql"])
+        self.assertLess(dense["gg"], dense["semantic_arrow"])
+        self.assertLess(dense["gg"], dense["sql"])
 
     def test_subgraph_relation_entropy_is_normalized_shannon_entropy(self) -> None:
         from graphgraph.planning import compute_subgraph_stats
@@ -266,7 +277,7 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(recommendation.base_budget, 80)
         # lambda_ = 0.05 * 1.2 (doc_node_ratio>=0.65) * 1.25 (nodes<=500) = 0.075
         # density = 0.8 * (1.0 + 0.30*0.8333 + 0.20*0.6667) = 1.106664 -> clipped to 1.106664 (<1.5)
-        # tau = 11.9975 + 5.1632*1.106664 = 17.7116 (path-aware gg_max LOPO refit)
+        # tau = 11.9975 + 5.1632*1.106664 = 17.7116 (path-aware gg LOPO refit)
         # n* = (1/0.075) * ln(max(1.1, 0.075/(1e-4*17.7116))) = 50
         self.assertEqual(recommendation.recommended_budget, 50)
         self.assertEqual(recommendation.mode, "candidate")

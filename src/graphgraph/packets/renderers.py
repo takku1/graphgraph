@@ -88,6 +88,77 @@ def render_semantic_arrow(graph: Graph, nodes: set[str], edges: list[Edge]) -> s
     return "\n".join(lines)
 
 
+def render_gg(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
+    *,
+    lexical: bool = False,
+    facts: bool = False,
+) -> str:
+    """Canonical GraphGraph structural packet — one renderer for the whole
+    ``[r]/[n]/[e]`` family, with two orthogonal knobs.
+
+    * ``lexical`` — node id scheme. ``False`` emits compact integer indices
+      (self-resolution 0: every edge reference must be resolved against the node
+      table). ``True`` emits short label-derived ids that carry their own
+      meaning (self-resolving, but ~10% more tokens that grow with edge count).
+      Which wins on answer quality is eval-gated, so the scheme is a parameter,
+      not a baked-in default.
+    * ``facts`` — inline ``[kind]`` and per-node facts (the former ``*_hybrid``
+      variants).
+
+    Both id schemes carry the same ``@path:line`` provenance, so the choice is
+    purely representational, not a change in information content.
+    """
+    nodes = _existing_nodes(graph, nodes)
+    edges = _existing_edges(nodes, edges)
+    relation_ids = _relation_ids(edges, relations)
+    tag = ("gg_lex" if lexical else "gg") + ("_hybrid" if facts else "")
+    lines = [f"#{tag}", "[r]"]
+    for rel, rel_id in relation_ids.items():
+        lines.append(f"{rel_id}:{rel}")
+    lines.append("[n]")
+    if lexical:
+        node_to_id = _lexical_ids(nodes, graph)
+    else:
+        node_to_id = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
+    grouped = _group_nodes_by_subsystem(nodes, graph)
+    facts_per_node = recommend_facts_per_node(len(nodes))
+    for sub, sub_nodes in grouped:
+        for node_id in sub_nodes:
+            node = graph.nodes[node_id]
+            nid = node_to_id[node_id]
+            context = _compact_source_context(node)
+            if facts:
+                # Only emit metadata tokens that actually exist — fall back to plain label if none.
+                meta_parts = []
+                if node.kind and node.kind != "unknown":
+                    meta_parts.append(f"[{node.kind}]")
+                if context:
+                    meta_parts.append(context)
+                if meta_parts:
+                    lines.append(f"{nid} {node.label} {' '.join(meta_parts)}")
+                else:
+                    lines.append(f"{nid} {node.label}")
+                for fact in node.facts[:facts_per_node]:
+                    lines.append(f" {fact}")
+            else:
+                lines.append(f"{nid} {node.label}{f' {context}' if context else ''}")
+    lines.append("[e]")
+    for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
+        lines.append(f"{rel_id}:")
+        for edge in rel_edges:
+            src_id = node_to_id[edge.source]
+            tgt_id = node_to_id[edge.target]
+            if abs(edge.weight - 1.0) > 1e-9:
+                lines.append(f"{src_id} {tgt_id} {edge.weight:g}")
+            else:
+                lines.append(f"{src_id} {tgt_id}")
+    return "\n".join(lines)
+
+
 def render_gg_max(
     graph: Graph,
     nodes: set[str],
@@ -95,48 +166,8 @@ def render_gg_max(
     relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
     hybrid: bool = False,
 ) -> str:
-    nodes = _existing_nodes(graph, nodes)
-    edges = _existing_edges(nodes, edges)
-    relation_ids = _relation_ids(edges, relations)
-    lines = ["[r]"]
-    for rel, rel_id in relation_ids.items():
-        lines.append(f"{rel_id}:{rel}")
-    lines.append("[n]")
-    node_to_idx = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
-    grouped = _group_nodes_by_subsystem(nodes, graph)
-    facts_per_node = recommend_facts_per_node(len(nodes))
-    for sub, sub_nodes in grouped:
-        for node_id in sub_nodes:
-            idx = node_to_idx[node_id]
-            node = graph.nodes[node_id]
-            if hybrid:
-                # Only emit metadata tokens that actually exist — fall back to plain label if none.
-                meta_parts = []
-                if node.kind and node.kind != "unknown":
-                    meta_parts.append(f"[{node.kind}]")
-                context = _compact_source_context(node)
-                if context:
-                    meta_parts.append(context)
-                if meta_parts:
-                    lines.append(f"{idx} {node.label} {' '.join(meta_parts)}")
-                else:
-                    lines.append(f"{idx} {node.label}")
-                for fact in node.facts[:facts_per_node]:
-                    lines.append(f" {fact}")
-            else:
-                context = _compact_source_context(node)
-                lines.append(f"{idx} {node.label}{f' {context}' if context else ''}")
-    lines.append("[e]")
-    for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
-        lines.append(f"{rel_id}:")
-        for edge in rel_edges:
-            src_idx = node_to_idx[edge.source]
-            tgt_idx = node_to_idx[edge.target]
-            if abs(edge.weight - 1.0) > 1e-9:
-                lines.append(f"{src_idx} {tgt_idx} {edge.weight:g}")
-            else:
-                lines.append(f"{src_idx} {tgt_idx}")
-    return "\n".join(lines)
+    """Integer-id structural packet. Thin wrapper over :func:`render_gg`."""
+    return render_gg(graph, nodes, edges, relations, lexical=False, facts=hybrid)
 
 
 def _compact_source_context(node: object) -> str:
@@ -228,7 +259,7 @@ def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
 
     Format: Label -type-> Label (weight)
     An LLM understands this cold with no instructions. Best for small 1-hop
-    queries where the schema preamble of gg_max would cost more than the savings.
+    queries where the schema preamble of gg would cost more than the savings.
     Omits weight when 1.0 (implicit default).
     """
     nodes = _existing_nodes(graph, nodes)
@@ -255,6 +286,7 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     nodes = _existing_nodes(graph, nodes)
     lines = ["[d]"]
     facts_per_node = recommend_facts_per_node(len(nodes))
+    grounded = 0
     for node_id in sorted(nodes, key=lambda nid: (graph.nodes[nid].path, graph.nodes[nid].label, nid)):
         node = graph.nodes[node_id]
         if node.kind == "concept" and not node.facts:
@@ -269,74 +301,9 @@ def render_doc_summary(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
         lines.append(" ".join(parts))
         for fact in node.facts[:facts_per_node]:
             lines.append(f" {fact}")
-    return "\n".join(lines)
-
-
-def render_tensor_array(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
-    nodes = _existing_nodes(graph, nodes)
-    edges = _existing_edges(nodes, edges)
-    node_to_idx = {node_id: i for i, node_id in enumerate(sorted(nodes))}
-    kinds = ["file", "module", "class", "function", "struct", "method", "concept", "section", "policy", "decision_trace", "commit"]
-    kind_to_id = {k: i for i, k in enumerate(kinds)}
-    
-    relations = list(DEFAULT_RELATION_ORDER)
-    for edge in edges:
-        if edge.type not in relations:
-            relations.append(edge.type)
-    rel_to_id = {r: i for i, r in enumerate(relations)}
-    
-    lines = []
-    lines.append("@types")
-    lines.append("[" + ", ".join(f"{idx}: {k}" for k, idx in kind_to_id.items()) + "]")
-    lines.append("@relations")
-    lines.append("[" + ", ".join(f"{idx}: {r}" for r, idx in rel_to_id.items()) + "]")
-    lines.append("")
-    
-    lines.append("@v")
-    for node_id, idx in node_to_idx.items():
-        node = graph.nodes[node_id]
-        kind_id = kind_to_id.get(node.kind, len(kinds))
-        size = len(node.facts) * 10 + len(node.summary or "")
-        lines.append(f"[{idx}, {node.label}, {kind_id}, {size}]")
-    lines.append("")
-    
-    lines.append("@a")
-    for edge in edges:
-        src_idx = node_to_idx.get(edge.source)
-        tgt_idx = node_to_idx.get(edge.target)
-        if src_idx is not None and tgt_idx is not None:
-            rel_id = rel_to_id.get(edge.type)
-            lines.append(f"[{src_idx}, {tgt_idx}, {rel_id}, {edge.weight:g}]")
-            
-    # Calculate geodesic shortest path distance matrix (Spatial Bias Tensor)
-    import collections
-    adj = collections.defaultdict(set)
-    for edge in edges:
-        src_idx = node_to_idx.get(edge.source)
-        tgt_idx = node_to_idx.get(edge.target)
-        if src_idx is not None and tgt_idx is not None:
-            adj[src_idx].add(tgt_idx)
-            adj[tgt_idx].add(src_idx)
-            
-    n = len(node_to_idx)
-    shortest_paths = [[99] * n for _ in range(n)]
-    for i in range(n):
-        shortest_paths[i][i] = 0
-        queue = collections.deque([(i, 0)])
-        visited = {i}
-        while queue:
-            curr, dist = queue.popleft()
-            for neighbor in adj[curr]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    shortest_paths[i][neighbor] = dist + 1
-                    queue.append((neighbor, dist + 1))
-                    
-    lines.append("")
-    lines.append("@s")
-    for row in shortest_paths:
-        lines.append("[" + ",".join(str(val) for val in row) + "]")
-        
+            grounded += 1
+    if grounded == 0:
+        lines.append(" WARNING: no grounded document body facts were selected")
     return "\n".join(lines)
 
 
@@ -370,68 +337,35 @@ def render_gg_lex(
     relations: tuple[str, ...] = DEFAULT_RELATION_ORDER,
     hybrid: bool = False,
 ) -> str:
-    nodes = _existing_nodes(graph, nodes)
-    edges = _existing_edges(nodes, edges)
-    relation_ids = _relation_ids(edges, relations)
-    lines = ["[r]"]
-    for rel, rel_id in relation_ids.items():
-        lines.append(f"{rel_id}:{rel}")
-    lines.append("[n]")
-    node_to_id = _lexical_ids(nodes, graph)
-    grouped = _group_nodes_by_subsystem(nodes, graph)
-    facts_per_node = recommend_facts_per_node(len(nodes))
-    for sub, sub_nodes in grouped:
-        for node_id in sub_nodes:
-            node = graph.nodes[node_id]
-            lex_id = node_to_id[node_id]
-            if hybrid:
-                meta_parts = []
-                if node.kind and node.kind != "unknown":
-                    meta_parts.append(f"[{node.kind}]")
-                if node.summary:
-                    meta_parts.append(node.summary)
-                if meta_parts:
-                    lines.append(f"{lex_id} {node.label} {' '.join(meta_parts)}")
-                else:
-                    lines.append(f"{lex_id} {node.label}")
-                for fact in node.facts[:facts_per_node]:
-                    lines.append(f" {fact}")
-            else:
-                lines.append(f"{lex_id} {node.label}")
-    lines.append("[e]")
-    for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
-        lines.append(f"{rel_id}:")
-        for edge in rel_edges:
-            src_id = node_to_id[edge.source]
-            tgt_id = node_to_id[edge.target]
-            if abs(edge.weight - 1.0) > 1e-9:
-                lines.append(f"{src_id} {tgt_id} {edge.weight:g}")
-            else:
-                lines.append(f"{src_id} {tgt_id}")
-    return "\n".join(lines)
+    """Lexical-id structural packet. Thin wrapper over :func:`render_gg`.
+
+    Self-resolving ids carrying the same ``@path:line`` provenance as
+    :func:`render_gg_max`; the two differ only in id scheme.
+    """
+    return render_gg(graph, nodes, edges, relations, lexical=True, facts=hybrid)
+
+
+# Packet name -> renderer. This is dispatch, not policy: a finite, discrete set
+# of named wire formats, so a lookup table is the whole story -- there is nothing
+# continuous to optimize here. The gg family is one renderer parameterized by id
+# scheme and facts; everything else is its own function. (Which format to *pick*
+# for a query is a separate, deliberately piecewise decision in planning/packet.)
+_PACKET_RENDERERS = {
+    "lowlevel": render_lowlevel,
+    "sql": render_sql,
+    "hybrid": render_hybrid,
+    "semantic_arrow": render_semantic_arrow,
+    "gg": render_gg,
+    "gg_hybrid": lambda g, n, e: render_gg(g, n, e, facts=True),
+    "gg_lex": lambda g, n, e: render_gg(g, n, e, lexical=True),
+    "gg_lex_hybrid": lambda g, n, e: render_gg(g, n, e, lexical=True, facts=True),
+    "svo": render_svo,
+    "doc_summary": render_doc_summary,
+}
 
 
 def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str) -> str:
-    if packet == "lowlevel":
-        return render_lowlevel(graph, nodes, edges)
-    if packet == "sql":
-        return render_sql(graph, nodes, edges)
-    if packet == "hybrid":
-        return render_hybrid(graph, nodes, edges)
-    if packet == "semantic_arrow":
-        return render_semantic_arrow(graph, nodes, edges)
-    if packet == "gg_max":
-        return render_gg_max(graph, nodes, edges)
-    if packet == "gg_max_hybrid":
-        return render_gg_max(graph, nodes, edges, hybrid=True)
-    if packet == "gg_lex":
-        return render_gg_lex(graph, nodes, edges)
-    if packet == "gg_lex_hybrid":
-        return render_gg_lex(graph, nodes, edges, hybrid=True)
-    if packet == "svo":
-        return render_svo(graph, nodes, edges)
-    if packet == "doc_summary":
-        return render_doc_summary(graph, nodes, edges)
-    if packet in {"tensor", "csr_arrays"}:
-        return render_tensor_array(graph, nodes, edges)
-    raise ValueError(f"unknown packet format: {packet}")
+    try:
+        return _PACKET_RENDERERS[packet](graph, nodes, edges)
+    except KeyError:
+        raise ValueError(f"unknown packet format: {packet}") from None

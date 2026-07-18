@@ -25,7 +25,7 @@ HEADING_FIELD_WEIGHT = 3
 # prose/documentation nodes where graph distance alone does not distinguish a
 # query-relevant section from an irrelevant sibling at the same hop depth.
 DOC_RELEVANCE_KINDS = frozenset(
-    {"section", "markdown", "rst", "html", "text", "concept", "docstring"}
+    {"section", "paragraph", "markdown", "rst", "html", "text", "concept", "docstring"}
 )
 
 

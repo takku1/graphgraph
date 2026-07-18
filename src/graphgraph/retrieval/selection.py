@@ -61,7 +61,7 @@ def tree_knapsack_context_partition(
     max_token_budget: int,
     *,
     edges: List[Edge] | None = None,
-    packet: str = "gg_max",
+    packet: str = "gg",
     max_nodes: int | None = None,
     include_orphans: bool = True,
 ) -> Set[str]:
@@ -75,7 +75,7 @@ def tree_knapsack_context_partition(
     if not candidates:
         return set()
 
-    # 1. Estimate packet-aware weights. Edge rows dominate gg_max cost, so
+    # 1. Estimate packet-aware weights. Edge rows dominate gg cost, so
     # share each incident edge's measured marginal cost across its endpoints.
     candidate_edges = edges if edges is not None else graph.edges
     raw_weights = packet_node_costs(
@@ -232,7 +232,7 @@ def connected_greedy_context_partition(
     max_token_budget: int,
     *,
     edges: List[Edge] | None = None,
-    packet: str = "gg_max",
+    packet: str = "gg",
     max_nodes: int | None = None,
     include_orphans: bool = False,
 ) -> Set[str]:
@@ -306,7 +306,7 @@ def packet_node_costs(
         node = graph.nodes[node_id]
         label_cost = max(node_cost, len(node.label) / 4.0)
         metadata_cost = 0.0
-        if packet in {"gg_max_hybrid", "hybrid", "doc_summary"}:
+        if packet in {"gg_hybrid", "hybrid", "doc_summary"}:
             metadata_cost = len(node.summary or "") / 4.0 + sum(len(fact) / 4.0 for fact in node.facts)
         costs[node_id] = max(1.0, node_floor, label_cost + metadata_cost + incidence[node_id] * edge_cost / 2.0)
     return costs

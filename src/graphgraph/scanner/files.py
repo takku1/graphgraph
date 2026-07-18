@@ -13,6 +13,10 @@ class CollectFilesResult:
     files: list[Path]
     truncated: bool
     total_matched: int
+    ignore_files: tuple[str, ...] = ()
+    ignored_by_rules: int = 0
+    rule_pruned_dirs: tuple[str, ...] = ()
+    default_pruned_dirs: tuple[str, ...] = ()
 
 
 # Single source of truth for the file/symbol collection cap. Previously
@@ -152,14 +156,13 @@ def collect_files(
     # ancestor specs in order preserves gitignore's last-match-wins behavior,
     # including nested negations, without trying to rewrite patterns.
     ignore_specs: dict[Path, tuple[GitIgnoreSpec, ...]] = {}
+    loaded_ignore_files: list[str] = []
+    ignored_by_rules = 0
+    rule_pruned_dirs: set[str] = set()
+    default_pruned_dirs: set[str] = set()
 
     for dirpath, dirnames, filenames in os.walk(root):
         directory = Path(dirpath)
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in skip and not d.startswith("target") and not d.endswith(".egg-info")
-        )
-        filenames.sort()
 
         specs: list[GitIgnoreSpec] = []
         for ignore_name in (".gitignore", ".ignore"):
@@ -168,16 +171,35 @@ def collect_files(
                 continue
             try:
                 specs.append(GitIgnoreSpec.from_lines(ignore_path.read_text(encoding="utf-8", errors="replace").splitlines()))
+                loaded_ignore_files.append(ignore_path.relative_to(root).as_posix())
             except OSError:
                 continue
         if specs:
             ignore_specs[directory] = tuple(specs)
+
+        kept_dirs: list[str] = []
+        for dirname in sorted(dirnames):
+            path = directory / dirname
+            rel = path.relative_to(root).as_posix()
+            if dirname in skip or dirname.startswith("target") or dirname.endswith(".egg-info"):
+                default_pruned_dirs.add(rel)
+            elif _ignored_by_specs(path, root, ignore_specs, is_dir=True):
+                # A directory excluded as a directory cannot have a child
+                # re-included by Git ignore semantics unless the directory
+                # itself is first unignored. Pruning here preserves negation
+                # behavior while avoiding a file-by-file walk of huge corpora.
+                rule_pruned_dirs.add(rel)
+            else:
+                kept_dirs.append(dirname)
+        dirnames[:] = kept_dirs
+        filenames.sort()
 
         for filename in filenames:
             path = directory / filename
             if _default_file_skip(filename) or path.suffix.lower() in SKIP_SUFFIXES:
                 continue
             if _ignored_by_specs(path, root, ignore_specs):
+                ignored_by_rules += 1
                 continue
             suffix_l = path.suffix.lower()
             rel = path.relative_to(root).as_posix()
@@ -195,6 +217,10 @@ def collect_files(
         files=ordered[:max_nodes],
         truncated=len(ordered) > max_nodes,
         total_matched=len(ordered),
+        ignore_files=tuple(loaded_ignore_files),
+        ignored_by_rules=ignored_by_rules,
+        rule_pruned_dirs=tuple(sorted(rule_pruned_dirs)),
+        default_pruned_dirs=tuple(sorted(default_pruned_dirs)),
     )
 
 
@@ -206,7 +232,37 @@ def _default_file_skip(filename: str) -> bool:
     return lower in SKIP_FILE_NAMES or lower == ".env" or lower.startswith(".env.")
 
 
-def _ignored_by_specs(path: Path, root: Path, specs: dict[Path, tuple[GitIgnoreSpec, ...]]) -> bool:
+def path_ignored_by_rules(root: Path, rel_path: str) -> bool:
+    """Check one path against ancestor `.gitignore` and `.ignore` files."""
+    path = root / rel_path
+    specs: dict[Path, tuple[GitIgnoreSpec, ...]] = {}
+    directories = [root]
+    if path.parent != root:
+        parts = path.parent.relative_to(root).parts
+        directories.extend(root.joinpath(*parts[:i]) for i in range(1, len(parts) + 1))
+    for directory in directories:
+        loaded: list[GitIgnoreSpec] = []
+        for ignore_name in (".gitignore", ".ignore"):
+            ignore_path = directory / ignore_name
+            if ignore_path.is_file():
+                try:
+                    loaded.append(GitIgnoreSpec.from_lines(
+                        ignore_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    ))
+                except OSError:
+                    pass
+        if loaded:
+            specs[directory] = tuple(loaded)
+    return _ignored_by_specs(path, root, specs)
+
+
+def _ignored_by_specs(
+    path: Path,
+    root: Path,
+    specs: dict[Path, tuple[GitIgnoreSpec, ...]],
+    *,
+    is_dir: bool = False,
+) -> bool:
     ignored = False
     # Path.parents is nearest-first; evaluate root-to-leaf so nested ignore
     # files override parent rules exactly as git does.
@@ -219,6 +275,8 @@ def _ignored_by_specs(path: Path, root: Path, specs: dict[Path, tuple[GitIgnoreS
             relative = path.relative_to(directory).as_posix()
         except ValueError:
             continue
+        if is_dir:
+            relative = relative.rstrip("/") + "/"
         for spec in specs.get(directory, ()):
             result = spec.check_file(relative)
             if result.include is not None:

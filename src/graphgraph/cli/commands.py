@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from ..eval import evaluate_graph, load_eval_tasks, results_to_json
@@ -35,6 +36,7 @@ from ..services.context import resolve_start_nodes
 from ..services.native import (
     build_project_status,
     graph_shape,
+    inspect_saved_graph_freshness,
     remove_paths_validated_graph,
     render_native_context,
     scan_validated_graph,
@@ -59,6 +61,16 @@ def cmd_profile(args: argparse.Namespace) -> None:
     report = {
         "graph": str(graph_path),
         "shape": shape.__dict__,
+        "frontend_quality": {
+            "member_calls": {
+                "resolved": int(graph.metadata.get("member_calls_resolved", "0")),
+                "ambiguous": int(graph.metadata.get("member_calls_ambiguous", "0")),
+                "unresolved": int(graph.metadata.get("member_calls_unresolved", "0")),
+                "scope": graph.metadata.get("member_call_telemetry_scope", "unavailable"),
+            },
+            "fallback_files": int(graph.metadata.get("frontend_fallback_count", "0")),
+            "failed_files": int(graph.metadata.get("frontend_failure_count", "0")),
+        },
         "budget_candidates": [
             recommend_node_budget(query_class, query, shape).__dict__
             for query_class in (
@@ -79,9 +91,12 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     import platform
     import sys
     from pathlib import Path
+
+    from ..version import package_version
     
     print("GraphGraph Doctor - System Diagnostic Utility")
     print("=============================================")
+    print(f"Version: {package_version()}")
     
     # 1. Environment and Python Checks
     print("\n[Environment]")
@@ -327,7 +342,7 @@ def cmd_final(args: argparse.Namespace) -> None:
 
     if getattr(args, "stable_skeleton", False):
         max_nodes = getattr(args, "max_nodes", 100) or 100
-        print(render_stable_skeleton(graph_path, max_nodes=max_nodes, packet=getattr(args, "packet", "gg_max") or "gg_max"))
+        print(render_stable_skeleton(graph_path, max_nodes=max_nodes, packet=getattr(args, "packet", "gg") or "gg"))
         return
 
     if getattr(args, "full_graph", False):
@@ -335,7 +350,7 @@ def cmd_final(args: argparse.Namespace) -> None:
         try:
             print(render_full_graph(
                 graph_path,
-                packet=getattr(args, "packet", "gg_max") or "gg_max",
+                packet=getattr(args, "packet", "gg") or "gg",
                 max_tokens=max_tokens if max_tokens else None,
             ))
         except FullGraphTooLargeError as exc:
@@ -368,6 +383,13 @@ def cmd_final(args: argparse.Namespace) -> None:
 
 def cmd_query(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
+    freshness = inspect_saved_graph_freshness(directory=Path("."), output_path=graph_path)
+    if not freshness["fresh"]:
+        print(
+            f"GraphGraph WARNING: graph is stale for {freshness['changed_count']} changed and "
+            f"{freshness['deleted_count']} deleted path(s); use `context --sync git`.",
+            file=sys.stderr,
+        )
     output = render_query_context(
         query=args.query,
         query_class=args.query_class,
@@ -377,8 +399,11 @@ def cmd_query(args: argparse.Namespace) -> None:
         anchor_limit=args.anchor_limit,
         max_nodes=args.max_nodes,
         scopes=tuple(args.scope),
+        scope_mode=args.scope_mode,
         show_anchors=args.show_anchors,
         cache_namespace="cli_query",
+        source_mode=args.source_mode,
+        memory_scopes=tuple(args.memory_scope) or ("project", "session"),
     )
     if getattr(args, "show_stats", False):
         shape = graph_shape(load_any(graph_path))
@@ -421,6 +446,7 @@ def cmd_context(args: argparse.Namespace) -> None:
         packet=args.packet,
         anchor_limit=args.anchor_limit,
         scopes=tuple(args.scope),
+        scope_mode=args.scope_mode,
         skip_dirs=all_skip,
         include_dirs=tuple(include_dirs),
         depth=args.depth,
@@ -430,16 +456,34 @@ def cmd_context(args: argparse.Namespace) -> None:
         generic_mentions=args.generic_mentions,
         incremental=args.incremental,
         show_anchors=args.show_anchors,
+        changed_paths=tuple(args.changed),
+        deleted_paths=tuple(args.deleted),
+        sync_git=args.sync == "git",
+        json_output=args.json,
+        source_mode=args.source_mode,
+        memory_scopes=tuple(args.memory_scope) or ("project", "session"),
     )
     if args.show_stats:
         shape = graph_shape(status.graph)
-        action = "built" if status.built else "loaded"
+        action = "refreshed" if status.changed_paths or status.deleted_paths else ("built" if status.built else "loaded")
         print(
             (
                 f"GraphGraph context {action}: {status.path} "
                 f"nodes={shape['nodes']} edges={shape['edges']} "
                 f"source={shape['source_nodes']} docs={shape['doc_nodes']} other={shape['other_nodes']}"
             ),
+            file=sys.stderr,
+        )
+        if status.changed_paths or status.deleted_paths:
+            print(
+                f"GraphGraph sync changed={len(status.changed_paths)} deleted={len(status.deleted_paths)}",
+                file=sys.stderr,
+            )
+    if args.validate and not args.json:
+        validation = validate_any(output)
+        print(
+            f"Packet structural validation: {'PASS' if validation.ok else 'FAIL'} {validation.format} "
+            f"nodes={validation.node_count} edges={validation.edge_count}",
             file=sys.stderr,
         )
     print(output)
@@ -455,6 +499,12 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return
 
+    if report.get("status") in {"no_graph", "ambiguous_graph"}:
+        print("GraphGraph Status")
+        print("=================")
+        print(report["message"])
+        return
+
     graph = report["graph"]  # type: ignore[index]
     package = report["package"]  # type: ignore[index]
     validation = graph["validation"]  # type: ignore[index]
@@ -463,7 +513,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     print("=================")
     print(f"Graph: {graph['path']}")
     print(
-        f"Validation: {'PASS' if validation['ok'] else 'FAIL'} "
+        f"Structural validation: {'PASS' if validation['ok'] else 'FAIL'} "
         f"{validation['format']} nodes={validation['nodes']} edges={validation['edges']}"
     )
     print(
@@ -471,6 +521,34 @@ def cmd_status(args: argparse.Namespace) -> None:
         f"other={shape['other_nodes']} total={shape['nodes']}"
     )
     print("Top kinds: " + ", ".join(f"{k}={v}" for k, v in graph["top_kinds"].items()))
+    member_calls = graph.get("member_calls") or {}
+    print(
+        "Member calls: "
+        f"resolved={member_calls.get('resolved', 0)} "
+        f"ambiguous={member_calls.get('ambiguous', 0)} "
+        f"unresolved={member_calls.get('unresolved', 0)} "
+        f"scope={member_calls.get('scope', 'unavailable')} "
+        f"trust={member_calls.get('trust', 'unavailable')}"
+    )
+    if member_calls.get("warning"):
+        print(f"  !  WARNING: {member_calls['warning']}")
+    last_update = member_calls.get("last_update") or {}
+    if last_update and last_update.get("scope") != member_calls.get("scope"):
+        print(
+            "  Last update: "
+            f"resolved={last_update.get('resolved', 0)} "
+            f"ambiguous={last_update.get('ambiguous', 0)} "
+            f"unresolved={last_update.get('unresolved', 0)} "
+            f"scope={last_update.get('scope', 'unavailable')}"
+        )
+    concept_linking = graph.get("concept_linking") or {}
+    if concept_linking:
+        print(
+            "Concept linking: "
+            f"linked={concept_linking.get('linked_nodes', 0)}/{concept_linking.get('eligible_nodes', 0)} "
+            f"coverage={concept_linking.get('coverage_ratio', 0):.2%} "
+            f"mode={concept_linking.get('mode', 'unavailable')}"
+        )
     if graph.get("files_truncated"):
         print(
             f"  !  WARNING: file scan was truncated -- only some of "
@@ -480,7 +558,16 @@ def cmd_status(args: argparse.Namespace) -> None:
         print(f"  !  WARNING: symbol extraction hit its cap ({graph.get('symbols_cap', '?')}).")
     if package.get("name"):
         print(f"Package: {package['name']} {package.get('version') or ''}".rstrip())
-        print(f"Module: {package.get('module') or '(unknown)'}")
+        if package.get("module"):
+            print(f"Module: {package['module']}")
+    if package.get("ecosystems"):
+        print("Ecosystems: " + ", ".join(package["ecosystems"]))
+    rust = package.get("rust") or {}
+    if rust:
+        print(
+            f"Rust {rust.get('kind', 'package')}: {rust.get('name', '(unknown)')}"
+            + (f" members={len(rust.get('members', []))}" if rust.get("kind") == "workspace" else "")
+        )
     if package.get("src_layout"):
         print(f"Runtime hint: {package['import_hint']}")
     scripts = package.get("scripts") or {}
@@ -522,7 +609,10 @@ def cmd_validate(args: argparse.Namespace) -> None:
             print(f"No packet supplied; auto-detected saved graph: {graph_path}")
             result = validate_graph_file(graph_path)
             status = "PASS" if result.ok else "FAIL"
-            print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
+            print(
+                f"STRUCTURAL {status} {result.format} "
+                f"nodes={result.node_count} edges={result.edge_count} path={graph_path}"
+            )
             for error in result.errors:
                 print(f"- {error}")
             if not result.ok:
@@ -535,7 +625,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
     result = validate_any(packet)
     status = "PASS" if result.ok else "FAIL"
-    print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count}")
+    print(f"STRUCTURAL {status} {result.format} nodes={result.node_count} edges={result.edge_count}")
     for error in result.errors:
         print(f"- {error}")
     if not result.ok:
@@ -543,10 +633,11 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
 
 def cmd_validate_graph(args: argparse.Namespace) -> None:
-    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    requested_path = args.graph or getattr(args, "path", None)
+    graph_path = Path(requested_path) if requested_path else find_graph_path()
     result = validate_graph_file(graph_path)
     status = "PASS" if result.ok else "FAIL"
-    print(f"{status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
+    print(f"STRUCTURAL {status} {result.format} nodes={result.node_count} edges={result.edge_count} path={graph_path}")
     for error in result.errors:
         print(f"- {error}")
     if not result.ok:
@@ -555,12 +646,42 @@ def cmd_validate_graph(args: argparse.Namespace) -> None:
 
 def cmd_scan(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
-    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
+    existing_graph = None
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        try:
+            output_path = find_graph_path(root)
+            existing_graph = load_any(output_path)
+        except FileNotFoundError:
+            output_path = Path(".graphgraph/graph.gg")
+    if existing_graph is None and output_path.exists():
+        existing_graph = load_any(output_path)
+    existing_metadata = existing_graph.metadata if existing_graph is not None else {}
+    depth = args.depth or existing_metadata.get("scan_depth", "files")
+    frontend = args.frontend or existing_metadata.get("frontend", "auto")
+    if frontend not in {"auto", "regex", "tree_sitter"}:
+        frontend = "auto"
+    docs = (
+        str(existing_metadata.get("docs", "false")).casefold() == "true"
+        if args.docs is None
+        else args.docs
+    )
+    history = (
+        str(existing_metadata.get("history", "false")).casefold() == "true"
+        if args.history is None
+        else args.history
+    )
     # Merge --skip-dirs and --exclude into a single list
     skip_dirs: list[str] = list(args.skip_dirs or [])
     exclude_dirs: list[str] = list(getattr(args, "exclude_dirs", None) or [])
     all_skip = skip_dirs + [d for d in exclude_dirs if d not in skip_dirs]
     include_dirs: list[str] = list(getattr(args, "include", None) or [])
+    started = time.monotonic()
+
+    def report_progress(phase: str, detail: str) -> None:
+        elapsed = time.monotonic() - started
+        print(f"[graphgraph {elapsed:7.1f}s] {phase}: {detail}", file=sys.stderr, flush=True)
 
     status = scan_validated_graph(
         directory=root,
@@ -569,11 +690,12 @@ def cmd_scan(args: argparse.Namespace) -> None:
         generic_mentions=args.generic_mentions,
         skip_dirs=tuple(all_skip),
         include_dirs=tuple(include_dirs),
-        depth=args.depth,
-        frontend=args.frontend,
-        docs=args.docs,
-        history=args.history,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+        history=history,
         incremental=args.incremental,
+        progress=report_progress,
     )
     graph = status.graph
     validation = status.validation
@@ -593,43 +715,74 @@ def cmd_scan(args: argparse.Namespace) -> None:
                     "kotlin", "scala", "haskell", "lean", "function", "class",
                     "struct", "method", "interface"}
     source_nodes = sum(v for k, v in kind_counts.items() if k in source_kinds)
-    doc_nodes = sum(v for k, v in kind_counts.items() if k in {"markdown", "rst", "html", "text", "concept", "section"})
+    doc_nodes = sum(v for k, v in kind_counts.items() if k in {"markdown", "rst", "html", "text", "concept", "section", "paragraph"})
 
     print(f"Scanned {total_nodes} nodes, {total_edges} edges  ->  {output_path}")
-    print(f"  Validation   : PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
+    print(f"  Structural validation: PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
     if status.repaired:
         print("  Repair       : incremental scan was invalid; promoted a clean full rebuild")
     print(f"  Source nodes : {source_nodes}  |  Doc nodes : {doc_nodes}  |  Other : {total_nodes - source_nodes - doc_nodes}")
+    print(f"  Frontend     : {graph.metadata.get('frontend', 'files')}")
     if all_skip:
         print(f"  Excluded dirs: {', '.join(all_skip)}")
     if include_dirs:
         print(f"  Force-included: {', '.join(include_dirs)}")
+    ignore_file_count = int(graph.metadata.get("ignore_rule_file_count", "0"))
+    ignore_files = graph.metadata.get("ignore_rule_files", "")
+    ignored_files = int(graph.metadata.get("ignored_by_rules", "0"))
+    ignored_dirs = int(graph.metadata.get("ignore_pruned_dir_count", "0"))
+    print(
+        f"  Ignore rules : honored {ignore_file_count} file(s)"
+        + (f" [{ignore_files}]" if ignore_files else " [none found]")
+    )
+    print(f"  Rule-excluded: {ignored_files} file(s), {ignored_dirs} directories pruned before descent")
+    rule_pruned_sample = graph.metadata.get("ignore_pruned_dirs", "")
+    if rule_pruned_sample:
+        print(f"  Rule-pruned  : {rule_pruned_sample}")
     fallback_count = int(graph.metadata.get("frontend_fallback_count", "0"))
     if fallback_count:
         print(
-            f"  Parse fallback: {fallback_count} file(s) used regex (unsupported, failed, or timed out)"
+            f"  Parse fallback: {fallback_count} file(s) used regex "
+            f"(unsupported={graph.metadata.get('frontend_unsupported_count', '0')}, "
+            f"timed_out={graph.metadata.get('frontend_timeout_count', '0')}, "
+            f"parse_error={graph.metadata.get('frontend_parse_error_count', '0')})"
         )
         print(f"  Fallback files: {graph.metadata.get('frontend_fallback_files', '')}")
     if graph.metadata.get("frontend_failures"):
         print(f"  Parse reasons : {graph.metadata['frontend_failures']}")
-    # Surface default-skip directories that actually held content, so real
-    # project dirs literally named e.g. `build`/`out` are not dropped silently.
-    # Never-real infra/VCS/tooling dirs are excluded from the note to keep it
-    # low-noise; ambiguous names (build, out, dist, target, archive, ...) remain.
-    from ..scanner.files import SKIP_DIRS, find_pruned_dirs
-    _NEVER_REPORT = {
-        ".git", ".svn", ".hg", "__pycache__", ".venv", "venv", "env", ".tox",
-        ".mypy_cache", ".pytest_cache", ".eggs", "site-packages", "node_modules",
-        ".graphgraph", ".cache", ".next", ".nuxt", "graphify-out",
-        ".code-review-graph", ".artifacts",
-    }
-    default_skipped = (SKIP_DIRS - set(all_skip) - set(include_dirs)) - _NEVER_REPORT
-    pruned = find_pruned_dirs(root, frozenset(default_skipped))
-    if pruned:
+    if "member_calls_resolved" in graph.metadata:
         print(
-            "  Auto-skipped : "
-            + ", ".join(sorted(pruned))
-            + "  (default rule; re-scan with --include <dir> to keep any of these)"
+            "  Member calls  : "
+            f"resolved={graph.metadata.get('member_calls_resolved', '0')} "
+            f"ambiguous={graph.metadata.get('member_calls_ambiguous', '0')} "
+            f"unresolved={graph.metadata.get('member_calls_unresolved', '0')} "
+            f"scope={graph.metadata.get('member_call_telemetry_scope', 'unavailable')}"
+        )
+    if "docs_profile_ms" in graph.metadata:
+        print(
+            f"  Document phase: {float(graph.metadata['docs_profile_ms']):.1f} ms across "
+            f"{graph.metadata.get('docs_profile_files', '0')} file(s); "
+            f"truncated={graph.metadata.get('docs_truncated_count', '0')}"
+        )
+        if graph.metadata.get("docs_profile_slowest"):
+            print(f"  Slowest docs  : {graph.metadata['docs_profile_slowest']}")
+        if graph.metadata.get("docs_truncated_files"):
+            print(f"  Truncated docs: {graph.metadata['docs_truncated_files']}")
+    if "source_concepts_profile_ms" in graph.metadata:
+        print(
+            f"  Source concepts: {float(graph.metadata['source_concepts_profile_ms']):.1f} ms; "
+            f"candidates={graph.metadata.get('source_concepts_candidates', '0')} "
+            f"links={graph.metadata.get('source_concepts_links', '0')}"
+        )
+    # Reuse collection telemetry instead of walking the repository a second
+    # time after the scan merely to discover which default rules fired.
+    default_pruned_count = int(graph.metadata.get("default_pruned_dir_count", "0"))
+    default_pruned_sample = graph.metadata.get("default_pruned_dirs", "")
+    if default_pruned_count:
+        print(
+            f"  Default/explicit pruned: {default_pruned_count} directories"
+            + (f" [{default_pruned_sample}]" if default_pruned_sample else "")
+            + "  (--include only overrides a default skip name)"
         )
     top_kinds = sorted(kind_counts.items(), key=lambda kv: -kv[1])[:8]
     print("  Top kinds    : " + "  ".join(f"{k}={v}" for k, v in top_kinds))
@@ -680,7 +833,7 @@ def cmd_update(args: argparse.Namespace) -> None:
     validation = status.validation
     assert validation is not None
     print(f"Updated {len(args.files)} file(s), graph now {len(graph.nodes)} nodes, {len(graph.edges)} edges  ->  {output_path}")
-    print(f"  Validation   : PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
+    print(f"  Structural validation: PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
     if status.repaired:
         print("  Repair       : no prior graph/manifest (or targeted update was invalid); promoted a clean full rebuild")
 
@@ -703,7 +856,7 @@ def cmd_remove(args: argparse.Namespace) -> None:
     validation = status.validation
     assert validation is not None
     print(f"Removed {len(args.files)} file(s), graph now {len(graph.nodes)} nodes, {len(graph.edges)} edges  ->  {output_path}")
-    print(f"  Validation   : PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
+    print(f"  Structural validation: PASS {validation.format} nodes={validation.node_count} edges={validation.edge_count}")
     if status.repaired:
         print("  Repair       : no prior graph/manifest (or removal was invalid); promoted a clean full rebuild")
 

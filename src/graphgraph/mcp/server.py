@@ -11,11 +11,26 @@ from ..graph.traversal import POLICIES, traversal_policy
 from ..io import find_graph_path, load_any, save_gg, save_validated_graph, validate_graph_file
 from ..packets.validation import validate_any
 from ..planning import plan_context
+from ..platform import (
+    CpgEvidenceProvider,
+    EvidenceStore,
+    GraphProgram,
+    GraphRuntime,
+    MemoryStore,
+    QuerySourcePlanner,
+    StructuralEvidenceProvider,
+    build_change_packet,
+    build_repair_context,
+    graph_as_of,
+)
 from ..retrieval import search_nodes
 from ..scanner import DEFAULT_SCAN_MAX_NODES
 from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
 from ..services.native import (
     build_project_status,
+    graph_shape,
+    inspect_saved_graph_freshness,
+    refresh_saved_graph,
     remove_paths_validated_graph,
     scan_validated_graph,
     update_paths_validated_graph,
@@ -36,7 +51,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query_class": {"type": "string"},
+                "query_class": {"type": "string", "description": "one of: direct_lookup, reverse_lookup, multi_hop_path, blast_radius, affected_tests, subsystem_summary, doc_summary, negative_query, recent_changes, spreading_activation (unknown falls back to a conservative default)"},
             },
             "required": ["query_class"],
         },
@@ -54,14 +69,14 @@ TOOLS = [
                 "graph_path": {"type": "string", "description": "Path to graph JSON; auto-detected if omitted."},
                 "policies_path": {"type": "string", "description": "Path to policies JSON; auto-detected if omitted."},
                 "query": {"type": "string"},
-                "query_class": {"type": "string"},
+                "query_class": {"type": "string", "description": "one of: direct_lookup, reverse_lookup, multi_hop_path, blast_radius, affected_tests, subsystem_summary, doc_summary, negative_query, recent_changes, spreading_activation (unknown falls back to a conservative default)"},
                 "starts": {"type": "array", "items": {"type": "string"}, "description": "Anchor node IDs."},
                 "paths": {"type": "array", "items": {"type": "string"}},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: dynamic by query class and graph shape."},
                 "packet": {
                     "type": "string",
-                    "description": "Override packet format (e.g. lowlevel, sql, hybrid, semantic_arrow, gg_max, gg_max_hybrid, gg_lex, gg_lex_hybrid, svo, doc_summary).",
+                    "description": "Override packet format (e.g. lowlevel, sql, hybrid, semantic_arrow, gg, gg_hybrid, gg_lex, gg_lex_hybrid, svo, doc_summary).",
                 },
             },
             "required": ["query_class", "starts"],
@@ -83,7 +98,7 @@ TOOLS = [
                 "graph_path": {"type": "string", "description": "Path to graph JSON; auto-detected if omitted."},
                 "packet": {
                     "type": "string",
-                    "description": "Packet format (default gg_max, the measured token floor for full topology).",
+                    "description": "Packet format (default gg, the measured token floor for full topology).",
                 },
                 "max_tokens": {
                     "type": "integer",
@@ -96,8 +111,9 @@ TOOLS = [
         "name": "query_context",
         "description": (
             "Native graphgraph retrieval: find graph anchors from a natural-language query, "
-            "automatically route its structural intent, expand the graph, and render the chosen compact packet. Use this when the caller "
-            "does not already know node IDs."
+            "automatically route its structural intent, expand the graph, and render the chosen compact packet. "
+            "Optionally splice changed/deleted files into the persisted graph first, then query that exact "
+            "in-memory result in the same call. Use this when the caller does not already know node IDs."
         ),
         "inputSchema": {
             "type": "object",
@@ -110,7 +126,19 @@ TOOLS = [
                 "anchor_limit": {"type": "integer", "description": "Max anchor nodes before expansion. Default: adaptive by query class."},
                 "max_nodes": {"type": "integer", "description": "Expanded node budget. Default: dynamic by query class and graph shape."},
                 "scopes": {"type": "array", "items": {"type": "string"}, "description": "Optional scope/path prefixes to constrain retrieval."},
+                "scope_mode": {"type": "string", "enum": ["strict", "expand"], "description": "strict keeps all results in scope; expand permits structurally connected boundary crossings. Default: strict."},
                 "show_anchors": {"type": "boolean", "description": "Include ranked anchors before packet."},
+                "source_mode": {"type": "string", "enum": ["auto", "off", "all"], "description": "Auxiliary source planner mode. Default: auto."},
+                "memory_scopes": {"type": "array", "items": {"type": "string"}, "description": "Memory scopes eligible for query-time projection. Default: project and session."},
+                "changed_paths": {"type": "array", "items": {"type": "string"}, "description": "Optional edited/created files to re-extract before querying. Cost scales with supplied paths, not repository size."},
+                "deleted_paths": {"type": "array", "items": {"type": "string"}, "description": "Optional deleted/renamed-away files to remove in the same graph splice before querying."},
+                "directory": {"type": "string", "description": "Project root for changed/deleted paths. Defaults to current working directory."},
+                "scan_max_nodes": {"type": "integer", "description": f"Max symbols for the changed-file batch. Default: {DEFAULT_SCAN_MAX_NODES}."},
+                "depth": {"type": "string", "enum": ["files", "symbols"], "description": "Refresh extraction depth. Defaults to the saved graph's scan depth."},
+                "frontend": {"type": "string", "enum": ["auto", "regex", "tree_sitter"], "description": "Refresh frontend. Defaults to the saved graph's frontend."},
+                "docs": {"type": "boolean", "description": "Refresh document sections/concepts. Defaults to the saved graph setting."},
+                "history": {"type": "boolean", "description": "Refresh bug-fix history. Defaults to the saved graph setting."},
+                "sync": {"type": "string", "enum": ["none", "git"], "description": "Optional work-loop sync before querying. 'git' hashes only Git-changed candidates against the manifest and refreshes stale paths. Default: none."},
             },
             "required": ["query"],
         },
@@ -133,7 +161,7 @@ TOOLS = [
     {
         "name": "validate_packet",
         "description": (
-            "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, gg_max, or "
+            "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, gg, or "
             "raw graph JSON). Omit `packet` to instead validate the saved native graph file "
             "(auto-detected, or `graph_path` if given) -- mirrors `graphgraph validate`'s "
             "auto-detect behavior."
@@ -156,11 +184,12 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "graph_path": {"type": "string", "description": "Path to native graphgraph graph; auto-detected if omitted."},
-                "starts": {"type": "array", "items": {"type": "string"}, "description": "Node IDs, labels, or paths."},
+                "node_ids": {"type": "array", "items": {"type": "string"}, "description": "Node ids (the `id` field search_nodes returns), labels, or paths. Preferred: chains directly from search_nodes."},
+                "starts": {"type": "array", "items": {"type": "string"}, "description": "Alias for node_ids (node ids, labels, or paths)."},
                 "context_lines": {"type": "integer", "description": "Lines before/after symbol line. Default: 4."},
                 "max_lines": {"type": "integer", "description": "Maximum lines per excerpt. Default: 40."},
             },
-            "required": ["starts"],
+            "required": [],
         },
     },
     {
@@ -311,20 +340,93 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query_class": {"type": "string"},
+                "query_class": {"type": "string", "description": "one of: direct_lookup, reverse_lookup, multi_hop_path, blast_radius, affected_tests, subsystem_summary, doc_summary, negative_query, recent_changes, spreading_activation (unknown falls back to a conservative default)"},
             },
         },
     },
 ]
 
+TOOLS.extend([
+    {
+        "name": "compile_context",
+        "description": "Compile a query through GraphGraph's LLM-native graph IR, optional evidence/inference/hierarchy passes, budgeted retrieval, compact packet rendering, and validation receipt.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "graph_path": {"type": "string"},
+                "query_class": {"type": "string", "default": "auto"},
+                "packet": {"type": "string", "default": "gg"},
+                "passes": {"type": "array", "items": {"type": "string", "enum": ["evidence", "inference", "hierarchy"]}},
+                "scopes": {"type": "array", "items": {"type": "string"}},
+                "max_nodes": {"type": "integer"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "repair_context",
+        "description": "Compile an issue, error, or stack trace into bounded code/test/config repair context with grounding receipt.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "issue": {"type": "string"},
+                "graph_path": {"type": "string"},
+                "max_nodes": {"type": "integer", "default": 30},
+                "hops": {"type": "integer", "default": 2},
+            },
+            "required": ["issue"],
+        },
+    },
+    {
+        "name": "graph_change",
+        "description": "Compile before/after graph snapshots into structural changes, blast radius, breaking changes, and a stable cursor.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "before_path": {"type": "string"},
+                "after_path": {"type": "string"},
+                "impact_hops": {"type": "integer", "default": 2},
+            },
+            "required": ["before_path", "after_path"],
+        },
+    },
+    {
+        "name": "memory_context",
+        "description": "Add, query, or list scoped local agent/project memory records that can be projected into GraphGraph IR.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operation": {"type": "string", "enum": ["add", "query", "list"]},
+                "text": {"type": "string"},
+                "store_path": {"type": "string", "default": ".graphgraph/memory.json"},
+                "scopes": {"type": "array", "items": {"type": "string"}},
+                "kind": {"type": "string", "default": "fact"},
+                "related_nodes": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["operation"],
+        },
+    },
+    {
+        "name": "graph_at_time",
+        "description": "Materialize an ISO-timestamped graph view using native validity windows and return its compact status.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"timestamp": {"type": "string"}, "graph_path": {"type": "string"}},
+            "required": ["timestamp"],
+        },
+    },
+])
+
 
 FORMAT_TABLE = [
-    {"format": "gg_max", "schema_tokens": 20, "relative_tokens": "1.00x", "description": "Measured token floor for non-empty structural graph packets, including 1-hop and 2-hop queries."},
+    {"format": "gg", "schema_tokens": 20, "relative_tokens": "1.00x", "description": "Measured token floor for non-empty structural graph packets, including 1-hop and 2-hop queries."},
     {"format": "svo", "schema_tokens": 0, "relative_tokens": "~1.1x", "description": "Self-describing SVO triples. Zero schema overhead — LLMs read cold. Best for small 1-hop queries."},
-    {"format": "lowlevel", "schema_tokens": 20, "relative_tokens": "1.03x", "description": "XML-tagged adjacency. Slightly more tokens than gg_max."},
+    {"format": "lowlevel", "schema_tokens": 20, "relative_tokens": "1.03x", "description": "XML-tagged adjacency. Slightly more tokens than gg."},
     {"format": "sql", "schema_tokens": 10, "relative_tokens": "1.38x+", "description": "Table row layout. Useful as an interpretability fallback if a model fails compact graph reasoning."},
     {"format": "semantic_arrow", "schema_tokens": 15, "relative_tokens": "1.49x", "description": "Subject-verb-object arrows with @nodes/@edges preamble. Token winner only for zero-edge packets in current real-project tests."},
-    {"format": "gg_max_hybrid", "schema_tokens": 20, "relative_tokens": "~1.6x", "description": "gg_max + inline node kind/summary. Use only when grounded prose is required."},
+    {"format": "gg_hybrid", "schema_tokens": 20, "relative_tokens": "~1.6x", "description": "gg + inline node kind/summary. Use only when grounded prose is required."},
     {"format": "doc_summary", "schema_tokens": 2, "relative_tokens": "~0.6x", "description": "Grounded section/file notes with no topology. Best for README/docs/install/usage questions."},
     {"format": "hybrid", "schema_tokens": 5, "relative_tokens": "~2.3x", "description": "Markdown bullet lists. Readable but high token overhead."},
     {"format": "json", "schema_tokens": 0, "relative_tokens": "3.9-6.7x", "description": "Raw JSON. Never use as LLM wire format."},
@@ -348,9 +450,44 @@ def handle_tools_list(_params: dict[str, Any]) -> dict[str, Any]:
     return {"tools": TOOLS}
 
 
+_TOOLS_BY_NAME = {tool["name"]: tool for tool in TOOLS}
+
+
+def _validate_required_args(name: str, args: dict[str, Any]) -> None:
+    """Fail missing required args at the MCP boundary with an actionable message.
+
+    Several handlers did a bare ``args["x"]``, so omitting a required arg leaked
+    a cryptic ``-32000: 'x'`` (an unhandled KeyError) that told the caller
+    neither what was wrong nor what to pass. This validates every tool's
+    declared ``required`` list once, naming each missing arg and enumerating its
+    allowed values when the schema constrains them.
+    """
+    tool = _TOOLS_BY_NAME.get(name)
+    if not tool:
+        return
+    schema = tool.get("inputSchema", {})
+    props = schema.get("properties", {})
+    missing = []
+    for arg in schema.get("required", []):
+        value = args.get(arg)
+        if value is None or value == "" or value == [] or value == {}:
+            spec = props.get(arg, {})
+            enum = spec.get("enum")
+            if enum:
+                hint = f" (one of: {', '.join(map(str, enum))})"
+            elif spec.get("description"):
+                hint = f" -- {spec['description']}"
+            else:
+                hint = ""
+            missing.append(f"'{arg}'{hint}")
+    if missing:
+        raise ValueError(f"{name} requires {', '.join(missing)}.")
+
+
 def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
     name = params.get("name")
     args = params.get("arguments") or {}
+    _validate_required_args(str(name), args)
     if name == "plan_context":
         plan = plan_context(str(args["query_class"]), str(args.get("query", "")))
         return content(json.dumps(plan.__dict__))
@@ -412,6 +549,76 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         if args.get("query_class"):
             return content(json.dumps(traversal_policy(str(args["query_class"])).__dict__, indent=2))
         return content(json.dumps({name: policy.__dict__ for name, policy in POLICIES.items()}, indent=2))
+    if name == "compile_context":
+        graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else find_graph_path()
+        runtime = GraphRuntime(
+            load_any(graph_path),
+            (StructuralEvidenceProvider(), CpgEvidenceProvider()),
+            evidence_store=EvidenceStore(graph_path.parent / "evidence.db"),
+            source_planner=QuerySourcePlanner(graph_path.parent, graph_path=graph_path),
+        )
+        result = runtime.compile(GraphProgram(
+            query=str(args["query"]),
+            query_class=str(args.get("query_class") or "auto"),
+            packet=str(args.get("packet") or "gg"),
+            passes=tuple(str(value) for value in args.get("passes") or []),
+            scopes=tuple(str(value) for value in args.get("scopes") or []),
+            max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
+        ))
+        return content(result.envelope())
+    if name == "repair_context":
+        graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else find_graph_path()
+        data = build_repair_context(
+            load_any(graph_path),
+            str(args["issue"]),
+            max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 30,
+            hops=int(args["hops"]) if args.get("hops") is not None else 2,
+        )
+        return content(json.dumps(data, indent=2, ensure_ascii=False))
+    if name == "graph_change":
+        packet = build_change_packet(
+            load_any(Path(str(args["before_path"]))),
+            load_any(Path(str(args["after_path"]))),
+            impact_hops=int(args["impact_hops"]) if args.get("impact_hops") is not None else 2,
+        )
+        return content(packet.to_json())
+    if name == "memory_context":
+        store = MemoryStore(Path(str(args.get("store_path") or ".graphgraph/memory.json")))
+        operation = str(args["operation"])
+        scopes = tuple(str(value) for value in args.get("scopes") or [])
+        if operation == "add":
+            if not args.get("text"):
+                raise ValueError("memory_context add requires text")
+            record = store.remember(
+                str(args["text"]),
+                scope=scopes[0] if scopes else "project",
+                kind=str(args.get("kind") or "fact"),
+                related_nodes=tuple(str(value) for value in args.get("related_nodes") or []),
+            )
+            data: object = record.__dict__
+        elif operation == "query":
+            if not args.get("text"):
+                raise ValueError("memory_context query requires text")
+            data = [record.__dict__ for record in store.search(
+                str(args["text"]),
+                scopes=scopes,
+                limit=int(args["limit"]) if args.get("limit") is not None else 10,
+            )]
+        elif operation == "list":
+            data = [record.__dict__ for record in store.read(scopes=scopes)]
+        else:
+            raise ValueError(f"unknown memory operation: {operation}")
+        return content(json.dumps(data, indent=2, ensure_ascii=False))
+    if name == "graph_at_time":
+        graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else find_graph_path()
+        graph = graph_as_of(load_any(graph_path), str(args["timestamp"]))
+        return content(json.dumps({
+            "as_of": str(args["timestamp"]),
+            "nodes": len(graph.nodes),
+            "edges": len(graph.edges),
+            "active_nodes": sum(node.active for node in graph.nodes.values()),
+            "active_edges": sum(edge.active for edge in graph.edges),
+        }, indent=2))
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -440,7 +647,7 @@ def build_full_graph(args: dict[str, Any]) -> str:
     max_tokens = int(args["max_tokens"]) if args.get("max_tokens") is not None else 20_000
     return render_full_graph(
         graph_path,
-        packet=str(args["packet"]) if args.get("packet") else "gg_max",
+        packet=str(args["packet"]) if args.get("packet") else "gg",
         max_tokens=max_tokens if max_tokens else None,
     )
 
@@ -448,6 +655,45 @@ def build_full_graph(args: dict[str, Any]) -> str:
 def build_query_context(args: dict[str, Any]) -> str:
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    changed_paths = _unique_strings(args.get("changed_paths") or [])
+    deleted_paths = _unique_strings(args.get("deleted_paths") or [])
+    refreshed_graph = None
+    refresh_metadata = None
+    sync_git = str(args.get("sync") or "none") == "git"
+    if changed_paths or deleted_paths or sync_git:
+        status = refresh_saved_graph(
+            directory=Path(str(args.get("directory") or ".")),
+            output_path=graph_path,
+            changed_paths=changed_paths,
+            deleted_paths=deleted_paths,
+            sync_git=sync_git,
+            max_nodes=int(args["scan_max_nodes"])
+            if args.get("scan_max_nodes") is not None
+            else DEFAULT_SCAN_MAX_NODES,
+            depth=str(args["depth"]) if args.get("depth") else None,
+            frontend=str(args["frontend"]) if args.get("frontend") else None,
+            docs=bool(args["docs"]) if "docs" in args else None,
+            history=bool(args["history"]) if "history" in args else None,
+        )
+        if status.built:
+            refreshed_graph = status.graph
+        refresh_metadata = {
+            "mode": "git" if sync_git else "explicit",
+            "changed_paths": list(status.changed_paths),
+            "deleted_paths": list(status.deleted_paths),
+            "repaired": status.repaired,
+        }
+    freshness = (
+        {"fresh": True, "changed_count": 0, "deleted_count": 0, "changed_paths": [], "deleted_paths": []}
+        if sync_git
+        else inspect_saved_graph_freshness(
+            directory=Path(str(args.get("directory") or ".")),
+            output_path=graph_path,
+        )
+    )
+    metadata: dict[str, object] = {"freshness": freshness}
+    if refresh_metadata is not None:
+        metadata["refresh"] = refresh_metadata
     return render_query_context(
         query=str(args["query"]),
         query_class=str(args.get("query_class") or "auto"),
@@ -457,17 +703,37 @@ def build_query_context(args: dict[str, Any]) -> str:
         anchor_limit=int(args["anchor_limit"]) if args.get("anchor_limit") is not None else None,
         max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
         scopes=tuple(str(scope) for scope in args.get("scopes") or []),
+        scope_mode=str(args.get("scope_mode") or "strict"),
         show_anchors=bool(args.get("show_anchors")),
         cache_namespace="mcp_query",
         json_anchors=True,
+        graph=refreshed_graph,
+        response_metadata=metadata,
+        source_mode=str(args.get("source_mode") or "auto"),
+        memory_scopes=tuple(str(scope) for scope in args.get("memory_scopes") or ("project", "session")),
     )
 
 
+def _unique_strings(values: list[Any]) -> list[str]:
+    return list(dict.fromkeys(str(value) for value in values))
+
+
 def handle_source_snippets(args: dict[str, Any]) -> str:
+    # Compose with search_nodes, which returns `id`: accept `node_ids` as the
+    # primary name and keep `starts` as an alias, so the two tools chain without
+    # the caller having to rename the field. Validate this before resolving the
+    # graph path so a missing-id call returns the actionable message, not an
+    # unrelated "no graph found" error.
+    raw_starts = args.get("node_ids") or args.get("starts")
+    if not raw_starts:
+        raise ValueError(
+            "source_snippets requires 'node_ids' (the ids search_nodes returns) or "
+            "'starts' (node ids, labels, or paths)."
+        )
     graph_path_str = args.get("graph_path")
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
     return render_source_snippets(
-        starts=[str(item) for item in args["starts"]],
+        starts=[str(item) for item in raw_starts],
         graph_path=graph_path,
         context_lines=int(args["context_lines"]) if args.get("context_lines") is not None else 4,
         max_lines=int(args["max_lines"]) if args.get("max_lines") is not None else 40,
@@ -539,6 +805,39 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         "output": str(output_path),
         "nodes": len(graph.nodes),
         "edges": len(graph.edges),
+        "frontend": graph.metadata.get("frontend", "files"),
+        "phase_profile": {
+            "docs_ms": float(graph.metadata.get("docs_profile_ms", "0")),
+            # `docs_files` counts documents parsed into heading/paragraph
+            # sections; `doc_nodes` counts doc-kind nodes that actually landed
+            # (markdown/rst/etc. ingested as file nodes). Reporting both keeps
+            # the receipt honest: on repos where docs fall back to file-level
+            # (no section parser), docs_files is 0 while doc_nodes is not -- the
+            # docs are present, they just weren't parsed into prose.
+            "docs_files": int(graph.metadata.get("docs_profile_files", "0")),
+            "doc_nodes": graph_shape(graph)["doc_nodes"],
+            "docs_slowest": json.loads(graph.metadata.get("docs_profile_slowest", "[]")),
+            "docs_truncated": int(graph.metadata.get("docs_truncated_count", "0")),
+            "docs_truncated_files": [
+                path for path in graph.metadata.get("docs_truncated_files", "").split(",") if path
+            ],
+            "source_concepts_ms": float(graph.metadata.get("source_concepts_profile_ms", "0")),
+            "source_concept_candidates": int(graph.metadata.get("source_concepts_candidates", "0")),
+            "source_concept_links": int(graph.metadata.get("source_concepts_links", "0")),
+        },
+        "exclusions": {
+            "explicit_dirs": all_skip,
+            "force_included_dirs": include_dirs,
+            "ignore_files": [
+                path for path in graph.metadata.get("ignore_rule_files", "").split(",") if path
+            ],
+            "ignored_files": int(graph.metadata.get("ignored_by_rules", "0")),
+            "ignored_dirs": int(graph.metadata.get("ignore_pruned_dir_count", "0")),
+            "ignored_dir_sample": [
+                path for path in graph.metadata.get("ignore_pruned_dirs", "").split(",") if path
+            ],
+            "default_pruned_dirs": int(graph.metadata.get("default_pruned_dir_count", "0")),
+        },
         "repaired": status.repaired,
         "validation": {"ok": validation.ok, "format": validation.format},
     }
@@ -554,11 +853,30 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     return json.dumps(result)
 
 
+def _require_paths(args: dict[str, Any], tool: str) -> list[str]:
+    """Validate the required ``paths`` arg with an actionable message.
+
+    A bare ``args["paths"]`` surfaced as a cryptic MCP ``-32000: 'paths'`` when
+    a caller omitted it. The schema marks ``paths`` required, but the server
+    should still fail with a message that says what to pass, not just the key
+    name -- consistent with the tool's honest, actionable-error contract.
+    """
+    raw = args.get("paths")
+    if not raw:
+        raise ValueError(
+            f"{tool} requires 'paths': a non-empty list of file paths "
+            "(repo-relative or absolute) to operate on."
+        )
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError(f"{tool} 'paths' must be a list of file paths, got {type(raw).__name__}.")
+    return [str(p) for p in raw]
+
+
 def handle_update_graph_files(args: dict[str, Any]) -> str:
     directory = Path(args.get("directory") or ".")
     output_path = Path(args.get("output_path") or ".graphgraph/graph.gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    paths = [str(p) for p in args["paths"]]
+    paths = _require_paths(args, "update_graph_files")
 
     status = update_paths_validated_graph(
         directory=directory,
@@ -592,7 +910,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
     directory = Path(args.get("directory") or ".")
     output_path = Path(args.get("output_path") or ".graphgraph/graph.gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    paths = [str(p) for p in args["paths"]]
+    paths = _require_paths(args, "remove_graph_files")
 
     status = remove_paths_validated_graph(
         directory=directory,

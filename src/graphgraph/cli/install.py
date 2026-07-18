@@ -84,6 +84,18 @@ def _codex_mcp_json() -> dict:
     return {"mcpServers": {"graphgraph": {"command": "graphgraph-mcp"}}}
 
 
+def _skill_asset_text(name: str) -> str:
+    return (Path(__file__).resolve().parents[1] / "assets" / name).read_text(encoding="utf-8")
+
+
+def _write_skill_bundle(skill_dir: Path, skill_content: str) -> None:
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (scripts_dir / "validate_live.py").write_text(_skill_asset_text("validate_live.py"), encoding="utf-8")
+
+
 def _upsert_mcp_servers(config_path: Path, server_block: dict) -> None:
     """Merge the graphgraph MCP server entry into a JSON config, preserving others."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,8 +126,7 @@ def _write_claude_code(
         root = project_root
         _upsert_mcp_servers(root / ".mcp.json", _mcp_server_config(root))
         skill_dir = root / ".claude" / "skills" / "graphgraph"
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+        _write_skill_bundle(skill_dir, skill_content)
         claude_md = root / "CLAUDE.md"
         existing = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
         if "# GraphGraph Workspace Rules" not in existing:
@@ -123,8 +134,7 @@ def _write_claude_code(
         print(f"Registered GraphGraph for Claude Code (project): {root / '.mcp.json'}, {skill_dir / 'SKILL.md'}")
     else:
         skill_dir = Path.home() / ".claude" / "skills" / "graphgraph"
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+        _write_skill_bundle(skill_dir, skill_content)
         _upsert_mcp_servers(Path.home() / ".claude.json", _mcp_server_config(None))
         print(f"Registered GraphGraph for Claude Code (global): {skill_dir / 'SKILL.md'}, {Path.home() / '.claude.json'}")
 
@@ -179,7 +189,6 @@ def _write_gemini(is_project: bool, project_root: Path | None) -> None:
 
 def _write_codex_plugin(plugin_root: Path, skill_content: str) -> None:
     (plugin_root / ".codex-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_root / "skills" / "graphgraph").mkdir(parents=True, exist_ok=True)
 
     (plugin_root / ".codex-plugin" / "plugin.json").write_text(
         json.dumps(_codex_plugin_json(), indent=2) + "\n",
@@ -189,7 +198,7 @@ def _write_codex_plugin(plugin_root: Path, skill_content: str) -> None:
         json.dumps(_codex_mcp_json(), indent=2) + "\n",
         encoding="utf-8",
     )
-    (plugin_root / "skills" / "graphgraph" / "SKILL.md").write_text(skill_content, encoding="utf-8")
+    _write_skill_bundle(plugin_root / "skills" / "graphgraph", skill_content)
 
 
 def _upsert_codex_marketplace(market_file: Path, plugin_name: str = "graphgraph") -> None:
@@ -345,23 +354,29 @@ def cmd_install(args: argparse.Namespace) -> None:
         "- Focus scope: `graphgraph context \"<query>\" --scope src/graphgraph/retrieval --query-class blast_radius`\n"
         "- Dynamic sizing: omit `--max-nodes` for production context packets; use `--scan-max-nodes` only to control how much of the repo is indexed.\n"
         "- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects the native graph under `.graphgraph/`)\n"
-        "- Validate a rendered packet from stdin: `graphgraph query \"<query>\" --packet gg_max | graphgraph validate`\n\n"
+        "- Validate a rendered packet from stdin: `graphgraph query \"<query>\" --packet gg | graphgraph validate`\n\n"
         "## Query Classes\n\n"
         "| Query Class | Description / Example Question | Hops | Format | Reason |\n"
         "| :--- | :--- | :---: | :--- | :--- |\n"
-        "| `direct_lookup` | Specific file/symbol details | 1 | `gg_max` | measured token floor |\n"
-        "| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg_max` | measured token floor |\n"
-        "| `subsystem_summary` | High-level status or architecture area | 1 | `gg_max` | measured token floor |\n"
-        "| `blast_radius` | What changes if this is modified? | 2 | `gg_max` | topology-first |\n"
-        "| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |\n"
+        "| `direct_lookup` | Specific file/symbol details | 1 | `gg` | measured token floor |\n"
+        "| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg` | measured token floor |\n"
+        "| `subsystem_summary` | High-level status or architecture area | 1 | `gg` | measured token floor |\n"
+        "| `blast_radius` | What changes if this is modified? | 2 | `gg` | topology-first |\n"
+        "| `multi_hop_path` | How does A reach/call B? | 2 | `gg` | path evidence |\n"
         "| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |\n"
         "| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |\n"
-        "| `recent_changes` | What recent fix commits touched this file/subsystem? | 1 | `gg_max` | commit/fixes evidence. Requires the graph to have been scanned with `--history` -- otherwise there are no commit nodes to surface. |\n\n"
-        "Format note: `gg_max`/`gg_max_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg_max` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.\n\n"
+        "| `recent_changes` | What recent fix commits touched this file/subsystem? | 1 | `gg` | commit/fixes evidence. Requires the graph to have been scanned with `--history` -- otherwise there are no commit nodes to surface. |\n\n"
+        "Format note: `gg`/`gg_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.\n\n"
         "## Noise Controls\n\n"
         "Default scanning skips generated artifact directories such as `.graphgraph`, `graphify-out`, `.code-review-graph`, `evidence`, `artifacts`, `scratch`, `tmp`, build outputs, vendors, and cloned external repos. Normal install, scan, context, query, and MCP workflows do not invoke Graphify, code-review-graph, or other graph tools; external graph outputs are read only when explicitly passed to `ingest` or a graph-path argument. For project-specific noise, pass `exclude_dirs` in MCP or `--exclude <dir>` in CLI.\n"
     )
-    skill_file.write_text(skill_content, encoding="utf-8")
+    # The packaged Markdown file is the canonical skill contract. Keep this
+    # outside the generated Python string so project installs, plugin installs,
+    # and checked-in copies cannot silently drift from one another.
+    skill_content = (
+        Path(__file__).resolve().parents[1] / "assets" / "graphgraph_skill.md"
+    ).read_text(encoding="utf-8")
+    _write_skill_bundle(skills_dir, skill_content)
     print(f"Registered skill in: {skill_file}")
 
     # 4. Handle Platform-Specific Registrations (Codex, Claude, Cursor)

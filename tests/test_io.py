@@ -41,10 +41,24 @@ class IOTest(unittest.TestCase):
             raw = json.loads(path.read_text(encoding="utf-8"))
             self.assertIn("centrality", raw)
             self.assertIn("pagerank", raw["centrality"])
+            self.assertIsInstance(raw["centrality"]["pagerank"]["scores"], list)
 
             loaded = load_graph(path)
             self.assertIsNotNone(loaded._pagerank_cache)
             self.assertEqual(loaded.pagerank(), graph.pagerank())
+
+    def test_graph_json_centrality_is_safe_for_case_insensitive_object_consumers(self) -> None:
+        graph = Graph(
+            nodes={
+                "pkg__Lane": Node("pkg__Lane", "Lane"),
+                "pkg__lane": Node("pkg__lane", "lane"),
+            },
+            edges=[Edge("pkg__Lane", "pkg__lane", "references")],
+        )
+        raw = json.loads(graph_to_json(graph))
+        rows = raw["centrality"]["pagerank"]["scores"]
+        self.assertEqual({row["id"] for row in rows}, {"pkg__Lane", "pkg__lane"})
+        self.assertNotIsInstance(raw["centrality"]["pagerank"]["scores"], dict)
 
     def test_load_graph_rejects_stale_pagerank_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -532,7 +546,7 @@ class IOTest(unittest.TestCase):
 
             graph_path.write_text("{}", encoding="utf-8")
             cache = TopologicalKVCache(cache_path)
-            key = compute_cache_key(["N1", "N2"], "blast_radius", 2, "gg_max")
+            key = compute_cache_key(["N1", "N2"], "blast_radius", 2, "gg")
 
             self.assertIsNone(cache.get(graph_path, key))
             cache.set(graph_path, key, "rendered_packet_data")
@@ -552,7 +566,7 @@ class IOTest(unittest.TestCase):
             graph_path = tmp / "graph.json"
             graph_path.write_text("{}", encoding="utf-8")
             cache = TopologicalKVCache(tmp / "kv_cache.json")
-            key = compute_cache_key(["A"], "direct_lookup", 1, "gg_max")
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg")
             cache.set(graph_path, key, "packet", node_ids={"B", "A"}, paths={"src/a.py", ""})
 
             loaded = TopologicalKVCache(tmp / "kv_cache.json")
@@ -572,7 +586,7 @@ class IOTest(unittest.TestCase):
         cache = TopologicalKVCache(tmp / ".graphgraph" / "kv_cache.json")
         return graph_path, cache
 
-    def test_kv_cache_survives_rescan_when_dependency_unchanged(self) -> None:
+    def test_kv_cache_invalidates_when_graph_changes_even_if_known_dependency_is_unchanged(self) -> None:
         import time
 
         from graphgraph.cache import compute_cache_key
@@ -580,13 +594,32 @@ class IOTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             graph_path, cache = self._dependency_cache_fixture(tmp)
-            key = compute_cache_key(["A"], "direct_lookup", 1, "gg_max")
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg")
             cache.set(graph_path, key, "packet-for-a", node_ids={"A"}, paths={"src/a.py"})
 
             # Rescan bumps the graph file's mtime (e.g. an incremental scan that
-            # only touched b.py), but a.py itself is untouched.
+            # introduced a new caller from b.py). The old packet only recorded
+            # a.py, so positive dependency hashes alone cannot prove that its
+            # topology is still complete.
             time.sleep(0.01)
-            graph_path.write_text('{"nodes": {"rescanned": true}}', encoding="utf-8")
+            graph_path.write_text('{"edges": [["B", "A", "calls"]]}', encoding="utf-8")
+
+            self.assertIsNone(cache.get(graph_path, key))
+
+    def test_kv_cache_survives_timestamp_only_graph_rewrite(self) -> None:
+        import time
+
+        from graphgraph.cache import compute_cache_key
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            graph_path, cache = self._dependency_cache_fixture(tmp)
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg")
+            cache.set(graph_path, key, "packet-for-a", node_ids={"A"}, paths={"src/a.py"})
+
+            original = graph_path.read_bytes()
+            time.sleep(0.01)
+            graph_path.write_bytes(original)
 
             self.assertEqual(cache.get(graph_path, key), "packet-for-a")
 
@@ -598,7 +631,7 @@ class IOTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
             graph_path, cache = self._dependency_cache_fixture(tmp)
-            key = compute_cache_key(["A"], "direct_lookup", 1, "gg_max")
+            key = compute_cache_key(["A"], "direct_lookup", 1, "gg")
             cache.set(graph_path, key, "packet-for-a", node_ids={"A"}, paths={"src/a.py"})
 
             time.sleep(0.01)

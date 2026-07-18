@@ -183,6 +183,20 @@ direct run against the real locus graph, matching node/edge counts.
   have direct pytest coverage; the CLI and MCP paths were smoke-tested
   end-to-end (real subprocess, real stdin/stdout JSON-RPC) against both a
   synthetic repo and the real locus repo.
+- MCP `query_context` also accepts `changed_paths` / `deleted_paths`. It
+  combines both sets into one authoritative splice, persists the validated
+  result, and queries the returned in-memory graph immediately. This removes
+  the update, remove, then query round-trip sequence and prevents a packet
+  cache hit or graph reload from observing pre-splice state. When refresh
+  options are omitted, scan depth/frontend/docs/history inherit from the
+  saved graph.
+- MCP `query_context` also accepts `sync: "git"`; CLI `context` exposes the
+  same behavior as `--sync git`. Git supplies candidate changed/deleted paths,
+  manifest hashes make repeated calls idempotent, and one batched ignore-rule
+  check removes paths indexed before they became ignored. This avoids a
+  repository walk, but the precise cost includes O(manifest path strings) for
+  ignore reconciliation plus hashing/extraction only for Git-changed
+  candidates.
 
 ## Where this fits in the agent loop
 
@@ -211,4 +225,11 @@ full rescan before a big blast-radius query.
 - [x] CLI (`graphgraph update` / `graphgraph remove`) and MCP
       (`update_graph_files` / `remove_graph_files`) wiring, with fallback to
       a full rebuild on any validation failure.
+- [x] Fused MCP refresh + retrieval through `query_context`, including one
+      changed/deleted splice, direct in-memory retrieval, and saved scan-option
+      inheritance.
+- [x] Idempotent Git-derived refresh for MCP and CLI, including stale ignore
+      reconciliation and compact refresh metadata.
+- [x] Query-aware dirty-file representatives: at most one seed per path and a
+      logarithmic four-path cap instead of every dirty symbol becoming a seed.
 - [x] Measured end-to-end on locus: 86s -> 15.7s -> 2.1s.

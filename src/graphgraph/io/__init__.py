@@ -1,3 +1,4 @@
+from .cache import load_any_cached, remember_graph
 from .core import (
     graph_to_json,
     load_any,
@@ -26,12 +27,14 @@ __all__ = [
     "find_policies_path",
     "graph_to_json",
     "load_any",
+    "load_any_cached",
     "load_csv_edges",
     "load_gg",
     "load_gg_text",
     "load_graph",
     "load_policies",
     "merge_graphify",
+    "remember_graph",
     "save_gg",
     "save_graph",
     "save_validated_graph",

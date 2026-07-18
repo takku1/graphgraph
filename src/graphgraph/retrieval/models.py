@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..graph.core import Edge, Node
 
@@ -18,3 +18,4 @@ class RetrievalResult:
     matches: tuple[Match, ...]
     nodes: set[str]
     edges: list[Edge]
+    metadata: dict[str, object] = field(default_factory=dict)

@@ -9,7 +9,7 @@ from .context import resolve_start_nodes
 # Kinds that never have a source-file location -- a label match against one
 # of these is not a "missing file" problem, it's a doc/concept/metadata node
 # that source_snippets structurally cannot show code for.
-_NO_SOURCE_KINDS = {"concept", "section", "decision_trace", "policy", "commit"}
+_NO_SOURCE_KINDS = {"concept", "section", "paragraph", "decision_trace", "policy", "commit"}
 
 
 def render_source_snippets(
@@ -50,7 +50,13 @@ def render_source_snippets(
                 no_source_blocks.append(f"## {node.label} ({node_id})\n\nNo readable source path for node.")
             continue
         start_line = node.line
-        source = _read_excerpt(path, start_line, context_lines=context_lines, max_lines=max_lines)
+        source = _read_excerpt(
+            path,
+            start_line,
+            end_line=_node_end_line(graph, node) if context_lines > 0 else None,
+            context_lines=context_lines,
+            max_lines=max_lines,
+        )
         key = (str(path), source[0], source[1])
         if key in seen:
             continue
@@ -145,7 +151,29 @@ def _resolve_direct_path(root: Path, raw_path: str) -> Path | None:
     return None
 
 
-def _read_excerpt(path: Path, line: int | None, *, context_lines: int, max_lines: int) -> tuple[int, int, str]:
+def _node_end_line(graph: Graph, node: Node) -> int | None:
+    """Use the next symbol boundary as a language-neutral definition extent."""
+    if node.line is None or not node.path:
+        return None
+    later_lines = [
+        other.line
+        for other in graph.nodes.values()
+        if other.id != node.id
+        and other.path == node.path
+        and other.line is not None
+        and other.line > node.line
+    ]
+    return min(later_lines) - 1 if later_lines else None
+
+
+def _read_excerpt(
+    path: Path,
+    line: int | None,
+    *,
+    end_line: int | None = None,
+    context_lines: int,
+    max_lines: int,
+) -> tuple[int, int, str]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     if not lines:
         return 1, 1, ""
@@ -155,12 +183,47 @@ def _read_excerpt(path: Path, line: int | None, *, context_lines: int, max_lines
         end = min(len(lines), max_lines)
     else:
         start = max(1, line - max(0, context_lines))
-        end = min(len(lines), line + max(0, context_lines))
+        symbol_end = (
+            end_line
+            if end_line is not None
+            else _infer_definition_end(lines, line)
+            if context_lines > 0
+            else line
+        )
+        end = min(len(lines), max(line + max(0, context_lines), symbol_end))
         if end - start + 1 > max_lines:
             end = start + max_lines - 1
     width = len(str(end))
     body = "\n".join(f"{idx:>{width}} | {lines[idx - 1]}" for idx in range(start, end + 1))
     return start, end, body
+
+
+def _infer_definition_end(lines: list[str], line: int) -> int:
+    """Best-effort body extent for the final symbol in a file."""
+    start_index = max(0, line - 1)
+    head = lines[start_index]
+    if "{" in head:
+        depth = 0
+        opened = False
+        for index in range(start_index, len(lines)):
+            depth += lines[index].count("{") - lines[index].count("}")
+            opened = opened or "{" in lines[index]
+            if opened and depth <= 0:
+                return index + 1
+    if head.rstrip().endswith(":"):
+        base_indent = len(head) - len(head.lstrip())
+        end = line
+        for index in range(start_index + 1, len(lines)):
+            candidate = lines[index]
+            if not candidate.strip():
+                end = index + 1
+                continue
+            indent = len(candidate) - len(candidate.lstrip())
+            if indent <= base_indent and not candidate.lstrip().startswith(("#", "@")):
+                break
+            end = index + 1
+        return end
+    return line
 
 
 def _display_path(root: Path, path: Path) -> str:

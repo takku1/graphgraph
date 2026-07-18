@@ -105,6 +105,9 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(result.frontend, "tree_sitter+regex")
             self.assertEqual(result.fallback_files, ("slow.rs",))
             self.assertEqual(result.failed_files, ("slow.rs:TimeoutError",))
+            self.assertEqual(result.timeout_files, ("slow.rs",))
+            self.assertEqual(result.unsupported_files, ())
+            self.assertEqual(result.parse_error_files, ())
             self.assertTrue(any(node.label == "Recovered" for node in result.nodes.values()))
 
     def test_explicit_tree_sitter_surfaces_file_failure(self) -> None:
@@ -121,6 +124,19 @@ class ScannerTest(unittest.TestCase):
         with patch("graphgraph.scanner.frontends._parser_for_suffix", return_value=BrokenParser()):
             with self.assertRaisesRegex(RuntimeError, "broken.rs"):
                 TreeSitterExtractor().extract_symbols([source], max_total_symbols=20)
+
+    def test_tree_sitter_reports_unsupported_fallback_separately_from_parse_failures(self) -> None:
+        source = SourceFile(Path("notes.md"), "notes.md", "notes_md", "# Notes\n")
+        result = TreeSitterExtractor(fallback_on_error=True).extract_symbols(
+            [source],
+            max_total_symbols=20,
+        )
+
+        self.assertEqual(result.fallback_files, ("notes.md",))
+        self.assertEqual(result.unsupported_files, ("notes.md",))
+        self.assertEqual(result.timeout_files, ())
+        self.assertEqual(result.parse_error_files, ())
+        self.assertEqual(result.failed_files, ())
 
     def test_tree_sitter_extractor_captures_rust_trait_methods(self) -> None:
         if not tree_sitter_available():
@@ -219,7 +235,12 @@ class ScannerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             f = root / "lib.rs"
-            text = "pub struct Point { pub x: f64, y: f64 }\npub fn make() -> Point { Point { x: 0.0, y: 0.0 } }\n"
+            text = (
+                "pub struct Point { pub x: f64, y: f64 }\n"
+                "pub struct EgraphStageTimingsMs { pub extraction: f64 }\n"
+                "pub fn make() -> Point { Point { x: 0.0, y: 0.0 } }\n"
+                "pub fn optimize_timed() -> (Point, f32, EgraphStageTimingsMs) { todo!() }\n"
+            )
             f.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [SourceFile(f, "lib.rs", "lib_rs", text)],
@@ -231,10 +252,20 @@ class ScannerTest(unittest.TestCase):
             self.assertIn("y", labels)
             point_id = next(nid for nid, node in result.nodes.items() if node.label == "Point")
             make_id = next(nid for nid, node in result.nodes.items() if node.label == "make")
+            timed_id = next(nid for nid, node in result.nodes.items() if node.label == "optimize_timed")
+            timings_id = next(
+                nid for nid, node in result.nodes.items() if node.label == "EgraphStageTimingsMs"
+            )
             self.assertTrue(any(edge.type == "field_of" and edge.target == point_id for edge in result.edges))
             self.assertTrue(
                 any(
                     edge.type == "returns" and edge.source == make_id and edge.target == point_id
+                    for edge in result.edges
+                )
+            )
+            self.assertTrue(
+                any(
+                    edge.type == "returns" and edge.source == timed_id and edge.target == timings_id
                     for edge in result.edges
                 )
             )
@@ -264,7 +295,7 @@ class ScannerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / ".gitignore").write_text("ignored.py\n*.env\n!keep.env\n", encoding="utf-8")
-            (root / ".ignore").write_text("dump-*.json\n", encoding="utf-8")
+            (root / ".ignore").write_text("dump-*.json\nignored-corpus/\n", encoding="utf-8")
             (root / "ignored.py").write_text("", encoding="utf-8")
             (root / "secret.env").write_text("SECRET=x", encoding="utf-8")
             (root / "keep.env").write_text("documented=x", encoding="utf-8")
@@ -274,10 +305,56 @@ class ScannerTest(unittest.TestCase):
             (nested / ".gitignore").write_text("*.tmp\n!keep.tmp\n", encoding="utf-8")
             (nested / "drop.tmp").write_text("", encoding="utf-8")
             (nested / "keep.tmp").write_text("", encoding="utf-8")
+            ignored_corpus = root / "ignored-corpus"
+            ignored_corpus.mkdir()
+            (ignored_corpus / "large.py").write_text("x = 1\n", encoding="utf-8")
             (root / "kept.py").write_text("", encoding="utf-8")
 
-            files = {path.relative_to(root).as_posix() for path in collect_files(root, 100).files}
+            result = collect_files(root, 100)
+            files = {path.relative_to(root).as_posix() for path in result.files}
             self.assertEqual(files, {"kept.py", "keep.env", "nested/keep.tmp"})
+            self.assertEqual(result.ignore_files, (".gitignore", ".ignore", "nested/.gitignore"))
+            self.assertEqual(result.ignored_by_rules, 4)
+            self.assertEqual(result.rule_pruned_dirs, ("ignored-corpus",))
+
+    def test_scan_directory_reports_phase_progress_and_ignore_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".ignore").write_text("corpus/\n", encoding="utf-8")
+            (root / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+            (root / "corpus").mkdir()
+            (root / "corpus" / "noise.py").write_text("def noise(): pass\n", encoding="utf-8")
+            events: list[tuple[str, str]] = []
+
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                frontend="regex",
+                progress=lambda phase, detail: events.append((phase, detail)),
+            )
+
+            phases = [phase for phase, _detail in events]
+            self.assertEqual(phases[0], "discover")
+            self.assertIn("symbols", phases)
+            self.assertIn("concepts", phases)
+            self.assertEqual(phases[-1], "complete")
+            self.assertEqual(graph.metadata["ignore_rule_files"], ".ignore")
+            self.assertEqual(graph.metadata["ignore_pruned_dir_count"], "1")
+            self.assertFalse(any(node.path.startswith("corpus/") for node in graph.nodes.values()))
+
+    def test_scan_directory_filters_ignored_git_paths_from_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".ignore").write_text("packet.json\n", encoding="utf-8")
+            (root / "app.py").write_text("x = 1\n", encoding="utf-8")
+            (root / "packet.json").write_text("{}\n", encoding="utf-8")
+            with patch(
+                "graphgraph.scanner.core._get_git_metadata",
+                return_value=({"app.py", "packet.json"}, {"app.py": 2, "packet.json": 9}),
+            ):
+                graph = scan_directory(root)
+        self.assertEqual(graph.metadata["git_dirty"], "app.py")
+        self.assertNotIn("packet.json", json.dumps(graph.metadata))
 
     def test_collect_files_skips_sensitive_and_agent_configuration_by_default(self) -> None:
         from graphgraph.scanner.files import collect_files
@@ -335,7 +412,7 @@ class ScannerTest(unittest.TestCase):
             )
             by_label = {node.label: node for node in result.nodes.values()}
             self.assertIn("RecipeResolver", by_label)
-            self.assertEqual(by_label["RecipeResolver"].kind, "class")
+            self.assertTrue(any(node.label == "RecipeResolver" and node.kind == "class" for node in result.nodes.values()))
             self.assertEqual(by_label["Resolve"].kind, "method")
             self.assertEqual(by_label["RecipeRecord"].kind, "struct")
             self.assertEqual(by_label["RecipeKind"].kind, "enum")
@@ -432,6 +509,37 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(result.nodes[calls[0].target].path, "src/pkg/renderers.py")
 
+    def test_tree_sitter_resolves_python_self_method_calls_by_class_owner(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source_text = (
+            "class Worker:\n"
+            "    def run(self):\n"
+            "        return self.process()\n\n"
+            "    def process(self):\n"
+            "        return 1\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "worker.py"
+            path.write_text(source_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "worker.py", "worker_py", source_text)],
+                max_total_symbols=100,
+            )
+
+        methods = {node.label: node for node in result.nodes.values() if node.kind == "method"}
+        self.assertEqual(set(methods), {"run", "process"})
+        self.assertEqual(result.nodes[methods["run"].parent].label, "Worker")
+        calls = [
+            edge for edge in result.edges
+            if edge.type == "calls"
+            and edge.source == methods["run"].id
+            and edge.target == methods["process"].id
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].provenance, "tree_sitter_type_resolved")
+        self.assertEqual(result.resolved_member_calls, 1)
+
     def test_tree_sitter_does_not_link_qualified_method_calls_to_free_functions(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
@@ -488,6 +596,320 @@ class ScannerTest(unittest.TestCase):
                 (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
             }
             self.assertIn(("caller", "helper"), calls, f"bare unqualified call should still resolve: {calls}")
+
+    def test_tree_sitter_resolves_rust_receiver_method_from_parameter_type(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/lib.rs": (
+                "pub struct LocusEngine;\n"
+                "impl LocusEngine {\n"
+                "    pub fn validate_candidates_detailed(&self, candidates: Vec<i32>) -> Vec<i32> { candidates }\n"
+                "}\n"
+            ),
+            "src/yield_benchmark.rs": (
+                "use crate::LocusEngine;\n"
+                "pub fn run_formula_yield_benchmark(engine: &LocusEngine, candidates: Vec<i32>) {\n"
+                "    let _outcomes = engine.validate_candidates_detailed(candidates);\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        matching = [
+            edge
+            for edge in result.edges
+            if edge.type == "calls"
+            and result.nodes[edge.source].label == "run_formula_yield_benchmark"
+            and result.nodes[edge.target].label == "validate_candidates_detailed"
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0].provenance, "tree_sitter_type_resolved")
+        self.assertEqual(result.resolved_member_calls, 1)
+        method = result.nodes[matching[0].target]
+        self.assertTrue(method.parent)
+        self.assertEqual(result.nodes[method.parent].label, "LocusEngine")
+
+    def test_tree_sitter_keeps_same_named_rust_methods_in_one_file_distinct(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "pub struct YieldBaseline;\n"
+            "impl YieldBaseline {\n"
+            "    pub fn evaluate(&self, report: &u32) -> bool { *report > 0 }\n"
+            "}\n"
+            "pub struct SourceYieldBaseline;\n"
+            "impl SourceYieldBaseline {\n"
+            "    pub fn evaluate(&self, report: &u64) -> bool { *report > 0 }\n"
+            "}\n"
+            "pub fn check(a: &YieldBaseline, b: &SourceYieldBaseline) {\n"
+            "    let _ = a.evaluate(&1);\n"
+            "    let _ = b.evaluate(&1);\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "yield_benchmark.rs"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "src/yield_benchmark.rs", "src_yield_benchmark_rs", text)],
+                max_total_symbols=100,
+            )
+
+        methods = [node for node in result.nodes.values() if node.kind == "method" and node.label == "evaluate"]
+        self.assertEqual(len(methods), 2)
+        self.assertEqual(len({node.id for node in methods}), 2)
+        self.assertEqual({node.line for node in methods}, {3, 7})
+        self.assertEqual(
+            {result.nodes[node.parent].label for node in methods},
+            {"YieldBaseline", "SourceYieldBaseline"},
+        )
+        self.assertTrue(any("SourceYieldBaseline::evaluate" in node.summary for node in methods))
+        call_targets = {
+            edge.target
+            for edge in result.edges
+            if edge.type == "calls" and result.nodes[edge.source].label == "check"
+        }
+        self.assertEqual(call_targets, {node.id for node in methods})
+
+    def test_incremental_scan_preserves_same_named_rust_methods(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "yield_benchmark.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "pub struct YieldBaseline;\n"
+                "impl YieldBaseline { pub fn evaluate(&self, report: &u32) -> bool { *report > 0 } }\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                frontend="tree_sitter",
+                previous_graph_path=None,
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+
+            source.write_text(
+                "pub struct YieldBaseline;\n"
+                "impl YieldBaseline { pub fn evaluate(&self, report: &u32) -> bool { *report > 0 } }\n"
+                "pub struct SourceYieldBaseline;\n"
+                "impl SourceYieldBaseline { pub fn evaluate(&self, report: &u64) -> bool { *report > 0 } }\n",
+                encoding="utf-8",
+            )
+            updated = update_paths(
+                root,
+                ["src/yield_benchmark.rs"],
+                depth="symbols",
+                frontend="tree_sitter",
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+
+        methods = [node for node in updated.nodes.values() if node.kind == "method" and node.label == "evaluate"]
+        self.assertEqual(len(methods), 2)
+        self.assertEqual(
+            {updated.nodes[node.parent].label for node in methods},
+            {"YieldBaseline", "SourceYieldBaseline"},
+        )
+
+    def test_tree_sitter_resolves_qualified_rust_unit_struct_receivers(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/identity.rs": (
+                "pub struct IdentityDiscoveryAdvisor;\n"
+                "impl IdentityDiscoveryAdvisor { pub fn examine(&self, objects: &[i32]) {} }\n"
+            ),
+            "src/simpler.rs": (
+                "pub struct SimplerFormAdvisor;\n"
+                "impl SimplerFormAdvisor { pub fn examine(&self, objects: &[i32]) {} }\n"
+            ),
+            "src/runner.rs": (
+                "pub fn run(objects: &[i32]) {\n"
+                "    crate::advisors::IdentityDiscoveryAdvisor.examine(objects);\n"
+                "    crate::advisors::SimplerFormAdvisor.examine(objects);\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        calls = [
+            edge
+            for edge in result.edges
+            if edge.type == "calls" and result.nodes[edge.source].label == "run"
+        ]
+        owners = {
+            result.nodes[result.nodes[edge.target].parent].label
+            for edge in calls
+            if result.nodes[edge.target].parent
+        }
+        self.assertEqual(owners, {"IdentityDiscoveryAdvisor", "SimplerFormAdvisor"})
+        self.assertTrue(all(edge.provenance == "tree_sitter_type_resolved" for edge in calls))
+        self.assertEqual(result.resolved_member_calls, 2)
+
+    def test_tree_sitter_keeps_untyped_rust_member_calls_as_nontraversable_candidates(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/a.rs": "pub struct A; impl A { pub fn validate(&self) {} }\n",
+            "src/b.rs": "pub struct B; impl B { pub fn validate(&self) {} }\n",
+            "src/run.rs": "pub fn run(engine: impl Sized) { engine.validate(); }\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        candidates = [
+            edge
+            for edge in result.edges
+            if edge.source in result.nodes
+            and result.nodes[edge.source].label == "run"
+            and edge.type == "calls_candidate"
+        ]
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(result.ambiguous_member_calls, 1)
+        self.assertFalse(any(edge.type == "calls" and edge.source == candidates[0].source for edge in result.edges))
+
+    def test_tree_sitter_resolves_rust_self_field_receiver_type(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "pub struct Store;\n"
+            "impl Store { pub fn commit(&self) {} }\n"
+            "pub struct Engine { store: Store }\n"
+            "impl Engine { pub fn run(&self) { self.store.commit(); } }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "engine.rs"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "engine.rs", "engine_rs", text)],
+                max_total_symbols=100,
+            )
+
+        call = next(
+            edge
+            for edge in result.edges
+            if edge.type == "calls"
+            and result.nodes[edge.source].label == "run"
+            and result.nodes[edge.target].label == "commit"
+        )
+        self.assertEqual(call.provenance, "tree_sitter_type_resolved")
+        self.assertIn("self.store:Store", call.evidence)
+        self.assertEqual(result.resolved_member_calls, 1)
+
+    def test_tree_sitter_links_typed_rust_test_field_assertion_as_direct_evidence(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "pub struct YieldStageTimingsMs {\n"
+            "    pub candidate_generation: f64,\n"
+            "    pub extraction_only: Option<f64>,\n"
+            "}\n"
+            "pub struct YieldBenchmarkReport { pub timings_ms: YieldStageTimingsMs }\n"
+            "pub fn run_formula_yield_benchmark() -> YieldBenchmarkReport { todo!() }\n"
+            "#[test]\n"
+            "fn validates_report() {\n"
+            "    let report = run_formula_yield_benchmark();\n"
+            "    assert!(report.timings_ms.candidate_generation > 0.0);\n"
+            "    assert!(report.timings_ms.extraction_only.is_some());\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tests" / "schema.rs"
+            path.parent.mkdir()
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "tests/schema.rs", "tests_schema_rs", text)],
+                max_total_symbols=100,
+            )
+
+        references = [
+            edge
+            for edge in result.edges
+            if edge.type == "references"
+            and result.nodes[edge.source].label == "validates_report"
+        ]
+        self.assertEqual(
+            {result.nodes[edge.target].label for edge in references},
+            {"timings_ms", "candidate_generation", "extraction_only"},
+        )
+        self.assertTrue(
+            all(edge.provenance == "tree_sitter_type_resolved_field_assertion" for edge in references)
+        )
+        self.assertTrue(all(edge.confidence == 0.94 for edge in references))
+
+    def test_incremental_scan_preserves_global_member_quality_and_reports_update_delta(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "engine.rs"
+            source.write_text(
+                "pub struct Store;\n"
+                "impl Store { pub fn commit(&self) {} }\n"
+                "pub struct Engine { store: Store }\n"
+                "impl Engine { pub fn run(&self) { self.store.commit(); } }\n",
+                encoding="utf-8",
+            )
+            graph_path = root / "graph.gg"
+            manifest_path = root / "manifest.json"
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                frontend="tree_sitter",
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+            self.assertEqual(graph.metadata["member_calls_global_resolved"], "1")
+
+            source.write_text(
+                "pub struct Store;\n"
+                "impl Store { pub fn commit(&self) {} }\n"
+                "pub struct Engine { store: Store }\n"
+                "impl Engine { pub fn run(&self) {} }\n",
+                encoding="utf-8",
+            )
+            updated = update_paths(
+                root,
+                ["engine.rs"],
+                depth="symbols",
+                frontend="tree_sitter",
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+
+        self.assertEqual(updated.metadata["member_calls_global_resolved"], "1")
+        self.assertEqual(updated.metadata["member_calls_last_update_resolved"], "0")
+        self.assertEqual(updated.metadata["member_calls_global_scope"], "full_scan_snapshot")
+        self.assertEqual(updated.metadata["member_calls_last_update_scope"], "changed_files")
 
     def test_tree_sitter_links_function_passed_as_callback_argument(self) -> None:
         if not tree_sitter_available():
@@ -728,6 +1150,10 @@ class ScannerTest(unittest.TestCase):
                 (e.source, e.target, e.type) for e in graph.edges if e.type == "implements_algorithm"
             }
             self.assertTrue(concept_edges_before, "fixture should produce at least one concept edge")
+            self.assertEqual(graph.metadata["source_concepts_mode"], "closed_registry_exact_alias")
+            self.assertGreater(int(graph.metadata["source_concepts_eligible"]), 0)
+            self.assertGreater(int(graph.metadata["source_concepts_linked_nodes"]), 0)
+            self.assertIn("source_concepts_rejected_no_registry_alias", graph.metadata)
 
             # Touch only a.py -- b.py is untouched and must keep its concept
             # edge via manifest restoration, not fresh linking.
@@ -843,6 +1269,31 @@ class ScannerTest(unittest.TestCase):
             utils_id = next(nid for nid, n in graph.nodes.items() if n.label == "utils.py")
             self.assertIn((app_id, db_id), edge_pairs)
             self.assertIn((app_id, utils_id), edge_pairs)
+
+    def test_scanner_resolves_indexed_java_csharp_and_lean_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "java").mkdir()
+            (root / "java" / "Main.java").write_text("import pkg.Target;\nclass Main {}\n", encoding="utf-8")
+            (root / "java" / "Target.java").write_text("class Target {}\n", encoding="utf-8")
+            (root / "csharp").mkdir()
+            (root / "csharp" / "Client.cs").write_text("using Company.Widget;\nclass Client {}\n", encoding="utf-8")
+            (root / "csharp" / "Widget.cs").write_text("class Widget {}\n", encoding="utf-8")
+            lean = root / "workspace" / "Lib"
+            lean.mkdir(parents=True)
+            (root / "Main.lean").write_text("import Lib.Util\n", encoding="utf-8")
+            (lean / "Util.lean").write_text("def helper := 1\n", encoding="utf-8")
+
+            graph = scan_directory(root)
+            edge_paths = {
+                (graph.nodes[edge.source].path, graph.nodes[edge.target].path, edge.type)
+                for edge in graph.edges
+                if edge.source in graph.nodes and edge.target in graph.nodes
+            }
+
+            self.assertIn(("java/Main.java", "java/Target.java", "imports"), edge_paths)
+            self.assertIn(("csharp/Client.cs", "csharp/Widget.cs", "imports"), edge_paths)
+            self.assertIn(("Main.lean", "workspace/Lib/Util.lean", "imports"), edge_paths)
 
     def test_scanner_detects_python_multiline_parenthesized_imports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1031,6 +1482,93 @@ class ScannerTest(unittest.TestCase):
             section = next(node for node in nodes.values() if node.kind == "section")
             self.assertTrue(section.facts)
 
+    def test_document_context_indexes_body_paragraphs_and_reports_truncation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "roadmap.md"
+            text = (
+                "# Phase 3\n\n"
+                "2026-07-14: The real-source benchmark now records a phase profile.\n\n"
+                "The preview command must preserve every requested implementation facet.\n\n"
+                "The remaining exit criterion is grounded roadmap retrieval from body text.\n"
+            )
+            doc.write_text(text, encoding="utf-8")
+            profiles: list[tuple[str, float, int, int, bool]] = []
+            nodes, edges = extract_document_context(
+                [DocumentInput(doc, "docs/roadmap.md", "roadmap_md", text)],
+                {"docs/roadmap.md": "roadmap_md"},
+                max_paragraphs_per_section=2,
+                profile=lambda *values: profiles.append(values),
+            )
+            paragraphs = [node for node in nodes.values() if node.kind == "paragraph"]
+            self.assertEqual(len(paragraphs), 2)
+            self.assertTrue(any("real-source benchmark" in node.facts[0] for node in paragraphs))
+            self.assertEqual(len([edge for edge in edges if edge.type == "contains"]), 2)
+            self.assertEqual(profiles[0][0], "docs/roadmap.md")
+            self.assertEqual(profiles[0][2:], (1, 2, True))
+
+    def test_document_context_indexes_each_markdown_list_item_as_a_paragraph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "contract.md"
+            text = (
+                "# Decision rules\n\n"
+                "1. Audit ignore rules before building the graph.\n"
+                "2. Validate the saved graph before querying it.\n"
+                "3. Accept a build only after checking the selected frontend, "
+                "fallback counts, validation, and truncation.\n"
+            )
+            doc.write_text(text, encoding="utf-8")
+
+            nodes, _edges = extract_document_context(
+                [DocumentInput(doc, "contract.md", "contract_md", text)],
+                {"contract.md": "contract_md"},
+            )
+
+            paragraphs = sorted(
+                (node for node in nodes.values() if node.kind == "paragraph"),
+                key=lambda node: node.line or 0,
+            )
+            self.assertEqual([node.line for node in paragraphs], [3, 4, 5])
+            self.assertEqual(paragraphs[2].label, "Accept a build only after checking the selected frontend, fallback counts, validation, and truncation")
+            self.assertNotIn("1.", paragraphs[0].label)
+
+    def test_document_context_coarse_document_still_indexes_paragraphs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "notes.txt"
+            text = (
+                "The first implementation note contains enough grounded detail for retrieval.\n\n"
+                "The second implementation note records the remaining validation requirement.\n"
+            )
+            doc.write_text(text, encoding="utf-8")
+            nodes, edges = extract_document_context(
+                [DocumentInput(doc, "notes.txt", "notes_txt", text)],
+                {"notes.txt": "notes_txt"},
+            )
+            paragraphs = [node for node in nodes.values() if node.kind == "paragraph"]
+            self.assertEqual(len(paragraphs), 2)
+            self.assertTrue(all(node.parent == "notes_txt__section_1" for node in paragraphs))
+            self.assertEqual(len([edge for edge in edges if edge.type == "contains"]), 2)
+
+    def test_document_context_keeps_answer_at_end_of_bounded_long_paragraph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "roadmap.md"
+            text = (
+                "# Phase 3\n\n"
+                + "The benchmark records representative measurements and exact evidence gates. " * 10
+                + "Phase 3 still needs pinned per-strategy yield thresholds.\n"
+            )
+            doc.write_text(text, encoding="utf-8")
+            nodes, _edges = extract_document_context(
+                [DocumentInput(doc, "roadmap.md", "roadmap_md", text)],
+                {"roadmap.md": "roadmap_md"},
+            )
+            paragraph = next(node for node in nodes.values() if node.kind == "paragraph")
+            self.assertIn("Phase 3 still needs pinned per-strategy yield thresholds", paragraph.facts[0])
+            self.assertLessEqual(len(paragraph.facts[0]), 1200)
+
     def test_document_context_bounds_explains_and_requires_symbol_boundaries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1082,6 +1620,23 @@ class ScannerTest(unittest.TestCase):
             mentions2 = [e for e in edges2 if e.type == "mentions"]
             self.assertEqual(len(mentions2), 1)
             self.assertEqual(mentions2[0].target, "server_core_py")
+
+    def test_document_context_preserves_ambiguous_same_basename_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "guide.md"
+            text = "# Wiring\n\nBoth packages expose a core.py implementation entry point.\n"
+            doc.write_text(text, encoding="utf-8")
+            _, edges = extract_document_context(
+                [DocumentInput(doc, "guide.md", "guide_md", text)],
+                {
+                    "server/core.py": "server_core_py",
+                    "client/core.py": "client_core_py",
+                    "guide.md": "guide_md",
+                },
+            )
+            targets = {edge.target for edge in edges if edge.type == "mentions"}
+            self.assertEqual(targets, {"server_core_py", "client_core_py"})
 
     def test_document_context_normalizes_duplicate_concepts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

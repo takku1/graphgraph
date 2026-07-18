@@ -18,6 +18,7 @@ from graphgraph import (
 from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
 from graphgraph.packets import (
     render_doc_summary,
+    render_gg_lex,
     render_gg_max,
     render_lowlevel,
     render_packet,
@@ -83,7 +84,7 @@ class PacketsTest(unittest.TestCase):
         packet = render_gg_max(graph, nodes, edges)
         result = validate_packet(packet)
         self.assertTrue(result.ok, result.errors)
-        self.assertEqual(result.format, "gg_max")
+        self.assertEqual(result.format, "gg")
         self.assertEqual(result.node_count, 3)
         self.assertEqual(result.edge_count, 2)
 
@@ -165,7 +166,7 @@ class PacketsTest(unittest.TestCase):
         self.assertIn("1 2", packet.split("[e]")[1])  # endpoint row under opcode
         result = validate_packet(packet)
         self.assertTrue(result.ok, result.errors)
-        self.assertEqual(result.format, "gg_max")
+        self.assertEqual(result.format, "gg")
         self.assertEqual(result.node_count, 2)
         self.assertEqual(result.edge_count, 1)
 
@@ -189,38 +190,71 @@ class PacketsTest(unittest.TestCase):
         self.assertTrue(result_hybrid.ok, result_hybrid.errors)
         self.assertEqual(result_hybrid.format, "gg_lex_hybrid")
 
-    def test_render_tensor_array(self) -> None:
-        graph = sample_graph()
-        nodes, edges = graph.expand(["N1"], hops=2)
-        from graphgraph.packets import render_packet
-
-        packet = render_packet(graph, nodes, edges, "tensor")
-        self.assertIn("@types", packet)
-        self.assertIn("@relations", packet)
-        self.assertIn("@v", packet)
-        self.assertIn("@a", packet)
-        self.assertIn("AuthService", packet)
-        self.assertIn("TokenStore", packet)
+    def test_gg_lex_ids_stay_unique_under_label_collisions(self) -> None:
+        # Lexical ids are self-resolving but truncate to 8 chars. Labels that
+        # collide on the same prefix MUST still map to distinct ids, so an edge
+        # reference can never resolve to the wrong node. A collided-but-ambiguous
+        # id is the format's main hallucination risk; assert it cannot happen.
+        labels = [
+            "process_payment", "process_payments", "process_payment_v2",
+            "processPayment", "process", "processor",
+        ]
+        nodes = {
+            f"N{i}": Node(f"N{i}", label, "function", f"m{i}.py", active=True)
+            for i, label in enumerate(labels)
+        }
+        edges = [Edge("N0", f"N{i}", "calls") for i in range(1, len(labels))]
+        graph = Graph(nodes=nodes, edges=edges)
+        packet = render_gg_lex(graph, set(nodes), edges)
+        node_section = packet.split("[n]", 1)[1].split("[e]", 1)[0]
+        ids = [ln.split()[0] for ln in node_section.splitlines() if ln.strip()]
+        self.assertEqual(len(ids), len(nodes))
+        self.assertEqual(len(ids), len(set(ids)), f"lexical ids collided: {ids}")
+        # provenance (file:line) rides along so agents can open the code
+        self.assertIn("@m0.py", packet)
+        self.assertTrue(validate_packet(packet).ok)
 
     def test_render_and_validate_gg_max_hybrid(self) -> None:
         graph = sample_graph()
         nodes, edges = graph.expand(["N1"], hops=2)
         from graphgraph.packets import render_packet
 
-        packet = render_packet(graph, nodes, edges, "gg_max_hybrid")
+        packet = render_packet(graph, nodes, edges, "gg_hybrid")
         result = validate_packet(packet)
         self.assertTrue(result.ok, result.errors)
-        self.assertEqual(result.format, "gg_max_hybrid")
+        self.assertEqual(result.format, "gg_hybrid")
         self.assertEqual(result.node_count, 3)
         self.assertEqual(result.edge_count, 2)
+
+    def test_explicit_gg_max_marker_prevents_source_signature_misclassification(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "array_value", "function", "src/a.rs", summary="L1 fn array_value<T>() -> [T; 2]"),
+                "B": Node("B", "consumer", "function", "src/b.rs", summary="L2 fn consumer()"),
+            },
+            edges=[Edge("A", "B", "calls")],
+        )
+        packet = render_packet(graph, set(graph.nodes), graph.edges, "gg")
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.format, "gg")
+
+    def test_doc_summary_validation_accepts_query_diagnostics_preamble(self) -> None:
+        graph = sample_graph()
+        packet = "ROUTE: doc_summary\nANCHORS:\n- README\n\nGRAPH:\n" + render_packet(
+            graph, {"N1"}, [], "doc_summary"
+        )
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.format, "doc_summary")
 
     def test_gg_max_hybrid_detected_with_multi_word_labels(self) -> None:
         # Regression: doc-scanned "section" nodes use free-text titles as their
         # label (e.g. "Getting Started"), which can contain spaces. The hybrid
         # node line is "{idx} {label} [{kind}] {summary}"; the old detection
         # regex required exactly one single-token label before the "[kind]"
-        # bracket, so any multi-word label made a real gg_max_hybrid packet
-        # misreport its format as plain "gg_max" (and gg_lex_hybrid as "gg_lex").
+        # bracket, so any multi-word label made a real gg_hybrid packet
+        # misreport its format as plain "gg" (and gg_lex_hybrid as "gg_lex").
         graph = Graph(
             nodes={
                 "S1": Node("S1", "Getting Started", "section", "README.md", summary="Intro."),
@@ -229,10 +263,10 @@ class PacketsTest(unittest.TestCase):
             edges=[Edge("S1", "S2", "section_of", 1.0)],
         )
         nodes = set(graph.nodes.keys())
-        packet = render_packet(graph, nodes, graph.edges, "gg_max_hybrid")
+        packet = render_packet(graph, nodes, graph.edges, "gg_hybrid")
         result = validate_packet(packet)
         self.assertTrue(result.ok, result.errors)
-        self.assertEqual(result.format, "gg_max_hybrid")
+        self.assertEqual(result.format, "gg_hybrid")
 
         packet_lex = render_packet(graph, nodes, graph.edges, "gg_lex_hybrid")
         result_lex = validate_packet(packet_lex)
@@ -287,13 +321,12 @@ N1,N2,1,0.9
             "sql",
             "hybrid",
             "semantic_arrow",
-            "gg_max",
-            "gg_max_hybrid",
+            "gg",
+            "gg_hybrid",
             "gg_lex",
             "gg_lex_hybrid",
             "svo",
             "doc_summary",
-            "tensor",
         ]
         for mode in modes:
             with self.subTest(mode=mode):
@@ -337,6 +370,13 @@ N1,N2,1,0.9
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(result.format, "doc_summary")
         self.assertEqual(result.node_count, 1)
+
+    def test_render_doc_summary_warns_when_no_body_facts_are_grounded(self) -> None:
+        graph = Graph(nodes={"S": Node("S", "Phase 3", "section", "docs/roadmap.md")})
+        packet = render_doc_summary(graph, {"S"}, [])
+        self.assertIn("WARNING: no grounded document body facts were selected", packet)
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
 
     def test_budget_edges_caps_weak_references(self) -> None:
         edges = [Edge("N1", f"N{i}", "references", 0.5) for i in range(30)]

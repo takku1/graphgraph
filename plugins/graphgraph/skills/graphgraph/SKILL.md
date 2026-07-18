@@ -1,81 +1,150 @@
 ---
 name: graphgraph
-description: Use GraphGraph for codebase context retrieval: one-step graph build/query, dependency lookup, blast radius analysis, status packets, packet validation, or graph-backed source orientation.
+description: Use GraphGraph for fast graph-backed codebase orientation, dependency/caller/path/blast-radius retrieval, fresh edit-loop context, status, and packet validation.
 ---
 
-# GraphGraph Operational Contract
+# GraphGraph operational contract
 
-GraphGraph is installed for native codebase context retrieval across coding agents (Codex, Gemini/Antigravity, Claude Code, Cursor, and other MCP/CLI-capable clients) and CLI workflows. Use it to orient on code structure before broad source searches.
+Use GraphGraph across Codex, Claude Code, and other MCP/CLI agents for
+structural codebase questions before broad source reading.
+MCP and CLI are transports over the same
+`SYNC -> EXTRACT -> NORMALIZE IR -> ANCHOR -> EXPAND -> SELECT -> PACK`
+instruction set.
+
+For richer workflows, keep the same low-level contract. Use MCP
+`compile_context` or CLI `graphgraph platform compile` when evidence providers,
+bounded inference, or hierarchy are needed. Memory, temporal episodes,
+federation, traces, and repair inputs must be projected into normal GraphGraph
+nodes/edges before retrieval; do not reason from a parallel store as if it were
+structural evidence. Inspect the returned compiler receipt and validate the
+packet.
+Normal `context`/`query` calls automatically use the bounded source planner;
+use `--source-mode off` only for a structural baseline. Evidence compilation
+uses versioned per-source CPG IR and exact merge/truncation receipts.
 
 > [!IMPORTANT]
-> **STEP 0 -- CHECK TOOL AVAILABILITY FIRST**
-> The `graphgraph/*` MCP tools only exist if a graphgraph MCP server is registered for *this* client. Many sessions (e.g. Claude Code without project `.mcp.json`) have **no** graphgraph MCP server even when Claude Desktop does. Before following any MCP step, confirm a tool named `graphgraph/query_context` (or similar) is actually available. **If it is not, silently switch to the CLI path below -- do NOT try to translate MCP tool names into CLI flags.** Run `graphgraph doctor` to see per-client MCP status.
+> **Check availability.** Use `graphgraph/query_context` when that MCP tool is
+> registered for this client. Otherwise use the CLI commands below; never
+> translate MCP tool names into guessed CLI flags. `graphgraph doctor` reports
+> installed frontends and client registration.
 
-> **DEFAULT PATH**
-> If MCP tools are available, prefer `graphgraph/query_context`. Otherwise run `graphgraph context "<query>"`; it builds `.graphgraph/graph.gg` if missing, routes the query class automatically, and returns a packet. Leave `query_class` and `max_nodes` unset for normal use; pass explicit values only for repeatable tests or a known policy override.
+> [!IMPORTANT]
+> **Audit exclusions before building.** Before the first build, an intentional
+> rebuild, or indexing a materially changed repository layout:
+>
+> 1. Read root and nested `.gitignore`/`.ignore` rules.
+> 2. Inspect top-level and unusually large path names. Look for generated/build/
+>    cache/coverage outputs, vendors/dependencies, bundles/minified assets,
+>    binaries, logs, datasets, copied repos, graph/tool outputs, secret-bearing
+>    environment/config files, and temporary investigation corpora. Inspect
+>    names/rules without opening secrets.
+> 3. Do not blindly exclude tests, fixtures, benchmarks, migrations, or docs;
+>    retain them when they provide likely task evidence.
+> 4. Record exclusions and reasons. Pass directory names through MCP
+>    `build_graph.exclude_dirs` or CLI `scan --exclude`. `include_dirs`/
+>    `--include` only overrides a built-in skip name; it is not an allowlist.
+> 5. Build only after this audit. Later, `query_context` with `sync: "git"`
+>    reconciles paths made stale by new ignore rules.
 
-> **BENCHMARK DISCIPLINE**
-> Do not use expected answer keys or benchmark fixture answers as evidence when answering codebase questions. Use only the retrieved graph packet, source files, docs, and explicitly requested command output.
+> **Default query path.** For an existing healthy graph, use
+> `query_context`. After edits, pass exact `changed_paths`/`deleted_paths`; if
+> that list was lost, pass `sync: "git"`. CLI equivalent:
+> `graphgraph context "<query>" --sync git`. Leave `query_class` and node
+> budgets automatic unless testing a known policy.
 
-## Decision Rules
+> **Development-loop receipt.** For one machine-readable operation, use
+> `graphgraph context "<query>" --changed-files <paths...> --json --validate`.
+> The envelope includes refresh and validation state, inferred/explicit scope,
+> plan rationale, packet-quality metrics, affected-test recommendations, and
+> timings. Compound implementation-and-test questions also report per-facet
+> evidence, unfulfilled facets, and the merged path/test intents. A stale
+> warning means refresh with `--sync git`; dirty does not mean stale when
+> manifest hashes already match.
 
-1. For natural-language codebase questions, call `graphgraph/query_context` first. Do not preselect node IDs unless the user supplied exact files/symbols.
-2. If no graph exists or MCP is unavailable, run `graphgraph context "<query>" --show-stats`.
-3. For focused implementation work, add `--scope src/path` or use `search_nodes` before `final_packet`.
-4. Validate saved graph files with `graphgraph validate-graph`; validate rendered packets with `graphgraph validate`.
-5. Treat GraphGraph as orientation evidence. Verify final claims against source files or test output before changing code.
-6. **grep vs. GraphGraph (measured, see `docs/retrieval-confidence-routing.md`):** if you already have an exact known symbol/string and don't need relationships, `grep`/`git grep` is equally valid -- GraphGraph isn't trying to win that case. Reach for GraphGraph specifically when the question is about callers, dependents, blast radius, or "how does X work" with no exact symbol given -- that's the case grep structurally cannot answer. `search_nodes` also returns `top_score_gap_ratio`/`ambiguous`: a large gap means the top hit is a confident single answer; `ambiguous: true` means treat the result list as several real candidates, not one answer.
+> **Benchmark discipline.** Do not use expected answer keys or fixture answers
+> as evidence. Use retrieved packets, source, docs, and requested command output.
 
-## MCP Tools
+## Decision rules
 
-| Tool | Purpose |
-|------|---------|
-| `query_context` | Natural-language query -> anchors -> compressed packet. Best default. |
-| `search_nodes` | Resolve file/symbol labels to node IDs for exact follow-up packets. |
-| `final_packet` | Render a packet from known node IDs. |
-| `full_graph` | Every active node/edge, no query. Rarely the right tool -- refuses above a token guard by default. |
-| `source_snippets` | Bounded source excerpts for node IDs/labels/paths; use after `query_context` for exact lines. |
-| `project_status` | Validate graph, summarize code/doc balance, package metadata, and optional probes. |
-| `build_graph` | Build `.graphgraph/graph.gg`; accepts `exclude_dirs` and `include_dirs`. |
-| `update_graph_files` / `remove_graph_files` | Splice specific edited/deleted files into an existing graph, no full rescan. |
-| `validate_packet` | Validate a rendered packet, or omit `packet` (+ optional `graph_path`) to validate the saved graph file instead. |
-| `describe_formats` / `describe_ontology` / `describe_frontends` / `describe_traversal` | Introspect packet formats, edge ontology, extraction frontends, traversal policy. |
+1. Natural-language structural question: call `query_context` first; do not
+   preselect IDs unless the user supplied exact files/symbols.
+2. Missing graph: audit exclusions, `build_graph`/`scan`, validate, inspect the
+   build receipt, then query. Do not let `context` auto-build before the audit.
+3. Exact known string with no relationship question: `rg`/`git grep` is valid.
+   Prefer GraphGraph for callers, dependencies, paths, blast radius, and “how
+   does this work?” orientation.
+4. Focus with CLI `--scope src/path` or MCP `search_nodes` then `final_packet`.
+   Explicit scope defaults to `--scope-mode strict`; choose `expand` only when
+   structurally connected dependency boundary crossings are useful.
+5. Validate saved graphs with `validate_packet` or `graphgraph validate-graph`;
+   validate rendered packets with `graphgraph validate`.
+6. Treat graph output as orientation evidence; verify final claims against
+   source or tests before changing code.
+7. Accept a build only after checking: ignore files honored, rule/default paths
+   pruned, selected frontend, fallback/failure counts, validation, and file or
+   symbol/document truncation. CLI scans emit timed phases, document counts,
+   slowest documents, and source-concept timings to stderr. MCP `build_graph`
+   returns `frontend`, `exclusions`, and a machine-readable `phase_profile`.
+8. For documentation answers, require grounded section/paragraph facts. Treat
+   `document_warning`, zero grounded doc nodes, or unfulfilled requested phrases
+   as a retrieval failure to narrow, refresh, or report—not a successful heading
+   match.
+9. Qualify same-named members as `Type::method` in queries. For affected tests,
+   inspect each recommendation's `covers` receipt and use the emitted command;
+   Rust commands are manifest-derived and distinguish an integration target
+   from a module/filter. Execute the focused command before claiming it passes.
 
-## CLI Commands (the real subcommands)
+## Main operations
 
-The MCP tool names above are NOT CLI flags. The CLI has distinct subcommands with **disjoint** options -- do not, e.g., pass `--starts` to `query` (it has no such flag). Use this map:
+| Need | MCP | CLI |
+| --- | --- | --- |
+| Natural-language packet, optionally fresh | `query_context` | `context "<query>" [--sync git] [--json]` |
+| Build after exclusion audit | `build_graph` | `scan --depth symbols --docs --exclude <dirs...>` |
+| Exact edited/deleted splice | `query_context` with changed/deleted paths | `update --files ...` / `remove --files ...` |
+| Resolve labels/paths | `search_nodes` | `query "<text>" --show-anchors` |
+| Packet from known IDs | `final_packet` | `final --query-class <class> --starts <ids...>` |
+| Bounded exact source | `source_snippets` | `snippets --starts <ids...>` |
+| Project/install health | `project_status` | `status --probe` / `doctor` |
+| Validate | `validate_packet` | `validate-graph` / `validate` |
+| Compile advanced graph passes | `compile_context` | `platform compile` |
+| Enforce multi-repo gates | - | `platform benchmark --config <json>` |
+| Migrate platform state | - | `platform migrate --directory .graphgraph` |
+| Issue/error repair context | `repair_context` | `platform repair` |
+| Structural snapshot diff | `graph_change` | `platform change` |
+| Scoped memory | `memory_context` | `platform memory` |
+| Historical graph view | `graph_at_time` | `platform as-of` |
 
-| Need | Subcommand | Anchors | Example |
-|------|-----------|---------|---------|
-| Ask a natural-language question (auto-routes and finds anchors) | `context` | auto | `graphgraph context "how does retrieval work" --show-stats` |
-| Same, on an existing graph only (no auto-build) | `query` | auto | `graphgraph query "callers of retrieve_context" --show-anchors` |
-| Render from node IDs you already know | `final` | `--starts <id>...` | `graphgraph final --query-class blast_radius --starts src_graphgraph_retrieval_context_py` |
-| Low-level render from known IDs (no policies) | `render` | `--starts <id>...` | `graphgraph render --query-class direct_lookup --starts <id>` |
+`full_graph` is an exceptional escape hatch and refuses large graphs by
+default. `describe_formats`, `describe_ontology`, `describe_frontends`, and
+`describe_traversal` expose the low-level contract. CLI `--starts` belongs only
+to `final` and `render`, not `context` or `query`.
 
-Notes: `--starts` exists only on `final` and `render`. `context`/`query` take free text and discover anchors themselves; use `--show-anchors` to see what they picked. Other helpers:
+Query classes: `direct_lookup`, `reverse_lookup`, `subsystem_summary`,
+`blast_radius`, `multi_hop_path`, `affected_tests`, `doc_summary`, `negative_query`, and
+`recent_changes` (requires a scan with `--history`). Compact `gg` is the
+normal token floor; choose larger formats only for columns they uniquely carry.
 
-- Project status: `graphgraph status --probe`
-- Force rebuild on a large repo: `graphgraph context "<query>" --rebuild --scan-max-nodes 20000 --show-stats`
-- Focus scope: `graphgraph context "<query>" --scope src/graphgraph/retrieval --query-class blast_radius`
-- Dynamic sizing: omit `--max-nodes` for production context packets; use `--scan-max-nodes` only to control how much of the repo is indexed.
-- Validate a saved graph file: `graphgraph validate-graph` (or bare `graphgraph validate`, which auto-detects the native graph under `.graphgraph/`)
-- Validate a rendered packet from stdin: `graphgraph query "<query>" --packet gg_max | graphgraph validate`
+## Live validation harness
 
-## Query Classes
+Run `python scripts/validate_live.py --repo <repo>` from this skill directory
+to scan and validate live packets against any repository. The harness derives
+default queries from that repository and detects Cargo, Go, npm, pytest, or
+unittest tests.
 
-| Query Class | Description / Example Question | Hops | Format | Reason |
-| :--- | :--- | :---: | :--- | :--- |
-| `direct_lookup` | Specific file/symbol details | 1 | `gg_max` | measured token floor |
-| `reverse_lookup` | References/callers/users of a symbol | 1 | `gg_max` | measured token floor |
-| `subsystem_summary` | High-level status or architecture area | 1 | `gg_max` | measured token floor |
-| `blast_radius` | What changes if this is modified? | 2 | `gg_max` | topology-first |
-| `multi_hop_path` | How does A reach/call B? | 2 | `gg_max` | path evidence |
-| `doc_summary` | README/docs/install/usage summaries | 1 | `doc_summary` | grounded docs, no topology |
-| `negative_query` | Is this isolated/missing? | 1 | `semantic_arrow` | minimal evidence |
-| `recent_changes` | What recent fix commits touched this file/subsystem? | 1 | `gg_max` | commit/fixes evidence. Requires the graph to have been scanned with `--history` -- otherwise there are no commit nodes to surface. |
+- Override detection with `--test-command "<command>"`.
+- Use `--skip-tests` when tests are intentionally out of scope.
+- Add repeatable `--query "<question>"` values to replace derived defaults.
+- Enable `--saved-reports` only for GraphGraph self-validation; foreign
+  repositories do not fail because GraphGraph benchmark reports are absent.
 
-Format note: `gg_max`/`gg_max_hybrid` use short integer node handles and are the most token-efficient. `sql` also uses integer handles but carries extra `kind`/`path`/`weight` columns, so it is larger than topology-only `gg_max` (typically ~2x on real repos, more when names are long) -- pick it only when you need those columns. Token ratios between formats are repo-dependent; measure on your own codebase with `--show-stats` or `graphgraph compare` rather than assuming fixed multipliers.
+## Noise and receipt rules
 
-## Noise Controls
-
-Default scanning skips generated artifact directories such as `.graphgraph`, `graphify-out`, `.code-review-graph`, `evidence`, `artifacts`, `scratch`, `tmp`, build outputs, vendors, and cloned external repos. Normal install, scan, context, query, and MCP workflows do not invoke Graphify, code-review-graph, or other graph tools; external graph outputs are read only when explicitly passed to `ingest` or a graph-path argument. For project-specific noise, pass `exclude_dirs` in MCP or `--exclude <dir>` in CLI.
+Defaults skip VCS, environments, dependencies, builds, caches, generated agent
+artifacts, local agent/MCP configuration, graph outputs, vendors, and cloned
+references. These defaults are a safety floor, not proof of a clean graph.
+Prefer excluding reproducible derivatives while retaining source-of-truth and
+relationship-bearing tests/docs. Ignore-matched directories must be reported
+as pruned before descent; a scan that merely walks and discards every ignored
+file is a performance bug.
+`doc_summary` may carry bounded paragraph spans beneath selected headings; use
+its grounding telemetry to distinguish an answer from a heading-only match.

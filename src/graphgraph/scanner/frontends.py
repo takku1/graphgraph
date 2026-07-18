@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from ..graph.core import Edge, Node
@@ -20,8 +21,12 @@ __all__ = [
     "Extractor",
     "RegexExtractor",
     "TreeSitterExtractor",
+    "DEFINITION_NODE_TYPES",
+    "NAME_NODE_TYPES",
     "tree_sitter_available",
     "available_frontends",
+    "parse_with_timeout",
+    "parser_for_suffix",
     "select_extractor",
 ]
 
@@ -57,6 +62,12 @@ class ExtractionResult:
     truncated: bool = False
     fallback_files: tuple[str, ...] = ()
     failed_files: tuple[str, ...] = ()
+    unsupported_files: tuple[str, ...] = ()
+    timeout_files: tuple[str, ...] = ()
+    parse_error_files: tuple[str, ...] = ()
+    resolved_member_calls: int = 0
+    ambiguous_member_calls: int = 0
+    unresolved_member_calls: int = 0
 
 
 class Extractor(Protocol):
@@ -110,6 +121,9 @@ class TreeSitterExtractor:
         truncated = False
         fallback_sources: list[SourceFile] = []
         failed_files: list[str] = []
+        unsupported_files: list[str] = []
+        timeout_files: list[str] = []
+        parse_error_files: list[str] = []
 
         for node_id, node in nodes.items():
             if _is_context_symbol(node):
@@ -120,6 +134,7 @@ class TreeSitterExtractor:
             if parser is None:
                 if self.fallback_on_error:
                     fallback_sources.append(source)
+                    unsupported_files.append(source.rel)
                 continue
             text_bytes = source.text.encode("utf-8", errors="replace")
             try:
@@ -135,25 +150,33 @@ class TreeSitterExtractor:
                     raise RuntimeError(f"Tree-sitter failed for {source.rel}: {exc}") from exc
                 fallback_sources.append(source)
                 failed_files.append(f"{source.rel}:{type(exc).__name__}")
+                if isinstance(exc, TimeoutError):
+                    timeout_files.append(source.rel)
+                else:
+                    parse_error_files.append(source.rel)
                 continue
             root = tree.root_node
             defs = _collect_defs(source, root, text_bytes)
             defs_by_file.append((source, defs, root))
-            seen_names: set[str] = set()
+            seen_ids: set[str] = set()
             for d in defs:
                 if total >= max_total_symbols:
                     truncated = True
                     break
-                if d.kind == "impl_block" or d.name in seen_names:
+                node_id = _definition_node_id(source, d)
+                if d.kind == "impl_block" or node_id in seen_ids:
                     continue
-                seen_names.add(d.name)
-                node_id = f"{source.file_node_id}__{d.name}"
+                seen_ids.add(node_id)
+                summary = _definition_summary(source.text, d.line)
+                qualified_name = _definition_qualified_name(d)
+                if qualified_name:
+                    summary = f"{summary} [{qualified_name}]"
                 nodes[node_id] = Node(
                     id=node_id,
                     label=d.name,
                     kind=d.kind,
                     path=source.rel,
-                    summary=_definition_summary(source.text, d.line),
+                    summary=summary,
                     source=str(source.path),
                     confidence=self.confidence,
                 )
@@ -170,11 +193,13 @@ class TreeSitterExtractor:
                 total += 1
 
         _add_tree_sitter_implements(defs_by_file, name_to_symbols, edges)
+        _add_rust_method_owners(defs_by_file, nodes, name_to_symbols, edges)
         _add_nested_contains(defs_by_file, nodes, edges)
         _add_rust_fields(defs_by_file, nodes, edges)
         _add_returns(defs_by_file, nodes, name_to_symbols, edges)
         _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
-        _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
+        member_call_stats = _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
+        _add_rust_test_field_references(defs_by_file, nodes, edges)
         _add_tree_sitter_callback_references(defs_by_file, nodes, name_to_symbols, edges)
 
         if fallback_sources:
@@ -197,6 +222,12 @@ class TreeSitterExtractor:
             truncated=truncated,
             fallback_files=tuple(source.rel for source in fallback_sources),
             failed_files=tuple(failed_files),
+            unsupported_files=tuple(unsupported_files),
+            timeout_files=tuple(timeout_files),
+            parse_error_files=tuple(parse_error_files),
+            resolved_member_calls=member_call_stats.resolved,
+            ambiguous_member_calls=member_call_stats.ambiguous,
+            unresolved_member_calls=member_call_stats.unresolved,
         )
 
 
@@ -250,9 +281,9 @@ def available_frontends() -> list[FrontendCapability]:
         ),
         FrontendCapability(
             name="cpg",
-            available=False,
+            available=tree_sitter_available(),
             confidence=0.95,
-            description="Planned Code Property Graph layer for control/data/type flow.",
+            description="Multi-language control, data, field, and type evidence normalized into GraphGraph IR.",
         ),
     ]
 
@@ -275,6 +306,26 @@ class _TsDef:
     end: int
     line: int
     extra: tuple[str, ...] = ()
+    owner: str = ""
+
+
+def _definition_impl_qualifier(definition: _TsDef) -> str:
+    if definition.kind != "method" or not definition.owner:
+        return ""
+    trait_name, type_name = definition.extra if len(definition.extra) == 2 else ("", definition.owner)
+    return f"{trait_name}_for_{type_name}" if trait_name else type_name
+
+
+def _definition_qualified_name(definition: _TsDef) -> str:
+    qualifier = _definition_impl_qualifier(definition)
+    return f"{qualifier}::{definition.name}" if qualifier else ""
+
+
+def _definition_node_id(source: SourceFile, definition: _TsDef) -> str:
+    qualifier = _definition_impl_qualifier(definition)
+    if qualifier:
+        return f"{source.file_node_id}__{qualifier}__{definition.name}"
+    return f"{source.file_node_id}__{definition.name}"
 
 
 _SUFFIX_LANGUAGE = {
@@ -364,6 +415,9 @@ _NAME_NODE_TYPES = {
     "constant",  # Ruby class/module names
 }
 
+DEFINITION_NODE_TYPES = MappingProxyType(_DEF_TYPES)
+NAME_NODE_TYPES = frozenset(_NAME_NODE_TYPES)
+
 
 def _language_available(name: str) -> bool:
     if find_spec("tree_sitter_language_pack") is not None:
@@ -427,6 +481,16 @@ def _parser_for_suffix(suffix: str) -> Any | None:
     return _parser_for_language(name)
 
 
+def parser_for_suffix(suffix: str) -> Any | None:
+    """Return the cached Tree-sitter parser registered for a file suffix."""
+    return _parser_for_suffix(suffix.casefold())
+
+
+def parse_with_timeout(parser: Any, text: bytes, timeout_micros: int) -> Any | None:
+    """Parse bytes through the scanner's shared timeout compatibility layer."""
+    return _parse_with_timeout(parser, text, timeout_micros)
+
+
 def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     defs: list[_TsDef] = []
     stack = [root]
@@ -454,7 +518,50 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             end=int(node.end_byte),
             line=int(node.start_point[0]) + 1,
         ))
-    return defs
+    if source.path.suffix.lower() != ".rs":
+        return _attach_lexical_method_owners(defs)
+    impls = [d for d in defs if d.kind == "impl_block" and len(d.extra) == 2]
+    if not impls:
+        return defs
+    owned: list[_TsDef] = []
+    for definition in defs:
+        if definition.kind not in {"function", "method"}:
+            owned.append(definition)
+            continue
+        parents = [impl for impl in impls if impl.start < definition.start and definition.end < impl.end]
+        if not parents:
+            owned.append(definition)
+            continue
+        parent = min(parents, key=lambda item: item.end - item.start)
+        owned.append(replace(definition, kind="method", owner=parent.extra[1], extra=parent.extra))
+    return owned
+
+
+def _attach_lexical_method_owners(defs: list[_TsDef]) -> list[_TsDef]:
+    """Mark callables directly nested in a type as owned methods."""
+    owner_kinds = {"class", "trait", "struct", "enum", "interface", "type"}
+    owned: list[_TsDef] = []
+    for definition in defs:
+        if definition.kind not in {"function", "method"}:
+            owned.append(definition)
+            continue
+        enclosing = [
+            parent for parent in defs
+            if parent is not definition
+            and parent.start < definition.start
+            and definition.end <= parent.end
+        ]
+        parent = min(enclosing, key=lambda item: item.end - item.start, default=None)
+        if parent is None or parent.kind not in owner_kinds:
+            owned.append(definition)
+            continue
+        owned.append(replace(
+            definition,
+            kind="method",
+            owner=parent.name,
+            extra=("", parent.name),
+        ))
+    return owned
 
 
 _NESTED_NAME_PARENT_TYPES = {
@@ -496,12 +603,12 @@ def _node_text_range(text: bytes, start: int, end: int) -> str:
 def _rust_impl_def(node: Any, text: bytes) -> _TsDef | None:
     snippet = _node_text(node, text).split("{", 1)[0]
     m = re.search(r"\bimpl\s*(?:<[^>]*>\s*)?(?:(?P<trait>[A-Za-z_][\w:]*)\s+for\s+)?(?P<typ>[A-Za-z_][\w:]*)", snippet)
-    if not m or not m.group("trait"):
+    if not m:
         return None
-    trait = m.group("trait").split("::")[-1]
+    trait = (m.group("trait") or "").split("::")[-1]
     typ = m.group("typ").split("::")[-1]
     return _TsDef(
-        name=f"impl_{trait}_for_{typ}",
+        name=f"impl_{trait}_for_{typ}" if trait else f"impl_{typ}",
         kind="impl_block",
         start=int(node.start_byte),
         end=int(node.end_byte),
@@ -510,8 +617,8 @@ def _rust_impl_def(node: Any, text: bytes) -> _TsDef | None:
     )
 
 
-def _rust_fields_in_range(root: Any, text: bytes, start: int, end: int) -> list[tuple[str, int]]:
-    fields: list[tuple[str, int]] = []
+def _rust_fields_in_range(root: Any, text: bytes, start: int, end: int) -> list[tuple[str, str, int]]:
+    fields: list[tuple[str, str, int]] = []
     stack = [root]
     while stack:
         node = stack.pop()
@@ -531,18 +638,58 @@ def _rust_fields_in_range(root: Any, text: bytes, start: int, end: int) -> list[
             continue
         name = _node_text(name_node, text)
         if _identifier(name):
-            fields.append((name, int(node.start_point[0]) + 1))
+            try:
+                type_node = node.child_by_field_name("type")
+            except Exception:
+                type_node = None
+            if type_node is None:
+                type_node = next(
+                    (
+                        child
+                        for child in getattr(node, "named_children", ())
+                        if child is not name_node and child.type != "visibility_modifier"
+                    ),
+                    None,
+                )
+            type_name = _rust_type_name(_node_text(type_node, text) if type_node is not None else "")
+            fields.append((name, type_name, int(node.start_point[0]) + 1))
     return fields
 
 
+def _rust_type_name(value: str) -> str:
+    wrappers = {
+        "Arc", "Box", "Cow", "Mutex", "Option", "Pin", "Rc", "Ref", "Result",
+        "RwLock", "Vec", "Weak",
+    }
+    candidates = [
+        token for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
+        if token[:1].isupper() and token not in wrappers
+    ]
+    return candidates[0] if candidates else ""
+
+
 def _return_type_name(signature_or_body: str) -> str:
+    names = _return_type_names(signature_or_body)
+    return names[0] if names else ""
+
+
+def _return_type_names(signature_or_body: str) -> tuple[str, ...]:
     head = signature_or_body.split("{", 1)[0].rstrip(";")
-    match = re.search(r"->\s*(?:&\s*)?(?:'[\w_]+\s+)?(?P<typ>[A-Za-z_][A-Za-z0-9_:<>]*)", head)
+    match = re.search(r"->\s*(?P<types>.+)$", head, flags=re.S)
     if not match:
-        return ""
-    typ = match.group("typ").split("::")[-1]
-    typ = typ.split("<", 1)[0]
-    return typ if _identifier(typ) else ""
+        return ()
+    ignored = {
+        "Arc", "Box", "Cow", "Option", "Pin", "Rc", "Ref", "Result", "RwLock",
+        "Vec", "Weak", "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64",
+        "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
+    }
+    return_expression = re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]
+    names = [
+        token
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", return_expression)
+        if token[:1].isupper() and token not in ignored
+    ]
+    return tuple(dict.fromkeys(names))
 
 
 def _add_tree_sitter_implements(
@@ -555,10 +702,66 @@ def _add_tree_sitter_implements(
             if d.kind != "impl_block" or len(d.extra) != 2:
                 continue
             trait_name, type_name = d.extra
+            if not trait_name:
+                continue
             for type_id in name_to_symbols.get(type_name, []):
                 for trait_id in name_to_symbols.get(trait_name, []):
                     if type_id != trait_id:
                         edges.append(Edge(type_id, trait_id, "implements", confidence=0.95, provenance="tree_sitter"))
+
+
+def _select_owner_type(
+    owner: str,
+    source: SourceFile,
+    nodes: dict[str, Node],
+    name_to_symbols: dict[str, list[str]],
+) -> str | None:
+    candidates = [
+        node_id
+        for node_id in name_to_symbols.get(owner, ())
+        if nodes.get(node_id) and nodes[node_id].kind in {"struct", "enum", "trait", "class", "type"}
+    ]
+    local = [node_id for node_id in candidates if nodes[node_id].path == source.rel]
+    if len(local) == 1:
+        return local[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _add_rust_method_owners(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    nodes: dict[str, Node],
+    name_to_symbols: dict[str, list[str]],
+    edges: list[Edge],
+) -> None:
+    """Attach Rust impl methods to their owning type.
+
+    The owner is structural evidence used by receiver-call resolution. It also
+    repairs a hierarchy gap: Rust methods are lexically inside ``impl`` blocks,
+    not inside the struct declaration itself.
+    """
+    for source, defs, _root in defs_by_file:
+        if source.path.suffix.lower() != ".rs":
+            continue
+        for definition in defs:
+            if definition.kind != "method" or not definition.owner:
+                continue
+            method_id = _definition_node_id(source, definition)
+            if method_id not in nodes:
+                continue
+            owner_id = _select_owner_type(definition.owner, source, nodes, name_to_symbols)
+            if not owner_id:
+                continue
+            nodes[method_id] = replace(nodes[method_id], parent=owner_id)
+            edges.append(Edge(
+                owner_id,
+                method_id,
+                "contains",
+                confidence=0.97,
+                provenance="tree_sitter_type_resolved",
+                source_location=f"{source.rel}:{definition.line}",
+            ))
 
 
 def _add_nested_contains(
@@ -569,7 +772,7 @@ def _add_nested_contains(
     owner_kinds = {"class", "trait", "struct", "enum", "interface"}
     child_kinds = {"function", "method", "class", "struct", "enum", "trait", "interface", "type"}
     for source, defs, _root in defs_by_file:
-        materialized = [d for d in defs if f"{source.file_node_id}__{d.name}" in nodes and d.kind != "impl_block"]
+        materialized = [d for d in defs if _definition_node_id(source, d) in nodes and d.kind != "impl_block"]
         for child in materialized:
             if child.kind not in child_kinds:
                 continue
@@ -577,14 +780,15 @@ def _add_nested_contains(
                 parent for parent in materialized
                 if parent.kind in owner_kinds
                 and parent.start < child.start
-                and child.end < parent.end
+                and child.end <= parent.end
             ]
             if not parents:
                 continue
             parent = min(parents, key=lambda d: d.end - d.start)
-            parent_id = f"{source.file_node_id}__{parent.name}"
-            child_id = f"{source.file_node_id}__{child.name}"
+            parent_id = _definition_node_id(source, parent)
+            child_id = _definition_node_id(source, child)
             if parent_id != child_id:
+                nodes[child_id] = replace(nodes[child_id], parent=parent_id)
                 edges.append(Edge(
                     parent_id,
                     child_id,
@@ -604,12 +808,12 @@ def _add_rust_fields(
         if source.path.suffix.lower() != ".rs":
             continue
         text = source.text.encode("utf-8", errors="replace")
-        structs = [d for d in defs if d.kind == "struct" and f"{source.file_node_id}__{d.name}" in nodes]
+        structs = [d for d in defs if d.kind == "struct" and _definition_node_id(source, d) in nodes]
         if not structs:
             continue
         for struct in structs:
-            struct_id = f"{source.file_node_id}__{struct.name}"
-            for field_name, line in _rust_fields_in_range(root, text, struct.start, struct.end):
+            struct_id = _definition_node_id(source, struct)
+            for field_name, field_type, line in _rust_fields_in_range(root, text, struct.start, struct.end):
                 field_id = f"{struct_id}__field_{field_name}"
                 if field_id not in nodes:
                     nodes[field_id] = Node(
@@ -618,6 +822,7 @@ def _add_rust_fields(
                         kind="field",
                         path=source.rel,
                         summary=_definition_summary(source.text, line),
+                        facts=(f"type:{field_type}",) if field_type else (),
                         parent=struct_id,
                         source=str(source.path),
                         confidence=0.9,
@@ -651,23 +856,21 @@ def _add_returns(
         for d in defs:
             if d.kind not in {"function", "method"}:
                 continue
-            src_id = f"{source.file_node_id}__{d.name}"
+            src_id = _definition_node_id(source, d)
             if src_id not in nodes:
                 continue
-            return_type = _return_type_name(_node_text_range(text, d.start, d.end))
-            if not return_type:
-                continue
-            targets = name_to_symbols.get(return_type, [])
-            if len(targets) != 1 or targets[0] == src_id:
-                continue
-            edges.append(Edge(
-                src_id,
-                targets[0],
-                "returns",
-                confidence=0.9,
-                provenance="tree_sitter",
-                source_location=f"{source.rel}:{d.line}",
-            ))
+            for return_type in _return_type_names(_node_text_range(text, d.start, d.end)):
+                targets = name_to_symbols.get(return_type, [])
+                if len(targets) != 1 or targets[0] == src_id:
+                    continue
+                edges.append(Edge(
+                    src_id,
+                    targets[0],
+                    "returns",
+                    confidence=0.9,
+                    provenance="tree_sitter",
+                    source_location=f"{source.rel}:{d.line}",
+                ))
 
 
 def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
@@ -721,7 +924,7 @@ def _add_tree_sitter_callback_references(
         src_lang = _lang_family(source.rel)
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
         for d in callable_defs:
-            src_id = f"{source.file_node_id}__{d.name}"
+            src_id = _definition_node_id(source, d)
             if src_id not in nodes:
                 continue
             for name in _callback_arg_names_in_range(
@@ -737,12 +940,124 @@ def _add_tree_sitter_callback_references(
                 edges.append(Edge(src_id, tgt_id, "references", confidence=0.6, provenance="tree_sitter_callback_ref"))
 
 
+def _add_rust_test_field_references(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    nodes: dict[str, Node],
+    edges: list[Edge],
+) -> None:
+    """Link typed Rust field assertions directly to their schema fields."""
+    fields_by_name: dict[str, list[str]] = {}
+    field_types: dict[str, str] = {}
+    for node_id, node in nodes.items():
+        if node.kind == "field":
+            fields_by_name.setdefault(node.label, []).append(node_id)
+            field_type = next(
+                (
+                    fact.split(":", 1)[1]
+                    for fact in node.facts
+                    if fact.startswith("type:") and len(fact.split(":", 1)) == 2
+                ),
+                "",
+            )
+            if field_type:
+                field_types[node_id] = field_type
+    if not fields_by_name:
+        return
+    return_types_by_name: dict[str, set[str]] = {}
+    for source, defs, _root in defs_by_file:
+        if source.path.suffix.lower() != ".rs":
+            continue
+        text_bytes = source.text.encode("utf-8", errors="replace")
+        for definition in (item for item in defs if item.kind in {"function", "method"}):
+            return_type = _return_type_name(
+                _node_text_range(text_bytes, definition.start, definition.end)
+            )
+            if return_type:
+                return_types_by_name.setdefault(definition.name, set()).add(return_type)
+    unique_return_types = {
+        name: next(iter(types))
+        for name, types in return_types_by_name.items()
+        if len(types) == 1
+    }
+    existing = {(edge.source, edge.target, edge.type) for edge in edges}
+    for source, defs, root in defs_by_file:
+        normalized = "/" + source.rel.replace("\\", "/").casefold()
+        if source.path.suffix.lower() != ".rs" or (
+            "/tests/" not in normalized
+            and not Path(source.rel).name.casefold().endswith(("_test.rs", "tests.rs"))
+        ):
+            continue
+        text_bytes = source.text.encode("utf-8", errors="replace")
+        for definition in (item for item in defs if item.kind in {"function", "method"}):
+            source_id = _definition_node_id(source, definition)
+            if source_id not in nodes:
+                continue
+            body = _node_text_range(text_bytes, definition.start, definition.end)
+            receiver_types = _rust_local_types(body)
+            receiver_types.update(_rust_local_call_return_types(body, unique_return_types))
+            if definition.owner:
+                receiver_types["self"] = definition.owner
+            accesses = sorted(
+                _rust_field_accesses_in_range(
+                    root,
+                    text_bytes,
+                    definition.start,
+                    definition.end,
+                ),
+                key=lambda item: (item[0].count("."), item),
+            )
+            for receiver, field_name in accesses:
+                receiver_type = receiver_types.get(receiver, "")
+                if not receiver_type:
+                    continue
+                candidates = [
+                    node_id
+                    for node_id in fields_by_name.get(field_name, ())
+                    if _method_owner(node_id, nodes) == receiver_type
+                ]
+                if len(candidates) != 1:
+                    continue
+                field_type = field_types.get(candidates[0], "")
+                if field_type:
+                    receiver_types[f"{receiver}.{field_name}"] = field_type
+                key = (source_id, candidates[0], "references")
+                if key in existing:
+                    continue
+                existing.add(key)
+                edges.append(Edge(
+                    source_id,
+                    candidates[0],
+                    "references",
+                    confidence=0.94,
+                    provenance="tree_sitter_type_resolved_field_assertion",
+                    source_location=source.rel,
+                    evidence=f"test receiver {receiver}:{receiver_type}.{field_name}",
+                ))
+
+
+def _rust_local_call_return_types(
+    body: str,
+    return_types: dict[str, str],
+) -> dict[str, str]:
+    inferred: dict[str, str] = {}
+    for match in re.finditer(
+        r"\blet\s+(?:mut\s+)?(?P<variable>[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s*:\s*[^=;]+)?\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*"
+        r"(?P<function>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        body,
+    ):
+        return_type = return_types.get(match.group("function"), "")
+        if return_type:
+            inferred[match.group("variable")] = return_type
+    return inferred
+
+
 def _add_tree_sitter_calls(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
-) -> None:
+) -> _MemberCallStats:
     # 1. Identify globally unique callables
     unique_callables = {
         name: ids[0] for name, ids in name_to_symbols.items()
@@ -750,6 +1065,7 @@ def _add_tree_sitter_calls(
     }
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
 
+    stats = _MemberCallStats()
     for source, defs, root in defs_by_file:
         suffix = source.path.suffix.lower()
         imported_sources = _imported_symbol_sources(suffix, source.text)
@@ -773,18 +1089,46 @@ def _add_tree_sitter_calls(
             if target:
                 local_resolutions[name] = target
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
+        rust_field_types: dict[tuple[str, str], str] = {}
+        if suffix == ".rs":
+            text_bytes = source.text.encode("utf-8", errors="replace")
+            for struct in (item for item in defs if item.kind == "struct"):
+                for field_name, field_type, _line in _rust_fields_in_range(
+                    root,
+                    text_bytes,
+                    struct.start,
+                    struct.end,
+                ):
+                    if field_type:
+                        rust_field_types[(struct.name, field_name)] = field_type
         for d in callable_defs:
-            src_id = f"{source.file_node_id}__{d.name}"
+            src_id = _definition_node_id(source, d)
             if src_id not in nodes:
                 continue
-            calls = _call_names_in_range(root, source.text.encode("utf-8", errors="replace"), d.start, d.end)
-            for call, is_qualified in calls:
-                if is_qualified:
-                    # receiver.method(...) -- resolving needs the receiver's
-                    # type, which we don't have. Do not guess against the
-                    # global free-function/method name index.
+            text_bytes = source.text.encode("utf-8", errors="replace")
+            local_types = _rust_local_types(_node_text_range(text_bytes, d.start, d.end)) if suffix == ".rs" else {}
+            if d.owner:
+                local_types["self"] = d.owner
+                local_types.update({
+                    f"self.{field_name}": field_type
+                    for (owner, field_name), field_type in rust_field_types.items()
+                    if owner == d.owner
+                })
+            calls = _call_sites_in_range(root, text_bytes, d.start, d.end)
+            for call in calls:
+                if call.qualified:
+                    outcome = _resolve_member_call(
+                        source=source,
+                        source_id=src_id,
+                        call=call,
+                        receiver_types=local_types,
+                        nodes=nodes,
+                        name_to_symbols=name_to_symbols,
+                        edges=edges,
+                    )
+                    stats = stats.add(outcome)
                     continue
-                tgt_id = local_resolutions.get(call)
+                tgt_id = local_resolutions.get(call.name)
                 if not tgt_id or tgt_id == src_id:
                     continue
                 tgt_node = nodes.get(tgt_id)
@@ -792,6 +1136,108 @@ def _add_tree_sitter_calls(
                 if src_lang is not None and tgt_lang is not None and src_lang != tgt_lang:
                     continue
                 edges.append(Edge(src_id, tgt_id, "calls", confidence=0.9, provenance="tree_sitter"))
+    return stats
+
+
+@dataclass(frozen=True)
+class _MemberCallStats:
+    resolved: int = 0
+    ambiguous: int = 0
+    unresolved: int = 0
+
+    def add(self, outcome: str) -> _MemberCallStats:
+        return _MemberCallStats(
+            resolved=self.resolved + (outcome == "resolved"),
+            ambiguous=self.ambiguous + (outcome == "ambiguous"),
+            unresolved=self.unresolved + (outcome == "unresolved"),
+        )
+
+
+def _rust_local_types(body: str) -> dict[str, str]:
+    """Extract conservative local receiver types from Rust parameters/lets."""
+    result: dict[str, str] = {}
+    type_pattern = r"(?:&\s*)?(?:'\w+\s+)?(?:mut\s+)?([A-Za-z_][A-Za-z0-9_:]*)"
+    for match in re.finditer(
+        rf"(?:^|[,(])\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{type_pattern}",
+        body.split("{", 1)[0],
+    ):
+        type_name = match.group(2).split("::")[-1]
+        if type_name[:1].isupper():
+            result[match.group(1)] = type_name
+    for match in re.finditer(
+        rf"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{type_pattern}",
+        body,
+    ):
+        type_name = match.group(2).split("::")[-1]
+        if type_name[:1].isupper():
+            result[match.group(1)] = type_name
+    for match in re.finditer(
+        r"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*&?\s*([A-Z][A-Za-z0-9_:]*)\s*(?:::\w+\s*\(|\{)",
+        body,
+    ):
+        result.setdefault(match.group(1), match.group(2).split("::")[-1])
+    return result
+
+
+def _method_owner(node_id: str, nodes: dict[str, Node]) -> str:
+    node = nodes.get(node_id)
+    if not node or not node.parent:
+        return ""
+    parent = nodes.get(node.parent)
+    return parent.label if parent else ""
+
+
+def _resolve_member_call(
+    *,
+    source: SourceFile,
+    source_id: str,
+    call: _CallSite,
+    receiver_types: dict[str, str],
+    nodes: dict[str, Node],
+    name_to_symbols: dict[str, list[str]],
+    edges: list[Edge],
+) -> str:
+    receiver_type = receiver_types.get(call.receiver, "")
+    if not receiver_type and source.path.suffix.lower() == ".rs" and _rust_qualified_type_receiver(call.receiver):
+        receiver_type = call.receiver.split("::")[-1]
+    candidates = [
+        node_id
+        for node_id in name_to_symbols.get(call.name, ())
+        if node_id != source_id
+        and nodes.get(node_id)
+        and nodes[node_id].kind == "method"
+        and _lang_family(nodes[node_id].path) == _lang_family(source.rel)
+    ]
+    if receiver_type:
+        candidates = [node_id for node_id in candidates if _method_owner(node_id, nodes) == receiver_type]
+    if len(candidates) == 1 and receiver_type:
+        edges.append(Edge(
+            source_id,
+            candidates[0],
+            "calls",
+            confidence=0.97,
+            provenance="tree_sitter_type_resolved",
+            source_location=source.rel,
+            evidence=f"receiver {call.receiver}:{receiver_type}",
+        ))
+        return "resolved"
+    if candidates:
+        for target in sorted(candidates)[:8]:
+            edges.append(Edge(
+                source_id,
+                target,
+                "calls_candidate",
+                confidence=0.45 if receiver_type else 0.3,
+                provenance="tree_sitter_ambiguous_call",
+                source_location=source.rel,
+                evidence=(
+                    f"receiver {call.receiver}:{receiver_type}; {len(candidates)} candidates"
+                    if receiver_type
+                    else f"receiver type unresolved; {len(candidates)} candidates"
+                ),
+            ))
+        return "ambiguous"
+    return "unresolved"
 
 
 def _add_imports_from(
@@ -956,6 +1402,23 @@ _PATH_QUALIFIED_CALL_TYPES = {
 }
 
 
+@dataclass(frozen=True)
+class _CallSite:
+    name: str
+    qualified: bool
+    receiver: str = ""
+
+
+def _rust_qualified_type_receiver(value: str) -> bool:
+    """Whether a Rust receiver explicitly names a unit-struct/type path."""
+    parts = value.split("::")
+    return bool(
+        len(parts) >= 1
+        and all(_identifier(part) for part in parts)
+        and parts[-1][:1].isupper()
+    )
+
+
 def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tuple[str, bool]]:
     """Return (callee_name, is_qualified) pairs for call sites in [start, end).
 
@@ -975,7 +1438,12 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tu
     functions (`QuadPoly::from_uni(...)`) would never show a `calls` edge
     pointing at it, making an actively-used struct look isolated/dead.
     """
-    names: set[tuple[str, bool]] = set()
+    return {(site.name, site.qualified) for site in _call_sites_in_range(root, text, start, end)}
+
+
+def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_CallSite]:
+    """Return bounded call-site facts, retaining receiver text for type resolution."""
+    sites: set[_CallSite] = set()
     stack = [root]
     while stack:
         node = stack.pop()
@@ -1003,8 +1471,69 @@ def _call_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[tu
         is_qualified = fn.type not in _NAME_NODE_TYPES and fn.type not in _PATH_QUALIFIED_CALL_TYPES
         name = _call_name(fn, text)
         if name:
-            names.add((name, is_qualified))
-    return names
+            receiver = ""
+            if is_qualified:
+                for field in ("value", "object", "receiver"):
+                    try:
+                        receiver_node = fn.child_by_field_name(field)
+                    except Exception:
+                        receiver_node = None
+                    if receiver_node is not None:
+                        receiver = _node_text(receiver_node, text).strip()
+                        break
+                if not receiver:
+                    children = list(getattr(fn, "named_children", ()))
+                    if len(children) >= 2:
+                        receiver = _node_text(children[0], text).strip()
+                rust_field_receiver = bool(re.fullmatch(r"self\.[A-Za-z_][A-Za-z0-9_]*", receiver))
+                if (
+                    not _identifier(receiver)
+                    and receiver != "self"
+                    and not rust_field_receiver
+                    and not _rust_qualified_type_receiver(receiver)
+                ):
+                    receiver = ""
+            sites.add(_CallSite(name=name, qualified=is_qualified, receiver=receiver))
+    return sites
+
+
+def _rust_field_accesses_in_range(
+    root: Any,
+    text: bytes,
+    start: int,
+    end: int,
+) -> set[tuple[str, str]]:
+    accesses: set[tuple[str, str]] = set()
+    snippet = _node_text_range(text, start, end)
+    for match in re.finditer(
+        r"\b(?P<chain>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\b",
+        snippet,
+    ):
+        parts = match.group("chain").split(".")
+        accesses.update(
+            (".".join(parts[:index]), parts[index])
+            for index in range(1, len(parts))
+        )
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if int(node.end_byte) < start or int(node.start_byte) > end:
+            continue
+        stack.extend(reversed(list(getattr(node, "named_children", ()))))
+        if node.type != "field_expression":
+            continue
+        try:
+            receiver_node = node.child_by_field_name("value")
+            field_node = node.child_by_field_name("field")
+        except Exception:
+            continue
+        if receiver_node is None or field_node is None:
+            continue
+        receiver = _node_text(receiver_node, text).strip()
+        field_name = _node_text(field_node, text).strip()
+        if _identifier(receiver) and _identifier(field_name):
+            accesses.add((receiver, field_name))
+    return accesses
 
 
 def _callback_arg_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[str]:

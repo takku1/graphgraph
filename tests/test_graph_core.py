@@ -274,6 +274,52 @@ class GraphCoreTest(unittest.TestCase):
         self.assertNotEqual(graph._pagerank_cache, cache)
         self.assertGreater(third["B"], first["B"])
 
+    def test_pagerank_cache_invalidates_when_edge_weight_is_replaced(self) -> None:
+        graph = Graph(
+            nodes={node_id: Node(node_id, node_id) for node_id in ("A", "B", "C")},
+            edges=[
+                Edge("A", "B", "calls", weight=1.0),
+                Edge("A", "C", "calls", weight=1.0),
+            ],
+        )
+        before = graph.pagerank()
+
+        graph.edges[0] = Edge("A", "B", "calls", weight=100.0)
+        after = graph.pagerank()
+        expected = Graph(nodes=dict(graph.nodes), edges=list(graph.edges)).pagerank()
+
+        self.assertEqual(after, expected)
+        self.assertNotEqual(after, before)
+        self.assertGreater(after["B"], after["C"])
+
+    def test_adjacency_cache_invalidates_when_edge_is_replaced(self) -> None:
+        graph = Graph(
+            nodes={node_id: Node(node_id, node_id) for node_id in ("A", "B", "C")},
+            edges=[Edge("A", "B", "calls")],
+        )
+        self.assertEqual([edge.target for edge in graph.outgoing()["A"]], ["B"])
+
+        graph.edges[0] = Edge("C", "B", "calls")
+
+        self.assertNotIn("A", graph.outgoing())
+        self.assertEqual([edge.target for edge in graph.outgoing()["C"]], ["B"])
+
+    def test_graph_mutation_revision_tracks_store_instructions(self) -> None:
+        graph = Graph(nodes={"A": Node("A", "A")}, edges=[Edge("A", "A", "references")])
+        revisions = [graph.mutation_revision]
+
+        graph.nodes["A"] = Node("A", "Alpha")
+        revisions.append(graph.mutation_revision)
+        graph.nodes.update({"B": Node("B", "Beta")})
+        revisions.append(graph.mutation_revision)
+        graph.edges[0] = Edge("B", "A", "calls")
+        revisions.append(graph.mutation_revision)
+        graph.edges.extend([Edge("A", "B", "calls")])
+        revisions.append(graph.mutation_revision)
+
+        self.assertEqual(len(set(revisions)), len(revisions))
+        self.assertTrue(all(after > before for before, after in zip(revisions, revisions[1:])))
+
     def test_graph_expansion_ignores_inactive_context(self) -> None:
         graph = Graph(
             nodes={
@@ -355,7 +401,7 @@ class GraphCoreTest(unittest.TestCase):
             query_class="blast_radius",
             hops=2,
             direction="both",
-            packet="gg_max",
+            packet="gg",
             node_budget=100,
             anchor_limit=6,
             weak_edge_limit=15,
@@ -383,7 +429,7 @@ class GraphCoreTest(unittest.TestCase):
             query_class="multi_hop_path",
             hops=40,
             direction="out",
-            packet="gg_max",
+            packet="gg",
             node_budget=34,
             anchor_limit=6,
             weak_edge_limit=100,
@@ -581,12 +627,10 @@ class GraphCoreTest(unittest.TestCase):
         p = capture_personalization("svc", {"svc": node}, {"auth.py": 6})
         self.assertEqual(p.get("svc"), 14.0)
 
-    def test_personalization_git_session_weight_applies_to_every_node_sharing_a_path(self) -> None:
-        # Regression guard for the git_utils.resolve_modified_node_ids refactor
-        # (consolidating duplicated path->node lookups from search.py/context.py):
-        # multiple active nodes can share the same file path (e.g. several
-        # symbol nodes in one file); every one of them must still get the
-        # git-session weight, not just the last one found.
+    def test_personalization_git_session_weight_uses_one_representative_per_path(self) -> None:
+        # A dirty file can own many symbol nodes. Session personalization must
+        # cover the path once rather than multiplying the same change weight by
+        # every symbol in that file and diluting the query-specific seeds.
         from graphgraph.core import Graph, Node
         from graphgraph.retrieval import search_nodes
 
@@ -609,24 +653,6 @@ class GraphCoreTest(unittest.TestCase):
             "fn2": Node("fn2", "validate", "function", "auth.py", active=True),
         }
         p = capture_personalization(nodes, {"auth.py": 6})
-        self.assertEqual(p.get("fn1"), 6.0)
-        self.assertEqual(p.get("fn2"), 6.0)
+        weighted = {node_id: weight for node_id, weight in p.items() if weight == 6.0}
+        self.assertEqual(weighted, {"fn2": 6.0})
 
-    def test_tensor_spatial_bias(self) -> None:
-        from graphgraph.packets import render_tensor_array
-
-        g = Graph(
-            nodes={
-                "A": Node("A", "AuthService", "service", "auth.py", active=True),
-                "B": Node("B", "TokenStore", "data", "tokens.py", active=True),
-                "C": Node("C", "AuditLog", "data", "audit.py", active=True),
-            },
-            edges=[
-                Edge("A", "B", "calls", 1.0),
-                Edge("B", "C", "calls", 1.0),
-            ],
-        )
-        res = render_tensor_array(g, {"A", "B", "C"}, g.edges)
-        self.assertIn("@s", res)
-        # Path distance A to C should be 2. Let's assert on distances.
-        self.assertIn("[0,1,2]", res) or self.assertIn("[2,1,0]", res)

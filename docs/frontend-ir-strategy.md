@@ -87,6 +87,12 @@ Tree-sitter extraction currently targets definitions, `contains`, `calls`, and
 Rust `implements` relationships. File-level imports still use graphgraph's
 deterministic resolver.
 
+The separate incremental CPG evidence provider now adds conservative
+intraprocedural reads, writes, control blocks, fields, declared types, and
+return types across the installed language pack. These relations normalize
+into GraphGraph IR and carry provenance, confidence, evidence, and source
+locations; they are not added to every base scan automatically.
+
 Verified optional frontend behavior:
 
 - Python: function/class definitions, `contains`, direct function `calls`.
@@ -95,9 +101,10 @@ Verified optional frontend behavior:
 
 Unsupported or intentionally deferred:
 
-- full type resolution,
+- compiler-resolved type and alias analysis,
 - interprocedural data flow,
-- control-flow graph extraction,
+- executable basic-block control-flow graphs,
 - build-system-aware module resolution.
 
-Those belong in the planned CPG-style layer, not in the first Tree-sitter pass.
+Those require language compiler adapters beyond the implemented CST-based CPG
+evidence layer; they do not belong in the low-latency scanner pass.

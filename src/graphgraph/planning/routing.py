@@ -12,10 +12,15 @@ class QueryRoute:
     confidence: float
     margin: float
     reasons: tuple[str, ...]
-    router_version: str = "query_router_v1"
+    router_version: str = "query_router_v2_scope_tests"
 
 
 _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
+    ("affected_tests", 7.0, "affected-test intent", re.compile(
+        r"\b(affected tests?|which tests? (?:are affected|cover|exercise|should run|to run)|"
+        r"what tests? (?:are affected|cover|exercise|should run|to run)|"
+        r"tests? (?:cover|exercise|should run|to run)|test selection)\b"
+    )),
     ("recent_changes", 6.0, "recent/history intent", re.compile(
         r"\b(recent(?:ly)? changed|change history|git history|last commits?|recent commits?|what changed|modified recently)\b"
     )),
@@ -32,7 +37,9 @@ _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
         r"\b(callers?|called by|references?|referenced by|used by|users of|dependents?|implements?|implementors?|implemented by|where .{0,80}\btested|what calls|who calls)\b"
     )),
     ("doc_summary", 5.0, "documentation intent", re.compile(
-        r"\b(readme|documentation|docs|installation|installing|usage guide|setup guide|tutorial|manual)\b"
+        r"\b(readme|documentation|docs|installation|installing|usage guide|setup guide|tutorial|manual|"
+        r"roadmap|backlog|milestones?|ordered (?:execution|work)|phases?|what (?:work )?(?:comes|happens) next|"
+        r"before (?:new )?capabilit)\b"
     )),
     ("direct_lookup", 4.0, "definition/location intent", re.compile(
         r"\b(where is|locate|find (?:the )?(?:definition|implementation)|defined in|definition of|show (?:me )?(?:the )?(?:source|definition))\b"
@@ -45,7 +52,10 @@ _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
 _TRACE_RE = re.compile(r"\btrace\b")
 _MISSING_RE = re.compile(r"^\s*(?:is\s+)?(?:there\s+)?(?:a\s+)?missing\b|\bdoes .{0,80}\bexist\b")
 _GENERIC_LOOKUP_RE = re.compile(r"\b(what is|where|show|find|locate)\b")
+_RELATION_BETWEEN_RE = re.compile(r"\b(depends? on|dependency between|connects? to|relationship between)\b")
+_CONSUMER_RE = re.compile(r"\bwhich tests? (?:uses?|consumes?|calls?|verifies?)\b")
 _PRECEDENCE = {
+    "affected_tests": 9,
     "negative_query": 8,
     "recent_changes": 7,
     "multi_hop_path": 6,
@@ -83,9 +93,15 @@ def route_query(query: str, requested_class: str | None = "auto") -> QueryRoute:
     if _MISSING_RE.search(normalized):
         scores["negative_query"] += 5.0
         reasons["negative_query"].append("existence probe")
+    if _CONSUMER_RE.search(normalized):
+        scores["reverse_lookup"] += 8.0
+        reasons["reverse_lookup"].append("consumer/test usage intent")
 
     identifiers = explicit_query_identifiers(query)
     terms = plan_terms(query)
+    if len(identifiers) >= 2 and _RELATION_BETWEEN_RE.search(normalized):
+        scores["multi_hop_path"] += 5.5
+        reasons["multi_hop_path"].append("explicit multi-symbol dependency intent")
     if identifiers and (_GENERIC_LOOKUP_RE.search(normalized) or len(terms) <= 2):
         scores["direct_lookup"] += 3.0
         reasons["direct_lookup"].append("focused code identifier")

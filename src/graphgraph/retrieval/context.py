@@ -3,8 +3,15 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, replace
+from pathlib import Path
 
-from ..concepts.doccode import doc_code_bias
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
+
+from ..concepts.doccode import doc_code_bias, is_code_like
+from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph
 from ..graph.ontology import provenance_confidence, relation_spec
 from ..graph.traversal import (
@@ -36,14 +43,31 @@ def sanitize_query(query: str) -> str:
         text = pat.sub("", text)
     return text.strip()
 
-STRUCTURAL_QUERY_CLASSES = {"blast_radius", "multi_hop_path", "reverse_lookup"}
+
+_AFFECTED_ANCHOR_INTENT = re.compile(
+    r"\b(?:if|affected|affecting|impact|impacted|changes?|changed|changing|"
+    r"which|what|tests?|test|should|run|cover|covers|exercise|validate|validates|directly)\b",
+    re.I,
+)
+
+
+def structural_anchor_query(query: str, query_class: str) -> str:
+    """Remove planner vocabulary that can collide with unrelated symbols."""
+    if query_class != "affected_tests":
+        return query
+    cleaned = _AFFECTED_ANCHOR_INTENT.sub(" ", query)
+    return " ".join(cleaned.split()) or query
+
+
+STRUCTURAL_QUERY_CLASSES = {"blast_radius", "multi_hop_path", "reverse_lookup", "affected_tests"}
 SESSION_CONTEXT_QUERY_CLASSES = {"subsystem_summary", "spreading_activation"}
-NON_STRUCTURAL_KINDS = {"concept", "section", "markdown", "rst", "html", "text"}
+NON_STRUCTURAL_KINDS = {"concept", "section", "paragraph", "markdown", "rst", "html", "text"}
 STRUCTURAL_RELATIONS = {
     "calls", "imports", "imports_from", "reads", "writes", "uses", "implements",
     "tests", "configures", "returns", "defines", "data_flow", "control_flow",
     "formalizes", "implements_algorithm",
 }
+_ORDERED_DOC_QUERY = re.compile(r"\b(before|after|next|previous|prior|ordered|phase|roadmap|backlog|milestone)\b", re.I)
 
 
 def expand_context(
@@ -56,6 +80,8 @@ def expand_context(
     policy = traversal_policy(plan.query_class)
     if plan.query_class == "blast_radius" and plan.node_budget is not None:
         nodes, edges = _expand_blast_radius(graph, starts, plan, scopes)
+    elif plan.query_class == "affected_tests":
+        nodes, edges = _expand_affected_tests(graph, starts, plan, scopes)
     else:
         # `graph.expand` truncates the frontier to the node budget by edge
         # weight, which is query-blind: a document with more sections than the
@@ -320,6 +346,55 @@ def _reserve_paths_between_starts(
         if edge.source in out_nodes and edge.target in out_nodes
     }
     return out_nodes, list(edge_by_key.values())
+
+
+def _expand_affected_tests(
+    graph: Graph,
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    scopes: tuple[str, ...],
+) -> tuple[set[str], list[Edge]]:
+    """Union direction-consistent implementation and test traversals.
+
+    A single ``both`` traversal permits an in-then-out zigzag. For a method,
+    that walks to its containing file and immediately fans out to every sibling
+    definition. Separate incoming and outgoing traversals retain callers/tests
+    and implementation dependencies without paying for that irrelevant fanout.
+    The 60/40 split keeps the union within the original node budget because the
+    duplicated start nodes are added back to the outgoing allocation.
+    """
+    policy = traversal_policy(plan.query_class)
+    if plan.node_budget is None:
+        incoming_budget = outgoing_budget = None
+    else:
+        start_count = min(len(starts), plan.node_budget)
+        incoming_budget = max(start_count, math.ceil(plan.node_budget * 0.60))
+        outgoing_budget = max(start_count, plan.node_budget - incoming_budget + start_count)
+
+    incoming_nodes, incoming_edges = graph.expand(
+        list(starts),
+        hops=plan.hops,
+        max_nodes=incoming_budget,
+        scopes=scopes,
+        direction="in",
+        allowed_relations=set(policy.preferred_relations),
+    )
+    outgoing_nodes, outgoing_edges = graph.expand(
+        list(starts),
+        hops=plan.hops,
+        max_nodes=outgoing_budget,
+        scopes=scopes,
+        direction="out",
+        allowed_relations=set(policy.preferred_relations),
+    )
+    seen: set[tuple[str, str, str]] = set()
+    edges: list[Edge] = []
+    for edge in (*incoming_edges, *outgoing_edges):
+        key = (edge.source, edge.target, edge.type)
+        if key not in seen:
+            edges.append(edge)
+            seen.add(key)
+    return incoming_nodes | outgoing_nodes, edges
 
 
 def _reserve_relation_family_evidence(
@@ -617,6 +692,31 @@ def reserve_start_evidence(
         if key not in seen and edge.source in out_nodes and edge.target in out_nodes:
             out_edges.append(edge)
             seen.add(key)
+    for support_id in test_support_nodes:
+        if support_id not in out_nodes:
+            continue
+        support = graph.nodes[support_id]
+        support_dir = support.path.replace("\\", "/").rsplit("/", 1)[0]
+        source_id = next(
+            (
+                start for start in starts
+                if start in out_nodes
+                and (node := graph.nodes.get(start)) is not None
+                and node.path.replace("\\", "/").rsplit("/", 1)[0] == support_dir
+            ),
+            "",
+        )
+        key = (source_id, support_id, "configures")
+        if source_id and key not in seen:
+            out_edges.append(Edge(
+                source_id,
+                support_id,
+                "configures",
+                confidence=0.8,
+                provenance="runtime_context",
+                evidence="same test-directory support file",
+            ))
+            seen.add(key)
     return out_nodes, out_edges
 
 
@@ -832,8 +932,17 @@ def retrieve_context(
     anchor_limit: int | None = None,
     max_nodes: int | None = None,
     scopes: tuple[str, ...] = (),
+    scope_mode: str = "strict",
+    seed_ids: tuple[str, ...] = (),
 ) -> RetrievalResult:
+    if scope_mode not in {"strict", "expand"}:
+        raise ValueError(f"unknown scope mode: {scope_mode}")
     query = sanitize_query(query)
+    identifiers = explicit_query_identifiers(query)
+    facet_aware = query_class in {"affected_tests", "multi_hop_path", "negative_query"} or (
+        query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers)
+    )
+    facets = query_facets(query) if facet_aware else ()
     doc_intensity = doc_intensity_score(query_class, query)
     graph_bias = doc_code_bias(graph)
     doc_intensity *= 0.75 + graph_bias * 0.5
@@ -841,16 +950,61 @@ def retrieve_context(
     if max_nodes is None:
         plan = apply_shape_budget(graph, plan, query)
     candidate_limit = max(plan.anchor_limit, plan.anchor_limit * 3 if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit)
+    if facets:
+        candidate_limit = max(candidate_limit, min(36, len(facets) * 3))
     if query_class == "direct_lookup" and len(plan_terms(query)) == 1:
         candidate_limit = max(candidate_limit, 24)
+    anchor_query = structural_anchor_query(query, query_class)
     matches = search_nodes(
         graph,
-        query,
+        anchor_query,
         limit=max(candidate_limit, 1),
         doc_intensity=doc_intensity,
         personalize=True,
         scopes=scopes,
     )
+    source_matches = tuple(
+        Match(
+            graph.nodes[node_id],
+            max(20.0, matches[0].score + 1.0 if matches else 20.0),
+            ("source_planner",),
+        )
+        for node_id in dict.fromkeys(seed_ids)
+        if node_id in graph.nodes and graph.nodes[node_id].active
+    )
+    if source_matches:
+        source_ids = {match.node.id for match in source_matches}
+        matches = source_matches + tuple(
+            match for match in matches if match.node.id not in source_ids
+        )
+    if facets:
+        # A single bag-of-words search for a conjunction is dominated by nodes
+        # that repeat the query's common subsystem terms. Search each facet
+        # independently, then merge its best evidence into the candidate pool
+        # before anchor selection. This is bounded by the twelve-facet parser
+        # cap and preserves the original whole-query ranking at the front.
+        merged = list(matches)
+        seen_match_ids = {match.node.id for match in merged}
+        for facet_label, facet_terms in facets:
+            for facet_query in facet_search_queries(facet_label, facet_terms):
+                facet_matches = search_nodes(
+                    graph,
+                    facet_query,
+                    limit=12,
+                    doc_intensity=0.0,
+                    personalize=True,
+                    scopes=scopes,
+                )
+                for match in facet_matches:
+                    if match.node.id not in seen_match_ids:
+                        merged.append(match)
+                        seen_match_ids.add(match.node.id)
+        matches = tuple(merged)
+    inferred_scope = "" if scopes else infer_dominant_scope(matches, query)
+    if inferred_scope and not facets:
+        coherent = tuple(match for match in matches if _path_in_scopes(match.node.path, (inferred_scope,)))
+        if coherent:
+            matches = coherent
     if (
         query_class in {"blast_radius", "subsystem_summary"}
         and max_nodes is None
@@ -871,16 +1025,73 @@ def retrieve_context(
         if query_class in STRUCTURAL_QUERY_CLASSES or query_class in {"direct_lookup", "subsystem_summary"}
         else plan.anchor_limit
     )
+    if (
+        query_class == "affected_tests"
+        and identifiers
+        and len(plan_terms(anchor_query)) > len(identifiers)
+    ):
+        # "Type method changes" names a member in prose even when the method
+        # itself is not code-shaped. Keep the exact type and its matching
+        # member as roots; the intent-sanitized query prevents affected/change
+        # homonyms from consuming this second slot.
+        effective_anchor_limit = max(2, effective_anchor_limit)
+    if source_matches:
+        effective_anchor_limit = max(
+            effective_anchor_limit,
+            min(12, len(source_matches) + plan.anchor_limit),
+        )
+    if facets:
+        effective_anchor_limit = max(effective_anchor_limit, min(12, len(facets)))
     selected_matches = select_anchor_matches(
         matches,
         effective_anchor_limit,
         query_class,
         doc_intensity >= 0.35,
         query=query,
+        graph=graph,
+        dominant_scope=inferred_scope,
     )
+    if facets:
+        selected_matches = reserve_facet_matches(
+            selected_matches,
+            matches,
+            facets,
+            graph=graph,
+            prefer_code=query_class == "multi_hop_path",
+        )
+    if query_class == "negative_query" and facets:
+        selected_ids = {match.node.id for match in selected_matches}
+        anchor_coverage = facet_coverage(
+            graph,
+            {
+                node_id
+                for node_id in selected_ids
+                if is_code_like(graph.nodes[node_id])
+            },
+            facets,
+        )
+        if not anchor_coverage["fulfilled"]:
+            mention_coverage = facet_coverage(graph, selected_ids, facets)
+            return RetrievalResult(
+                starts=(),
+                matches=selected_matches,
+                nodes=set(),
+                edges=[],
+                metadata={
+                    "facet_coverage": anchor_coverage,
+                    "mention_coverage": mention_coverage,
+                    "answerability": {
+                        "status": "unanswerable",
+                        "abstained": True,
+                        "reason": "no code or structural graph evidence covers the requested entity facets",
+                    },
+                    "plan_reason": plan.reason,
+                    "planner_version": plan.planner_version,
+                },
+            )
     starts_list = list(match.node.id for match in selected_matches)
     if query_class == "reverse_lookup":
-        starts_list = list(reserve_reverse_contract_starts(graph, tuple(starts_list)))
+        starts_list = list(reserve_reverse_contract_starts(graph, tuple(starts_list), query=query))
 
     # Discover git-modified files (active session context / Ephemeral Session Layer).
     # Dirty files are useful ambient context for exploratory summaries and
@@ -889,17 +1100,36 @@ def retrieve_context(
     # modified files a ranking boost without forcing unrelated nodes into those
     # result subgraphs.
     if query_class in SESSION_CONTEXT_QUERY_CLASSES:
-        from .git_utils import get_git_modified_files, resolve_modified_node_ids
+        from .git_utils import get_git_modified_files, select_modified_context_nodes
         modified_paths = get_git_modified_files()
-        resolved = resolve_modified_node_ids(graph, modified_paths)
-        for path in modified_paths:
-            for node_id in resolved.get(path, []):
-                if node_id not in starts_list:
-                    starts_list.append(node_id)
+        selected = select_modified_context_nodes(
+            graph,
+            modified_paths,
+            query,
+            exclude=tuple(starts_list),
+        )
+        if inferred_scope:
+            selected = tuple(
+                node_id for node_id in selected
+                if _path_in_scopes(graph.nodes[node_id].path, (inferred_scope,))
+            )
+        starts_list.extend(node_id for node_id in selected if node_id not in starts_list)
 
     starts = tuple(starts_list[:12])
     if not starts:
-        return RetrievalResult(starts=(), matches=matches, nodes=set(), edges=[])
+        return RetrievalResult(
+            starts=(),
+            matches=matches,
+            nodes=set(),
+            edges=[],
+            metadata={
+                "answerability": {
+                    "status": "unanswerable",
+                    "abstained": True,
+                    "reason": "no matching graph anchors",
+                },
+            },
+        )
 
     if query_class == "spreading_activation":
         from .activation import ActivationStateCache, spreading_activation
@@ -912,9 +1142,762 @@ def retrieve_context(
             previous_activation=prev_state,
         )
     else:
-        nodes, edges = expand_context(graph, starts, plan, scopes=scopes, query_terms=plan_terms(query))
+        expansion_scopes = scopes if scope_mode == "strict" else ()
+        nodes, edges = expand_context(graph, starts, plan, scopes=expansion_scopes, query_terms=plan_terms(query))
         nodes, edges = reserve_query_named_siblings(graph, nodes, edges, starts, query, plan)
-    return RetrievalResult(starts=starts, matches=matches, nodes=nodes, edges=edges)
+        nodes, edges = reserve_ordered_doc_siblings(graph, nodes, edges, starts, query, plan)
+        if query_class == "affected_tests":
+            nodes, edges = reserve_affected_test_evidence(graph, nodes, edges, starts, plan)
+    if query_class in STRUCTURAL_QUERY_CLASSES:
+        nodes, edges = prune_unexplained_structural_nodes(nodes, edges, starts)
+    if inferred_scope:
+        nodes, edges = cap_inferred_scope_crossings(graph, nodes, edges, inferred_scope, protected=starts)
+    if scopes and scope_mode == "strict":
+        nodes = {node_id for node_id in nodes if _path_in_scopes(graph.nodes[node_id].path, scopes)}
+        edges = [edge for edge in edges if edge.source in nodes and edge.target in nodes]
+    effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
+    metadata = packet_quality_metadata(graph, nodes, edges, starts, effective_scope)
+    metadata.update({
+        "scope": list(scopes),
+        "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
+        "inferred_scope": inferred_scope,
+        "plan_reason": plan.reason,
+        "planner_version": plan.planner_version,
+        "node_budget": plan.node_budget,
+        "anchor_limit": effective_anchor_limit,
+    })
+    if facets:
+        coverage = facet_coverage(graph, nodes, facets)
+        metadata["facet_coverage"] = coverage
+        structural_coverage = None
+        if query_class in {"multi_hop_path", "direct_lookup", "reverse_lookup"}:
+            structural_coverage = facet_coverage(
+                graph,
+                {
+                    node_id
+                    for node_id in nodes
+                    if is_code_like(graph.nodes[node_id])
+                },
+                facets,
+            )
+            metadata["structural_facet_coverage"] = structural_coverage
+        incomplete = bool(coverage["unfulfilled"]) or bool(
+            structural_coverage and structural_coverage["unfulfilled"]
+        )
+        metadata["answerability"] = {
+            "status": "incomplete" if incomplete else "answerable",
+            "abstained": False,
+            "reason": (
+                "one or more requested facets have no code or structural evidence"
+                if structural_coverage and structural_coverage["unfulfilled"]
+                else coverage["warning"]
+            ),
+        }
+    else:
+        metadata["answerability"] = {
+            "status": "answerable",
+            "abstained": False,
+            "reason": "",
+        }
+    if query_class == "affected_tests":
+        metadata["affected_tests"] = affected_test_recommendations(graph, starts, nodes)
+        metadata["hybrid_intents"] = ["multi_hop_path", "affected_tests"]
+    if query_class == "doc_summary" and not any(
+        node.kind in {"section", "paragraph"} for node in graph.nodes.values()
+    ):
+        # Documentation query against a graph that carries no grounded doc-body
+        # nodes -- it was built without document extraction, so retrieval can
+        # only return file pointers. Say so with the fix, rather than silently
+        # degrading (a graph built with docs=true grounds paragraph prose fine).
+        metadata["document_extraction"] = {
+            "grounded": False,
+            "hint": (
+                "This graph has no document section/paragraph nodes, so documentation "
+                "queries return only file pointers. Rebuild with document extraction for "
+                "grounded prose: build_graph with docs=true (or `graphgraph scan --docs`)."
+            ),
+        }
+    return RetrievalResult(starts=starts, matches=selected_matches, nodes=nodes, edges=edges, metadata=metadata)
+
+
+def _path_in_scopes(path: str, scopes: tuple[str, ...]) -> bool:
+    normalized = path.replace("\\", "/").strip("/")
+    return any(
+        normalized == scope.replace("\\", "/").strip("/")
+        or normalized.startswith(scope.replace("\\", "/").strip("/") + "/")
+        for scope in scopes
+    )
+
+
+def _package_scope(path: str) -> str:
+    parts = path.replace("\\", "/").strip("/").split("/")
+    if len(parts) >= 2 and parts[0] in {"crates", "packages", "apps", "libs", "modules"}:
+        return "/".join(parts[:2])
+    if len(parts) >= 2 and parts[0] == "src":
+        return "/".join(parts[:2]) if len(parts) >= 3 else "src"
+    return "/".join(parts[:-1]) if len(parts) > 1 else ""
+
+
+def infer_dominant_scope(matches: tuple[Match, ...], query: str) -> str:
+    """Infer scope only from high-confidence symbol anchors, never generic words."""
+    exact = [match for match in matches[:8] if _is_targeted_symbol_anchor(match)]
+    if not exact:
+        return ""
+    mass: dict[str, float] = {}
+    for match in exact:
+        scope = _package_scope(match.node.path)
+        if scope:
+            mass[scope] = mass.get(scope, 0.0) + max(0.0, match.score)
+    if not mass:
+        return ""
+    winner, winner_mass = max(mass.items(), key=lambda item: item[1])
+    total = sum(mass.values()) or 1.0
+    return winner if winner_mass / total >= 0.67 else ""
+
+
+def packet_quality_metadata(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    scope: str,
+) -> dict[str, object]:
+    covered = {endpoint for edge in edges for endpoint in (edge.source, edge.target)}
+    isolated = nodes - covered - set(starts)
+    cross_scope = {
+        node_id for node_id in nodes
+        if scope and not _path_in_scopes(graph.nodes[node_id].path, (scope,))
+    }
+    contribution = {
+        start: sum(1 for edge in edges if edge.source == start or edge.target == start)
+        for start in starts
+    }
+    doc_nodes = [graph.nodes[node_id] for node_id in nodes if graph.nodes[node_id].kind in NON_STRUCTURAL_KINDS]
+    grounded_doc_nodes = sum(1 for node in doc_nodes if node.facts)
+    return {
+        "quality": {
+            "nodes": len(nodes),
+            "edges": len(edges),
+            "isolated_nodes": len(isolated),
+            "edge_covered_node_ratio": round(len(covered & nodes) / max(1, len(nodes)), 4),
+            "lexical_only_nodes": len(isolated),
+            "cross_scope_nodes": len(cross_scope),
+            "anchor_contribution": contribution,
+            "grounded_doc_nodes": grounded_doc_nodes,
+            "ungrounded_doc_nodes": len(doc_nodes) - grounded_doc_nodes,
+            "document_warning": "no grounded document body content" if doc_nodes and grounded_doc_nodes == 0 else "",
+        }
+    }
+
+
+def cap_inferred_scope_crossings(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    scope: str,
+    *,
+    protected: tuple[str, ...] = (),
+) -> tuple[set[str], list[Edge]]:
+    """Keep automatic scope porous but bound its cross-package token spend."""
+    in_scope = {node_id for node_id in nodes if _path_in_scopes(graph.nodes[node_id].path, (scope,))}
+    outside = nodes - in_scope
+    if not outside:
+        return nodes, edges
+    protected_outside = set(protected) & outside
+    connector_budget = max(2, min(6, math.ceil(math.log2(len(in_scope) + 1))))
+    limit = min(12, len(protected_outside) + connector_budget)
+    boundary_score: dict[str, float] = {node_id: 0.0 for node_id in outside}
+    for edge in edges:
+        if edge.source in outside and edge.target in in_scope:
+            boundary_score[edge.source] += 2.0 * edge.traversal_val
+        elif edge.target in outside and edge.source in in_scope:
+            boundary_score[edge.target] += 2.0 * edge.traversal_val
+        elif edge.source in outside and edge.target in outside:
+            boundary_score[edge.source] += 0.25 * edge.traversal_val
+            boundary_score[edge.target] += 0.25 * edge.traversal_val
+    ranked_outside = sorted(outside - protected_outside, key=lambda node_id: (-boundary_score[node_id], node_id))
+    kept_outside = protected_outside | set(ranked_outside[:max(0, limit - len(protected_outside))])
+    kept = in_scope | kept_outside
+    return kept, [edge for edge in edges if edge.source in kept and edge.target in kept]
+
+
+def _is_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").casefold()
+    name = normalized.rsplit("/", 1)[-1]
+    return "/tests/" in f"/{normalized}" or name.startswith("test_") or name.endswith(("_test.py", ".test.ts", ".spec.ts"))
+
+
+def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    facets: list[tuple[str, tuple[str, ...]]] = []
+    seen: set[tuple[str, ...]] = set()
+    qualified = _qualified_query_symbols(query)
+    qualified_owners = {owner.casefold() for owner, _member in qualified}
+    for owner, member in qualified:
+        terms = tuple(term_key(f"{owner} {member}").split())
+        if terms and terms not in seen:
+            facets.append((f"{owner}::{member}", terms))
+            seen.add(terms)
+    for identifier in explicit_query_identifiers(query):
+        if identifier.casefold() in qualified_owners:
+            continue
+        terms = tuple(part for part in term_key(identifier).split() if len(part) >= 2)
+        if terms and terms not in seen:
+            facets.append((identifier, terms))
+            seen.add(terms)
+    identifiers = explicit_query_identifiers(query)
+    identifier_terms = {
+        part
+        for identifier in identifiers
+        for part in term_key(identifier.replace("-", "_")).split()
+        if len(part) >= 2
+    }
+    intent_terms = {
+        "and", "which", "tests", "test", "cover", "covers", "covered", "coverage",
+        "run", "how", "does", "do", "measure", "measures", "measured", "report",
+        "reports", "show", "shows", "including", "include", "through", "chain",
+        "every", "each", "all", "part", "parts", "entire", "whole", "requested", "above",
+        "positive", "negative",
+        "affected", "affecting", "impact", "impacted",
+        "consume", "consumes", "consumed", "consumer", "use", "uses", "used",
+        "should", "if", "change", "changes", "changed", "changing", "behavior", "behaviour",
+        "evaluate", "evaluates", "evaluated", "evaluating",
+        "assess", "assesses", "assessed", "assessing",
+        "gate", "gates", "gated", "gating",
+        "directly", "validate", "validates", "validated", "validating", "validation",
+        "where", "what", "why", "who", "when", "is", "are", "was", "were",
+        "the", "a", "an", "from", "into", "flow", "flows",
+        "nonexistent", "missing", "implemented", "implements",
+    }
+    for clause in re.split(r"\s*(?:,|;|\band\b|\bplus\b|\bwhich\b)\s*", query, flags=re.I):
+        for identifier in identifiers:
+            clause = re.sub(rf"\b{re.escape(identifier)}\b", " ", clause, flags=re.I)
+        for owner, member in qualified:
+            clause = re.sub(
+                rf"\b{re.escape(owner)}\s*::\s*{re.escape(member)}\b",
+                " ",
+                clause,
+                flags=re.I,
+            )
+        terms = tuple(
+            term for term in plan_terms(clause)
+            if term not in intent_terms and term not in identifier_terms
+        )
+        meaningful_single = len(terms) == 1 and len(terms[0]) >= 4
+        if (meaningful_single or 2 <= len(terms) <= 6) and terms not in seen:
+            facets.append((" ".join(terms), terms))
+            seen.add(terms)
+    return tuple(facets[:12])
+
+
+def facet_search_queries(label: str, terms: tuple[str, ...]) -> tuple[str, ...]:
+    """Bounded relaxed searches let prose facets reach compound code symbols."""
+    queries = [label]
+    if len(terms) >= 3:
+        queries.extend(
+            " ".join(terms[index : index + 2])
+            for index in range(len(terms) - 1)
+        )
+    return tuple(dict.fromkeys(query for query in queries if query.strip()))
+
+
+def _facet_node_text(node: object) -> str:
+    return term_key(" ".join((
+        str(getattr(node, "label", "")),
+        str(getattr(node, "path", "")),
+        str(getattr(node, "summary", "")),
+        " ".join(getattr(node, "facts", ()) or ()),
+    )))
+
+
+def _symbol_identity_terms(node: object) -> set[str]:
+    """Owner-aware terms for same-file candidate coherence."""
+    return set(term_key(" ".join((
+        str(getattr(node, "id", "")),
+        str(getattr(node, "label", "")),
+        str(getattr(node, "summary", "")),
+    ))).split())
+
+
+def facet_coverage(
+    graph: Graph,
+    nodes: set[str],
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+) -> dict[str, object]:
+    fulfilled: list[dict[str, object]] = []
+    unfulfilled: list[str] = []
+    for label, terms in facets:
+        evidence = [
+            node_id for node_id in sorted(nodes)
+            if _facet_matches_node(graph.nodes[node_id], terms)
+        ]
+        if not evidence and len(_facet_evidence_terms(terms)) >= 3:
+            needed = set(_facet_evidence_terms(terms))
+            distributed = sorted(
+                (
+                    (-len(hits), node_id, hits)
+                    for node_id in nodes
+                    if len(hits := _facet_matched_terms(graph.nodes[node_id], tuple(needed))) >= 2
+                ),
+            )
+            covered: set[str] = set()
+            selected: list[str] = []
+            for _negative_hits, node_id, hits in distributed:
+                if not (hits - covered):
+                    continue
+                selected.append(node_id)
+                covered.update(hits)
+                if covered >= needed or len(selected) >= 3:
+                    break
+            if covered >= needed:
+                evidence = selected
+        if evidence:
+            fulfilled.append({"facet": label, "evidence": evidence[:5]})
+        else:
+            unfulfilled.append(label)
+    return {
+        "fulfilled": fulfilled,
+        "unfulfilled": unfulfilled,
+        "coverage_ratio": round(len(fulfilled) / max(1, len(facets)), 4),
+        "warning": "unfulfilled query facets" if unfulfilled else "",
+    }
+
+
+def reserve_facet_matches(
+    selected: tuple[Match, ...],
+    candidates: tuple[Match, ...],
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    graph: Graph | None = None,
+    prefer_code: bool = False,
+    limit: int = 12,
+) -> tuple[Match, ...]:
+    """Reserve one independently retrieved anchor for every requested facet."""
+    reserved = list(selected)
+    seen = {match.node.id for match in reserved}
+    for _label, terms in facets:
+        matching_reserved = [
+            match for match in reserved if _facet_matches_node(match.node, terms)
+        ]
+        if matching_reserved and (
+            not prefer_code
+            or graph is None
+            or any(is_code_like(match.node) for match in matching_reserved)
+        ):
+            continue
+        eligible = [
+            match
+            for match in candidates
+            if match.node.id not in seen and _facet_matches_node(match.node, terms)
+        ]
+        code_eligible = [match for match in eligible if is_code_like(match.node)]
+        needs_distributed_code = prefer_code and not code_eligible
+        if (not eligible or needs_distributed_code) and len(_facet_evidence_terms(terms)) >= 3:
+            needed = set(_facet_evidence_terms(terms))
+            covered: set[str] = set()
+            distributed = sorted(
+                (
+                    (
+                        0 if not prefer_code or is_code_like(match.node) else 1,
+                        -len(hits),
+                        -match.score,
+                        match.node.id,
+                        match,
+                        hits,
+                    )
+                    for match in candidates
+                    if match.node.id not in seen
+                    if len(hits := _facet_matched_terms(match.node, tuple(needed))) >= 2
+                ),
+                key=lambda item: item[:4],
+            )
+            for _kind_rank, _hit_rank, _score_rank, _node_id, match, hits in distributed:
+                if not (hits - covered):
+                    continue
+                reserved.append(match)
+                seen.add(match.node.id)
+                covered.update(hits)
+                if covered >= needed or len(reserved) >= limit:
+                    break
+            if covered >= needed:
+                continue
+        candidate = next(
+            iter(code_eligible if prefer_code else eligible),
+            eligible[0] if eligible else None,
+        )
+        if candidate is not None:
+            reserved.append(candidate)
+            seen.add(candidate.node.id)
+        if len(reserved) >= limit:
+            break
+    return tuple(reserved[:limit])
+
+
+_FACET_PROCESS_TERMS = {
+    "discovery", "equivalence", "rationalization", "implementation", "implementations",
+    "measurement", "measurements",
+}
+
+
+def _facet_evidence_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
+    """Keep a facet's domain terms while treating process nouns as intent."""
+    reduced = tuple(term for term in terms if term not in _FACET_PROCESS_TERMS)
+    return reduced or terms
+
+
+def _facet_term_forms(term: str) -> set[str]:
+    forms = {term_key(term)}
+    aliases = {
+        "sync": {"synchronization", "synchronize", "synchronized", "syncing"},
+        "synchronization": {"sync", "synchronize", "synchronized", "syncing"},
+        "synchronize": {"sync", "synchronization", "synchronized", "syncing"},
+        "synchronized": {"sync", "synchronization", "synchronize", "syncing"},
+    }
+    forms.update(aliases.get(term, ()))
+    if term.endswith("ies") and len(term) > 4:
+        forms.add(term[:-3] + "y")
+    elif term.endswith("ing") and len(term) > 5:
+        stem = term[:-3]
+        forms.add(stem)
+        if len(stem) >= 2 and stem[-1] == stem[-2]:
+            forms.add(stem[:-1])
+        forms.add(stem + "e")
+    elif term.endswith("ed") and len(term) > 4:
+        stem = term[:-2]
+        forms.update((stem, stem + "e"))
+    elif term.endswith("s") and not term.endswith("ss") and len(term) > 3:
+        forms.add(term[:-1])
+    else:
+        forms.add(term + "s")
+    return {form for form in forms if form}
+
+
+def _facet_evidence_queries(terms: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    base = _facet_evidence_terms(terms)
+    queries = [base]
+    term_set = set(base)
+    if "verified" in term_set and term_set & {"source", "application", "applications"}:
+        queries.extend((
+            ("preview", "fixes"),
+            ("is", "fixable"),
+            ("successful", "verified", "application"),
+            ("verified", "application"),
+        ))
+    if "rejection" in term_set and term_set & {"diagnostic", "diagnostics"}:
+        queries.extend((("refactor", "rejection"), ("rejection",), ("diagnostic",)))
+    if "yield" in term_set:
+        queries.extend((("promotable", "candidate"), ("promotable", "candidates")))
+    if term_set & {"metric", "metrics"} and term_set & {"enforce", "enforces", "enforced"}:
+        queries.extend((("min",), ("max",), ("threshold",), ("evaluate",)))
+    if "unsafe" in term_set and "path" in term_set:
+        queries.extend((("unsafe", "path"), ("parent", "traversal"), ("rejects", "parent", "traversal")))
+    if term_set & {"running", "run"} and term_set & {"loaded", "load", "cases", "case"}:
+        queries.extend((("load", "run"), ("loaded", "case"), ("loads", "cases")))
+    return tuple(dict.fromkeys(queries))
+
+
+def _facet_matches_node(node: object, terms: tuple[str, ...]) -> bool:
+    token_list = re.findall(r"[a-z0-9]+", _facet_node_text(node))
+    tokens = set(token_list)
+    compact = "".join(token_list)
+    return any(
+        all(
+            tokens & (forms := _facet_term_forms(term))
+            or any(len(form) >= 4 and form in compact for form in forms)
+            for term in query_terms
+        )
+        for query_terms in _facet_evidence_queries(terms)
+    )
+
+
+def _facet_matched_terms(node: object, terms: tuple[str, ...]) -> set[str]:
+    token_list = re.findall(r"[a-z0-9]+", _facet_node_text(node))
+    tokens = set(token_list)
+    compact = "".join(token_list)
+    return {
+        term
+        for term in terms
+        if (
+            tokens & (forms := _facet_term_forms(term))
+            or any(len(form) >= 4 and form in compact for form in forms)
+        )
+    }
+
+
+def _qualified_query_symbols(query: str) -> tuple[tuple[str, str], ...]:
+    return tuple(dict.fromkeys(
+        (owner, member)
+        for owner, member in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)\b", query)
+    ))
+
+
+def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
+    """Return (package, integration target, optional module filter)."""
+    if not source:
+        return None
+    source_path = Path(source)
+    if not source_path.exists():
+        return None
+    manifest = next(
+        (parent / "Cargo.toml" for parent in (source_path.parent, *source_path.parents) if (parent / "Cargo.toml").is_file()),
+        None,
+    )
+    if manifest is None:
+        return None
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        package = str(data.get("package", {}).get("name", "")).strip()
+        relative = source_path.resolve().relative_to(manifest.parent.resolve())
+    except (OSError, ValueError, tomllib.TOMLDecodeError):
+        return None
+    if not package or not relative.parts or relative.parts[0] != "tests" or source_path.suffix != ".rs":
+        return None
+
+    # Explicit [[test]] targets are authoritative. A consolidated harness may
+    # include module files beneath the harness directory, so map descendants
+    # back to that declared target and use the module stem as a Cargo filter.
+    for target in data.get("test", ()):
+        target_name = str(target.get("name", "")).strip()
+        target_path = str(target.get("path", "")).strip()
+        if not target_name or not target_path:
+            continue
+        harness = (manifest.parent / target_path).resolve()
+        if source_path.resolve() == harness:
+            return package, target_name, ""
+        if harness.name in {"main.rs", "lib.rs"} and harness.parent in source_path.resolve().parents:
+            return package, target_name, source_path.stem
+
+    tests_root = manifest.parent / "tests"
+    nested = relative.parts[1:]
+    if len(nested) == 1:
+        return package, source_path.stem, ""
+    # Cargo auto-discovers tests/<target>/main.rs as one integration binary.
+    for parent in (source_path.parent, *source_path.parents):
+        if parent == tests_root or tests_root not in parent.parents:
+            break
+        if (parent / "main.rs").is_file():
+            target_name = parent.relative_to(tests_root).parts[0]
+            return package, target_name, "" if source_path.name == "main.rs" else source_path.stem
+    return None
+
+
+def _test_command(path: str, source: str = "") -> str:
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    if len(parts) >= 4 and parts[0] == "crates" and "tests" in parts and normalized.endswith(".rs"):
+        cargo_target = _cargo_test_target(source)
+        if cargo_target is not None:
+            package, target, module_filter = cargo_target
+            suffix = f" {module_filter}" if module_filter else ""
+            return f"cargo test -p {package} --test {target}{suffix}"
+        test_name = normalized.rsplit("/", 1)[-1][:-3]
+        return f"cargo test -p {parts[1]} --test {test_name}"
+    if len(parts) >= 2 and parts[0] == "crates" and normalized.endswith(".rs"):
+        return f"cargo test -p {parts[1]}"
+    if normalized.endswith(".py"):
+        return f"python -m pytest {normalized}"
+    if normalized.endswith((".ts", ".tsx", ".js", ".jsx")):
+        return f"npm test -- {normalized}"
+    return ""
+
+
+def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selected_nodes: set[str]) -> dict[str, object]:
+    incoming: dict[str, list[Edge]] = {}
+    for edge in graph.edges:
+        if edge.active and edge.type in {"calls", "references", "tests"}:
+            incoming.setdefault(edge.target, []).append(edge)
+    distances = {start: 0 for start in starts}
+    covered_starts: dict[str, set[str]] = {start: {start} for start in starts}
+    evidence_by_node: dict[str, list[Edge]] = {}
+    paths_by_node: dict[str, dict[str, tuple[tuple[str, ...], tuple[Edge, ...]]]] = {}
+    # Track each requested anchor independently. A merged frontier makes
+    # coverage order-dependent when one anchor is itself upstream of another:
+    # whichever set element is visited first can miss the later-propagated
+    # anchor. The product is bounded by <=12 starts and two hops.
+    for start in starts:
+        frontier = {start}
+        seen = {start}
+        root_paths: dict[str, tuple[tuple[str, ...], tuple[Edge, ...]]] = {
+            start: ((start,), ())
+        }
+        for distance in (1, 2):
+            next_frontier: set[str] = set()
+            for target in frontier:
+                for edge in incoming.get(target, ()):
+                    covered_starts.setdefault(edge.source, set()).add(start)
+                    if edge not in evidence_by_node.setdefault(edge.source, []):
+                        evidence_by_node[edge.source].append(edge)
+                    distances[edge.source] = min(distance, distances.get(edge.source, distance))
+                    target_nodes, target_edges = root_paths[target]
+                    candidate_path = ((edge.source, *target_nodes), (edge, *target_edges))
+                    prior_path = root_paths.get(edge.source)
+                    if prior_path is None or len(candidate_path[1]) < len(prior_path[1]):
+                        root_paths[edge.source] = candidate_path
+                        paths_by_node.setdefault(edge.source, {})[start] = candidate_path
+                    if edge.source not in seen:
+                        seen.add(edge.source)
+                        next_frontier.add(edge.source)
+            frontier = next_frontier
+    direct: list[dict[str, object]] = []
+    transitive: list[dict[str, object]] = []
+    for node_id, distance in sorted(distances.items(), key=lambda item: (item[1], item[0])):
+        node = graph.nodes.get(node_id)
+        if distance == 0 or node is None or not _is_test_path(node.path):
+            continue
+        evidence_edges = evidence_by_node.get(node_id, ())
+        item = {
+            "id": node.id,
+            "label": node.label,
+            "path": node.path,
+            "distance": distance,
+            "in_packet": node_id in selected_nodes,
+            "evidence": [
+                {
+                    "type": edge.type,
+                    "confidence": edge.confidence,
+                    "provenance": edge.provenance,
+                }
+                for edge in evidence_edges[:3]
+            ],
+            "covers": [
+                {"id": start, "label": graph.nodes[start].label}
+                for start in sorted(covered_starts.get(node_id, ()))
+                if start in graph.nodes
+            ],
+            "root_paths": [
+                {
+                    "root": {"id": start, "label": graph.nodes[start].label},
+                    "nodes": [
+                        {"id": path_node, "label": graph.nodes[path_node].label}
+                        for path_node in path_nodes
+                        if path_node in graph.nodes
+                    ],
+                    "edges": [
+                        {
+                            "source": edge.source,
+                            "target": edge.target,
+                            "type": edge.type,
+                            "confidence": edge.confidence,
+                            "provenance": edge.provenance,
+                        }
+                        for edge in path_edges
+                    ],
+                }
+                for start, (path_nodes, path_edges) in sorted(paths_by_node.get(node_id, {}).items())
+                if start in graph.nodes
+            ],
+        }
+        (direct if distance == 1 else transitive).append(item)
+    def recommendation_rank(item: dict[str, object]) -> tuple[object, ...]:
+        evidence = item.get("evidence", [])
+        max_confidence = max(
+            (float(edge.get("confidence", 0.0)) for edge in evidence if isinstance(edge, dict)),
+            default=0.0,
+        )
+        return (
+            -len(item.get("covers", [])),
+            -max_confidence,
+            str(item.get("path", "")),
+            str(item.get("label", "")),
+        )
+
+    direct.sort(key=recommendation_rank)
+    transitive.sort(key=recommendation_rank)
+    omitted_transitive = max(0, len(transitive) - 12)
+    direct = direct[:12]
+    transitive = transitive[:12]
+
+    def commands_for(items: list[dict[str, object]]) -> list[str]:
+        return list(dict.fromkeys(
+            command
+            for item in items
+            if (command := _test_command(str(item["path"]), graph.nodes[str(item["id"])].source))
+        ))
+
+    direct_commands = commands_for(direct)
+    transitive_commands = commands_for(transitive)
+    all_items = [*direct, *transitive]
+    command_provenance = [
+        {
+            "command": command,
+            "tests": [
+                {
+                    "id": item["id"],
+                    "label": item["label"],
+                    "root_paths": item["root_paths"],
+                }
+                for item in all_items
+                if _test_command(str(item["path"]), graph.nodes[str(item["id"])].source) == command
+            ],
+        }
+        for command in dict.fromkeys((*direct_commands, *transitive_commands))
+    ]
+    return {
+        "direct": direct,
+        "transitive": transitive,
+        "commands": list(dict.fromkeys((*direct_commands, *transitive_commands))),
+        "commands_by_role": {
+            "direct_behavior_or_contract": direct_commands,
+            "transitive_regression": transitive_commands,
+        },
+        "command_provenance": command_provenance,
+        "omitted_transitive": omitted_transitive,
+    }
+
+
+def reserve_affected_test_evidence(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    *,
+    direct_limit: int = 8,
+) -> tuple[set[str], list[Edge]]:
+    """Keep strongest direct test assertions in the rendered packet."""
+    recommendations = affected_test_recommendations(graph, starts, nodes)
+    direct_ids = [
+        str(item["id"])
+        for item in recommendations["direct"][:direct_limit]
+        if str(item["id"]) in graph.nodes
+    ]
+    if not direct_ids:
+        return nodes, edges
+
+    secondary_ids = {
+        str(item["id"])
+        for item in recommendations["transitive"][:6]
+        if str(item["id"]) in graph.nodes
+    }
+    retained_tests = set(direct_ids) | secondary_ids | set(starts)
+    out_nodes = {
+        node_id
+        for node_id in nodes
+        if not _is_test_path(graph.nodes[node_id].path) or node_id in retained_tests
+    }
+    protected = set(starts) | set(direct_ids)
+    for node_id in direct_ids:
+        if node_id in out_nodes:
+            continue
+        if plan.node_budget is not None and len(out_nodes) >= plan.node_budget:
+            removable = _least_valuable_context_node(graph, out_nodes, protected=protected)
+            if removable is None:
+                continue
+            out_nodes.remove(removable)
+        out_nodes.add(node_id)
+
+    edge_by_key = {
+        (edge.source, edge.target, edge.type): edge
+        for edge in edges
+        if edge.source in out_nodes and edge.target in out_nodes
+    }
+    direct_set = set(direct_ids)
+    for edge in graph.edges:
+        if not edge.active or edge.source not in direct_set:
+            continue
+        if edge.target not in out_nodes or edge.type not in {"calls", "references", "tests"}:
+            continue
+        edge_by_key.setdefault((edge.source, edge.target, edge.type), edge)
+    return out_nodes, list(edge_by_key.values())
 
 
 def apply_shape_budget(graph: Graph, plan: ContextPlan, query: str) -> ContextPlan:
@@ -1095,15 +2078,57 @@ def select_anchor_matches(
     query_class: str,
     doc_intent: bool = False,
     query: str = "",
+    graph: Graph | None = None,
+    dominant_scope: str = "",
 ) -> tuple[Match, ...]:
     # Preserve explicit multi-entity intent before generic score ordering.
     # Reserve up to two exact matches per snake_case identifier (declaration
     # and implementation commonly share a label) and one per CamelCase type.
     explicit = explicit_query_identifiers(query)
-    if explicit:
+    qualified = _qualified_query_symbols(query)
+    resolved_qualified_owners: set[str] = set()
+    if explicit or qualified:
         reserved: list[Match] = []
         seen_reserved: set[str] = set()
+        for owner, member in qualified:
+            owner_key = term_key(owner)
+            candidate = next(
+                (
+                    match for match in matches
+                    if match.node.id not in seen_reserved
+                    and match.node.label.casefold() == member.casefold()
+                    and owner_key in _facet_node_text(match.node)
+                ),
+                None,
+            )
+            if candidate is None and graph is not None:
+                # Exact qualified symbols are stronger than a bounded lexical
+                # candidate list. Same-named methods can otherwise be crowded
+                # out by fields and the owner type before selection runs.
+                node = next(
+                    (
+                        node for node in graph.nodes.values()
+                        if node.label.casefold() == member.casefold()
+                        and owner_key in _facet_node_text(node)
+                    ),
+                    None,
+                )
+                if node is not None:
+                    candidate = Match(
+                        node=node,
+                        score=(matches[0].score if matches else 0.0) + 40.0,
+                        reasons=(f"qualified_exact:{owner}::{member}",),
+                    )
+            if candidate is not None:
+                reserved.append(candidate)
+                seen_reserved.add(candidate.node.id)
+                resolved_qualified_owners.add(owner.casefold())
         for identifier in explicit:
+            # Once Type::member resolved exactly, the owner type is redundant.
+            # Reserving it would let a two-hop traversal fan through the source
+            # file's contains edges and pull unrelated sibling definitions.
+            if identifier.casefold() in resolved_qualified_owners:
+                continue
             per_identifier = 2 if "_" in identifier else 1
             found = 0
             for match in matches:
@@ -1123,13 +2148,93 @@ def select_anchor_matches(
         if doc_matches:
             selected: list[Match] = []
             seen: set[str] = set()
-            for match in doc_matches + list(matches):
+            seen_content: set[str] = set()
+            candidates = doc_matches if query_class == "doc_summary" else doc_matches + list(matches)
+            for match in candidates:
                 if match.node.id in seen:
+                    continue
+                content_key = _document_content_key(match.node)
+                if content_key and content_key in seen_content:
                     continue
                 selected.append(match)
                 seen.add(match.node.id)
+                if content_key:
+                    seen_content.add(content_key)
                 if len(selected) >= anchor_limit:
                     return tuple(selected)
+            return tuple(selected)
+    if query_class == "affected_tests":
+        implementation = [
+            match for match in matches
+            if not _is_test_path(match.node.path)
+            and match.node.kind not in NON_STRUCTURAL_KINDS
+            and not _unrequested_identifier_sibling(match.node.label, explicit)
+        ]
+        if implementation:
+            selected: list[Match] = []
+            seen: set[str] = set()
+            adjacency: dict[str, set[str]] = {}
+            if graph is not None:
+                for edge in graph.edges:
+                    if not edge.active or edge.type not in STRUCTURAL_RELATIONS:
+                        continue
+                    adjacency.setdefault(edge.source, set()).add(edge.target)
+                    adjacency.setdefault(edge.target, set()).add(edge.source)
+            for identifier in explicit:
+                if identifier.casefold() in resolved_qualified_owners:
+                    continue
+                for match in implementation:
+                    if match.node.id not in seen and match.node.label.casefold() == identifier:
+                        selected.append(match)
+                        seen.add(match.node.id)
+                        break
+            for _label, terms in query_facets(query):
+                candidates = [
+                    match for match in implementation
+                    if match.node.id not in seen
+                    and _facet_matches_node(match.node, terms)
+                ]
+                selected_ids = {match.node.id for match in selected}
+                selected_term_sets = [_symbol_identity_terms(match.node) for match in selected]
+
+                def anchor_coherence(match: Match) -> float:
+                    candidate_terms = _symbol_identity_terms(match.node)
+                    return max(
+                        (
+                            len(candidate_terms & anchor_terms)
+                            / math.sqrt(max(1, len(candidate_terms) * len(anchor_terms)))
+                            for anchor_terms in selected_term_sets
+                        ),
+                        default=0.0,
+                    )
+
+                candidate = max(
+                    candidates,
+                    key=lambda match: (
+                        any(node_id in adjacency.get(match.node.id, ()) for node_id in selected_ids),
+                        anchor_coherence(match),
+                        bool(dominant_scope and _path_in_scopes(match.node.path, (dominant_scope,))),
+                        match.node.kind in {"struct", "class", "trait", "enum"},
+                        match.node.kind in {"function", "method"},
+                        match.score,
+                        match.node.id,
+                    ),
+                    default=None,
+                )
+                if candidate is not None:
+                    selected.append(candidate)
+                    seen.add(candidate.node.id)
+                if len(selected) >= anchor_limit:
+                    return tuple(selected)
+            if qualified and selected:
+                return tuple(selected)
+            for match in implementation:
+                if match.node.id not in seen:
+                    selected.append(match)
+                    seen.add(match.node.id)
+                if len(selected) >= anchor_limit:
+                    break
+            return tuple(selected)
     if query_class not in STRUCTURAL_QUERY_CLASSES:
         return matches[:anchor_limit]
     structural = [match for match in matches if match.node.kind not in NON_STRUCTURAL_KINDS]
@@ -1152,7 +2257,35 @@ def select_anchor_matches(
     return tuple(selected)
 
 
-def reserve_reverse_contract_starts(graph: Graph, starts: tuple[str, ...]) -> tuple[str, ...]:
+def _document_content_key(node: object) -> str:
+    facts = " ".join(getattr(node, "facts", ()) or ())
+    normalized = term_key(facts)
+    if len(normalized) < 24:
+        return ""
+    return f"{getattr(node, 'kind', '')}:{normalized}"
+
+
+def _unrequested_identifier_sibling(label: str, explicit: tuple[str, ...]) -> bool:
+    folded = label.casefold()
+    if folded in explicit or "_" not in folded:
+        return False
+    parts = set(part for part in folded.split("_") if len(part) >= 2)
+    for identifier in explicit:
+        other = set(part for part in identifier.split("_") if len(part) >= 2)
+        if len(other) < 3:
+            continue
+        overlap = len(parts & other) / max(1, min(len(parts), len(other)))
+        if overlap >= 0.75 and parts != other:
+            return True
+    return False
+
+
+def reserve_reverse_contract_starts(
+    graph: Graph,
+    starts: tuple[str, ...],
+    *,
+    query: str = "",
+) -> tuple[str, ...]:
     """Promote both sides of a named contract before one-hop reverse lookup.
 
     A trait's implementor is one hop away and tests importing that implementor
@@ -1175,6 +2308,47 @@ def reserve_reverse_contract_starts(graph: Graph, starts: tuple[str, ...]) -> tu
             seen.add(counterpart)
         if len(out) >= 12:
             break
+    consumer_query = bool(
+        re.search(r"\b(?:test|tests)\b.{0,40}\b(?:uses?|consumes?|calls?|verifies?)\b", query, re.I)
+    )
+    if consumer_query:
+        explicit = set(explicit_query_identifiers(query))
+        exact_parents = {
+            node_id
+            for node_id in out
+            if node_id in graph.nodes
+            and "".join(term_key(graph.nodes[node_id].label).split()) in explicit
+        }
+        parent_ids = exact_parents or set(out)
+        members = [
+            graph.nodes[edge.target]
+            for edge in graph.edges
+            if edge.active
+            and edge.type in {"defines", "contains"}
+            and edge.source in parent_ids
+            and edge.target in graph.nodes
+            and graph.nodes[edge.target].kind in {"method", "function", "field"}
+        ]
+        members.extend(
+            node
+            for node in graph.nodes.values()
+            if node.parent in parent_ids
+            and node.kind in {"method", "function", "field"}
+            and node not in members
+        )
+        members.sort(
+            key=lambda node: (
+                0 if node.label.casefold() in {"evaluate", "validate", "check", "verify", "enforce"} else 1,
+                0 if node.kind == "field" else 1,
+                node.label,
+            )
+        )
+        for node in members:
+            if node.id not in seen:
+                out.append(node.id)
+                seen.add(node.id)
+            if len(out) >= 12:
+                break
     return tuple(out)
 
 
@@ -1257,6 +2431,74 @@ def reserve_query_named_siblings(
             out_edges.append(edge)
             seen.add(key)
     return out_nodes, out_edges
+
+
+def reserve_ordered_doc_siblings(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    query: str,
+    plan: ContextPlan,
+) -> tuple[set[str], list[Edge]]:
+    """Keep adjacent roadmap/phase sections needed for ordering questions."""
+    if plan.query_class != "doc_summary" or not _ORDERED_DOC_QUERY.search(query):
+        return nodes, edges
+    out_nodes = set(nodes)
+    protected = set(starts)
+    for start in starts:
+        anchor = graph.nodes.get(start)
+        if anchor is None or anchor.kind != "section" or not anchor.path:
+            continue
+        siblings = sorted(
+            (
+                node_id for node_id, node in graph.nodes.items()
+                if node.active and node.kind == "section" and node.path == anchor.path
+            ),
+            key=lambda node_id: (graph.nodes[node_id].line or 10**9, graph.nodes[node_id].label, node_id),
+        )
+        try:
+            index = siblings.index(start)
+        except ValueError:
+            continue
+        candidates: list[str] = []
+        if index > 0:
+            candidates.append(siblings[index - 1])
+        if index + 1 < len(siblings):
+            candidates.append(siblings[index + 1])
+        for node_id in candidates:
+            if plan.node_budget is not None and len(out_nodes) >= plan.node_budget:
+                removable = _least_valuable_context_node(graph, out_nodes, protected=protected | {node_id})
+                if removable is None:
+                    continue
+                out_nodes.remove(removable)
+            out_nodes.add(node_id)
+            protected.add(node_id)
+
+    out_edges = [edge for edge in edges if edge.source in out_nodes and edge.target in out_nodes]
+    seen = {(edge.source, edge.target, edge.type) for edge in out_edges}
+    for edge in graph.edges:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen or not edge.active:
+            continue
+        if edge.type == "section_of" and edge.source in protected and edge.target in out_nodes:
+            out_edges.append(edge)
+            seen.add(key)
+    return out_nodes, out_edges
+
+
+def prune_unexplained_structural_nodes(
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+) -> tuple[set[str], list[Edge]]:
+    """Structural packets keep anchors and edge endpoints, never lexical orphans."""
+    explained = set(starts)
+    for edge in edges:
+        explained.add(edge.source)
+        explained.add(edge.target)
+    kept = nodes & explained
+    return kept, [edge for edge in edges if edge.source in kept and edge.target in kept]
 
 
 def _loose_term_hits(needles: set[str], haystack: set[str]) -> int:

@@ -115,9 +115,9 @@ Use a ladder instead of a single favorite format:
 | `.gg` adjacency | native storage and human-editable graph files | good |
 | `svo` | tiny direct evidence packets | excellent |
 | `semantic_arrow` | relation clarity with moderate token cost | excellent |
-| `gg_max` | larger topology packets with low token cost | good, must validate |
-| `gg_max_hybrid` | topology plus summaries/facts | good for summaries |
-| CSR/bitset | machine retrieval and benchmarks | poor as raw prompt |
+| `gg` | larger topology packets with low token cost | good, must validate |
+| `gg_hybrid` | topology plus summaries/facts | good for summaries |
+| `gg_lex` | self-resolving lexical ids (eval-gated vs `gg`) | good, must validate |
 | JSON/GraphML | interchange/debugging | poor as prompt |
 
 ## Brutal Current Gaps

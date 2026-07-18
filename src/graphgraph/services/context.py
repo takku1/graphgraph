@@ -4,20 +4,26 @@ import json
 from pathlib import Path
 
 from ..graph.core import Graph, Query
-from ..io import find_graph_path, find_lessons_path, find_policies_path, load_any, load_policies
+from ..io import (
+    find_graph_path,
+    find_lessons_path,
+    find_policies_path,
+    load_any_cached,
+    load_policies,
+    remember_graph,
+)
 from ..packets import render_packet
 from ..packets.validation import validate_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph, route_query
 from ..planning.budgets import plan_terms
 from ..planning.policies import render_policy_packet, select_policies
-from ..retrieval import apply_shape_budget, expand_context, retrieve_context
+from ..platform.compiler import GraphProgram, GraphRuntime
+from ..platform.source_planner import QuerySourcePlanner, source_state_signature
+from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # noqa: F401
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 
-_GRAPH_CACHE: dict[Path, tuple[int, int, Graph]] = {}
-_GRAPH_CACHE_LIMIT = 4
 
-
-def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg_max") -> str:
+def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg") -> str:
     resolved_graph_path = graph_path or find_graph_path()
     graph = _load_graph_cached(resolved_graph_path)
     pr = graph.pagerank()
@@ -45,7 +51,7 @@ class FullGraphTooLargeError(ValueError):
 
 def render_full_graph(
     graph_path: Path | None = None,
-    packet: str = "gg_max",
+    packet: str = "gg",
     max_tokens: int | None = 20_000,
 ) -> str:
     """Render every active node/edge in the graph as one packet -- no query, no budget.
@@ -274,13 +280,20 @@ def render_query_context(
     anchor_limit: int | None = None,
     max_nodes: int | None = None,
     scopes: tuple[str, ...] = (),
+    scope_mode: str = "strict",
     show_anchors: bool = False,
     cache_namespace: str = "query",
     json_anchors: bool = False,
+    graph: Graph | None = None,
+    response_metadata: dict[str, object] | None = None,
+    source_mode: str = "auto",
+    memory_scopes: tuple[str, ...] = ("project", "session"),
 ) -> str:
+    requested_query_class = query_class
     route = route_query(query, query_class)
     query_class = route.query_class
     resolved_graph_path = graph_path or find_graph_path()
+    source_signature = source_state_signature(resolved_graph_path.parent)
     plan = plan_context(
         query_class,
         query,
@@ -296,41 +309,74 @@ def render_query_context(
         plan.hops,
         (
             f"request_v2|{resolved_graph_path.resolve()}|{cache_namespace}|{plan.planner_version}|"
-            f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|"
-            f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|{_session_signature()}"
+            f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
+            f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"
+            f"{response_metadata}|{source_mode}|{memory_scopes}|{source_signature}|{_session_signature()}"
         ),
     )
-    cached_packet = cache.get(resolved_graph_path, cache_key)
-    if cached_packet:
-        return cached_packet
+    # A caller-provided graph is the result of an in-process refresh. Query it
+    # directly and bypass cache reads so the fused update/query operation can
+    # neither re-parse the just-written graph nor return a pre-refresh packet.
+    if graph is None:
+        cached_packet = cache.get(resolved_graph_path, cache_key)
+        if cached_packet:
+            return cached_packet
+        graph = _load_graph_cached(resolved_graph_path)
+    else:
+        _remember_graph(resolved_graph_path, graph)
 
-    graph = _load_graph_cached(resolved_graph_path)
-    if max_nodes is None:
-        plan = apply_shape_budget(graph, plan, query)
-    result = retrieve_context(
+    compiled = GraphRuntime(
         graph,
-        query,
-        query_class,
-        hops=plan.hops,
-        anchor_limit=anchor_limit,
-        max_nodes=max_nodes,
+        source_planner=QuerySourcePlanner(
+            resolved_graph_path.parent,
+            graph_path=resolved_graph_path,
+        ),
+        source_mode=source_mode,
+        memory_scopes=memory_scopes,
+    ).compile(GraphProgram(
+        query=query,
+        query_class=requested_query_class,
+        packet=packet,
         scopes=scopes,
-    )
+        max_nodes=max_nodes,
+        hops=hops,
+        anchor_limit=anchor_limit,
+        scope_mode=scope_mode,
+    ))
+    graph = compiled.graph
+    route = compiled.route
+    query_class = route.query_class
+    plan = compiled.plan
+    result = compiled.retrieval
     if not result.starts:
+        answerability = result.metadata.get("answerability", {})
+        reason = str(answerability.get("reason", "no matching graph anchors"))
+        message = f"GraphGraph abstained: {reason}."
         if json_anchors:
-            return json.dumps({"anchors": [], "packet": "", "message": "No matching graph anchors found for query."})
-        return "No matching graph anchors found for query."
+            payload: dict[str, object] = {
+                "anchors": [],
+                "packet": "",
+                "query_class": query_class,
+                "routing": {
+                    "confidence": route.confidence,
+                    "margin": route.margin,
+                    "reasons": list(route.reasons),
+                    "version": route.router_version,
+                },
+                "retrieval": result.metadata,
+                "message": message,
+            }
+            if response_metadata:
+                payload.update(response_metadata)
+            return json.dumps(payload)
+        return message
 
-    if packet is None:
-        plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, result.nodes, result.edges))
-
-    graph_packet = render_packet(graph, result.nodes, result.edges, plan.packet)
+    graph_packet = compiled.packet
     _raise_if_invalid(graph_packet)
 
     if json_anchors and show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
-        response = json.dumps(
-            {
+        payload = {
                 "anchors": [
                     {
                         "id": match.node.id,
@@ -350,15 +396,18 @@ def render_query_context(
                     "reasons": list(route.reasons),
                     "version": route.router_version,
                 },
+                "retrieval": result.metadata,
                 "packet": graph_packet,
-            },
-            indent=2,
-        )
+            }
+        if response_metadata:
+            payload.update(response_metadata)
+        response = json.dumps(payload, indent=2)
     elif show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         out_lines = [
             f"ROUTE: {query_class} confidence={route.confidence:.3f} margin={route.margin:.3f} "
             f"reason={'; '.join(route.reasons)}",
+            f"PLAN: {json.dumps(result.metadata, separators=(',', ':'), ensure_ascii=False)}",
             "ANCHORS:",
         ]
         for match in result.matches[:limit]:
@@ -418,14 +467,9 @@ def _file_signature(path: Path | None) -> tuple[str, int, int] | None:
 
 
 def _load_graph_cached(path: Path) -> Graph:
-    resolved = path.resolve()
-    stat = resolved.stat()
-    fingerprint = (stat.st_mtime_ns, stat.st_size)
-    cached = _GRAPH_CACHE.get(resolved)
-    if cached is not None and cached[:2] == fingerprint:
-        return cached[2]
-    graph = load_any(resolved)
-    _GRAPH_CACHE[resolved] = (*fingerprint, graph)
-    while len(_GRAPH_CACHE) > _GRAPH_CACHE_LIMIT:
-        _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)))
-    return graph
+    return load_any_cached(path)
+
+
+def _remember_graph(path: Path, graph: Graph) -> None:
+    """Seed the service cache with a graph that was just persisted in-process."""
+    remember_graph(path, graph)

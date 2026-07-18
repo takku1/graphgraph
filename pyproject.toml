@@ -56,6 +56,9 @@ package = true
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+graphgraph = ["assets/*.md", "assets/*.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["tmp", "benchmarks", ".venv", ".graphgraph", "graphify-out", "*.egg-info"]

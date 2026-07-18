@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..graph.core import Edge
@@ -26,6 +27,30 @@ _LEAN_IMPORT = re.compile(r"^import\s+([a-zA-Z_0-9.]+)", re.MULTILINE)
 _JS_EXTS = (".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.js")
 
 
+@dataclass(frozen=True)
+class _FileResolutionIndex:
+    """Predecoded file-name/module operands for constant-time import lookup."""
+
+    class_files: dict[str, str]
+    lean_modules: dict[str, str]
+
+    @classmethod
+    def build(cls, file_map: dict[str, str]) -> _FileResolutionIndex:
+        class_files: dict[str, str] = {}
+        lean_modules: dict[str, str] = {}
+        for raw_rel, node_id in file_map.items():
+            rel = raw_rel.replace("\\", "/")
+            filename = rel.rsplit("/", 1)[-1]
+            class_files.setdefault(filename, node_id)
+            if not filename.endswith(".lean"):
+                continue
+            path_parts = rel[:-5].split("/")
+            for start in range(len(path_parts)):
+                module = ".".join(path_parts[start:])
+                lean_modules.setdefault(module, node_id)
+        return cls(class_files=class_files, lean_modules=lean_modules)
+
+
 def add_file_edges(
     *,
     dirty_files: list[tuple[Path, str, str]],
@@ -35,6 +60,8 @@ def add_file_edges(
     seen: set[tuple[str, str]],
     generic_mentions: bool,
 ) -> None:
+    resolution_index = _FileResolutionIndex.build(file_map)
+
     def add_edge(src: str, tgt: str | None, etype: str = "imports") -> None:
         if tgt and tgt != src:
             key = (src, tgt)
@@ -86,10 +113,10 @@ def add_file_edges(
                 add_edge(src_id, _resolve_relative("./" + parts, path, root, file_map, extra_exts=(".rs", "/mod.rs")))
         elif suffix == ".java":
             for match in _JAVA_IMPORT.finditer(text):
-                add_edge(src_id, _resolve_by_class_name(match.group(1), ".java", file_map), "imports")
+                add_edge(src_id, _resolve_by_class_name(match.group(1), ".java", resolution_index), "imports")
         elif suffix == ".cs":
             for match in _CS_USING.finditer(text):
-                add_edge(src_id, _resolve_by_class_name(match.group(1), ".cs", file_map), "imports")
+                add_edge(src_id, _resolve_by_class_name(match.group(1), ".cs", resolution_index), "imports")
         elif suffix in {".c", ".cpp", ".cxx", ".cc", ".h", ".hpp"}:
             for match in _C_INCLUDE_LOCAL.finditer(text):
                 add_edge(src_id, _resolve_c_include(match.group(1), path, root, file_map))
@@ -109,7 +136,7 @@ def add_file_edges(
                 add_edge(src_id, _resolve_relative(match.group(1), path, root, file_map), "links")
         elif suffix == ".lean":
             for match in _LEAN_IMPORT.finditer(text):
-                add_edge(src_id, _resolve_lean(match.group(1), file_map))
+                add_edge(src_id, _resolve_lean(match.group(1), resolution_index))
 
 
 def _resolve_py(module: str, current: Path, root: Path, file_map: dict[str, str], imported: str = "") -> str | None:
@@ -164,12 +191,8 @@ def _python_import_modules(raw: str) -> list[str]:
     return modules
 
 
-def _resolve_lean(module: str, file_map: dict[str, str]) -> str | None:
-    filename = module.replace(".", "/") + ".lean"
-    for rel, nid in file_map.items():
-        if rel.endswith(filename) or rel == filename:
-            return nid
-    return None
+def _resolve_lean(module: str, index: _FileResolutionIndex) -> str | None:
+    return index.lean_modules.get(module)
 
 
 def _resolve_relative(
@@ -209,12 +232,9 @@ def _resolve_rust_mod(mod_name: str, current: Path, root: Path, file_map: dict[s
     return None
 
 
-def _resolve_by_class_name(class_name: str, suffix: str, file_map: dict[str, str]) -> str | None:
+def _resolve_by_class_name(class_name: str, suffix: str, index: _FileResolutionIndex) -> str | None:
     filename = class_name.split(".")[-1] + suffix
-    for rel, nid in file_map.items():
-        if rel.endswith("/" + filename) or rel == filename:
-            return nid
-    return None
+    return index.class_files.get(filename)
 
 
 def _resolve_c_include(include: str, current: Path, root: Path, file_map: dict[str, str]) -> str | None:

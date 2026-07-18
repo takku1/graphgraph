@@ -48,6 +48,7 @@ QUERY_STOPWORDS = {
 DEFAULT_NODE_BUDGETS = {
     "direct_lookup": 80,
     "reverse_lookup": 80,
+    "affected_tests": 60,
     "multi_hop_path": 80,
     # 8, not 1: a 1-node budget caps expansion back down to just the anchor
     # even with hops=1, which would silently undo the point of raising hops
@@ -72,7 +73,7 @@ DOC_NODE_BUDGET = 12
 def default_anchor_limit(query: str, query_class: str) -> int:
     term_count = len(plan_terms(query))
     identifiers = explicit_query_identifiers(query)
-    if query_class in {"direct_lookup", "reverse_lookup", "blast_radius"} and identifiers:
+    if query_class in {"direct_lookup", "reverse_lookup", "affected_tests", "blast_radius"} and identifiers:
         # A single exact symbol should stay surgical. Contract/test questions
         # often name several exact methods plus a CamelCase type or trait; the
         # old any-underscore gate collapsed those multi-entity queries to one
@@ -80,7 +81,7 @@ def default_anchor_limit(query: str, query_class: str) -> int:
         if len(identifiers) == 1:
             return 1
         return min(8, max(3, len(identifiers) * 2))
-    if query_class in {"direct_lookup", "reverse_lookup"}:
+    if query_class in {"direct_lookup", "reverse_lookup", "affected_tests"}:
         return max(3, min(6, term_count + 1))
     if is_doc_query(query_class, query):
         return 6
@@ -134,7 +135,10 @@ def explicit_query_identifiers(text: str) -> tuple[str, ...]:
     """Return code-shaped identifiers explicitly named by the user."""
     identifiers = []
     for raw in PLAN_TOKEN.findall(text):
-        has_mixed_case = any(char.islower() for char in raw) and any(char.isupper() for char in raw)
+        # Sentence-initial prose such as ``How`` is capitalized but is not a
+        # code-shaped identifier. Require an uppercase transition after the
+        # first character for CamelCase/PascalCase names.
+        has_mixed_case = any(char.islower() for char in raw) and any(char.isupper() for char in raw[1:])
         if "_" not in raw and not has_mixed_case:
             continue
         folded = raw.casefold()

@@ -12,6 +12,126 @@ This file is a status log of *specific bugs found and fixed*. For the
 forward-looking backlog of open ideas/gaps (new features, research
 directions), see [`docs/planned-work.md`](../planned-work.md) instead.
 
+## Session 6 (2026-07-17) — packet-format unification + dogfood-finding verification
+
+- [~] **Packet format unification.** Merged the near-identical
+  `render_gg_max`/`render_gg_lex` into one `render_gg(*, lexical, facts)`
+  (`packets/renderers.py`); the old names are thin wrappers. Removed the
+  disproven, non-weight-bearing `tensor`/`csr_arrays` renderer entirely.
+  Hard-renamed the format vocabulary `gg_max`→`gg`, `gg_max_hybrid`→`gg_hybrid`
+  across all src+tests (no alias; legacy `gg_max` now raises). `render_packet`
+  is now a dispatch table. 411 tests green; verified byte-identical output for
+  every legacy variant. Refreshed the installed global/Codex/Gemini skills to
+  the new vocabulary.
+- [~] **Closes prior open item `render_tensor_array` O(n²) matrix** (see the
+  two `[ ]` entries below): the renderer, its routing, exports, and tests were
+  removed this session, so the format no longer exists on any path — not just
+  unreachable from the planner. Superseded/resolved.
+- [~] **Re-verified prior open item `validate_gg_max` hybrid-detection edge
+  case** against current code: for a `kind="unknown"`, no-facts node,
+  `render_packet(..., "gg")` and `"gg_hybrid"` are **no longer byte-identical**
+  — the `#gg` vs `#gg_hybrid` header disambiguates them and `validate_packet`
+  labels each correctly. Non-issue for engine-produced packets. Resolved.
+- [~] **GG-ITER-03 (homonym anchor contamination) — verified + regression
+  locked.** Reproduced the leak (the intent word "affected" ranks an unrelated
+  `affected_packages` above the correct test), confirmed the fix is
+  defense-in-depth (`structural_anchor_query` strips planner vocab *and* anchor
+  selection drops it), and added a teeth-proven test in `test_locus_findings.py`
+  (asserts the homonym is a real candidate first, so it can't pass vacuously).
+- [~] **GG-ITER-04 (facet unfulfilled despite in-packet evidence) — verified +
+  regression locked.** Confirmed the domain-equivalence mapping in
+  `_facet_evidence_queries` credits `min_promotable_candidates` for "yield",
+  `rejects_parent_traversal` for "unsafe path", `load_and_run` for "running
+  loaded cases"; teeth-checked (all unfulfilled if the mapping is neutralized)
+  and locked in `test_locus_findings.py`.
+- [~] **`project_status` graceful cold-repo status** (slice-round finding #1,
+  `2026-07-17-locus-blackbox-slice-implementation-round.md`). A status probe is
+  the natural first call on a fresh repo, but `build_project_status` let
+  `find_graph_path`'s `FileNotFoundError` surface as an MCP `-32000` crash. Now
+  returns an actionable `{"status": "no_graph", "next_action": "build_graph", …}`
+  (and `"ambiguous_graph"` for the multi-graph case, preserving the deliberate
+  refuse-ambiguous stance as a status, not a crash). Fixed at the shared service
+  layer so CLI `status` and the MCP tool both benefit; `cmd_status` renders it.
+  Regression test in `test_cli_mcp.py`.
+- [~] **Build-receipt docs counters were misread as "no docs"** (slice-round
+  finding #2). `phase_profile.docs_files` counts documents *parsed into
+  sections* (0 on repos where markdown falls back to file-level), which read as
+  "docs missing" even when doc-kind nodes landed. The receipt now also reports
+  `doc_nodes` (what actually landed), reusing `graph_shape` so it agrees with
+  `project_status`. Regression test asserts the two surfaces match.
+- [~] **`remove_graph_files`/`update_graph_files` cryptic `-32000: 'paths'`**
+  (live friction). Both handlers did a bare `args["paths"]`, so omitting the
+  required arg surfaced only the key name. Added `_require_paths()` with an
+  actionable message (names the tool + what to pass; rejects non-list too), and
+  documented the `paths` arg in the skill (it wasn't mentioned). The MCP schema
+  already marked it required; the server no longer assumes the client enforced
+  it. Regression test in `test_cli_mcp.py`.
+- [~] **`project_status`/build receipt couldn't say whether symbol extraction
+  happened** (live friction). An incremental scan that preserves prior symbols
+  rebuilt metadata with the default `frontend="files"` (the symbol block that
+  sets the real label is gated on `dirty_files`), so a 6,900-node symbol graph
+  reported `frontend: "files"`. Fixed both ways: the scan now inherits the prior
+  graph's `frontend` label on refresh (fresh extraction still overwrites), and
+  `project_status` now reports a content-derived `symbol_extraction`
+  (`present`/`symbol_nodes` counted from node kinds — authoritative even if the
+  label is stale). Regression test asserts symbols are detected despite a
+  `frontend="files"` label.
+- [~] **Systemic MCP input validation + `source_snippets` composability**
+  (blackbox-eval-2026-07-18, BUG-1/BUG-2). Several handlers did a bare
+  `args["x"]`, leaking cryptic `-32000: 'starts'` / `-32000: 'query_class'`
+  KeyErrors that told a caller nothing. Added `_validate_required_args()` at the
+  dispatch boundary (`handle_tools_call`) that checks every tool's declared
+  `required` against the schema and names each missing arg with its allowed
+  values -- fixes these two and any future tool at once. Also made
+  `source_snippets` accept `node_ids` (the `id` field `search_nodes` returns) so
+  the two tools chain, validated before graph resolution, and enriched the
+  `query_class` schema descriptions with the class list. Regression tests in
+  `test_cli_mcp.py`.
+- [ ] **LIM-1: Rust reverse/registration edges** (blackbox-eval-2026-07-18) --
+  `reverse_lookup`/`blast_radius` miss construction/registration sites
+  (`Box::new(T)`, `T::new`) and in-file free-function callers. Suggested tractable
+  step: capture type-construction sites and free-function call sites as
+  *candidate* edges (below full receiver inference). Shared with
+  `code-review-graph` (not a regression); part of the member-call substrate work.
+  UX-1 (#gg legend) is intentionally deferred: adding per-packet legend tokens
+  would undercut the measured terseness the same eval praises (STR-3); the legend
+  lives in `describe_formats` + the skill.
+- [ ] **Eval harness renders a reimplementation, not the real engine**
+  (validated this session): `benchmarks/context_graph/protocol_benchmark.py`'s
+  `render_packet` reimplements every format inline from `idx` dicts and does not
+  import graphgraph's `render_gg`/`render_packet`. So the interpretability /
+  model-reasoning eval would validate a parallel copy, not production output,
+  and does not reflect the `gg` rename or `gg_lex` provenance. Making the eval
+  faithful means rewiring it to the real renderers — its own focused pass, and a
+  prerequisite for trusting any `gg`-vs-`gg_lex` answer-quality result.
+- [~] **`doc_summary` silently returned file pointers on docs-less graphs**
+  (slice-round #5, round 2). Root cause validated: doc grounding *works* — a
+  graph built with `docs=true` produces `section`/`paragraph` nodes and
+  `doc_summary` retrieval surfaces the prose. The friction was building without
+  docs (MCP `build_graph` defaults `docs=false`), so only file pointers exist.
+  Retrieval now emits an actionable `document_extraction` hint (content-derived:
+  no section/paragraph nodes ⇒ "rebuild with docs=true") instead of degrading
+  silently. Regression test in `test_locus_findings.py`. NOTE: markdown
+  section *parsing quality* (tree-sitter-markdown) is a separate feature; the
+  existing paragraph extraction already grounds.
+- [ ] **Language generality validated ("any code, not just Rust"):** basic
+  symbol extraction (defs/contains/calls|calls_candidate) works across Python,
+  JS, TS, Go, Rust today — orientation is not Rust-only. What *is* Rust-specific
+  is the advanced **receiver-type-inference** pipeline (`impl`/trait resolution,
+  method-owner, struct-field and return-type inference in `scanner/frontends.py`,
+  gated by `suffix != ".rs"`) that turns `calls_candidate` into resolved member
+  calls. Generalizing it is a per-language type-inference effort — the deep
+  substrate item — not a quick fix; other languages degrade gracefully to
+  `calls_candidate` edges.
+- [ ] **Not fixed, correctly deferred (validated this session):** GG-BB-002 /
+  GG-BB-004 natural-language multi-hop and affected-test *recall* gaps are real
+  but honestly reported (`answerability.status = incomplete`) and are eval-gated
+  recall tuning on the live Locus graph, not crisp bugs. The `affected_tests`
+  missing runnable-command / `covers` receipt is downstream of member-call
+  resolution (no covering edge exists to build the command from). Communities
+  (Leiden/CPM), unfinished-work discovery, and the live-LLM answerability eval
+  remain research/benchmark-gated — not session fixes.
+
 ## Session 5 (2026-07-11) — backlog cleanup, recent_changes query class, full-graph mode
 
 - [x] **CLI/MCP defaults consolidation** (Priority 1 backlog item). Added
