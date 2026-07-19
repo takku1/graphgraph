@@ -23,6 +23,8 @@ from ..platform.source_planner import QuerySourcePlanner, source_state_signature
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # noqa: F401
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 
+QUERY_RESPONSE_CACHE_VERSION = "request_v6_hybrid_test_receipts"
+
 
 def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg") -> str:
     resolved_graph_path = graph_path or find_graph_path()
@@ -312,7 +314,8 @@ def render_query_context(
         query_class,
         plan.hops,
         (
-            f"request_v2|{resolved_graph_path.resolve()}|{cache_namespace}|{plan.planner_version}|"
+            f"{QUERY_RESPONSE_CACHE_VERSION}|{resolved_graph_path.resolve()}|"
+            f"{cache_namespace}|{plan.planner_version}|"
             f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
             f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"
             f"{_cache_metadata_signature(response_metadata)}|"

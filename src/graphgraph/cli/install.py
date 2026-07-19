@@ -239,6 +239,7 @@ def _upsert_codex_marketplace(market_file: Path, plugin_name: str = "graphgraph"
 
 
 def cmd_install(args: argparse.Namespace) -> None:
+    platform = getattr(args, "platform", "all")
     # 1. Determine destination root
     if args.project:
         dest_root = Path(".")
@@ -380,12 +381,14 @@ def cmd_install(args: argparse.Namespace) -> None:
     print(f"Registered skill in: {skill_file}")
 
     # 4. Handle Platform-Specific Registrations (Codex, Claude, Cursor)
-    platform = getattr(args, "platform", "all")
     if platform in ("codex", "all"):
         if args.project:
             plugins_dir = dest_root / "plugins" / "graphgraph"
             market_file = dest_root / ".agents" / "plugins" / "marketplace.json"
         else:
+            codex_skill_dir = Path.home() / ".codex" / "skills" / "graphgraph"
+            _write_skill_bundle(codex_skill_dir, skill_content)
+            print(f"Registered Codex skill in: {codex_skill_dir}")
             plugins_dir = Path.home() / "plugins" / "graphgraph"
             market_file = Path.home() / ".agents" / "plugins" / "marketplace.json"
 

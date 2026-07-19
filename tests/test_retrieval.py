@@ -1359,6 +1359,35 @@ class RetrievalTest(unittest.TestCase):
                     )
             self.assertEqual(first, second)
 
+    def test_render_query_context_cache_contract_invalidates_old_semantics(self) -> None:
+        from graphgraph.runtime.cache import TopologicalKVCache
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            cache = TopologicalKVCache(root / "cache.json")
+            with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
+                with patch(
+                    "graphgraph.services.context.QUERY_RESPONSE_CACHE_VERSION",
+                    "legacy_semantic_contract",
+                ):
+                    render_query_context(
+                        query="auth service",
+                        query_class="direct_lookup",
+                        graph_path=graph_path,
+                        cache_namespace="versioned_query_cache",
+                    )
+                render_query_context(
+                    query="auth service",
+                    query_class="direct_lookup",
+                    graph_path=graph_path,
+                    cache_namespace="versioned_query_cache",
+                )
+
+            self.assertEqual(cache.stats()["hits"], 0)
+            self.assertEqual(cache.stats()["misses"], 2)
+
     def test_render_final_packet_cache_hit_skips_expansion(self) -> None:
         from graphgraph.runtime.cache import TopologicalKVCache
 
@@ -3846,6 +3875,267 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             (("bounded input contract", ("bounded", "input", "contract")),),
         )
         self.assertEqual(coverage["unfulfilled"], [])
+
+    def test_topic_local_roadmap_row_cannot_borrow_a_sibling_bound(self) -> None:
+        path = "docs/roadmap/gap-analysis.md"
+        graph = Graph(nodes={
+            "GAME": Node(
+                "GAME",
+                "Game Theory",
+                "paragraph",
+                path,
+                facts=(
+                    "Game Theory computes an exact fully mixed Nash equilibrium "
+                    "for a nondegenerate two-player 2×2 general-sum game. "
+                    "General m×n equilibria and degenerate enumeration remain absent.",
+                ),
+            ),
+            "LEARNING": Node(
+                "LEARNING",
+                "Statistical Learning Theory",
+                "paragraph",
+                path,
+                facts=("Exact finite classes are supported up to 20 domain points.",),
+            ),
+        })
+
+        result = retrieve_context(
+            graph,
+            (
+                "From the Game Theory roadmap row, what is the bounded input "
+                "contract for mixed_nash_2x2 and what remains unsupported?"
+            ),
+            "doc_summary",
+            hops=1,
+            scopes=(path,),
+        )
+
+        self.assertEqual(result.starts, ("GAME",))
+        self.assertNotIn("LEARNING", result.nodes)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_blast_radius_binds_roadmap_paragraph_to_qualified_api(self) -> None:
+        code_path = "crates/locus-engine/src/game_theory.rs"
+        doc_path = "docs/roadmap/gap-analysis.md"
+        graph = Graph(
+            nodes={
+                "API": Node(
+                    "API",
+                    "mixed_nash_2x2",
+                    "function",
+                    code_path,
+                    summary="pub fn mixed_nash_2x2",
+                ),
+                "VERIFY": Node("VERIFY", "verify_mixed_nash_2x2", "function", code_path),
+                "RESULT": Node("RESULT", "MixedNash2x2", "struct", code_path),
+                "TEST": Node(
+                    "TEST",
+                    "general_sum_matching_pennies_is_uniform",
+                    "function",
+                    code_path,
+                    facts=("role:test", "rust_attribute:test"),
+                ),
+                "GAME_DOC": Node(
+                    "GAME_DOC",
+                    "Game Theory",
+                    "paragraph",
+                    doc_path,
+                    facts=(
+                        "Game Theory computes the exact mixed Nash equilibrium "
+                        "of a two-player 2×2 general-sum game.",
+                    ),
+                ),
+                "AUDIT_DOC": Node(
+                    "AUDIT_DOC",
+                    "Tracking audit docs",
+                    "paragraph",
+                    "docs/roadmap/coverage-matrix.md",
+                    facts=("Tracking docs include the gap analysis and this roadmap.",),
+                ),
+            },
+            edges=[
+                Edge("API", "VERIFY", "calls"),
+                Edge("API", "RESULT", "returns"),
+                Edge("TEST", "API", "calls"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            (
+                "What is the blast radius of changing game_theory::mixed_nash_2x2, "
+                "including callers, export, tests, and the roadmap paragraph that "
+                "documents this API?"
+            ),
+            "blast_radius",
+            hops=2,
+            max_nodes=16,
+        )
+
+        self.assertIn("GAME_DOC", result.starts)
+        self.assertIn("GAME_DOC", result.nodes)
+        self.assertNotIn("AUDIT_DOC", result.starts)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_compound_game_theory_abstention_prefers_api_connected_test(self) -> None:
+        code_path = "crates/locus-engine/src/game_theory.rs"
+        doc_path = "docs/roadmap/gap-analysis.md"
+        graph = Graph(
+            nodes={
+                "API": Node("API", "mixed_nash_2x2", "function", code_path),
+                "VERIFY": Node("VERIFY", "verify_mixed_nash_2x2", "function", code_path),
+                "RESULT": Node("RESULT", "MixedNash2x2", "struct", code_path),
+                "ZERO_SUM": Node("ZERO_SUM", "mixed_zero_sum_2x2", "function", code_path),
+                "RIGHT_TEST": Node(
+                    "RIGHT_TEST",
+                    "dominant_or_degenerate_games_have_no_fully_mixed_solution",
+                    "function",
+                    code_path,
+                    facts=("role:test", "rust_attribute:test"),
+                ),
+                "WRONG_TEST": Node(
+                    "WRONG_TEST",
+                    "a_saddle_point_game_has_no_mixed_solution",
+                    "function",
+                    code_path,
+                    facts=("role:test", "rust_attribute:test"),
+                ),
+                "GAME_DOC": Node(
+                    "GAME_DOC",
+                    "Game Theory",
+                    "paragraph",
+                    doc_path,
+                    facts=(
+                        "Game Theory computes the exact fully mixed Nash equilibrium "
+                        "of a nondegenerate two-player 2×2 general-sum game.",
+                    ),
+                ),
+            },
+            edges=[
+                Edge("API", "VERIFY", "calls"),
+                Edge("API", "RESULT", "returns"),
+                Edge("RIGHT_TEST", "API", "calls"),
+                Edge("WRONG_TEST", "ZERO_SUM", "calls"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            (
+                "From the Game Theory roadmap row, explain the new general-sum "
+                "2x2 mixed Nash API, its result, self-verification, abstention "
+                "cases, and tests."
+            ),
+            "doc_summary",
+            hops=1,
+            scopes=(doc_path, code_path),
+        )
+
+        self.assertIn("API", result.starts)
+        self.assertIn("RIGHT_TEST", result.starts)
+        self.assertNotIn("WRONG_TEST", result.starts)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(
+            [item["id"] for item in result.metadata["affected_tests"]["direct"]],
+            ["RIGHT_TEST"],
+        )
+        self.assertEqual(
+            result.metadata["hybrid_intents"],
+            ["doc_summary", "affected_tests"],
+        )
+
+    def test_affected_command_contract_covers_every_direct_test(self) -> None:
+        from graphgraph.planning import QueryRoute
+        from graphgraph.retrieval import reconcile_retrieval_receipt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-engine"
+            source = crate / "src" / "game_theory.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-engine"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "src" / "lib.rs").write_text(
+                "mod game_theory;\n",
+                encoding="utf-8",
+            )
+            source.write_text(
+                "pub fn mixed_nash_2x2() {}\n"
+                "#[cfg(test)] mod tests {\n"
+                "  #[test] fn battle_of_the_sexes() { mixed_nash_2x2(); }\n"
+                "  #[test] fn degenerate_abstains() { mixed_nash_2x2(); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            code_path = "crates/locus-engine/src/game_theory.rs"
+            graph = Graph(
+                nodes={
+                    "API": Node(
+                        "API",
+                        "mixed_nash_2x2",
+                        "function",
+                        code_path,
+                        source=str(source),
+                    ),
+                    "TEST_A": Node(
+                        "TEST_A",
+                        "battle_of_the_sexes",
+                        "function",
+                        code_path,
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                    "TEST_B": Node(
+                        "TEST_B",
+                        "degenerate_abstains",
+                        "function",
+                        code_path,
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                    "DOC_NOISE": Node(
+                        "DOC_NOISE",
+                        "One run",
+                        "paragraph",
+                        "docs/roadmap/bridge-plan.md",
+                    ),
+                },
+                edges=[
+                    Edge("TEST_A", "API", "calls"),
+                    Edge("TEST_B", "API", "calls"),
+                ],
+            )
+            result = retrieve_context(
+                graph,
+                (
+                    "Which tests directly exercise mixed_nash_2x2, and what is "
+                    "the smallest exact Cargo command that runs every one?"
+                ),
+                "affected_tests",
+                hops=2,
+            )
+            errors = reconcile_retrieval_receipt(
+                graph,
+                result,
+                route=QueryRoute("affected_tests", 1.0, 1.0, ("explicit query class",)),
+                automatic_route=False,
+            )
+
+        self.assertEqual(errors, ())
+        self.assertEqual(
+            result.metadata["affected_tests"]["commands"],
+            ["cargo test -p locus-engine game_theory::tests --lib"],
+        )
+        self.assertEqual(
+            result.metadata["affected_tests"]["command_selection"]["uncovered_direct_tests"],
+            [],
+        )
+        self.assertNotIn("DOC_NOISE", result.starts)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
 
     def test_blast_radius_preserves_explicit_changed_markdown_root(self) -> None:
         graph = Graph(

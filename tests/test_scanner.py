@@ -41,6 +41,7 @@ class ScannerTest(unittest.TestCase):
         self.assertEqual(term_key("Token Store"), "token store")
         self.assertEqual(term_key("token-store"), "token store")
         self.assertEqual(term_key("TokenStore"), "token store")
+        self.assertEqual(term_key("2×2 mixed Nash"), "2x2 mixed nash")
         self.assertEqual(concept_id("Token Store"), "concept_token_store")
         self.assertEqual(canonical_concept_label("token store"), "Token Store")
 

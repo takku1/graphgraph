@@ -45,6 +45,39 @@ from ..services.native import (
 from .install import cmd_install as cmd_install
 
 
+def _installed_skill_artifact_status(home: Path) -> tuple[dict[str, object], ...]:
+    """Compare published Codex skill files with this package's canonical assets."""
+    assets = Path(__file__).resolve().parents[1] / "assets"
+    skill_root = home / ".codex" / "skills" / "graphgraph"
+    artifacts = (
+        ("skill contract", skill_root / "SKILL.md", assets / "graphgraph_skill.md"),
+        (
+            "live validator",
+            skill_root / "scripts" / "validate_live.py",
+            assets / "validate_live.py",
+        ),
+    )
+    status: list[dict[str, object]] = []
+    for label, installed, canonical in artifacts:
+        state = (
+            "missing"
+            if not installed.is_file()
+            else "current"
+            # Path.write_text uses the platform newline convention. Compare
+            # decoded content so an LF asset installed as CRLF on Windows is
+            # not misreported as stale.
+            if installed.read_text(encoding="utf-8")
+            == canonical.read_text(encoding="utf-8")
+            else "stale"
+        )
+        status.append({
+            "label": label,
+            "path": installed,
+            "state": state,
+        })
+    return tuple(status)
+
+
 def cmd_plan(args: argparse.Namespace) -> None:
     plan = plan_context(args.query_class, getattr(args, "query", ""))
     print(
@@ -132,7 +165,19 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         print("  tiktoken: Installed (OK)")
     except ImportError:
         print("  tiktoken: Missing (WARN - using approximate token count)")
-        
+
+    # The skill is an executable public contract. A current package with a
+    # stale user-level wrapper silently exercises old behavior, so report the
+    # two artifacts independently and provide one deterministic repair.
+    print("\n[Installed Skill Artifacts]")
+    artifact_status = _installed_skill_artifact_status(Path.home())
+    for artifact in artifact_status:
+        state = str(artifact["state"])
+        display = "Current (OK)" if state == "current" else state.upper()
+        print(f"  Codex {artifact['label']}: {display}  [{artifact['path']}]")
+    if any(artifact["state"] != "current" for artifact in artifact_status):
+        print("  Repair: graphgraph install --platform codex")
+
     # 3. Optional provider credentials. GraphGraph's local skill/MCP/CLI
     # workflow does not need these; they only matter for paid external model
     # benchmark scripts.

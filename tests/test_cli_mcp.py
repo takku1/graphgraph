@@ -1805,6 +1805,41 @@ class CliMcpTest(unittest.TestCase):
             finally:
                 os.chdir(orig_cwd)
 
+    def test_cmd_install_global_codex_refreshes_published_skill(self) -> None:
+        from unittest.mock import patch
+
+        from graphgraph.cli.commands import _installed_skill_artifact_status, cmd_install
+
+        class DummyArgs:
+            project = False
+            platform = "codex"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            stale_root = home / ".codex" / "skills" / "graphgraph"
+            (stale_root / "scripts").mkdir(parents=True)
+            (stale_root / "SKILL.md").write_text("stale skill\n", encoding="utf-8")
+            (stale_root / "scripts" / "validate_live.py").write_text(
+                "stale validator\n",
+                encoding="utf-8",
+            )
+            with patch("pathlib.Path.home", return_value=home):
+                cmd_install(DummyArgs())
+
+            self.assertEqual(
+                {str(item["state"]) for item in _installed_skill_artifact_status(home)},
+                {"current"},
+            )
+            assets = Path("src") / "graphgraph" / "assets"
+            self.assertEqual(
+                (stale_root / "SKILL.md").read_text(encoding="utf-8"),
+                (assets / "graphgraph_skill.md").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                (stale_root / "scripts" / "validate_live.py").read_text(encoding="utf-8"),
+                (assets / "validate_live.py").read_text(encoding="utf-8"),
+            )
+
     def test_live_validation_detects_repo_ecosystem_and_supports_override(self) -> None:
         from graphgraph.live_validation import detect_test_command, split_command
 

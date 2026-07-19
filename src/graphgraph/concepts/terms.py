@@ -40,6 +40,10 @@ def term_key(value: str) -> str:
     label = normalize_label(value)
     if not label:
         return ""
+    # Mathematical prose commonly uses the multiplication glyph while source
+    # identifiers use ASCII ``x`` (``2×2`` <-> ``mixed_nash_2x2``). Normalize
+    # only digit-bounded glyphs so ordinary prose punctuation is unaffected.
+    label = re.sub(r"(?<=\d)[×✕](?=\d)", "x", label)
     parts: list[str] = []
     for raw in re.split(r"[\s_\-./\\:]+", label):
         if not raw:
@@ -75,4 +79,3 @@ def canonical_concept_label(value: str) -> str:
         else:
             titled.append(lower[:1].upper() + lower[1:])
     return " ".join(titled)
-

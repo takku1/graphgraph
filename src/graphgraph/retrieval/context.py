@@ -50,7 +50,7 @@ _AFFECTED_ANCHOR_INTENT = re.compile(
     r"\b(?:if|affected|affecting|impact|impacted|changes?|changed|changing|"
     r"which|what|tests?|should|runs?|running|cover|covers|covered|exercise|"
     r"validate|validates|directly|cases?|do|does|they|them|their|exact|cargo|"
-    r"commands?)\b",
+    r"commands?|smallest|every|all|one)\b",
     re.I,
 )
 
@@ -79,6 +79,10 @@ _ORDERED_DOC_QUERY = re.compile(
 _ENUMERATED_DOC_QUERY = re.compile(r"\b(stage|stages|phase|phases|step|steps|sequence)\b", re.I)
 _FLOW_ORIENTATION_QUERY = re.compile(
     r"\b(flow|flows|path|pipeline|call chain|data flow|control flow)\b",
+    re.I,
+)
+_TEST_EVIDENCE_QUERY = re.compile(
+    r"\b(?:tests?|test\s+coverage|covered\s+by)\b",
     re.I,
 )
 
@@ -1492,7 +1496,9 @@ def retrieve_context(
         if query_class == "direct_lookup" and not anchor_paths
         else ()
     )
-    facet_aware = query_class in {"affected_tests", "multi_hop_path", "negative_query", "doc_summary"} or (
+    facet_aware = query_class in {
+        "affected_tests", "blast_radius", "multi_hop_path", "negative_query", "doc_summary",
+    } or (
         query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers)
     )
     facets = query_facets(query) if facet_aware else ()
@@ -1691,6 +1697,12 @@ def retrieve_context(
         query=query,
         graph=graph,
         dominant_scope=inferred_scope,
+    )
+    selected_matches = select_topic_local_doc_roots(
+        selected_matches,
+        matches,
+        query=query,
+        query_class=query_class,
     )
     if facets and not path_matches and not exact_anchor_fast_path:
         anchor_facets = (
@@ -2070,7 +2082,16 @@ def retrieve_context(
             }
     changed_path_tests = changed_path_test_recommendations(graph, anchor_paths)
     if query_class == "affected_tests":
-        affected = affected_test_recommendations(graph, starts, nodes)
+        cover_all_direct_tests = any(
+            {"all", "direct", "tests"} <= set(terms)
+            for _label, terms in facets
+        )
+        affected = affected_test_recommendations(
+            graph,
+            starts,
+            nodes,
+            cover_all_direct_tests=cover_all_direct_tests,
+        )
         if changed_path_tests["commands"]:
             selected_entries = list(affected["command_provenance"])
             changed_entries = list(changed_path_tests["command_provenance"])
@@ -2135,6 +2156,24 @@ def retrieve_context(
             affected["changed_path_candidates"] = changed_path_tests["candidates"]
         metadata["affected_tests"] = affected
         metadata["hybrid_intents"] = ["multi_hop_path", "affected_tests"]
+    elif _TEST_EVIDENCE_QUERY.search(query):
+        compound_test_roots = tuple(
+            start
+            for start in starts
+            if start in graph.nodes
+            and graph.nodes[start].kind not in NON_STRUCTURAL_KINDS
+            and graph.nodes[start].kind
+            in {"function", "method", "class", "struct", "trait", "enum", "field"}
+            and not _is_test_node(graph.nodes[start])
+        )[:1]
+        if compound_test_roots:
+            affected = affected_test_recommendations(
+                graph,
+                compound_test_roots,
+                nodes,
+            )
+            metadata["affected_tests"] = affected
+            metadata["hybrid_intents"] = [query_class, "affected_tests"]
     elif changed_path_tests["commands"]:
         metadata["affected_tests"] = {
             "direct": [],
@@ -2501,6 +2540,32 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         query,
         flags=re.I,
     )
+    command_contract = re.compile(
+        r"\b(?:what\s+is\s+|and\s+)?(?:the\s+)?(?:smallest\s+)?"
+        r"(?:exact\s+)?cargo\s+command\s+that\s+runs?\s+"
+        r"(?:every|all)(?:\s+one)?\b",
+        re.I,
+    )
+    if command_contract.search(query):
+        terms = ("smallest", "exact", "command", "all", "direct", "tests")
+        facets.append(("smallest exact command covering all direct tests", terms))
+        seen.add(terms)
+        facet_query = command_contract.sub(" ", facet_query)
+    roadmap_paragraph = re.compile(
+        r"\b(?:the\s+)?roadmap(?:'s)?\s+paragraph(?:\s+that\s+documents?\s+"
+        r"(?:this|the)\s+api)?\b",
+        re.I,
+    )
+    if roadmap_paragraph.search(query):
+        qualified_doc_terms = tuple(dict.fromkeys(
+            term
+            for owner, member in _qualified_query_symbols(query)
+            for term in term_key(f"{owner} {member}").split()
+        ))
+        terms = ("roadmap", "paragraph", *qualified_doc_terms)
+        facets.append(("roadmap paragraph", terms))
+        seen.add(terms)
+        facet_query = roadmap_paragraph.sub(" ", facet_query)
     if re.search(r"\bbounded\s+input\s+contract\b", query, re.I):
         terms = ("bounded", "input", "contract")
         facets.append(("bounded input contract", terms))
@@ -2549,6 +2614,8 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "documentation", "documents", "document", "docs", "doc",
         "say", "says", "said", "under",
         "roadmap", "row", "now", "claim", "claims", "claimed",
+        "blast", "radius",
+        "api", "explain", "new",
         "capability", "capabilities", "remain", "remains",
         "affected", "affecting", "impact", "impacted",
         "call", "calls", "called", "caller", "callers", "calling",
@@ -2611,6 +2678,7 @@ def facet_search_queries(label: str, terms: tuple[str, ...]) -> tuple[str, ...]:
 def _facet_node_text(node: object) -> str:
     return term_key(" ".join((
         str(getattr(node, "label", "")),
+        str(getattr(node, "kind", "")),
         str(getattr(node, "path", "")),
         str(getattr(node, "summary", "")),
         " ".join(getattr(node, "facts", ()) or ()),
@@ -2726,6 +2794,15 @@ def _facet_structural_evidence(
         for term in terms
         for form in _facet_term_forms(term)
     }
+    if forms & {"result", "results", "return", "returns", "outcome"}:
+        return sorted({
+            edge.target
+            for edge in graph.edges
+            if edge.active
+            and edge.type == "returns"
+            and edge.source in nodes
+            and edge.target in nodes
+        })
     if forms & {"exercise", "exercises", "exercised"}:
         return sorted({
             edge.source
@@ -2779,6 +2856,21 @@ def reserve_facet_matches(
             for match in candidates
             if match.node.id not in seen and _facet_matches_node(match.node, terms)
         ]
+        if (
+            not eligible
+            and graph is not None
+            and set(terms) & {"result", "results", "return", "returns", "outcome"}
+        ):
+            returned_ids = {
+                edge.target
+                for edge in graph.edges
+                if edge.active and edge.type == "returns" and edge.source in seen
+            }
+            eligible = [
+                match
+                for match in candidates
+                if match.node.id in returned_ids and match.node.id not in seen
+            ]
         code_eligible = [match for match in eligible if is_code_like(match.node)]
         needs_distributed_code = prefer_code and not code_eligible
         if (not eligible or needs_distributed_code) and len(_facet_evidence_terms(terms)) >= 3:
@@ -2810,9 +2902,37 @@ def reserve_facet_matches(
                     break
             if covered >= needed:
                 continue
-        candidate = next(
-            iter(code_eligible if prefer_code else eligible),
-            eligible[0] if eligible else None,
+        pool = code_eligible if prefer_code and code_eligible else eligible
+        connected_ids: set[str] = set()
+        adjacency: dict[str, set[str]] = {}
+        if graph is not None and seen:
+            for edge in graph.edges:
+                if not edge.active or edge.type not in STRUCTURAL_RELATIONS:
+                    continue
+                adjacency.setdefault(edge.source, set()).add(edge.target)
+                adjacency.setdefault(edge.target, set()).add(edge.source)
+                if edge.source in seen:
+                    connected_ids.add(edge.target)
+                if edge.target in seen:
+                    connected_ids.add(edge.source)
+
+        def connection_rank(match: Match) -> int:
+            node_id = match.node.id
+            if node_id in connected_ids:
+                return 2
+            return int(any(
+                neighbor in connected_ids
+                for neighbor in adjacency.get(node_id, ())
+            ))
+
+        candidate = max(
+            pool,
+            key=lambda match: (
+                connection_rank(match),
+                match.score,
+                match.node.id,
+            ),
+            default=None,
         )
         if candidate is not None:
             reserved.append(candidate)
@@ -2853,6 +2973,12 @@ def _facet_term_forms(term: str) -> set[str]:
         "readiness": {"ready"},
         "reconciliation": {"reconcile", "reconciled"},
         "unproved": {"unproven", "prove", "proved", "proof"},
+        "export": {"exports", "exported", "public", "pub"},
+        "result": {"result", "results", "return", "returns", "outcome"},
+        "verification": {"verify", "verified", "verifies", "verification"},
+        "unsupported": {
+            "absent", "missing", "unsupported", "unimplemented",
+        },
     }
     forms.update(aliases.get(term, ()))
     if term.endswith("ies") and len(term) > 4:
@@ -2894,6 +3020,16 @@ def _facet_evidence_queries(terms: tuple[str, ...]) -> tuple[tuple[str, ...], ..
         queries.extend((("unsafe", "path"), ("parent", "traversal"), ("rejects", "parent", "traversal")))
     if term_set & {"running", "run"} and term_set & {"loaded", "load", "cases", "case"}:
         queries.extend((("load", "run"), ("loaded", "case"), ("loads", "cases")))
+    if term_set & {"abstain", "abstention"} and term_set & {"case", "cases"}:
+        queries.extend((
+            ("no", "solution"),
+            ("returns", "none"),
+            ("dominant", "degenerate"),
+        ))
+    if "unsupported" in term_set:
+        queries.extend((("remain", "absent"), ("absent",), ("missing",)))
+    if "self" in term_set and term_set & {"verification", "verified", "verify"}:
+        queries.extend((("verify",), ("verified",), ("verifies",)))
     return tuple(dict.fromkeys(queries))
 
 
@@ -3169,22 +3305,24 @@ def _bounded_input_contract_match(text: str, terms: tuple[str, ...]) -> bool:
         return False
     normalized = term_key(text)
     has_bound = bool(re.search(
-        r"\b(?:up to|at most|no more than|maximum(?: of)?)\s+\d+\b",
+        r"\b(?:up to|at most|no more than|maximum(?: of)?)\s+\d+\b"
+        r"|\b\d+\s*[x×✕]\s*\d+\b",
         normalized,
     ))
     has_input_shape = bool(re.search(
         r"\b(?:input|inputs|domain|domains|point|points|item|items|"
-        r"element|elements|length|size|arity)\b",
+        r"element|elements|length|size|arity|game|games|player|players|"
+        r"matrix|matrices)\b",
         normalized,
     ))
     return has_bound and has_input_shape
 
 
 _AFFECTED_OUTPUT_TERMS = {
-    "affected", "behavioral", "cargo", "case", "cases", "command", "commands",
-    "cover", "covered", "coverage", "covers", "direct", "exact", "exercise",
+    "affected", "all", "behavioral", "cargo", "case", "cases", "command", "commands",
+    "cover", "covered", "covering", "coverage", "covers", "direct", "exact", "exercise",
     "exercised", "exercises", "focused", "minimal", "return", "runnable", "run",
-    "running", "runs", "test", "tests", "transitive",
+    "running", "runs", "smallest", "test", "tests", "transitive",
 }
 
 
@@ -3202,6 +3340,7 @@ def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, 
     direct = [item for item in affected.get("direct", ()) if isinstance(item, dict)]
     transitive = [item for item in affected.get("transitive", ()) if isinstance(item, dict)]
     commands = [str(item) for item in affected.get("commands", ()) if item]
+    command_selection = affected.get("command_selection", {})
     fulfilled = list(coverage.get("fulfilled", ()))
     remaining: list[str] = []
     repaired: list[str] = []
@@ -3212,12 +3351,27 @@ def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, 
             remaining.append(label)
             continue
         evidence: list[str] = []
-        if "direct" in terms and direct:
+        requires_all_direct = bool(
+            {"all", "direct", "test"} <= terms
+            or {"all", "direct", "tests"} <= terms
+        )
+        selected_command_complete = bool(commands) and (
+            not requires_all_direct
+            or not isinstance(command_selection, dict)
+            or (
+                not command_selection.get("uncovered_roots", ())
+                and not command_selection.get("uncovered_direct_tests", ())
+            )
+        )
+        if (
+            terms & {"cargo", "command", "commands", "runnable", "run", "runs"}
+            and selected_command_complete
+        ):
+            evidence = [f"affected_tests.command:{command}" for command in commands[:5]]
+        elif "direct" in terms and direct:
             evidence = [f"affected_tests.direct:{item.get('id', '')}" for item in direct[:5]]
         elif "transitive" in terms and transitive:
             evidence = [f"affected_tests.transitive:{item.get('id', '')}" for item in transitive[:5]]
-        elif terms & {"cargo", "command", "commands", "runnable", "run", "runs"} and commands:
-            evidence = [f"affected_tests.command:{command}" for command in commands[:5]]
         elif terms & {"affected", "behavioral", "test", "tests"} and (direct or transitive):
             evidence = [
                 f"affected_tests.test:{item.get('id', '')}"
@@ -3242,7 +3396,13 @@ def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, 
     return tuple(repaired)
 
 
-def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selected_nodes: set[str]) -> dict[str, object]:
+def affected_test_recommendations(
+    graph: Graph,
+    starts: tuple[str, ...],
+    selected_nodes: set[str],
+    *,
+    cover_all_direct_tests: bool = False,
+) -> dict[str, object]:
     incoming: dict[str, list[Edge]] = {}
     for edge in graph.edges:
         if edge.active and edge.type in {"calls", "references", "tests"}:
@@ -3470,7 +3630,13 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         # A narrow command wins when it covers the whole remaining contract.
         # Otherwise, prefer the broader test scope after root coverage so one
         # valid test cannot hide additional direct cases.
-        scope_rank = test_count if len(covered) == len(uncovered) else -test_count
+        scope_rank = (
+            -test_count
+            if cover_all_direct_tests and len(covered) == len(uncovered)
+            else test_count
+            if len(covered) == len(uncovered)
+            else -test_count
+        )
         return -len(covered), scope_rank, index
 
     while remaining and uncovered and len(selected_command_provenance) < command_budget:
@@ -3513,6 +3679,13 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
     ]
     direct_ids = {str(item["id"]) for item in direct}
     transitive_ids = {str(item["id"]) for item in transitive}
+    selected_test_ids = {
+        str(test.get("id", ""))
+        for entry in selected_command_provenance
+        for test in entry.get("tests", [])
+        if test.get("id")
+    }
+    uncovered_direct_tests = direct_ids - selected_test_ids
 
     def selected_commands_covering(test_ids: set[str]) -> list[str]:
         return [
@@ -3534,7 +3707,11 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         },
         "command_provenance": selected_command_provenance,
         "command_selection": {
-            "algorithm": "greedy_root_cover_v2_module_verified",
+            "algorithm": (
+                "greedy_root_cover_v3_all_direct_tests"
+                if cover_all_direct_tests
+                else "greedy_root_cover_v3_narrow"
+            ),
             "candidate_count": len(candidate_command_provenance),
             "selected_count": len(selected_commands),
             "root_count": len(root_ids),
@@ -3542,6 +3719,8 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
             "uncovered_roots": sorted(uncovered),
             "structurally_uncovered_roots": sorted(structurally_uncovered),
             "execution_scope_covered_roots": sorted(execution_scope_covered),
+            "covered_direct_tests": sorted(direct_ids & selected_test_ids),
+            "uncovered_direct_tests": sorted(uncovered_direct_tests),
         },
         "omitted_direct": omitted_direct,
         "omitted_transitive": omitted_transitive,
@@ -3713,13 +3892,23 @@ def reconcile_semantic_retrieval_receipt(
             terms = set(term_key(label).split())
             if not terms or terms - _AFFECTED_OUTPUT_TERMS:
                 continue
+            selection = affected.get("command_selection", {})
+            requires_all_direct = bool(
+                {"all", "direct", "test"} <= terms
+                or {"all", "direct", "tests"} <= terms
+            )
+            command_contract_met = bool(commands) and (
+                not requires_all_direct
+                or not isinstance(selection, dict)
+                or not selection.get("uncovered_direct_tests", ())
+            )
             contradicted = (
-                ("direct" in terms and bool(affected.get("direct")))
-                or ("transitive" in terms and bool(affected.get("transitive")))
-                or (
+                (
                     bool(terms & {"cargo", "command", "commands", "runnable", "run", "runs"})
-                    and bool(commands)
+                    and command_contract_met
                 )
+                or ("direct" in terms and bool(affected.get("direct")))
+                or ("transitive" in terms and bool(affected.get("transitive")))
                 or (
                     bool(terms & {"affected", "behavioral", "test", "tests"})
                     and bool(recommended_ids)
@@ -4239,6 +4428,74 @@ def select_enumerated_doc_roots(
         if len(roots) >= limit:
             break
     return tuple(roots) or selected
+
+
+_TOPIC_LOCAL_ROADMAP_ROW = re.compile(
+    r"\bfrom\s+(?:the\s+)?(?P<topic>[A-Za-z0-9][A-Za-z0-9 &/+\-]{0,80}?)"
+    r"\s+(?:roadmap\s+)?row\b",
+    re.I,
+)
+
+
+def select_topic_local_doc_roots(
+    selected: tuple[Match, ...],
+    candidates: tuple[Match, ...],
+    *,
+    query: str,
+    query_class: str,
+) -> tuple[Match, ...]:
+    """Compile ``From the X roadmap row`` into one topic-local prose root.
+
+    A strict path is only a file boundary; it does not make sibling roadmap
+    rows interchangeable. Keep the best paragraph matching the named topic,
+    while preserving independently selected code roots for compound doc/code
+    requests.
+    """
+    if query_class != "doc_summary":
+        return selected
+    match = _TOPIC_LOCAL_ROADMAP_ROW.search(query)
+    if match is None:
+        return selected
+    topic_terms = tuple(plan_terms(match.group("topic")))
+    if not topic_terms:
+        return selected
+    topic_docs = [
+        candidate
+        for candidate in candidates
+        if candidate.node.kind in NON_STRUCTURAL_KINDS
+        and _facet_matches_node(candidate.node, topic_terms)
+    ]
+    if not topic_docs:
+        return selected
+    winner = max(
+        topic_docs,
+        key=lambda candidate: (
+            len(_facet_matched_terms(candidate.node, topic_terms)),
+            candidate.score,
+            candidate.node.id,
+        ),
+    )
+    code_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.node.kind not in NON_STRUCTURAL_KINDS
+        and candidate.node.id != winner.node.id
+    ]
+    code_roots = (
+        [max(
+            code_candidates,
+            key=lambda candidate: (
+                candidate.node.kind
+                in {"function", "method", "class", "struct", "trait", "enum"},
+                candidate.score,
+                candidate.node.id,
+            ),
+        )]
+        if code_candidates
+        else []
+    )
+    limit = max(2 if code_roots else 1, len(selected))
+    return tuple([winner, *code_roots][:limit])
 
 
 def _document_content_key(node: object) -> str:
