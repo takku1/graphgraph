@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..graph.core import Graph, Node
-from ..io import find_graph_path, load_any
+from ..io import find_graph_path, load_any_cached
 from .context import resolve_start_nodes
 
 # Kinds that never have a source-file location -- a label match against one
@@ -18,6 +18,7 @@ def render_source_snippets(
     graph_path: Path | None = None,
     context_lines: int = 4,
     max_lines: int = 40,
+    graph: Graph | None = None,
 ) -> str:
     """Render bounded source excerpts for selected graph nodes.
 
@@ -25,7 +26,8 @@ def render_source_snippets(
     and exact source is loaded only for nodes the caller selected.
     """
     resolved_graph_path = graph_path or find_graph_path()
-    graph = load_any(resolved_graph_path)
+    if graph is None:
+        graph = load_any_cached(resolved_graph_path)
     node_ids = resolve_start_nodes(graph, starts)
     if not node_ids:
         raise ValueError(f"No graph nodes matched the requested starts: {starts!r}")

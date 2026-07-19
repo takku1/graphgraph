@@ -327,10 +327,55 @@ def scope_freshness(
         "requested_scope_fresh": repository_fresh if not requested else not bool(stale & requested),
         "repository_fresh": repository_fresh,
         "requested_paths": sorted(requested),
+        "remaining_stale_count": len(stale),
+        "remaining_stale_paths": sorted(stale),
+        "remaining_stale_changed_paths": sorted(stale_changed),
+        "remaining_stale_deleted_paths": sorted(stale_deleted),
         "unrelated_changed_paths": sorted(path for path in stale_changed if path not in requested),
         "unrelated_deleted_paths": sorted(path for path in stale_deleted if path not in requested),
     })
     return enriched
+
+
+def refresh_receipt(
+    status: GraphBuildStatus,
+    *,
+    mode: str,
+    requested_changed_paths: tuple[str, ...] = (),
+    requested_deleted_paths: tuple[str, ...] = (),
+    attempted: bool = True,
+    milliseconds: float | None = None,
+) -> dict[str, object]:
+    """Encode refresh inputs, work, and graph writes as distinct receipt fields."""
+    requested_changed = list(dict.fromkeys(requested_changed_paths))
+    requested_deleted = list(dict.fromkeys(requested_deleted_paths))
+    refreshed = list(status.changed_paths) if attempted else []
+    removed = list(status.deleted_paths) if attempted else []
+    graph_write_performed = bool(attempted and status.built)
+    receipt: dict[str, object] = {
+        "mode": mode,
+        "requested_paths": list(dict.fromkeys((*requested_changed, *requested_deleted))),
+        "requested_changed_paths": requested_changed,
+        "requested_deleted_paths": requested_deleted,
+        "refreshed_paths": refreshed,
+        "removed_paths": removed,
+        "graph_mutations": {
+            "write_performed": graph_write_performed,
+            "repaired": bool(graph_write_performed and status.repaired),
+            "updated_paths": refreshed if graph_write_performed else [],
+            "removed_paths": removed if graph_write_performed else [],
+            "updated_path_count": len(refreshed) if graph_write_performed else 0,
+            "removed_path_count": len(removed) if graph_write_performed else 0,
+        },
+        # Compatibility aliases. These are paths processed by the refresh,
+        # not a post-refresh freshness result.
+        "changed_paths": refreshed,
+        "deleted_paths": removed,
+        "repaired": bool(graph_write_performed and status.repaired),
+    }
+    if milliseconds is not None:
+        receipt["milliseconds"] = milliseconds
+    return receipt
 
 
 def _worktree_sync_candidate(rel_path: str) -> bool:
@@ -876,12 +921,14 @@ def render_native_context(
     )
     workflow_metadata = {
         "workflow": {
-            "refresh": {
-                "mode": "git" if sync_git else ("explicit" if changed_paths or deleted_paths else "none"),
-                "changed_paths": list(status.changed_paths),
-                "deleted_paths": list(status.deleted_paths),
-                "milliseconds": refresh_ms,
-            },
+            "refresh": refresh_receipt(
+                status,
+                mode="git" if sync_git else ("explicit" if changed_paths or deleted_paths else "none"),
+                requested_changed_paths=changed_paths,
+                requested_deleted_paths=deleted_paths,
+                attempted=bool(changed_paths or deleted_paths or sync_git),
+                milliseconds=refresh_ms,
+            ),
             "graph_validation": {
                 "ok": bool(status.validation.ok) if status.validation else True,
                 "format": status.validation.format if status.validation else "existing_valid_graph",

@@ -30,6 +30,7 @@ from ..services.native import (
     build_project_status,
     graph_shape,
     inspect_saved_graph_freshness,
+    refresh_receipt,
     refresh_saved_graph,
     remove_paths_validated_graph,
     scan_validated_graph,
@@ -129,6 +130,10 @@ TOOLS = [
                 "scopes": {"type": "array", "items": {"type": "string"}, "description": "Optional scope/path prefixes to constrain retrieval."},
                 "scope_mode": {"type": "string", "enum": ["strict", "expand"], "description": "strict keeps all results in scope; expand permits structurally connected boundary crossings. Default: strict."},
                 "show_anchors": {"type": "boolean", "description": "Include ranked anchors before packet."},
+                "include_snippets": {"type": "boolean", "description": "Fuse bounded exact source windows for selected anchors into this response, avoiding a second source_snippets call. Default: false."},
+                "snippet_limit": {"type": "integer", "minimum": 0, "description": "Maximum selected anchors with fused source windows. Default: 3."},
+                "snippet_context_lines": {"type": "integer", "minimum": 0, "description": "Lines before/after each fused symbol. Default: 2."},
+                "snippet_max_lines": {"type": "integer", "minimum": 1, "description": "Maximum lines per fused source excerpt. Default: 24."},
                 "source_mode": {"type": "string", "enum": ["auto", "off", "all"], "description": "Auxiliary source planner mode. Default: auto."},
                 "memory_scopes": {"type": "array", "items": {"type": "string"}, "description": "Memory scopes eligible for query-time projection. Default: project and session."},
                 "changed_paths": {"type": "array", "items": {"type": "string"}, "description": "Optional edited/created files to re-extract before querying. Cost scales with supplied paths, not repository size."},
@@ -678,12 +683,12 @@ def build_query_context(args: dict[str, Any]) -> str:
         )
         if status.built:
             refreshed_graph = status.graph
-        refresh_metadata = {
-            "mode": "git" if sync_git else "explicit",
-            "changed_paths": list(status.changed_paths),
-            "deleted_paths": list(status.deleted_paths),
-            "repaired": status.repaired,
-        }
+        refresh_metadata = refresh_receipt(
+            status,
+            mode="git" if sync_git else "explicit",
+            requested_changed_paths=tuple(changed_paths),
+            requested_deleted_paths=tuple(deleted_paths),
+        )
         anchor_paths = tuple(dict.fromkeys((*changed_paths, *status.changed_paths)))
     else:
         anchor_paths = ()
@@ -721,6 +726,18 @@ def build_query_context(args: dict[str, Any]) -> str:
         source_mode=str(args.get("source_mode") or "auto"),
         memory_scopes=tuple(str(scope) for scope in args.get("memory_scopes") or ("project", "session")),
         anchor_paths=anchor_paths,
+        include_snippets=bool(args.get("include_snippets")),
+        snippet_limit=int(args["snippet_limit"]) if args.get("snippet_limit") is not None else 3,
+        snippet_context_lines=(
+            int(args["snippet_context_lines"])
+            if args.get("snippet_context_lines") is not None
+            else 2
+        ),
+        snippet_max_lines=(
+            int(args["snippet_max_lines"])
+            if args.get("snippet_max_lines") is not None
+            else 24
+        ),
     )
 
 

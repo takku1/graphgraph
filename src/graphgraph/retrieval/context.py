@@ -2483,6 +2483,12 @@ def reconcile_semantic_retrieval_receipt(
             *affected.get("direct", ()),
             *affected.get("transitive", ()),
         ]
+        commands = [str(item) for item in affected.get("commands", ())]
+        affected["evidence_status"] = (
+            "attributed"
+            if recommendations
+            else ("candidate_only" if commands else "no_evidence")
+        )
         if not recommendations:
             status = "incomplete"
             abstained = True
@@ -2535,6 +2541,11 @@ def reconcile_semantic_retrieval_receipt(
                 + ", ".join(missing)
             )
         commands = [str(item) for item in affected.get("commands", ())]
+        if commands and not recommended_ids:
+            errors.append(
+                "affected-test commands were emitted without attributed direct or "
+                "transitive test evidence"
+            )
         provenance_commands = {
             str(item.get("command"))
             for item in affected.get("command_provenance", ())
@@ -2579,6 +2590,11 @@ def reconcile_semantic_retrieval_receipt(
         "ok": not errors,
         "status": "semantic_pass" if not errors else "semantic_fail",
         "scope": "packet_receipt_consistency",
+        "evidence_status": (
+            affected.get("evidence_status")
+            if query_class == "affected_tests" and isinstance(affected, dict)
+            else "not_applicable"
+        ),
         "errors": errors,
     }
     return tuple(errors)

@@ -37,6 +37,14 @@ that a particular model will interpret every packet correctly.
 - Test-command trust: Cargo package/target discovery understands explicit test
   entries and aggregated `tests/<target>/main.rs` harnesses; recommendations
   report which selected symbols each test covers.
+- Semantic receipt trust: affected-test commands without attributed direct or
+  transitive test evidence now fail semantic validation and are labeled
+  `candidate_only`; packet validity can no longer mask that contradiction.
+- Refresh receipts separate requested paths, refreshed/removed paths, graph
+  writes, and post-refresh remaining stale paths across CLI and MCP.
+- Agent round-trip floor: `query_context` can optionally fuse bounded source
+  windows, and standalone `source_snippets` reuses the process-local graph
+  cache instead of reparsing the graph.
 
 ## P0: Accuracy Gates
 

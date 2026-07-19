@@ -2535,6 +2535,57 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertFalse(result.metadata["semantic_validation"]["ok"])
         self.assertIn("TEST", " ".join(errors))
 
+    def test_semantic_validation_rejects_candidate_commands_as_test_evidence(self) -> None:
+        from graphgraph.planning import QueryRoute
+        from graphgraph.retrieval import reconcile_retrieval_receipt
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "compile_formula", "function", "src/compiler.py"),
+                "CANDIDATE": Node(
+                    "CANDIDATE",
+                    "test_formula_cli",
+                    "function",
+                    "tests/test_formula_cli.py",
+                ),
+            },
+        )
+        result = retrieve_context(
+            graph,
+            "which tests cover compile_formula and what command runs them",
+            "affected_tests",
+            hops=2,
+        )
+        affected = result.metadata["affected_tests"]
+        affected["direct"] = []
+        affected["transitive"] = []
+        affected["commands"] = ["pytest -q tests/test_formula_cli.py"]
+        affected["command_provenance"] = [{
+            "command": "pytest -q tests/test_formula_cli.py",
+            "tests": [{"id": "CANDIDATE"}],
+        }]
+
+        errors = reconcile_retrieval_receipt(
+            graph,
+            result,
+            route=QueryRoute("affected_tests", 1.0, 1.0, ("explicit query class",)),
+            automatic_route=False,
+        )
+
+        self.assertIn(
+            "affected-test commands were emitted without attributed direct or "
+            "transitive test evidence",
+            errors,
+        )
+        self.assertEqual(affected["evidence_status"], "candidate_only")
+        self.assertEqual(
+            result.metadata["semantic_validation"]["evidence_status"],
+            "candidate_only",
+        )
+        self.assertFalse(result.metadata["semantic_validation"]["ok"])
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+
     def test_doc_summary_reserves_each_requested_heading_facet(self) -> None:
         graph = Graph(
             nodes={

@@ -309,6 +309,8 @@ graph contract is defined in
   decision rule, latency breakdown, and the score-gap confidence signal
 - `docs/architecture.md` — system architecture
 - `docs/llm-native-context-graph.md` / `docs/runtime-context-graph.md` — core design
+- `docs/semantic-locality-and-llm-efficiency.md` — corrected latent-space
+  framing and its translation into bounded LLM-native retrieval
 - `docs/incremental-update-instruction-set.md` — incremental update primitives, profiling, prior art
 - `docs/relation-ontology.md` — edge types and traversal weights
 - `docs/interpretation-layer.md` — algorithm/concept detection

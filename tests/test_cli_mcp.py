@@ -24,7 +24,13 @@ from graphgraph.packets import (
     render_gg_max,
 )
 from graphgraph.scanner import scan_directory
-from graphgraph.services.native import graph_shape, render_native_context, scope_freshness
+from graphgraph.services.native import (
+    GraphBuildStatus,
+    graph_shape,
+    refresh_receipt,
+    render_native_context,
+    scope_freshness,
+)
 from graphgraph.validate import validate_graph_json
 
 
@@ -43,7 +49,31 @@ class CliMcpTest(unittest.TestCase):
 
         self.assertTrue(freshness["requested_scope_fresh"])
         self.assertFalse(freshness["repository_fresh"])
+        self.assertEqual(freshness["remaining_stale_count"], 1)
+        self.assertEqual(freshness["remaining_stale_paths"], ["src/unrelated.py"])
         self.assertEqual(freshness["unrelated_changed_paths"], ["src/unrelated.py"])
+
+    def test_refresh_receipt_separates_request_work_and_graph_mutations(self) -> None:
+        status = GraphBuildStatus(
+            Path("graph.gg"),
+            sample_graph(),
+            built=True,
+            changed_paths=("src/a.py",),
+            deleted_paths=("src/old.py",),
+        )
+
+        receipt = refresh_receipt(
+            status,
+            mode="explicit",
+            requested_changed_paths=("src/a.py", "src/a.py"),
+            requested_deleted_paths=("src/old.py",),
+        )
+
+        self.assertEqual(receipt["requested_paths"], ["src/a.py", "src/old.py"])
+        self.assertEqual(receipt["refreshed_paths"], ["src/a.py"])
+        self.assertEqual(receipt["removed_paths"], ["src/old.py"])
+        self.assertEqual(receipt["graph_mutations"]["updated_path_count"], 1)
+        self.assertEqual(receipt["graph_mutations"]["removed_path_count"], 1)
 
     def test_cli_version_is_discoverable(self) -> None:
         proc = subprocess.run(
@@ -550,6 +580,85 @@ class CliMcpTest(unittest.TestCase):
             self.assertIn("AuthService", data["packet"])
             self.assertNotIn("N2: TokenStore", data["packet"])
 
+    def test_mcp_query_context_can_fuse_bounded_source_snippets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "src" / "auth.py"
+            source.parent.mkdir()
+            source.write_text(
+                "def login():\n"
+                "    token = 'ok'\n"
+                "    return token\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir()
+            save_graph(
+                Graph(nodes={
+                    "LOGIN": Node(
+                        "LOGIN",
+                        "login",
+                        "function",
+                        "src/auth.py",
+                        summary="L1",
+                    ),
+                }),
+                graph_path,
+            )
+
+            response = dispatch({
+                "jsonrpc": "2.0",
+                "id": 559,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_context",
+                    "arguments": {
+                        "query": "login",
+                        "query_class": "direct_lookup",
+                        "graph_path": str(graph_path),
+                        "include_snippets": True,
+                        "snippet_limit": 1,
+                        "snippet_context_lines": 1,
+                        "snippet_max_lines": 2,
+                    },
+                },
+            })
+
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertIn("1 | def login():", data["source_snippets"])
+            self.assertIn("2 |     token = 'ok'", data["source_snippets"])
+            self.assertNotIn("3 |", data["source_snippets"])
+
+            source.write_text(
+                "def login():\n"
+                "    token = 'fresh'\n"
+                "    return token\n",
+                encoding="utf-8",
+            )
+            second = dispatch({
+                "jsonrpc": "2.0",
+                "id": 558,
+                "method": "tools/call",
+                "params": {
+                    "name": "query_context",
+                    "arguments": {
+                        "query": "login",
+                        "query_class": "direct_lookup",
+                        "graph_path": str(graph_path),
+                        "show_anchors": True,
+                        "include_snippets": True,
+                        "snippet_limit": 1,
+                        "snippet_context_lines": 1,
+                        "snippet_max_lines": 2,
+                    },
+                },
+            })
+            assert second is not None
+            second_data = json.loads(second["result"]["content"][0]["text"])
+            self.assertIn("token = 'fresh'", second_data["source_snippets"])
+            self.assertNotIn("token = 'ok'", second_data["source_snippets"])
+
     def test_mcp_query_context_splices_changed_and_deleted_paths_before_query(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -602,6 +711,11 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(data["anchors"][0]["label"], "fused_fresh_handler")
             self.assertIn("fused_fresh_handler", data["packet"])
             self.assertTrue(data["actionable"]["freshness"]["requested_scope_fresh"])
+            self.assertEqual(data["refresh"]["requested_paths"], ["main.py", "removed.py"])
+            self.assertEqual(data["refresh"]["refreshed_paths"], ["main.py"])
+            self.assertEqual(data["refresh"]["removed_paths"], ["removed.py"])
+            self.assertTrue(data["refresh"]["graph_mutations"]["write_performed"])
+            self.assertEqual(data["actionable"]["freshness"]["remaining_stale_paths"], [])
 
             refreshed = load_any(graph_path)
             labels = {node.label for node in refreshed.nodes.values()}

@@ -624,6 +624,56 @@ The status surface now reports trusted-resolution precision separately from
 receiver-evidence coverage and identifies pre-v2 snapshots as legacy telemetry
 until a full symbol scan refreshes them.
 
+## Locus Round-Three Closure and Ripgrep Transfer Audit (2026-07-18)
+
+The round-three black-box report was re-audited against the current production
+paths. Four reported failures were already closed before this audit:
+
+- the live harness returns nonzero when required gates or query semantics fail
+  and reports expected/actual failure details;
+- repeatable custom queries replace the derived default query plan;
+- the harness calls the same production query service and automatic router as
+  CLI/MCP;
+- exact changed paths use local, conjunctive facet anchors, while affected-test
+  recommendations prioritize attributed symbols before file-level commands.
+
+Two live gaps remained and are now closed:
+
+- affected-test commands with no attributed direct/transitive recommendations
+  receive `evidence_status=candidate_only` and force `semantic_fail`;
+- refresh receipts now distinguish caller-requested paths, paths actually
+  refreshed or removed, graph-write facts, and post-refresh
+  `remaining_stale_paths`.
+
+The prior `changed_count=0` after a successful explicit refresh was a
+post-refresh fact, but the old receipt made it look like no work happened. The
+new state-transition fields retain the compatibility counters while removing
+that ambiguity.
+
+A bounded source study of ripgrep identified transferable staging principles:
+required-literal prefilters, full verification only around candidates,
+input-shape-specific read strategies, worker-state reuse, early termination,
+and explicit work bounds. These are translated into GraphGraph as exact
+symbol/path/facet activation, typed-edge verification, changed-path splices,
+process-local graph/index reuse, facet-complete stop conditions, and
+node/edge/source/token budgets.
+
+Two concrete changes survived measurement and correctness review:
+
+- standalone `source_snippets` now shares the process-local graph load cache;
+- MCP `query_context` can fuse bounded source windows with the topology packet,
+  eliminating a second tool call when raw code is required. Fused raw source
+  bypasses whole-response packet caching so file edits cannot return stale
+  lines.
+
+One plausible optimization was rejected. An experimental topology-free branch
+measured about 97.7 ms warm on the 5,026-node self-graph, versus about 93.6 ms
+for the existing path. This was not a controlled flat-file-search benchmark,
+and the small difference does not establish a causal topology speedup. The
+branch was removed because it demonstrated no advantage. The corrected
+semantic-locality model and its limits are documented in
+`semantic-locality-and-llm-efficiency.md`.
+
 ## What Is Still Unproven
 
 The remaining major proof is live model-answer scoring:

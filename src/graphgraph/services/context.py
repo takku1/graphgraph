@@ -289,6 +289,10 @@ def render_query_context(
     source_mode: str = "auto",
     memory_scopes: tuple[str, ...] = ("project", "session"),
     anchor_paths: tuple[str, ...] = (),
+    include_snippets: bool = False,
+    snippet_limit: int = 3,
+    snippet_context_lines: int = 2,
+    snippet_max_lines: int = 24,
 ) -> str:
     requested_query_class = query_class
     route = route_query(query, query_class)
@@ -313,16 +317,21 @@ def render_query_context(
             f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
             f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"
             f"{response_metadata}|{source_mode}|{memory_scopes}|{source_signature}|{_session_signature()}"
-            f"|{anchor_paths}"
+            f"|{anchor_paths}|{include_snippets}|{snippet_limit}|"
+            f"{snippet_context_lines}|{snippet_max_lines}"
         ),
     )
     # A caller-provided graph is the result of an in-process refresh. Query it
     # directly and bypass cache reads so the fused update/query operation can
     # neither re-parse the just-written graph nor return a pre-refresh packet.
     if graph is None:
-        cached_packet = cache.get(resolved_graph_path, cache_key)
-        if cached_packet:
-            return cached_packet
+        # Raw source windows must reflect the filesystem at call time. Do not
+        # serve a whole-response packet cache entry when snippets are fused;
+        # the graph itself still comes from the process-local load cache.
+        if not include_snippets:
+            cached_packet = cache.get(resolved_graph_path, cache_key)
+            if cached_packet:
+                return cached_packet
         graph = _load_graph_cached(resolved_graph_path)
     else:
         _remember_graph(resolved_graph_path, graph)
@@ -385,34 +394,49 @@ def render_query_context(
         else ""
     )
 
-    if json_anchors and show_anchors:
+    if json_anchors and (show_anchors or include_snippets):
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         payload = {
-                "actionable": _actionable_receipt(result, response_metadata),
-                "anchors": [
-                    {
-                        "id": match.node.id,
-                        "label": match.node.label,
-                        "kind": match.node.kind,
-                        "path": match.node.path,
-                        "line": match.node.line,
-                        "score": match.score,
-                        "reasons": list(match.reasons),
-                    }
-                    for match in result.matches[:limit]
-                ],
-                "query_class": query_class,
-                "routing": {
-                    "confidence": route.confidence,
-                    "margin": route.margin,
-                    "reasons": list(route.reasons),
-                    "version": route.router_version,
-                },
-                "retrieval": result.metadata,
-                "packet": graph_packet,
-            }
+            "actionable": _actionable_receipt(result, response_metadata),
+            "anchors": [
+                {
+                    "id": match.node.id,
+                    "label": match.node.label,
+                    "kind": match.node.kind,
+                    "path": match.node.path,
+                    "line": match.node.line,
+                    "score": match.score,
+                    "reasons": list(match.reasons),
+                }
+                for match in result.matches[:limit]
+            ],
+            "query_class": query_class,
+            "routing": {
+                "confidence": route.confidence,
+                "margin": route.margin,
+                "reasons": list(route.reasons),
+                "version": route.router_version,
+            },
+            "retrieval": result.metadata,
+            "packet": graph_packet,
+        }
         if partial_message:
             payload["message"] = partial_message
+        if include_snippets:
+            from .snippets import render_source_snippets
+
+            snippet_ids = list(result.starts[:max(0, snippet_limit)])
+            payload["source_snippets"] = (
+                render_source_snippets(
+                    starts=snippet_ids,
+                    graph_path=resolved_graph_path,
+                    context_lines=snippet_context_lines,
+                    max_lines=snippet_max_lines,
+                    graph=graph,
+                )
+                if snippet_ids
+                else ""
+            )
         if response_metadata:
             payload.update(response_metadata)
         response = json.dumps(payload, indent=2)
@@ -434,13 +458,14 @@ def render_query_context(
     else:
         response = f"{partial_message}\n\n{graph_packet}" if partial_message else graph_packet
 
-    cache.set(
-        resolved_graph_path,
-        cache_key,
-        response,
-        node_ids=result.nodes,
-        paths=_node_paths(graph, result.nodes),
-    )
+    if not include_snippets:
+        cache.set(
+            resolved_graph_path,
+            cache_key,
+            response,
+            node_ids=result.nodes,
+            paths=_node_paths(graph, result.nodes),
+        )
     return response
 
 
