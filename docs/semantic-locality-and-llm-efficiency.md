@@ -19,9 +19,9 @@ matrix multiplications, layers, or parameters.
 Let \(Q\) be the query, \(C\) the selected context, and \(Y\) the desired
 response. An ideal retriever would select context that reduces:
 
-\[
+$$
 H(Y \mid C,Q)
-\]
+$$
 
 GraphGraph cannot observe \(Y\) at retrieval time and does not measure this
 conditional entropy directly. Exact entity resolution, typed paths, requested
@@ -33,9 +33,9 @@ answer.
 
 The standard attention operation is:
 
-\[
+$$
 \operatorname{softmax}\left(\frac{QK^\mathsf{T}}{\sqrt{d_k}}\right)V
-\]
+$$
 
 Adding tokens adds candidates to the normalization, but it does not
 mechanically guarantee that attention to relevant evidence is diluted. Learned
@@ -81,13 +81,13 @@ query ambiguity, graph density, or observed evidence.
 
 A useful design objective for packet \(P\) is:
 
-\[
+$$
 \max_{P \subseteq G}
   \operatorname{coverage}(P,Q)
   + \operatorname{typedSupport}(P,Q)
   - \lambda_t\operatorname{tokens}(P)
   - \lambda_x\operatorname{unsupportedCrossings}(P)
-\]
+$$
 
 GraphGraph does not optimize this as one learned function or estimate mutual
 information. The production implementation realizes pieces of the objective

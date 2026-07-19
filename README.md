@@ -311,6 +311,8 @@ graph contract is defined in
 - `docs/llm-native-context-graph.md` / `docs/runtime-context-graph.md` — core design
 - `docs/semantic-locality-and-llm-efficiency.md` — corrected latent-space
   framing and its translation into bounded LLM-native retrieval
+- `docs/semantic-locality-llm-efficiency-paper.md` — research-scoped position
+  paper, evidence boundary, and falsifiable evaluation plan
 - `docs/incremental-update-instruction-set.md` — incremental update primitives, profiling, prior art
 - `docs/relation-ontology.md` — edge types and traversal weights
 - `docs/interpretation-layer.md` — algorithm/concept detection
