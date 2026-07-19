@@ -74,6 +74,10 @@ _ORDERED_DOC_QUERY = re.compile(
     re.I,
 )
 _ENUMERATED_DOC_QUERY = re.compile(r"\b(stage|stages|phase|phases|step|steps|sequence)\b", re.I)
+_FLOW_ORIENTATION_QUERY = re.compile(
+    r"\b(flow|flows|path|pipeline|call chain|data flow|control flow)\b",
+    re.I,
+)
 
 
 def _reverse_lookup_relations(query: str) -> set[str]:
@@ -1274,6 +1278,11 @@ def retrieve_context(
         raise ValueError(f"unknown scope mode: {scope_mode}")
     query = sanitize_query(query)
     identifiers = explicit_query_identifiers(query)
+    qualified_matches = (
+        qualified_symbol_anchor_matches(graph, query, scopes=scopes)
+        if query_class == "direct_lookup" and not anchor_paths
+        else ()
+    )
     facet_aware = query_class in {"affected_tests", "multi_hop_path", "negative_query", "doc_summary"} or (
         query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers)
     )
@@ -1287,6 +1296,8 @@ def retrieve_context(
         facets,
     )
     exact_matches = (
+        qualified_matches
+        or
         search_nodes(
             graph,
             identifiers[0] if query_class == "reverse_lookup" and len(identifiers) == 1 else anchor_query,
@@ -1438,6 +1449,12 @@ def retrieve_context(
         # roots; ordinary lexical matches may still enter through structural
         # expansion, but cannot become competing roots.
         selected_matches = path_matches[:effective_anchor_limit]
+    selected_matches = select_enumerated_doc_roots(
+        selected_matches,
+        matches,
+        query=query,
+        query_class=query_class,
+    )
     if query_class == "negative_query" and facets:
         selected_ids = {match.node.id for match in selected_matches}
         anchor_coverage = facet_coverage(
@@ -1537,6 +1554,25 @@ def retrieve_context(
             )
         if query_class == "affected_tests":
             nodes, edges = reserve_affected_test_evidence(graph, nodes, edges, starts, plan)
+    if (
+        query_class == "direct_lookup"
+        and exact_anchor_fast_path
+        and set(plan_terms(query)) & {"call", "calls", "called", "calling"}
+    ):
+        # An exact `Type::method` call question is a direct adjacency read.
+        # Containment and documentation expansion can only add siblings/noise;
+        # derive the slice from the graph's outgoing call table regardless of
+        # a generously supplied node budget.
+        start_set = set(starts)
+        edges = [
+            edge
+            for edge in graph.edges
+            if edge.active
+            and edge.source in start_set
+            and edge.type == "calls"
+            and edge.confidence * provenance_confidence(edge.provenance) >= plan.min_confidence
+        ]
+        nodes = set(starts) | {edge.target for edge in edges}
     if query_class in STRUCTURAL_QUERY_CLASSES:
         nodes, edges = prune_unexplained_structural_nodes(nodes, edges, starts)
     if inferred_scope:
@@ -1684,6 +1720,52 @@ def retrieve_context(
             ),
         }
     return RetrievalResult(starts=starts, matches=selected_matches, nodes=nodes, edges=edges, metadata=metadata)
+
+
+def qualified_symbol_anchor_matches(
+    graph: Graph,
+    query: str,
+    *,
+    scopes: tuple[str, ...] = (),
+) -> tuple[Match, ...]:
+    """Resolve one explicit ``Type::member`` to its owner-qualified definition."""
+    qualified = _qualified_query_symbols(query)
+    if len(qualified) != 1:
+        return ()
+    owner, member = qualified[0]
+    owner_terms = set(term_key(owner).split())
+    candidates = search_nodes(
+        graph,
+        member,
+        limit=24,
+        scopes=scopes,
+        exact_fast_path=False,
+    )
+    matched: list[Match] = []
+    for candidate in candidates:
+        node = candidate.node
+        if term_key(node.label) != term_key(member):
+            continue
+        context_terms = set(term_key(" ".join((
+            node.id,
+            node.summary,
+            graph.nodes[node.parent].label
+            if node.parent and node.parent in graph.nodes
+            else "",
+        ))).split())
+        if owner_terms and owner_terms <= context_terms:
+            matched.append(Match(
+                node,
+                candidate.score + 25.0,
+                tuple(dict.fromkeys((
+                    "exact_fast_path",
+                    "qualified_owner_exact",
+                    *candidate.reasons,
+                ))),
+            ))
+    if len(matched) != 1:
+        return ()
+    return (matched[0],)
 
 
 def _path_in_scopes(path: str, scopes: tuple[str, ...]) -> bool:
@@ -2585,7 +2667,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
     direct_commands = commands_for(direct)
     transitive_commands = commands_for(transitive)
     all_items = [*direct, *transitive]
-    command_provenance = [
+    candidate_command_provenance = [
         {
             "command": command,
             "tests": [
@@ -2605,15 +2687,69 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         }
         for command in dict.fromkeys((*direct_commands, *transitive_commands))
     ]
+    root_ids = set(starts)
+    uncovered = set(root_ids)
+    command_budget = max(1, math.ceil(math.log2(len(root_ids) + 1)))
+    selected_command_provenance: list[dict[str, object]] = []
+    remaining = list(candidate_command_provenance)
+    while remaining and uncovered and len(selected_command_provenance) < command_budget:
+        ranked = sorted(
+            enumerate(remaining),
+            key=lambda pair: (
+                -len(
+                    {
+                        str(path.get("root", {}).get("id", ""))
+                        for test in pair[1].get("tests", [])
+                        for path in test.get("root_paths", [])
+                    }
+                    & uncovered
+                ),
+                pair[0],
+            ),
+        )
+        index, winner = ranked[0]
+        covered = {
+            str(path.get("root", {}).get("id", ""))
+            for test in winner.get("tests", [])
+            for path in test.get("root_paths", [])
+        } & uncovered
+        if not covered:
+            break
+        selected_command_provenance.append(winner)
+        uncovered -= covered
+        remaining.pop(index)
+    if not selected_command_provenance and candidate_command_provenance:
+        selected_command_provenance.append(candidate_command_provenance[0])
+        uncovered -= {
+            str(path.get("root", {}).get("id", ""))
+            for test in candidate_command_provenance[0].get("tests", [])
+            for path in test.get("root_paths", [])
+        }
+    selected_commands = [
+        str(entry["command"])
+        for entry in selected_command_provenance
+    ]
     return {
         "direct": direct,
         "transitive": transitive,
-        "commands": list(dict.fromkeys((*direct_commands, *transitive_commands))),
+        "commands": selected_commands,
         "commands_by_role": {
-            "direct_behavior_or_contract": direct_commands,
-            "transitive_regression": transitive_commands,
+            "direct_behavior_or_contract": [
+                command for command in selected_commands if command in direct_commands
+            ],
+            "transitive_regression": [
+                command for command in selected_commands if command in transitive_commands
+            ],
         },
-        "command_provenance": command_provenance,
+        "command_provenance": selected_command_provenance,
+        "command_selection": {
+            "algorithm": "greedy_root_cover_v1",
+            "candidate_count": len(candidate_command_provenance),
+            "selected_count": len(selected_commands),
+            "root_count": len(root_ids),
+            "covered_roots": sorted(root_ids - uncovered),
+            "uncovered_roots": sorted(uncovered),
+        },
         "omitted_direct": omitted_direct,
         "omitted_transitive": omitted_transitive,
     }
@@ -3121,6 +3257,24 @@ def select_anchor_matches(
                 return tuple(reserved)
         if reserved:
             matches = tuple(reserved + [match for match in matches if match.node.id not in seen_reserved])
+    if query_class == "subsystem_summary" and _FLOW_ORIENTATION_QUERY.search(query):
+        # Compile architecture-flow prose to executable/type roots. A prose
+        # paragraph or test name can repeat the whole question verbatim, but
+        # production symbols are the nodes whose typed edges prove the flow.
+        production_kinds = {
+            "function", "method", "class", "struct", "trait", "enum",
+            "python", "rust", "javascript", "typescript", "go", "java",
+            "c", "cpp", "csharp", "ruby", "php", "kotlin", "scala", "swift",
+        }
+        production = [
+            match
+            for match in matches
+            if match.node.kind in production_kinds
+            and match.node.kind not in NON_STRUCTURAL_KINDS
+            and not _is_test_node(match.node)
+        ]
+        if production:
+            return tuple(production[:anchor_limit])
     if doc_intent:
         doc_matches = [match for match in matches if match.node.kind in NON_STRUCTURAL_KINDS]
         if doc_matches:
@@ -3237,6 +3391,59 @@ def select_anchor_matches(
         if len(selected) >= anchor_limit:
             break
     return tuple(selected)
+
+
+def select_enumerated_doc_roots(
+    selected: tuple[Match, ...],
+    candidates: tuple[Match, ...],
+    *,
+    query: str,
+    query_class: str,
+) -> tuple[Match, ...]:
+    """Compile list-shaped document questions to one document root per path.
+
+    Paragraphs repeat the query vocabulary and can consume every anchor slot.
+    An enumeration is lower-level as ``document -> ordered section siblings``:
+    root the document once, then let ``reserve_ordered_doc_siblings`` spend the
+    node budget on the requested stages/phases/steps.
+    """
+    if (
+        query_class != "doc_summary"
+        or not _ORDERED_DOC_QUERY.search(query)
+        or not _ENUMERATED_DOC_QUERY.search(query)
+    ):
+        return selected
+
+    limit = max(1, len(selected))
+    document_kinds = {"file", "markdown", "rst", "html", "text"}
+    roots: list[Match] = []
+    seen_paths: set[str] = set()
+    for match in candidates:
+        path = match.node.path.replace("\\", "/").strip("/")
+        if (
+            not path
+            or path in seen_paths
+            or match.node.kind not in document_kinds
+        ):
+            continue
+        roots.append(match)
+        seen_paths.add(path)
+        if len(roots) >= limit:
+            return tuple(roots)
+    if roots:
+        return tuple(roots)
+
+    # Graphs produced by external frontends may have sections but no file node.
+    # Keep one strongest section/paragraph root per document path.
+    for match in selected:
+        path = match.node.path.replace("\\", "/").strip("/")
+        if not path or path in seen_paths:
+            continue
+        roots.append(match)
+        seen_paths.add(path)
+        if len(roots) >= limit:
+            break
+    return tuple(roots) or selected
 
 
 def _document_content_key(node: object) -> str:

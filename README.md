@@ -271,6 +271,9 @@ $env:GEMINI_API_KEY="your-gemini-key"
 python benchmarks\context_graph\run_all.py    # full benchmark suite
 graphgraph eval --graph .graphgraph/graph.gg --tasks benchmarks/context_graph/data/locus_tasks.json --max-nodes 40
 graphgraph platform benchmark --config multi-repo-acceptance.json  # enforced multi-repo gates
+graphgraph platform acceptance --repo ../locus                     # sealed black-box release floor
+graphgraph platform quality                                       # token/recall/precision regression gate
+# Set GG_ACCEPT_EXEC=1 to prove recommended commands select real tests.
 python -m pytest                              # unit tests
 ```
 

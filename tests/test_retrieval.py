@@ -3201,3 +3201,110 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual(affected["omitted_direct"], 2)
         self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
         self.assertTrue(result.metadata["answerability"]["abstained"])
+
+    def test_qualified_direct_lookup_uses_one_owner_exact_anchor_at_large_budget(self) -> None:
+        graph = Graph(
+            nodes={
+                "TRAIT": Node(
+                    "TRAIT",
+                    "parse_to_ir",
+                    "method",
+                    "crates/core/src/pipeline.rs",
+                    summary="L10 fn parse_to_ir [Pipeline::parse_to_ir]",
+                ),
+                "IMPL": Node(
+                    "IMPL",
+                    "parse_to_ir",
+                    "method",
+                    "crates/pipeline/src/lib.rs",
+                    summary="L20 fn parse_to_ir [DiscoveryPipeline_for_LocusEngine::parse_to_ir]",
+                ),
+                "PARSE": Node("PARSE", "parse", "function", "crates/frontends/src/formula.rs"),
+                "LIFT": Node("LIFT", "lift_expr", "function", "crates/engine/src/lift.rs"),
+                "DOC": Node(
+                    "DOC",
+                    "binary-evidence-roadmap",
+                    "paragraph",
+                    "docs/roadmap/binary-evidence-roadmap.md",
+                ),
+                "SIBLING": Node(
+                    "SIBLING",
+                    "schedule_candidates",
+                    "method",
+                    "crates/pipeline/src/lib.rs",
+                ),
+            },
+            edges=[
+                Edge("IMPL", "PARSE", "calls", confidence=0.96, provenance="tree_sitter_path_resolved"),
+                Edge("IMPL", "LIFT", "calls", confidence=0.96, provenance="tree_sitter_path_resolved"),
+                Edge("IMPL", "SIBLING", "contains"),
+                Edge("DOC", "IMPL", "references"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "What does LocusEngine::parse_to_ir call?",
+            "direct_lookup",
+            hops=1,
+            anchor_limit=12,
+            max_nodes=42,
+        )
+
+        self.assertEqual(result.starts, ("IMPL",))
+        self.assertEqual(result.metadata["anchor_strategy"], "exact_fast_path")
+        self.assertTrue({"IMPL", "PARSE", "LIFT"} <= result.nodes)
+        self.assertNotIn("TRAIT", result.nodes)
+        self.assertNotIn("DOC", result.nodes)
+        self.assertNotIn("SIBLING", result.nodes)
+
+    def test_flow_summary_roots_production_symbols_above_prose_and_tests(self) -> None:
+        query = (
+            "How does expression parsing flow from frontends "
+            "into the engine expression representation?"
+        )
+        graph = Graph(
+            nodes={
+                "AUDIT": Node(
+                    "AUDIT",
+                    query,
+                    "paragraph",
+                    "docs/audit.md",
+                    facts=(query,),
+                ),
+                "TEST": Node(
+                    "TEST",
+                    "test_expression_parsing_flow_from_frontends_into_engine",
+                    "function",
+                    "tests/test_parse.py",
+                    summary=query,
+                ),
+                "PARSE": Node(
+                    "PARSE",
+                    "parse_expr",
+                    "function",
+                    "frontends/parse.py",
+                    summary="production frontend expression parser",
+                ),
+                "EXPR": Node("EXPR", "Expr", "class", "engine/expr.py"),
+                "LIFT": Node("LIFT", "lift", "function", "engine/expr.py"),
+            },
+            edges=[
+                Edge("TEST", "PARSE", "calls"),
+                Edge("PARSE", "EXPR", "calls"),
+                Edge("PARSE", "LIFT", "calls"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            query,
+            "subsystem_summary",
+            hops=1,
+            max_nodes=40,
+        )
+
+        self.assertEqual(result.starts[0], "PARSE")
+        self.assertNotIn("AUDIT", result.starts)
+        self.assertNotIn("TEST", result.starts)
+        self.assertTrue({"PARSE", "EXPR", "LIFT"} <= result.nodes)

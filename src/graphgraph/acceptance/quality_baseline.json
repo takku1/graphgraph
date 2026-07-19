@@ -1,0 +1,42 @@
+{
+  "direct_callee": {
+    "density": 2.2222,
+    "nodes": 2,
+    "precision": 1.0,
+    "present": 1,
+    "query": "direct_callee",
+    "recall": 1.0,
+    "required": 1,
+    "tokens": 45
+  },
+  "doc_stages": {
+    "density": 4.7059,
+    "nodes": 11,
+    "precision": null,
+    "present": 8,
+    "query": "doc_stages",
+    "recall": 1.0,
+    "required": 8,
+    "tokens": 170
+  },
+  "flow_scope": {
+    "density": 1.9481,
+    "nodes": 8,
+    "precision": 0.75,
+    "present": 3,
+    "query": "flow_scope",
+    "recall": 1.0,
+    "required": 3,
+    "tokens": 154
+  },
+  "reverse_callers": {
+    "density": 2.6667,
+    "nodes": 4,
+    "precision": 0.75,
+    "present": 2,
+    "query": "reverse_callers",
+    "recall": 1.0,
+    "required": 2,
+    "tokens": 75
+  }
+}

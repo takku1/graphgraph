@@ -425,6 +425,16 @@ def search_nodes(
             score *= 0.5 + coverage
             if node.kind == "community":
                 score *= 0.65
+            if document_node:
+                # A lexical prose paragraph can repeat every word in a
+                # code-flow question while proving none of the flow. Convert
+                # document intent into a continuous prior: docs retain full
+                # rank for explicit doc queries and become supporting evidence
+                # (rather than primary anchors) as doc intent approaches zero.
+                doc_prior = min(1.0, 0.20 + 0.80 * (doc_intensity / 0.25))
+                if doc_prior < 1.0:
+                    score *= doc_prior
+                    reasons.append("document_intent_prior")
             if _is_test_node(node) and not test_query:
                 reasons.append("test_context_penalty")
             if _is_generated_node(node) and not generated_query:

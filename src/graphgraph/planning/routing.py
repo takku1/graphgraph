@@ -1,9 +1,52 @@
+"""Automatic query-class routing as an additive log-linear intent classifier.
+
+Model
+-----
+Each query class starts from a prior, accrues weight from every lexical intent
+signal that fires, and receives a few context-dependent adjustments. The winner
+is the highest-scoring class, ties broken by a fixed precedence prior. When no
+class is decisive the router abstains to a broad fallback. Confidence is a convex
+blend of normalized evidence strength and margin separation.
+
+    score(c)   = prior(c) + Σ signal_weight(c) + Σ context_adjustment(c)
+    winner     = argmax_c (score(c), precedence(c))
+    margin     = score(winner) − score(runner_up)
+    confidence = w_e · clamp01(score/EVIDENCE_SCALE)
+               + w_s · clamp01(margin/SEPARATION_SCALE)
+
+The weights and scales are hand-set priors. Replacing the confidence blend with a
+calibrated multinomial-logit (softmax) posterior is deferred to the evaluation
+loop (`graphgraph.acceptance.quality`), because it shifts the abstention
+boundary and must be measured, not guessed.
+"""
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
 from .budgets import explicit_query_identifiers, plan_terms
+
+ROUTER_VERSION = "query_router_v3_calibrated_recovery"
+
+# Broad class used both as the default prior and the low-evidence fallback.
+BROAD_FALLBACK = "subsystem_summary"
+BROAD_FALLBACK_PRIOR = 0.75
+
+# Repeated wording should compound but never dominate the score.
+REPEAT_SIGNAL_WEIGHT = 2.0
+MAX_COMPOUNDED_REPEATS = 2
+
+# Abstention boundary: keep the broad fallback unless the winner is decisive.
+DECISIVE_SCORE = 5.0
+MIN_WINNING_SCORE = 2.0
+MIN_DECISIVE_MARGIN = 0.75
+
+# Confidence blend: convex combination of normalized evidence and separation.
+EVIDENCE_WEIGHT = 0.65
+SEPARATION_WEIGHT = 0.35
+EVIDENCE_SCALE = 6.0  # score at which evidence strength saturates to 1.0
+SEPARATION_SCALE = 4.0  # margin at which separation saturates to 1.0
 
 
 @dataclass(frozen=True)
@@ -12,9 +55,10 @@ class QueryRoute:
     confidence: float
     margin: float
     reasons: tuple[str, ...]
-    router_version: str = "query_router_v3_calibrated_recovery"
+    router_version: str = ROUTER_VERSION
 
 
+# Primary lexical signals: (query_class, weight, reason, pattern).
 _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
     ("affected_tests", 7.0, "affected-test intent", re.compile(
         r"\b(affected tests?|which tests? (?:are affected|cover|exercise|should run|to run)|"
@@ -53,11 +97,25 @@ _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
     )),
 )
 
-_TRACE_RE = re.compile(r"\btrace\b")
-_MISSING_RE = re.compile(r"^\s*(?:is\s+)?(?:there\s+)?(?:a\s+)?missing\b|\bdoes .{0,80}\bexist\b")
+# Unconditional context signals, applied identically to the primary signals but
+# without the repeat-compounding bonus.
+_CONTEXT_SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
+    ("multi_hop_path", 3.0, "trace intent", re.compile(r"\btrace\b")),
+    ("negative_query", 5.0, "existence probe",
+     re.compile(r"^\s*(?:is\s+)?(?:there\s+)?(?:a\s+)?missing\b|\bdoes .{0,80}\bexist\b")),
+    ("reverse_lookup", 8.0, "consumer/test usage intent",
+     re.compile(r"\bwhich tests? (?:uses?|consumes?|calls?|verifies?)\b")),
+)
+
+# Identifier-conditioned adjustments (weights applied only when the identifier
+# precondition also holds).
 _GENERIC_LOOKUP_RE = re.compile(r"\b(what is|where|show|find|locate)\b")
 _RELATION_BETWEEN_RE = re.compile(r"\b(depends? on|dependency between|connects? to|relationship between)\b")
-_CONSUMER_RE = re.compile(r"\bwhich tests? (?:uses?|consumes?|calls?|verifies?)\b")
+MULTI_SYMBOL_DEPENDENCY_WEIGHT = 5.5
+FOCUSED_IDENTIFIER_WEIGHT = 3.0
+FOCUSED_IDENTIFIER_MAX_TERMS = 2
+
+# Tie-break priors: higher wins when two classes share a score.
 _PRECEDENCE = {
     "affected_tests": 9,
     "negative_query": 8,
@@ -71,6 +129,17 @@ _PRECEDENCE = {
 }
 
 
+def _clamp01(value: float) -> float:
+    return min(1.0, max(0.0, value))
+
+
+def _route_confidence(top_score: float, margin: float) -> float:
+    """Convex blend of normalized evidence strength and margin separation."""
+    evidence = _clamp01(top_score / EVIDENCE_SCALE)
+    separation = _clamp01(margin / SEPARATION_SCALE)
+    return EVIDENCE_WEIGHT * evidence + SEPARATION_WEIGHT * separation
+
+
 def route_query(query: str, requested_class: str | None = "auto") -> QueryRoute:
     """Resolve an explicit or automatic query class with no I/O."""
     requested = (requested_class or "auto").strip().lower()
@@ -80,48 +149,42 @@ def route_query(query: str, requested_class: str | None = "auto") -> QueryRoute:
     normalized = " ".join((query or "").lower().split())
     scores = {name: 0.0 for name in _PRECEDENCE}
     reasons: dict[str, list[str]] = {name: [] for name in _PRECEDENCE}
-    scores["subsystem_summary"] = 0.75
-    reasons["subsystem_summary"].append("safe broad fallback")
+    scores[BROAD_FALLBACK] = BROAD_FALLBACK_PRIOR
+    reasons[BROAD_FALLBACK].append("safe broad fallback")
 
     for query_class, weight, reason, pattern in _SIGNALS:
         matches = tuple(pattern.finditer(normalized))
         if matches:
-            # Independent cues should compound, but cap the bonus so repeated
-            # wording cannot dominate the router.
-            scores[query_class] += weight + min(2, len(matches) - 1) * 2.0
+            repeats = min(MAX_COMPOUNDED_REPEATS, len(matches) - 1)
+            scores[query_class] += weight + repeats * REPEAT_SIGNAL_WEIGHT
             reasons[query_class].append(reason)
 
-    if _TRACE_RE.search(normalized):
-        scores["multi_hop_path"] += 3.0
-        reasons["multi_hop_path"].append("trace intent")
-    if _MISSING_RE.search(normalized):
-        scores["negative_query"] += 5.0
-        reasons["negative_query"].append("existence probe")
-    if _CONSUMER_RE.search(normalized):
-        scores["reverse_lookup"] += 8.0
-        reasons["reverse_lookup"].append("consumer/test usage intent")
+    for query_class, weight, reason, pattern in _CONTEXT_SIGNALS:
+        if pattern.search(normalized):
+            scores[query_class] += weight
+            reasons[query_class].append(reason)
 
     identifiers = explicit_query_identifiers(query)
     terms = plan_terms(query)
     if len(identifiers) >= 2 and _RELATION_BETWEEN_RE.search(normalized):
-        scores["multi_hop_path"] += 5.5
+        scores["multi_hop_path"] += MULTI_SYMBOL_DEPENDENCY_WEIGHT
         reasons["multi_hop_path"].append("explicit multi-symbol dependency intent")
-    if identifiers and (_GENERIC_LOOKUP_RE.search(normalized) or len(terms) <= 2):
-        scores["direct_lookup"] += 3.0
+    if identifiers and (_GENERIC_LOOKUP_RE.search(normalized) or len(terms) <= FOCUSED_IDENTIFIER_MAX_TERMS):
+        scores["direct_lookup"] += FOCUSED_IDENTIFIER_WEIGHT
         reasons["direct_lookup"].append("focused code identifier")
 
     ordered = sorted(scores, key=lambda name: (scores[name], _PRECEDENCE[name]), reverse=True)
     winner, runner_up = ordered[:2]
     top_score = scores[winner]
     margin = top_score - scores[runner_up]
-    if top_score < 2.0 or (top_score < 5.0 and margin < 0.75):
-        winner = "subsystem_summary"
+
+    indecisive = top_score < MIN_WINNING_SCORE or (top_score < DECISIVE_SCORE and margin < MIN_DECISIVE_MARGIN)
+    if indecisive:
+        winner = BROAD_FALLBACK
         top_score = scores[winner]
         other_best = max(score for name, score in scores.items() if name != winner)
         margin = max(0.0, top_score - other_best)
         reasons[winner].append("ambiguous intent kept broad")
 
-    evidence_strength = min(1.0, max(0.0, top_score) / 6.0)
-    separation = min(1.0, max(0.0, margin) / 4.0)
-    confidence = 0.65 * evidence_strength + 0.35 * separation
+    confidence = _route_confidence(top_score, margin)
     return QueryRoute(winner, confidence, margin, tuple(dict.fromkeys(reasons[winner])))

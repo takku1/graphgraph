@@ -148,6 +148,24 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
     benchmark.add_argument("--output")
     benchmark.add_argument("--no-enforce", action="store_true")
 
+    acceptance = actions.add_parser(
+        "acceptance",
+        help="Run the sealed black-box GraphGraph acceptance board.",
+    )
+    acceptance.add_argument("--repo", default=".", help="target repository root")
+    acceptance.add_argument("--graph", help="graph path (default: <repo>/.graphgraph/graph.gg)")
+    acceptance.add_argument("--case", action="append", default=[], help="run only this canonical case ID")
+    acceptance.add_argument("--json", dest="as_json", action="store_true", help="emit JSON instead of Markdown")
+    acceptance.add_argument("--output", help="also write the report to this path")
+
+    quality = actions.add_parser(
+        "quality",
+        help="Check token/recall/precision metrics against the hermetic baseline.",
+    )
+    quality.add_argument("--baseline", help="quality baseline JSON (default: packaged baseline)")
+    quality.add_argument("--json", dest="as_json", action="store_true", help="emit JSON")
+    quality.add_argument("--no-enforce", action="store_true", help="report regressions without exiting nonzero")
+
     serve = actions.add_parser("serve", help="Run the shared local HTTP API and operational console.")
     serve.add_argument("--graph")
     serve.add_argument("--host", default="127.0.0.1")
@@ -330,6 +348,48 @@ def cmd_platform(args: argparse.Namespace) -> None:
             Path(args.output).write_text(text + "\n", encoding="utf-8")
         print(text)
         if not args.no_enforce and not report["ok"]:
+            raise SystemExit(1)
+        return
+    if action == "acceptance":
+        from ..acceptance.service import execute_acceptance
+
+        execution = execute_acceptance(
+            repo=Path(args.repo),
+            graph_path=Path(args.graph) if args.graph else None,
+            case_ids=tuple(args.case),
+            as_json=args.as_json,
+            output=Path(args.output) if args.output else None,
+        )
+        print(execution.report)
+        if execution.exit_code:
+            raise SystemExit(execution.exit_code)
+        return
+    if action == "quality":
+        from ..acceptance.quality import (
+            BASELINE_PATH,
+            compare,
+            format_report,
+            load_baseline,
+            run_quality,
+            to_json,
+        )
+
+        report = run_quality()
+        baseline_path = Path(args.baseline) if args.baseline else BASELINE_PATH
+        regressions = compare(report, load_baseline(baseline_path))
+        if args.as_json:
+            print(json.dumps({
+                "baseline": str(baseline_path),
+                "ok": not regressions,
+                "metrics": to_json(report),
+                "regressions": [asdict(item) for item in regressions],
+            }, indent=2))
+        else:
+            print(format_report(report))
+            print("\nno quality regression" if not regressions else "\nquality regressions:")
+            for item in regressions:
+                print(f"  {item.query}: {item.reason} {item.baseline} -> {item.current}")
+        if regressions and not args.no_enforce:
             raise SystemExit(1)
         return
     if action == "serve":
