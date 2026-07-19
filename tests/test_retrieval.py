@@ -3636,3 +3636,386 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertNotIn("AUDIT", result.starts)
         self.assertNotIn("TEST", result.starts)
         self.assertTrue({"PARSE", "EXPR", "LIFT"} <= result.nodes)
+
+    def test_broad_absent_capability_query_prioritizes_literal_roadmap_row(self) -> None:
+        graph = Graph(
+            nodes={
+                "ABSENT": Node(
+                    "ABSENT",
+                    "Finite Automata Learning",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=(
+                        "*   `[ ]` **Finite Automata Learning:** No bounded learner is implemented.",
+                    ),
+                    summary="L61",
+                ),
+                "GENERAL": Node(
+                    "GENERAL",
+                    "Implementation roadmap and likely tests",
+                    "paragraph",
+                    "docs/architecture/overview.md",
+                    facts=(
+                        "This capability roadmap describes bounded implementation areas and tests.",
+                    ),
+                    summary="L4",
+                ),
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            (
+                "From the roadmap documentation, identify one capability that is "
+                "currently marked absent, is small enough for a bounded implementation, "
+                "and report the documented gap plus likely implementation area and tests."
+            ),
+            "doc_summary",
+            hops=1,
+        )
+
+        self.assertEqual(result.starts[0], "ABSENT")
+        self.assertIn("literal_document_status", result.matches[0].reasons)
+        self.assertIn("[ ]", result.matches[0].node.facts[0])
+
+    def test_absent_capability_query_rejects_checkbox_legend_as_evidence(self) -> None:
+        graph = Graph(
+            nodes={
+                "LEGEND": Node(
+                    "LEGEND",
+                    "`[ ]` absent or not reliable enough to claim",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=("- `[ ]` absent or not reliable enough to claim.",),
+                ),
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "From the roadmap, identify one capability currently marked absent.",
+            "doc_summary",
+            hops=1,
+        )
+
+        status = result.metadata["document_status_evidence"]
+        self.assertEqual(status["capability_rows"], 0)
+        self.assertIn("no literal absent capability rows", status["warning"])
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertEqual(
+            result.metadata["answerability"]["reason"],
+            status["warning"],
+        )
+
+    def test_query_facets_compile_contract_and_covered_cases_canonically(self) -> None:
+        from graphgraph.retrieval.context import facet_coverage, query_facets
+
+        contract_facets = query_facets(
+            "What bounded input contract does it have?"
+        )
+        case_facets = query_facets(
+            "Which tests exercise finite_vc_dimension and shatters, "
+            "and what cases do they cover?"
+        )
+        self.assertIn(
+            ("bounded input contract", ("bounded", "input", "contract")),
+            contract_facets,
+        )
+        self.assertNotIn("bounded input contract have", {
+            label for label, _terms in contract_facets
+        })
+        self.assertIn(("covered cases", ("covered", "cases")), case_facets)
+        self.assertNotIn("cases they", {label for label, _terms in case_facets})
+
+        graph = Graph(
+            nodes={
+                "ROW": Node(
+                    "ROW",
+                    "Statistical Learning Theory",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=("Exact finite classes are supported up to 20 domain points.",),
+                )
+            },
+        )
+        coverage = facet_coverage(
+            graph,
+            {"ROW"},
+            (("bounded input contract", ("bounded", "input", "contract")),),
+        )
+        self.assertEqual(coverage["unfulfilled"], [])
+
+    def test_blast_radius_preserves_explicit_changed_markdown_root(self) -> None:
+        graph = Graph(
+            nodes={
+                "CODE": Node(
+                    "CODE",
+                    "finite_vc_dimension",
+                    "function",
+                    "crates/locus-engine/src/learning_theory.rs",
+                ),
+                "LIB": Node(
+                    "LIB",
+                    "lib.rs",
+                    "rust",
+                    "crates/locus-engine/src/lib.rs",
+                ),
+                "DOC": Node(
+                    "DOC",
+                    "gap-analysis.md",
+                    "markdown",
+                    "docs/roadmap/gap-analysis.md",
+                ),
+                "UNRELATED": Node(
+                    "UNRELATED",
+                    "Herbie FFI",
+                    "paragraph",
+                    "docs/integrations/herbie.md",
+                    facts=("Foreign function notes.",),
+                ),
+            },
+            edges=[Edge("LIB", "CODE", "contains")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "What code, tests, and documentation are affected?",
+            "blast_radius",
+            hops=2,
+            anchor_paths=(
+                "crates/locus-engine/src/learning_theory.rs",
+                "crates/locus-engine/src/lib.rs",
+                "docs/roadmap/gap-analysis.md",
+            ),
+        )
+
+        self.assertIn("DOC", result.starts)
+        self.assertIn("DOC", result.nodes)
+        self.assertNotIn("UNRELATED", result.starts)
+        doc_receipt = next(
+            item
+            for item in result.metadata["anchor_paths"]
+            if item["path"] == "docs/roadmap/gap-analysis.md"
+        )
+        self.assertEqual(doc_receipt["role"], "primary_root")
+        self.assertEqual(doc_receipt["anchors"], ["DOC"])
+
+    def test_affected_anchor_query_compiles_exact_symbols_without_runs_noise(self) -> None:
+        from graphgraph.retrieval.context import structural_anchor_query
+
+        compiled = structural_anchor_query(
+            (
+                "Which tests directly exercise finite_vc_dimension and shatters, "
+                "what cases do they cover, and what exact Cargo command runs them?"
+            ),
+            "affected_tests",
+        )
+
+        self.assertEqual(compiled, "finite_vc_dimension shatters")
+        self.assertNotIn("runs", compiled)
+
+    def test_affected_tests_broadens_inline_command_to_cover_all_direct_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-engine"
+            source = crate / "src" / "learning_theory.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-engine"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "src" / "lib.rs").write_text(
+                "mod learning_theory;\n",
+                encoding="utf-8",
+            )
+            source.write_text(
+                "fn finite_vc_dimension() {}\n"
+                "fn shatters() {}\n"
+                "#[cfg(test)] mod tests {\n"
+                "  #[test] fn complete_class() { finite_vc_dimension(); }\n"
+                "  #[test] fn subset_contract() { shatters(); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            graph = Graph(
+                nodes={
+                    "VC": Node(
+                        "VC",
+                        "finite_vc_dimension",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                    ),
+                    "SHATTERS": Node(
+                        "SHATTERS",
+                        "shatters",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                    ),
+                    "SHATTERED_POINTS": Node(
+                        "SHATTERED_POINTS",
+                        "shattered_points",
+                        "field",
+                        "crates/locus-engine/src/learning_theory.rs",
+                    ),
+                    "TEST_VC": Node(
+                        "TEST_VC",
+                        "complete_class",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                    "TEST_SUBSET": Node(
+                        "TEST_SUBSET",
+                        "subset_contract",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                },
+                edges=[
+                    Edge("TEST_VC", "VC", "calls"),
+                    # Deliberately omit the real shatters edge to model partial
+                    # call extraction. The bounded source check below must
+                    # still prove that the module command exercises it.
+                    Edge("TEST_SUBSET", "VC", "calls"),
+                ],
+            )
+            result = retrieve_context(
+                graph,
+                (
+                    "Which tests directly exercise finite_vc_dimension and shatters, "
+                    "what cases do they cover, and what exact Cargo command runs them?"
+                ),
+                "affected_tests",
+                hops=2,
+            )
+            path_result = retrieve_context(
+                graph,
+                (
+                    "Which tests directly exercise finite_vc_dimension and shatters, "
+                    "what cases do they cover, and what exact Cargo command runs them?"
+                ),
+                "affected_tests",
+                hops=2,
+                anchor_paths=("crates/locus-engine/src/learning_theory.rs",),
+            )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual(result.starts, ("VC", "SHATTERS"))
+        self.assertEqual(path_result.starts, ("VC", "SHATTERS"))
+        self.assertEqual(
+            affected["commands"],
+            ["cargo test -p locus-engine learning_theory::tests --lib"],
+        )
+        self.assertEqual(affected["command_selection"]["uncovered_roots"], [])
+        self.assertEqual(
+            affected["command_selection"]["structurally_uncovered_roots"],
+            ["SHATTERS"],
+        )
+        self.assertEqual(
+            affected["command_selection"]["execution_scope_covered_roots"],
+            ["SHATTERS"],
+        )
+        self.assertEqual(
+            affected["command_provenance"][0]["selection_scope"],
+            "inline_test_module",
+        )
+
+    def test_changed_path_module_command_supersedes_redundant_exact_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-engine"
+            source = crate / "src" / "learning_theory.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-engine"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "src" / "lib.rs").write_text("mod learning_theory;\n", encoding="utf-8")
+            source.write_text(
+                "fn finite_vc_dimension() {}\n"
+                "fn shatters() {}\n"
+                "#[cfg(test)] mod tests {\n"
+                "  #[test] fn both_contracts() { finite_vc_dimension(); shatters(); }\n"
+                "  #[test] fn malformed_contract() { finite_vc_dimension(); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            graph = Graph(
+                nodes={
+                    "VC": Node(
+                        "VC",
+                        "finite_vc_dimension",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                    ),
+                    "SHATTERS": Node(
+                        "SHATTERS",
+                        "shatters",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                    ),
+                    "TEST": Node(
+                        "TEST",
+                        "both_contracts",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                    "TEST_MALFORMED": Node(
+                        "TEST_MALFORMED",
+                        "malformed_contract",
+                        "function",
+                        "crates/locus-engine/src/learning_theory.rs",
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                },
+                edges=[
+                    Edge("TEST", "VC", "calls"),
+                    Edge("TEST", "SHATTERS", "calls"),
+                    Edge("TEST_MALFORMED", "VC", "calls"),
+                ],
+            )
+            result = retrieve_context(
+                graph,
+                "Which tests cover finite_vc_dimension and shatters?",
+                "affected_tests",
+                hops=2,
+                anchor_paths=("crates/locus-engine/src/learning_theory.rs",),
+            )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual(
+            affected["commands"],
+            ["cargo test -p locus-engine learning_theory::tests --lib"],
+        )
+        self.assertEqual(
+            affected["command_selection"]["superseded_commands"],
+            ["cargo test -p locus-engine both_contracts --lib"],
+        )
+
+    def test_zero_concept_links_are_declared_unavailable_with_threshold(self) -> None:
+        graph = Graph(
+            nodes={"A": Node("A", "Architecture", "paragraph", "docs/architecture.md", facts=("Architecture.",))},
+            metadata={
+                "source_concepts_eligible": "100",
+                "source_concepts_linked_nodes": "0",
+                "source_concepts_scope": "full_graph_snapshot",
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "Summarize the architecture documentation",
+            "doc_summary",
+            hops=1,
+        )
+
+        semantic = result.metadata["quality"]["semantic_support"]
+        self.assertEqual(semantic["status"], "unavailable")
+        self.assertFalse(semantic["supported"])
+        self.assertEqual(semantic["minimum_supported_coverage_ratio"], 0.2)
+        self.assertIn("no exact registry-alias links", semantic["diagnostic_reason"])
+        self.assertEqual(semantic["retrieval_mode"], "lexical_document_fallback")

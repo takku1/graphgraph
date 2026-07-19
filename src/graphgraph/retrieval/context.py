@@ -11,6 +11,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
+from ..concepts import concept_link_health
 from ..concepts.doccode import doc_code_bias, is_code_like
 from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph
@@ -47,7 +48,9 @@ def sanitize_query(query: str) -> str:
 
 _AFFECTED_ANCHOR_INTENT = re.compile(
     r"\b(?:if|affected|affecting|impact|impacted|changes?|changed|changing|"
-    r"which|what|tests?|test|should|run|cover|covers|exercise|validate|validates|directly)\b",
+    r"which|what|tests?|should|runs?|running|cover|covers|covered|exercise|"
+    r"validate|validates|directly|cases?|do|does|they|them|their|exact|cargo|"
+    r"commands?)\b",
     re.I,
 )
 
@@ -57,7 +60,7 @@ def structural_anchor_query(query: str, query_class: str) -> str:
     if query_class != "affected_tests":
         return query
     cleaned = _AFFECTED_ANCHOR_INTENT.sub(" ", query)
-    return " ".join(cleaned.split()) or query
+    return " ".join(plan_terms(cleaned)) or query
 
 
 STRUCTURAL_QUERY_CLASSES = {"blast_radius", "multi_hop_path", "reverse_lookup", "affected_tests"}
@@ -1102,6 +1105,10 @@ def preferred_path_anchor_matches(
     file_node_kinds = {
         "python", "rust", "javascript", "typescript", "go", "java", "c", "cpp",
         "csharp", "ruby", "php", "kotlin", "scala", "swift",
+        # Exact changed paths are I/O roots, including documentation. A blast
+        # request must not discard an explicitly changed Markdown file merely
+        # because structural traversal normally deprioritizes prose nodes.
+        "file", "markdown", "rst", "html", "text",
     }
     per_path: list[list[Match]] = []
     for normalized in normalized_paths:
@@ -1181,6 +1188,7 @@ def preferred_path_anchor_matches(
                 winner = max(
                     local_matches,
                     key=lambda match: (
+                        term_key(match.node.label) == term_key(label),
                         match.score,
                         degree.get(match.node.id, 0),
                         match.node.id,
@@ -1260,6 +1268,96 @@ def preferred_path_anchor_matches(
         if len(preferred) >= 12:
             break
     return tuple(preferred)
+
+
+_DOCUMENT_STATUS_MARKER = re.compile(
+    r"^\s*(?:[-+*]\s*)?`?\[\s*([xX~]?)\s*\]`?",
+)
+_ABSENT_DOCUMENT_INTENT = re.compile(
+    r"\b(?:marked|currently|explicitly)\s+absent\b|"
+    r"\b(?:unimplemented|not\s+implemented|missing\s+capabilit(?:y|ies))\b",
+    re.I,
+)
+_PARTIAL_DOCUMENT_INTENT = re.compile(
+    r"\b(?:marked|currently|explicitly)\s+partial\b|"
+    r"\bpartially\s+implemented\b",
+    re.I,
+)
+
+
+def _requested_document_statuses(query: str) -> set[str]:
+    wanted: set[str] = set()
+    if _ABSENT_DOCUMENT_INTENT.search(query):
+        wanted.add("")
+    if _PARTIAL_DOCUMENT_INTENT.search(query):
+        wanted.add("~")
+    return wanted
+
+
+def document_status_anchor_matches(
+    graph: Graph,
+    query: str,
+    *,
+    scopes: tuple[str, ...] = (),
+) -> tuple[Match, ...]:
+    """Compile roadmap status language to literal checkbox-row anchors."""
+    wanted = _requested_document_statuses(query)
+    if not wanted:
+        return ()
+
+    query_terms = set(plan_terms(query))
+    roadmap_intent = "roadmap" in query_terms
+    capability_intent = bool(query_terms & {"capability", "capabilities"})
+    ranked: list[tuple[tuple[float, int, int, str], Match]] = []
+    for node in graph.nodes.values():
+        if (
+            not node.active
+            or node.kind != "paragraph"
+            or not node.facts
+            or (scopes and not _path_in_scopes(node.path, scopes))
+        ):
+            continue
+        body = " ".join(str(fact) for fact in node.facts)
+        normalized_path = node.path.replace("\\", "/").casefold()
+        if roadmap_intent and "/roadmap/" not in f"/{normalized_path}/":
+            continue
+        marker = _DOCUMENT_STATUS_MARKER.search(body)
+        status = marker.group(1).casefold() if marker else None
+        if status not in wanted:
+            continue
+        if capability_intent and not re.search(
+            r"\*\*[^*]+(?::\*\*|\*\*\s*:)",
+            body,
+        ):
+            # Legend rows such as "`[ ]` absent" describe the marker rather
+            # than naming an absent capability.
+            continue
+        path_terms = set(plan_terms(node.path))
+        body_terms = set(plan_terms(f"{node.label} {body}"))
+        overlap = len(query_terms & (path_terms | body_terms)) / max(1, len(query_terms))
+        roadmap_path = int("roadmap" in path_terms)
+        # The status marker is the hard gate. These continuous tie-breakers
+        # choose the most query-local literal row without repository-specific
+        # labels or score constants.
+        score = 1.0 + overlap + roadmap_path
+        match = Match(
+            node,
+            score,
+            (
+                "literal_document_status",
+                "document_status:absent" if status == "" else "document_status:partial",
+            ),
+        )
+        ranked.append((
+            (
+                -score,
+                0 if roadmap_intent and roadmap_path else 1,
+                node.line or 10**9,
+                node.id,
+            ),
+            match,
+        ))
+    return tuple(match for _rank, match in sorted(ranked)[:12])
 
 
 def retrieve_context(
@@ -1347,6 +1445,32 @@ def retrieve_context(
             exact_fast_path=query_class == "direct_lookup",
         )
     )
+    token_symbol_matches = (
+        exact_token_symbol_anchor_matches(
+            graph,
+            anchor_query,
+            scopes=scopes,
+        )
+        if query_class == "affected_tests" and not path_matches
+        else ()
+    )
+    if token_symbol_matches:
+        token_symbol_ids = {match.node.id for match in token_symbol_matches}
+        matches = (*token_symbol_matches, *(
+            match for match in matches if match.node.id not in token_symbol_ids
+        ))
+    status_matches: tuple[Match, ...] = ()
+    if query_class == "doc_summary":
+        status_matches = document_status_anchor_matches(
+            graph,
+            query,
+            scopes=scopes,
+        )
+        if status_matches and not path_matches:
+            status_ids = {match.node.id for match in status_matches}
+            matches = (*status_matches, *(
+                match for match in matches if match.node.id not in status_ids
+            ))
     source_matches = tuple(
         Match(
             graph.nodes[node_id],
@@ -1428,6 +1552,11 @@ def retrieve_context(
             effective_anchor_limit,
             min(12, len(source_matches) + plan.anchor_limit),
         )
+    if token_symbol_matches:
+        effective_anchor_limit = max(
+            effective_anchor_limit,
+            min(12, len(token_symbol_matches)),
+        )
     if path_matches:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(path_matches)))
     if facets and not path_matches and not exact_anchor_fast_path:
@@ -1442,10 +1571,18 @@ def retrieve_context(
         dominant_scope=inferred_scope,
     )
     if facets and not path_matches and not exact_anchor_fast_path:
+        anchor_facets = (
+            tuple(
+                facet for facet in facets
+                if not _affected_output_contract_facet(facet[1])
+            )
+            if query_class == "affected_tests"
+            else facets
+        )
         selected_matches = reserve_facet_matches(
             selected_matches,
             matches,
-            facets,
+            anchor_facets,
             graph=graph,
             prefer_code=query_class == "multi_hop_path",
         )
@@ -1628,6 +1765,9 @@ def retrieve_context(
                 "role": (
                     "test_evidence_candidate"
                     if query_class == "affected_tests" and _is_test_path(path)
+                    else "primary_root"
+                    if Path(path).suffix.casefold()
+                    in {".md", ".mdx", ".rst", ".txt", ".html", ".htm"}
                     else "file_fallback"
                     if any(
                         match.node.path.replace("\\", "/").strip("/")
@@ -1688,6 +1828,33 @@ def retrieve_context(
             "abstained": True,
             "reason": document_warning,
         }
+    requested_statuses = _requested_document_statuses(query)
+    if query_class == "doc_summary" and requested_statuses:
+        status_labels = [
+            "absent" if status == "" else "partial"
+            for status in sorted(requested_statuses)
+        ]
+        status_warning = (
+            ""
+            if status_matches
+            else (
+                "no literal "
+                + "/".join(status_labels)
+                + " capability rows were found in the requested roadmap documents"
+            )
+        )
+        metadata["document_status_evidence"] = {
+            "requested": status_labels,
+            "capability_rows": len(status_matches),
+            "evidence": [match.node.id for match in status_matches],
+            "warning": status_warning,
+        }
+        if status_warning:
+            metadata["answerability"] = {
+                "status": "incomplete",
+                "abstained": True,
+                "reason": status_warning,
+            }
     if query_class == "reverse_lookup":
         truncation = reverse_lookup_truncation(
             graph,
@@ -1712,15 +1879,66 @@ def retrieve_context(
     if query_class == "affected_tests":
         affected = affected_test_recommendations(graph, starts, nodes)
         if changed_path_tests["commands"]:
-            affected["commands"] = list(dict.fromkeys((
-                *affected["commands"],
-                *changed_path_tests["commands"],
-            )))
-            affected["commands_by_role"]["changed_path_regression"] = changed_path_tests["commands"]
-            affected["command_provenance"] = [
-                *affected["command_provenance"],
-                *changed_path_tests["command_provenance"],
+            selected_entries = list(affected["command_provenance"])
+            changed_entries = list(changed_path_tests["command_provenance"])
+
+            def entry_test_ids(entry: dict[str, object]) -> set[str]:
+                return {
+                    str(test.get("id", ""))
+                    for test in entry.get("tests", [])
+                    if test.get("id")
+                }
+
+            superseded = {
+                str(selected["command"])
+                for selected in selected_entries
+                if any(
+                    str(selected["command"]) != str(changed["command"])
+                    and entry_test_ids(selected)
+                    and entry_test_ids(selected) <= entry_test_ids(changed)
+                    and len(entry_test_ids(changed)) > len(entry_test_ids(selected))
+                    for changed in changed_entries
+                )
+            }
+            kept_selected = [
+                entry
+                for entry in selected_entries
+                if str(entry["command"]) not in superseded
             ]
+            kept_changed = [
+                changed
+                for changed in changed_entries
+                if not any(
+                    str(selected["command"]) != str(changed["command"])
+                    and entry_test_ids(selected) == entry_test_ids(changed)
+                    and entry_test_ids(changed)
+                    for selected in kept_selected
+                )
+            ]
+            merged_entries = [*kept_selected, *kept_changed]
+            affected["commands"] = list(dict.fromkeys(
+                str(entry["command"])
+                for entry in merged_entries
+            ))
+            affected["commands_by_role"]["changed_path_regression"] = [
+                str(entry["command"])
+                for entry in kept_changed
+            ]
+            direct_ids = {str(item["id"]) for item in affected["direct"]}
+            transitive_ids = {str(item["id"]) for item in affected["transitive"]}
+            affected["commands_by_role"]["direct_behavior_or_contract"] = list(dict.fromkeys(
+                str(entry["command"])
+                for entry in merged_entries
+                if entry_test_ids(entry) & direct_ids
+            ))
+            affected["commands_by_role"]["transitive_regression"] = list(dict.fromkeys(
+                str(entry["command"])
+                for entry in merged_entries
+                if entry_test_ids(entry) & transitive_ids
+            ))
+            affected["command_provenance"] = merged_entries
+            affected["command_selection"]["selected_count"] = len(affected["commands"])
+            affected["command_selection"]["superseded_commands"] = sorted(superseded)
             affected["changed_path_candidates"] = changed_path_tests["candidates"]
         metadata["affected_tests"] = affected
         metadata["hybrid_intents"] = ["multi_hop_path", "affected_tests"]
@@ -1802,6 +2020,38 @@ def qualified_symbol_anchor_matches(
     return (matched[0],)
 
 
+def exact_token_symbol_anchor_matches(
+    graph: Graph,
+    query: str,
+    *,
+    scopes: tuple[str, ...] = (),
+) -> tuple[Match, ...]:
+    """Resolve unique exact symbol-table labels before inflectional ranking."""
+    terms = set(plan_terms(query))
+    if not terms:
+        return ()
+    by_label: dict[str, list[object]] = {}
+    for node in graph.nodes.values():
+        label = node.label.casefold()
+        if (
+            node.active
+            and label in terms
+            and node.kind not in NON_STRUCTURAL_KINDS
+            and not _is_test_node(node)
+            and (not scopes or _path_in_scopes(node.path, scopes))
+        ):
+            by_label.setdefault(label, []).append(node)
+    return tuple(
+        Match(
+            candidates[0],
+            64.0,
+            (f"label_exact:{label}", "exact_query_symbol"),
+        )
+        for label in plan_terms(query)
+        if len(candidates := by_label.get(label, ())) == 1
+    )
+
+
 def _path_in_scopes(path: str, scopes: tuple[str, ...]) -> bool:
     normalized = path.replace("\\", "/").strip("/")
     return any(
@@ -1878,26 +2128,17 @@ def packet_quality_metadata(
     )
     concept_eligible = int(graph.metadata.get("source_concepts_eligible", "0") or 0)
     concept_linked = int(graph.metadata.get("source_concepts_linked_nodes", "0") or 0)
-    concept_coverage = concept_linked / max(1, concept_eligible)
+    concept_health = concept_link_health(concept_eligible, concept_linked)
     semantic_support = {
-        "status": (
-            "unavailable"
-            if concept_eligible == 0
-            else "sparse"
-            if concept_coverage < 0.2
-            else "partial"
-            if concept_coverage < 0.8
-            else "strong"
-        ),
+        **concept_health,
         "linked_nodes": concept_linked,
         "eligible_nodes": concept_eligible,
-        "coverage_ratio": round(concept_coverage, 4),
         "scope": graph.metadata.get("source_concepts_scope", "unavailable"),
         "retrieval_mode": (
             "lexical_document_fallback"
-            if query_class == "doc_summary" and concept_coverage < 0.2
+            if query_class == "doc_summary" and not concept_health["supported"]
             else "lexical_structural_fallback"
-            if query_class == "subsystem_summary" and concept_coverage < 0.2
+            if query_class == "subsystem_summary" and not concept_health["supported"]
             else "graph_supported"
         ),
     }
@@ -2067,6 +2308,19 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         query,
         flags=re.I,
     )
+    if re.search(r"\bbounded\s+input\s+contract\b", query, re.I):
+        terms = ("bounded", "input", "contract")
+        facets.append(("bounded input contract", terms))
+        seen.add(terms)
+    covered_cases = re.compile(
+        r"\bwhat\s+cases?\s+(?:do|does)\s+(?:they|it|these|those)\s+cover\b",
+        re.I,
+    )
+    if covered_cases.search(query):
+        terms = ("covered", "cases")
+        facets.append(("covered cases", terms))
+        seen.add(terms)
+        facet_query = covered_cases.sub(" ", facet_query)
     qualified = _qualified_query_symbols(query)
     qualified_owners = {owner.casefold() for owner, _member in qualified}
     raw_identifiers = {
@@ -2118,7 +2372,8 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "behavioral", "focus", "focused", "minimal", "runnable", "return", "returns",
         "own", "step", "steps", "according", "md",
         "then",
-        "it", "its", "them", "their", "these", "those",
+        "it", "its", "they", "them", "their", "these", "those",
+        "have", "has", "had",
         "cargo",
         "where", "what", "why", "who", "when", "is", "are", "was", "were",
         "the", "a", "an", "from", "into", "flow", "flows",
@@ -2188,11 +2443,21 @@ def facet_coverage(
     fulfilled: list[dict[str, object]] = []
     unfulfilled: list[str] = []
     for label, terms in facets:
-        evidence = [
-            node_id for node_id in sorted(nodes)
-            if _facet_matches_node(graph.nodes[node_id], terms)
-        ]
-        if not evidence:
+        structural_first = _affected_output_contract_facet(terms)
+        evidence = (
+            _facet_structural_evidence(
+                graph,
+                nodes,
+                terms,
+                roots=roots,
+            )
+            if structural_first
+            else [
+                node_id for node_id in sorted(nodes)
+                if _facet_matches_node(graph.nodes[node_id], terms)
+            ]
+        )
+        if not evidence and not structural_first:
             evidence = _facet_structural_evidence(
                 graph,
                 nodes,
@@ -2269,6 +2534,15 @@ def _facet_structural_evidence(
         for form in _facet_term_forms(term)
     }
     if forms & {"exercise", "exercises", "exercised"}:
+        return sorted({
+            edge.source
+            for edge in relation_edges
+            if _is_test_node(graph.nodes[edge.source])
+        })
+    if (
+        forms & {"case", "cases"}
+        and forms & {"cover", "covers", "covered", "coverage"}
+    ):
         return sorted({
             edge.source
             for edge in relation_edges
@@ -2431,6 +2705,8 @@ def _facet_evidence_queries(terms: tuple[str, ...]) -> tuple[tuple[str, ...], ..
 
 
 def _facet_matches_node(node: object, terms: tuple[str, ...]) -> bool:
+    if _bounded_input_contract_match(_facet_node_text(node), terms):
+        return True
     token_list = re.findall(r"[a-z0-9]+", _facet_node_text(node))
     tokens = set(token_list)
     compact = "".join(token_list)
@@ -2457,6 +2733,8 @@ def _facet_label_matched_terms(node: object, terms: tuple[str, ...]) -> set[str]
 
 
 def _facet_matched_text_terms(text: str, terms: tuple[str, ...]) -> set[str]:
+    if _bounded_input_contract_match(text, terms):
+        return set(terms)
     token_list = re.findall(r"[a-z0-9]+", text)
     tokens = set(token_list)
     compact = "".join(token_list)
@@ -2564,6 +2842,32 @@ def _cargo_inline_rust_test_target(source: str) -> tuple[str, str, str] | None:
     return package, module_filter, target
 
 
+def _cargo_inline_rust_module_command(source: str) -> str:
+    target = _cargo_inline_rust_test_target(source)
+    if target is None:
+        return ""
+    package, module_filter, cargo_target = target
+    suffix = f" {module_filter}" if module_filter else ""
+    return f"cargo test -p {package}{suffix} {cargo_target}"
+
+
+@lru_cache(maxsize=2048)
+def _rust_test_module_calls_symbol(source: str, label: str) -> bool:
+    """Verify a missing graph edge against the bounded inline test module."""
+    path = Path(source)
+    if path.suffix.casefold() != ".rs" or not path.is_file() or not label:
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    marker = re.search(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]", text)
+    if marker is None:
+        return False
+    test_module = text[marker.end():]
+    return bool(re.search(rf"\b{re.escape(label)}\s*\(", test_module))
+
+
 def _test_command(
     path: str,
     source: str = "",
@@ -2665,11 +2969,35 @@ def changed_path_test_recommendations(
     }
 
 
+def _bounded_input_contract_match(text: str, terms: tuple[str, ...]) -> bool:
+    """Recognize an explicit numeric input bound as contract evidence."""
+    normalized_terms = {term_key(term) for term in terms}
+    if not {"bounded", "input", "contract"} <= normalized_terms:
+        return False
+    normalized = term_key(text)
+    has_bound = bool(re.search(
+        r"\b(?:up to|at most|no more than|maximum(?: of)?)\s+\d+\b",
+        normalized,
+    ))
+    has_input_shape = bool(re.search(
+        r"\b(?:input|inputs|domain|domains|point|points|item|items|"
+        r"element|elements|length|size|arity)\b",
+        normalized,
+    ))
+    return has_bound and has_input_shape
+
+
 _AFFECTED_OUTPUT_TERMS = {
-    "affected", "behavioral", "cargo", "command", "commands", "direct", "exact",
-    "focused", "minimal", "return", "runnable", "run", "runs", "test", "tests",
-    "transitive",
+    "affected", "behavioral", "cargo", "case", "cases", "command", "commands",
+    "cover", "covered", "coverage", "covers", "direct", "exact", "exercise",
+    "exercised", "exercises", "focused", "minimal", "return", "runnable", "run",
+    "running", "runs", "test", "tests", "transitive",
 }
+
+
+def _affected_output_contract_facet(terms: tuple[str, ...]) -> bool:
+    normalized = set(term_key(" ".join(terms)).split())
+    return bool(normalized) and normalized <= _AFFECTED_OUTPUT_TERMS
 
 
 def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, ...]:
@@ -2874,6 +3202,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
                 {
                     "id": item["id"],
                     "label": item["label"],
+                    "covers": item["covers"],
                     "root_paths": item["root_paths"],
                 }
                 for item in all_items
@@ -2887,32 +3216,77 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         }
         for command in dict.fromkeys((*direct_commands, *transitive_commands))
     ]
+    aggregate_inline_commands: dict[str, list[dict[str, object]]] = {}
+    for item in all_items:
+        item_id = str(item["id"])
+        node = graph.nodes[item_id]
+        path = str(item["path"])
+        if _is_test_path(path) or not path.replace("\\", "/").endswith(".rs"):
+            continue
+        command = _cargo_inline_rust_module_command(node.source)
+        if command:
+            aggregate_inline_commands.setdefault(command, []).append(item)
+    existing_commands = {
+        str(entry["command"])
+        for entry in candidate_command_provenance
+    }
+    for command, items in aggregate_inline_commands.items():
+        unique_items = list({
+            str(item["id"]): item
+            for item in items
+        }.values())
+        if len(unique_items) < 2 or command in existing_commands:
+            continue
+        candidate_command_provenance.append({
+            "command": command,
+            "selection_scope": "inline_test_module",
+            "tests": [
+                {
+                    "id": item["id"],
+                    "label": item["label"],
+                    "covers": item["covers"],
+                    "root_paths": item["root_paths"],
+                }
+                for item in unique_items
+            ],
+        })
+        existing_commands.add(command)
     root_ids = set(starts)
     uncovered = set(root_ids)
     command_budget = max(1, math.ceil(math.log2(len(root_ids) + 1)))
     selected_command_provenance: list[dict[str, object]] = []
     remaining = list(candidate_command_provenance)
+
+    def command_covered_roots(entry: dict[str, object]) -> set[str]:
+        return {
+            str(root.get("id", ""))
+            for test in entry.get("tests", [])
+            for root in test.get("covers", [])
+        } | {
+            str(path.get("root", {}).get("id", ""))
+            for test in entry.get("tests", [])
+            for path in test.get("root_paths", [])
+        }
+
+    def command_rank(
+        pair: tuple[int, dict[str, object]],
+    ) -> tuple[int, int, int]:
+        index, entry = pair
+        covered = command_covered_roots(entry) & uncovered
+        test_count = len(entry.get("tests", []))
+        # A narrow command wins when it covers the whole remaining contract.
+        # Otherwise, prefer the broader test scope after root coverage so one
+        # valid test cannot hide additional direct cases.
+        scope_rank = test_count if len(covered) == len(uncovered) else -test_count
+        return -len(covered), scope_rank, index
+
     while remaining and uncovered and len(selected_command_provenance) < command_budget:
         ranked = sorted(
             enumerate(remaining),
-            key=lambda pair: (
-                -len(
-                    {
-                        str(path.get("root", {}).get("id", ""))
-                        for test in pair[1].get("tests", [])
-                        for path in test.get("root_paths", [])
-                    }
-                    & uncovered
-                ),
-                pair[0],
-            ),
+            key=command_rank,
         )
         index, winner = ranked[0]
-        covered = {
-            str(path.get("root", {}).get("id", ""))
-            for test in winner.get("tests", [])
-            for path in test.get("root_paths", [])
-        } & uncovered
+        covered = command_covered_roots(winner) & uncovered
         if not covered:
             break
         selected_command_provenance.append(winner)
@@ -2920,35 +3294,61 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
         remaining.pop(index)
     if not selected_command_provenance and candidate_command_provenance:
         selected_command_provenance.append(candidate_command_provenance[0])
-        uncovered -= {
-            str(path.get("root", {}).get("id", ""))
-            for test in candidate_command_provenance[0].get("tests", [])
-            for path in test.get("root_paths", [])
+        uncovered -= command_covered_roots(candidate_command_provenance[0])
+    structurally_uncovered = set(uncovered)
+    execution_scope_covered: set[str] = set()
+    for entry in selected_command_provenance:
+        if entry.get("selection_scope") != "inline_test_module":
+            continue
+        sources = {
+            graph.nodes[test_id].source
+            for test in entry.get("tests", [])
+            if (test_id := str(test.get("id", ""))) in graph.nodes
+            and graph.nodes[test_id].source
         }
+        for root in structurally_uncovered:
+            root_node = graph.nodes.get(root)
+            if root_node is not None and any(
+                _rust_test_module_calls_symbol(source, root_node.label)
+                for source in sources
+            ):
+                execution_scope_covered.add(root)
+    uncovered -= execution_scope_covered
     selected_commands = [
         str(entry["command"])
         for entry in selected_command_provenance
     ]
+    direct_ids = {str(item["id"]) for item in direct}
+    transitive_ids = {str(item["id"]) for item in transitive}
+
+    def selected_commands_covering(test_ids: set[str]) -> list[str]:
+        return [
+            str(entry["command"])
+            for entry in selected_command_provenance
+            if any(
+                str(test.get("id", "")) in test_ids
+                for test in entry.get("tests", [])
+            )
+        ]
+
     return {
         "direct": direct,
         "transitive": transitive,
         "commands": selected_commands,
         "commands_by_role": {
-            "direct_behavior_or_contract": [
-                command for command in selected_commands if command in direct_commands
-            ],
-            "transitive_regression": [
-                command for command in selected_commands if command in transitive_commands
-            ],
+            "direct_behavior_or_contract": selected_commands_covering(direct_ids),
+            "transitive_regression": selected_commands_covering(transitive_ids),
         },
         "command_provenance": selected_command_provenance,
         "command_selection": {
-            "algorithm": "greedy_root_cover_v1",
+            "algorithm": "greedy_root_cover_v2_module_verified",
             "candidate_count": len(candidate_command_provenance),
             "selected_count": len(selected_commands),
             "root_count": len(root_ids),
             "covered_roots": sorted(root_ids - uncovered),
             "uncovered_roots": sorted(uncovered),
+            "structurally_uncovered_roots": sorted(structurally_uncovered),
+            "execution_scope_covered_roots": sorted(execution_scope_covered),
         },
         "omitted_direct": omitted_direct,
         "omitted_transitive": omitted_transitive,
@@ -3525,6 +3925,8 @@ def select_anchor_matches(
                         seen.add(match.node.id)
                         break
             for _label, terms in query_facets(query):
+                if _affected_output_contract_facet(terms):
+                    continue
                 candidates = [
                     match for match in implementation
                     if match.node.id not in seen
@@ -3562,7 +3964,7 @@ def select_anchor_matches(
                     seen.add(candidate.node.id)
                 if len(selected) >= anchor_limit:
                     return tuple(selected)
-            if qualified and selected:
+            if (qualified or explicit) and selected:
                 return tuple(selected)
             for match in implementation:
                 if match.node.id not in seen:

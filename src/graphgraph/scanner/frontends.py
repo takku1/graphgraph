@@ -1221,6 +1221,20 @@ def _add_tree_sitter_calls(
                     }
                 )
             calls = _call_sites_in_range(root, text_bytes, d.start, d.end)
+            rust_macro_calls = (
+                {
+                    _CallSite(name=name, qualified=False)
+                    for name in _rust_macro_bare_call_names_in_range(
+                        root,
+                        text_bytes,
+                        d.start,
+                        d.end,
+                    )
+                }
+                if suffix == ".rs"
+                else set()
+            )
+            calls.update(rust_macro_calls)
             for call in calls:
                 if call.qualified:
                     outcome = _resolve_member_call(
@@ -1249,8 +1263,20 @@ def _add_tree_sitter_calls(
                     src_id,
                     tgt_id,
                     "calls",
-                    confidence=0.96 if call.qualifier else 0.9,
-                    provenance="tree_sitter_path_resolved" if call.qualifier else "tree_sitter",
+                    confidence=(
+                        0.96
+                        if call.qualifier
+                        else 0.88
+                        if call in rust_macro_calls
+                        else 0.9
+                    ),
+                    provenance=(
+                        "tree_sitter_path_resolved"
+                        if call.qualifier
+                        else "tree_sitter_macro_token_tree"
+                        if call in rust_macro_calls
+                        else "tree_sitter"
+                    ),
                 ))
     return stats
 
@@ -1941,6 +1967,57 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                 qualifier=qualifier,
             ))
     return sites
+
+
+def _rust_macro_bare_call_names_in_range(
+    root: Any,
+    text: bytes,
+    start: int,
+    end: int,
+) -> set[str]:
+    """Recover Rust calls hidden in macro token trees.
+
+    The Rust grammar intentionally leaves macro bodies as ``token_tree``
+    rather than parsing their expressions. Within those bounded trees,
+    ``identifier`` immediately followed by a parenthesized token tree is the
+    lowest reliable call signal. Macro heads (``name!``), method calls
+    (``.name``), and path continuations (``::name``) are excluded.
+    """
+    names: set[str] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if int(node.end_byte) < start or int(node.start_byte) > end:
+            continue
+        stack.extend(reversed(list(getattr(node, "named_children", ()))))
+        if node.type != "token_tree":
+            continue
+        children = list(getattr(node, "named_children", ()))
+        for index, child in enumerate(children[:-1]):
+            if child.type != "identifier":
+                continue
+            arguments = children[index + 1]
+            if arguments.type != "token_tree":
+                continue
+            argument_text = _node_text(arguments, text).lstrip()
+            if not argument_text.startswith("("):
+                continue
+            gap = text[int(child.end_byte):int(arguments.start_byte)].decode(
+                "utf-8",
+                errors="replace",
+            )
+            if "!" in gap:
+                continue
+            prefix = text[max(start, int(child.start_byte) - 2):int(child.start_byte)].decode(
+                "utf-8",
+                errors="replace",
+            ).rstrip()
+            if prefix.endswith((".", ":")):
+                continue
+            name = _node_text(child, text).strip()
+            if _identifier(name):
+                names.add(name)
+    return names
 
 
 def _rust_field_accesses_in_range(

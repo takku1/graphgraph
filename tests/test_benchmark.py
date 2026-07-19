@@ -155,8 +155,8 @@ class BenchmarkExtractionTest(unittest.TestCase):
             }:
                 continue
             rel = path.relative_to(src_dir).as_posix()
-            if rel.startswith("graphgraph/acceptance/"):
-                continue  # acceptance is eval harness, not the engine this ceiling guards
+            if rel.startswith("graphgraph/acceptance/") or rel == "graphgraph/live_validation.py":
+                continue  # release/eval harnesses are not the engine this ceiling guards
             file_node_id = f"file_{rel}"  # deterministic id
             text = path.read_text(encoding="utf-8", errors="ignore")
             files.append((path, rel, file_node_id, text))

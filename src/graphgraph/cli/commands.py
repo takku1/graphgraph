@@ -264,10 +264,19 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         "run: graphgraph install --platform claude-desktop",
     )
     codex_project = _report_mcp_client(
-        "Codex plugin (project ./plugins/graphgraph/.mcp.json)",
+        "Codex plugin bundle (project ./plugins/graphgraph/.mcp.json)",
         Path("plugins/graphgraph/.mcp.json"),
         "run: graphgraph install --project --platform codex",
     )
+    if codex_project:
+        print(
+            "    - Bundle registration does not prove this running Codex session loaded "
+            "the MCP server."
+        )
+        print(
+            "    - Reinstall/repair: graphgraph install --project --platform codex; "
+            "then start a fresh Codex session and verify graphgraph/query_context is exposed."
+        )
     cursor_project = _report_mcp_client(
         "Cursor (project ./.cursor/mcp.json)",
         Path(".cursor/mcp.json"),
@@ -559,8 +568,11 @@ def cmd_status(args: argparse.Namespace) -> None:
             f"linked={concept_linking.get('linked_nodes', 0)}/{concept_linking.get('eligible_nodes', 0)} "
             f"coverage={concept_linking.get('coverage_ratio', 0):.2%} "
             f"mode={concept_linking.get('mode', 'unavailable')} "
-            f"scope={concept_linking.get('scope', 'unavailable')}"
+            f"scope={concept_linking.get('scope', 'unavailable')} "
+            f"health={concept_linking.get('status', 'unavailable')}"
         )
+        if concept_linking.get("diagnostic_reason"):
+            print(f"  !  {concept_linking['diagnostic_reason']}")
         concept_update = concept_linking.get("last_update") or {}
         if concept_update.get("scope") not in {
             "",

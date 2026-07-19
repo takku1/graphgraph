@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
@@ -112,6 +113,27 @@ def _test_count(output: str) -> int | None:
     return len(go_matches) if go_matches else None
 
 
+def _test_counts(output: str, ecosystem: str) -> dict[str, int | None]:
+    """Return explicit pass/fail/ignored counts when the runner exposes them."""
+    cargo_rows = re.findall(
+        r"test result: \w+\.\s+(\d+) passed;\s+(\d+) failed;\s+"
+        r"(\d+) ignored;",
+        output,
+    )
+    if cargo_rows:
+        return {
+            "passed": sum(int(row[0]) for row in cargo_rows),
+            "failed": sum(int(row[1]) for row in cargo_rows),
+            "ignored": sum(int(row[2]) for row in cargo_rows),
+        }
+    passed = _test_count(output)
+    return {
+        "passed": passed,
+        "failed": 0 if passed is not None and ecosystem in {"pytest", "unittest", "go"} else None,
+        "ignored": None,
+    }
+
+
 def run_tests(
     repo: Path,
     *,
@@ -131,6 +153,7 @@ def run_tests(
             "ecosystem": ecosystem,
             "command": [],
         }
+    started = time.perf_counter()
     try:
         proc = subprocess.run(
             command,
@@ -149,9 +172,13 @@ def run_tests(
             "ecosystem": ecosystem,
             "command": command,
             "tests": None,
+            "test_counts": {"passed": None, "failed": None, "ignored": None},
+            "duration_ms": round((time.perf_counter() - started) * 1000, 3),
             "tail": "",
         }
-    tests = _test_count(proc.stdout)
+    duration_ms = round((time.perf_counter() - started) * 1000, 3)
+    test_counts = _test_counts(proc.stdout, ecosystem)
+    tests = test_counts["passed"]
     zero_selected = tests == 0
     ok = proc.returncode == 0 and not zero_selected
     return {
@@ -162,6 +189,8 @@ def run_tests(
         "ecosystem": ecosystem,
         "command": command,
         "tests": tests,
+        "test_counts": test_counts,
+        "duration_ms": duration_ms,
         "tail": "\n".join(proc.stdout.strip().splitlines()[-12:]),
     }
 
@@ -181,7 +210,121 @@ def summarize_graph(graph: Any) -> dict[str, Any]:
     }
 
 
-def scan_policy_receipt(graph: Any, max_nodes: int) -> dict[str, Any]:
+def _node_category(node: Any) -> str:
+    if node.kind in {"section", "paragraph", "concept", "document", "markdown", "rst", "html", "text"}:
+        return "documentation"
+    if node.kind in STRUCTURAL_NODE_KINDS:
+        return "source"
+    return "other"
+
+
+def compare_active_graph(repo: Path, live_graph: Any, live_graph_path: Path) -> dict[str, Any]:
+    """Explain the independent harness graph against a repository's active graph."""
+    from graphgraph.io import load_any
+
+    active_path = next(
+        (
+            path
+            for path in (
+                repo / ".graphgraph" / "graph.gg",
+                repo / ".graphgraph" / "graph.json",
+                repo / ".graphgraph" / "graph.ggb",
+            )
+            if path.is_file() and path.resolve() != live_graph_path.resolve()
+        ),
+        None,
+    )
+    if active_path is None:
+        return {
+            "status": "unavailable",
+            "reason": "repository has no active .graphgraph graph to compare",
+            "live_graph": str(live_graph_path),
+        }
+    try:
+        active = load_any(active_path)
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "error",
+            "reason": f"{exc.__class__.__name__}: {exc}",
+            "active_graph": str(active_path),
+            "live_graph": str(live_graph_path),
+        }
+
+    active_nodes = set(active.nodes)
+    live_nodes = set(live_graph.nodes)
+    added_nodes = live_nodes - active_nodes
+    removed_nodes = active_nodes - live_nodes
+    active_edges = {
+        (edge.source, edge.target, edge.type)
+        for edge in active.edges
+        if getattr(edge, "active", True)
+    }
+    live_edges = {
+        (edge.source, edge.target, edge.type)
+        for edge in live_graph.edges
+        if getattr(edge, "active", True)
+    }
+    added_edges = live_edges - active_edges
+    removed_edges = active_edges - live_edges
+
+    def node_categories(graph: Any, node_ids: set[str]) -> dict[str, int]:
+        return dict(sorted(Counter(
+            _node_category(graph.nodes[node_id])
+            for node_id in node_ids
+        ).items()))
+
+    def relation_categories(edges: set[tuple[str, str, str]]) -> dict[str, int]:
+        return dict(sorted(Counter(edge_type for _source, _target, edge_type in edges).items()))
+
+    active_metadata = getattr(active, "metadata", {}) or {}
+    return {
+        "status": "compared",
+        "active_graph": str(active_path),
+        "live_graph": str(live_graph_path),
+        "comparable": False,
+        "reason": (
+            "identity delta is reported for diagnosis, but the harness remains "
+            "an independent full scan rather than validation of the active snapshot"
+        ),
+        "build_settings": {
+            "live": {
+                "docs": True,
+                "depth": "symbols",
+                "generic_mentions": False,
+                "history": False,
+                "previous_snapshot": False,
+                "skip_dirs": list(DEFAULT_SKIP_DIRS),
+            },
+            "active": {
+                "frontend": active_metadata.get("frontend", "unavailable"),
+                "docs": active_metadata.get("docs", "unavailable"),
+                "depth": active_metadata.get("depth", "unavailable"),
+                "history": active_metadata.get("history", "unavailable"),
+            },
+        },
+        "counts": {
+            "active": {"nodes": len(active_nodes), "edges": len(active_edges)},
+            "live": {"nodes": len(live_nodes), "edges": len(live_edges)},
+        },
+        "delta": {
+            "added_nodes": len(added_nodes),
+            "removed_nodes": len(removed_nodes),
+            "added_nodes_by_category": node_categories(live_graph, added_nodes),
+            "removed_nodes_by_category": node_categories(active, removed_nodes),
+            "added_edges": len(added_edges),
+            "removed_edges": len(removed_edges),
+            "added_edges_by_relation": relation_categories(added_edges),
+            "removed_edges_by_relation": relation_categories(removed_edges),
+        },
+    }
+
+
+def scan_policy_receipt(
+    graph: Any,
+    max_nodes: int,
+    *,
+    active_graph_comparison: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Report exclusion and collection-cap evidence for the live scan."""
     active_paths = [
         str(node.path).replace("\\", "/").strip("/")
@@ -205,6 +348,10 @@ def scan_policy_receipt(graph: Any, max_nodes: int) -> dict[str, Any]:
             "generic_mentions=false, no history, and no prior incremental snapshot. "
             "Its edge count is not expected to equal the repository's active graph."
         ),
+        "active_graph_comparison": active_graph_comparison or {
+            "status": "not_checked",
+            "reason": "no active-graph comparison was requested",
+        },
         "max_files": max_nodes,
         "skip_dirs": list(DEFAULT_SKIP_DIRS),
         "exclusions": exclusions,
@@ -453,6 +600,7 @@ def load_saved_reports(repo: Path, enabled: bool) -> dict[str, Any]:
 
 def write_markdown(report: dict[str, Any], path: Path) -> None:
     tests = report["tests"]
+    active_comparison = report["scan_policy"]["active_graph_comparison"]
     lines = [
         "# GraphGraph Live Validation",
         "",
@@ -460,6 +608,9 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         f"- Graph: `{report['graph_path']}`",
         f"- Tests: `{tests['status']}`"
         + (f" ({tests.get('tests')} tests via `{tests.get('ecosystem')}`)" if tests.get("tests") is not None else ""),
+        f"- Test command: `{json.dumps(tests.get('command', ()))}`",
+        f"- Test counts: `{json.dumps(tests.get('test_counts', {}), sort_keys=True)}`",
+        f"- Test duration: `{tests.get('duration_ms', 'not run')} ms`",
         f"- Saved reports: `{report['saved_reports']['status']}`",
         "",
         "## Live graph",
@@ -474,6 +625,7 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         f"- Graph mode: `{report['scan_policy']['graph_mode']}`",
         f"- Active graph comparable: `{report['scan_policy']['active_graph_comparable']}`",
         f"- Comparison note: {report['scan_policy']['comparison_note']}",
+        f"- Active graph comparison: `{active_comparison['status']}`",
         f"- File collection cap: `{report['scan_policy']['max_files']}`",
         f"- Audited exclusions valid: `{report['scan_policy']['exclusions_valid']}`",
         f"- Truncation receipt: `{json.dumps(report['scan_policy']['truncation'], sort_keys=True)}`",
@@ -483,6 +635,17 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
     ]
     for row in report["scan_policy"]["exclusions"]:
         lines.append(f"| `{row['name']}` | {row['indexed_nodes']} | `{row['passed']}` |")
+    if active_comparison.get("status") == "compared":
+        lines.extend([
+            "",
+            "### Active-versus-live identity delta",
+            "",
+            f"- Active graph: `{active_comparison['active_graph']}`",
+            f"- Live graph: `{active_comparison['live_graph']}`",
+            f"- Build settings: `{json.dumps(active_comparison['build_settings'], sort_keys=True)}`",
+            f"- Counts: `{json.dumps(active_comparison['counts'], sort_keys=True)}`",
+            f"- Categorized delta: `{json.dumps(active_comparison['delta'], sort_keys=True)}`",
+        ])
     lines.extend([
         "",
         "## Query packet validation",
@@ -546,6 +709,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         manifest_path=None,
     )
     save_graph(graph, graph_path)
+    active_comparison = compare_active_graph(repo, graph, graph_path)
     tests = (
         {"status": "skipped", "ok": None, "reason": "disabled by --skip-tests", "command": []}
         if args.skip_tests
@@ -555,7 +719,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "repo": str(repo),
         "graph_path": str(graph_path),
         "graph": summarize_graph(graph),
-        "scan_policy": scan_policy_receipt(graph, args.max_nodes),
+        "scan_policy": scan_policy_receipt(
+            graph,
+            args.max_nodes,
+            active_graph_comparison=active_comparison,
+        ),
         "queries": validate_queries(graph, graph_path, args.query),
         "gate_checks": validate_gate_packets(graph, graph_path),
         "saved_reports": load_saved_reports(repo, args.saved_reports),

@@ -1,3 +1,8 @@
+from .health import (
+    MIN_SUPPORTED_CONCEPT_COVERAGE,
+    STRONG_CONCEPT_COVERAGE,
+    concept_link_health,
+)
 from .registry import (
     INTERPRETATION_CONCEPTS,
     InterpretationConcept,
@@ -17,6 +22,9 @@ __all__ = [
     "interpretation_concept_id",
     "link_interpretation_concepts",
     "link_source_interpretation_concepts",
+    "MIN_SUPPORTED_CONCEPT_COVERAGE",
+    "STRONG_CONCEPT_COVERAGE",
+    "concept_link_health",
     "canonical_concept_label",
     "concept_id",
     "normalize_label",

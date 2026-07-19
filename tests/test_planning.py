@@ -175,7 +175,7 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(direct.packet, "gg")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
-        self.assertIn("context_plan_v5", direct.planner_version)
+        self.assertIn("context_plan_v10", direct.planner_version)
 
         docs = plan_context("subsystem_summary", "README installation usage")
         self.assertEqual(docs.packet, "doc_summary")

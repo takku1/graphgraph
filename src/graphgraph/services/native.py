@@ -14,6 +14,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
     import tomli as tomllib
 
+from ..concepts import concept_link_health
 from ..graph.core import Graph
 from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
 from ..manifest import Manifest, compute_file_hash
@@ -686,11 +687,14 @@ def build_project_status(
             "scope": graph.metadata.get("member_calls_last_update_scope", graph.metadata.get("member_call_telemetry_scope", "unavailable")),
         },
     }
+    concept_eligible = int(graph.metadata.get("source_concepts_eligible", "0"))
+    concept_linked = int(graph.metadata.get("source_concepts_linked_nodes", "0"))
     graph_report["concept_linking"] = {
+        **concept_link_health(concept_eligible, concept_linked),
         "mode": graph.metadata.get("source_concepts_mode", "unavailable"),
         "scope": graph.metadata.get("source_concepts_scope", "unavailable"),
-        "eligible_nodes": int(graph.metadata.get("source_concepts_eligible", "0")),
-        "linked_nodes": int(graph.metadata.get("source_concepts_linked_nodes", "0")),
+        "eligible_nodes": concept_eligible,
+        "linked_nodes": concept_linked,
         "links": int(graph.metadata.get("source_concepts_links", "0")),
         "coverage_ratio": float(graph.metadata.get("source_concepts_coverage_ratio", "0")),
         "rejections": {

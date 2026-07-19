@@ -1232,6 +1232,55 @@ class ScannerTest(unittest.TestCase):
                 f"Type::function(...) associated call should resolve: {calls}",
             )
 
+    def test_tree_sitter_recovers_rust_calls_nested_in_macro_token_trees(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        rust = (
+            "fn finite_vc_dimension() -> Result<(), ()> { Ok(()) }\n"
+            "fn shatters() -> Result<bool, ()> { Ok(true) }\n"
+            "#[cfg(test)] mod tests {\n"
+            "    use super::*;\n"
+            "    #[test]\n"
+            "    fn malformed_contract() {\n"
+            "        assert!(matches!(finite_vc_dimension(), Ok(())));\n"
+            "    }\n"
+            "    #[test]\n"
+            "    fn subset_contract() {\n"
+            "        assert!(shatters().unwrap());\n"
+            "    }\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "learning_theory.rs"
+            path.write_text(rust, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "src/learning_theory.rs", "learning_theory_rs", rust)],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (
+                result.nodes[edge.source].label,
+                result.nodes[edge.target].label,
+                edge.provenance,
+            )
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(
+            (
+                "malformed_contract",
+                "finite_vc_dimension",
+                "tree_sitter_macro_token_tree",
+            ),
+            calls,
+        )
+        self.assertIn(
+            ("subset_contract", "shatters", "tree_sitter_macro_token_tree"),
+            calls,
+        )
+        self.assertFalse(any(target == "unwrap" for _source, target, _provenance in calls))
+
     def test_tree_sitter_extractor_captures_additional_languages(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
