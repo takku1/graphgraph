@@ -162,6 +162,15 @@ def scan_directory(
         file_map[rel] = nid
 
     manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
+    if manifest is not None and not manifest.compatible:
+        # Extraction semantics are part of the manifest contract. Reusing
+        # unchanged files from an older manifest would preserve stale node
+        # shapes (for example, one node for an entire Markdown table) after an
+        # extractor upgrade. A normal full scan therefore starts a compatible
+        # empty manifest and rebuilds every file.
+        from ..manifest import Manifest
+        manifest = Manifest()
+        previous_graph = None
     from ..manifest import compute_file_hash
 
     skipped_files: list[tuple[Path, str, str]] = []

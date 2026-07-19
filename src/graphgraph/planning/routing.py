@@ -122,6 +122,11 @@ MULTI_SYMBOL_DEPENDENCY_WEIGHT = 5.5
 FOCUSED_IDENTIFIER_WEIGHT = 3.0
 FOCUSED_IDENTIFIER_MAX_TERMS = 2
 EXPLICIT_DOCUMENT_REQUEST_WEIGHT = 10.0
+EXPLICIT_DOCUMENT_SCOPE_WEIGHT = 8.0
+_DOCUMENT_SCOPE_RE = re.compile(
+    r"(?:^|/)(?:docs?|documentation|roadmap|backlog)(?:/|$)|"
+    r"\.(?:md|mdx|rst|txt|html?)$",
+)
 
 # Tie-break priors: higher wins when two classes share a score.
 _PRECEDENCE = {
@@ -148,7 +153,12 @@ def _route_confidence(top_score: float, margin: float) -> float:
     return EVIDENCE_WEIGHT * evidence + SEPARATION_WEIGHT * separation
 
 
-def route_query(query: str, requested_class: str | None = "auto") -> QueryRoute:
+def route_query(
+    query: str,
+    requested_class: str | None = "auto",
+    *,
+    scopes: tuple[str, ...] = (),
+) -> QueryRoute:
     """Resolve an explicit or automatic query class with no I/O."""
     requested = (requested_class or "auto").strip().lower()
     if requested and requested != "auto":
@@ -175,6 +185,17 @@ def route_query(query: str, requested_class: str | None = "auto") -> QueryRoute:
     if _EXPLICIT_DOC_PATH_RE.search(normalized) and _DOC_REQUEST_RE.search(normalized):
         scores["doc_summary"] += EXPLICIT_DOCUMENT_REQUEST_WEIGHT
         reasons["doc_summary"].append("explicit document path and summary intent")
+    normalized_scopes = tuple(
+        scope.replace("\\", "/").casefold().strip("/")
+        for scope in scopes
+        if scope.strip()
+    )
+    if normalized_scopes and all(
+        _DOCUMENT_SCOPE_RE.search(scope)
+        for scope in normalized_scopes
+    ):
+        scores["doc_summary"] += EXPLICIT_DOCUMENT_SCOPE_WEIGHT
+        reasons["doc_summary"].append("explicit document scope")
 
     identifiers = explicit_query_identifiers(query)
     terms = plan_terms(query)

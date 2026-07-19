@@ -19,6 +19,14 @@ _CAP_PHRASE = re.compile(r"\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){1,3})\b"
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _SENTENCE = re.compile(r"([A-Z0-9][^.!?\n]{20,220}[.!?])")
 _MARKDOWN_LIST_ITEM = re.compile(r"(?m)^[ \t]*(?:[-+*]|\d+[.)])\s+\S")
+_MARKDOWN_TABLE_ROW = re.compile(r"^\s*\|(?:[^|\r\n]*\|){2,}\s*$")
+_MARKDOWN_TABLE_DELIMITER = re.compile(
+    r"^\s*\|(?:\s*:?-{3,}:?\s*\|){2,}\s*$",
+)
+_PREFIX_STATUS_MARKER = re.compile(
+    r"^\s*(?:[-+*]\s*)?`?\[\s*([xX~]?)\s*\]`?",
+)
+_STATUS_CELL = re.compile(r"^`?\[\s*([xX~]?)\s*\]`?$")
 MAX_PARAGRAPH_FACT_CHARS = 1200
 
 _STOP_CONCEPTS = {
@@ -457,13 +465,59 @@ def _paragraphs(text: str, start: int, end: int, *, limit: int) -> tuple[list[tu
                 continue
             line = text[:start + body_offset + match.start(1) + offset].count("\n") + 1
             paragraphs.append((line, normalized))
-            if len(paragraphs) > max(0, limit):
-                return paragraphs[:max(0, limit)], True
-    return paragraphs, False
+    bounded_limit = max(0, limit)
+    if len(paragraphs) <= bounded_limit:
+        return paragraphs, False
+
+    # Status-heavy roadmaps are effectively small typed tables. A first-N
+    # paragraph cap can erase every rare `[ ]` row behind common `[x]` rows,
+    # making the retrieval task impossible regardless of ranking quality.
+    # Retain the normal prefix plus at most one normal paragraph budget for
+    # each status class. This remains bounded by the caller's existing budget,
+    # while preserving the categorical operands needed by status queries.
+    selected_indexes = set(range(min(bounded_limit, len(paragraphs))))
+    for wanted in ("", "~", "x"):
+        retained = sum(
+            _paragraph_status_marker(paragraphs[index][1]) == wanted
+            for index in selected_indexes
+        )
+        for index, (_line, paragraph) in enumerate(paragraphs):
+            if retained >= bounded_limit:
+                break
+            if index in selected_indexes:
+                continue
+            if _paragraph_status_marker(paragraph) == wanted:
+                selected_indexes.add(index)
+                retained += 1
+    return [paragraphs[index] for index in sorted(selected_indexes)], True
 
 
 def _paragraph_chunks(raw: str) -> tuple[tuple[int, str], ...]:
-    """Split consecutive Markdown list items without losing continuations."""
+    """Split Markdown list items and tables into independently addressable rows."""
+    lines = raw.splitlines(keepends=True)
+    nonempty = [
+        line.strip()
+        for line in lines
+        if line.strip()
+    ]
+    if (
+        len(nonempty) >= 2
+        and all(_MARKDOWN_TABLE_ROW.fullmatch(line) for line in nonempty)
+        and any(_MARKDOWN_TABLE_DELIMITER.fullmatch(line) for line in nonempty)
+    ):
+        chunks: list[tuple[int, str]] = []
+        offset = 0
+        for line in lines:
+            stripped = line.strip()
+            if (
+                stripped
+                and _MARKDOWN_TABLE_ROW.fullmatch(stripped)
+                and not _MARKDOWN_TABLE_DELIMITER.fullmatch(stripped)
+            ):
+                chunks.append((offset + line.find(stripped), stripped))
+            offset += len(line)
+        return tuple(chunks)
+
     item_starts = [match.start() for match in _MARKDOWN_LIST_ITEM.finditer(raw)]
     if not item_starts:
         stripped = raw.strip()
@@ -478,6 +532,21 @@ def _paragraph_chunks(raw: str) -> tuple[tuple[int, str], ...]:
             continue
         chunks.append((chunk_start + chunk.find(stripped), stripped))
     return tuple(chunks)
+
+
+def _paragraph_status_marker(paragraph: str) -> str | None:
+    prefix = _PREFIX_STATUS_MARKER.match(paragraph)
+    if prefix:
+        return prefix.group(1).casefold()
+    stripped = paragraph.strip()
+    if not _MARKDOWN_TABLE_ROW.fullmatch(stripped):
+        return None
+    statuses = [
+        match.group(1).casefold()
+        for cell in stripped.strip("|").split("|")
+        if (match := _STATUS_CELL.fullmatch(cell.strip()))
+    ]
+    return statuses[0] if len(statuses) == 1 else None
 
 
 def _paragraph_label(paragraph: str) -> str:

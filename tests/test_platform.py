@@ -520,6 +520,27 @@ class PlatformTest(unittest.TestCase):
         self.assertTrue(result.packet.startswith("#gg"))
         self.assertTrue(result.receipt.provider_receipts)
 
+    def test_runtime_preserves_document_scope_during_compiler_routing(self) -> None:
+        path = "docs/roadmap/gaps.md"
+        graph = Graph(nodes={
+            "ABSENT": Node(
+                "ABSENT",
+                "Symbolic PAC learning",
+                "paragraph",
+                path,
+                facts=("* `[ ]` **Symbolic PAC learning:** Not implemented.",),
+            ),
+        })
+
+        result = GraphRuntime(graph).compile(GraphProgram(
+            "Identify one capability currently marked absent.",
+            scopes=(path,),
+        ))
+
+        self.assertEqual(result.route.query_class, "doc_summary")
+        self.assertIn("explicit document scope", result.route.reasons)
+        self.assertEqual(result.retrieval.starts, ("ABSENT",))
+
     def test_runtime_exact_paths_bypass_auxiliary_source_planning(self) -> None:
         class UnexpectedSourcePlanner:
             def plan(self, *_args: object, **_kwargs: object) -> object:

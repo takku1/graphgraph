@@ -36,15 +36,33 @@ Two boundaries remain explicit:
 
 ### GG-LOCUS2-001 — Broad documentation retrieval
 
-**Status:** fixed and recalibrated.
+**Status:** fixed after follow-up correction.
 
-Broad absent-capability requests now compile to literal Markdown status markers.
-Only capability-shaped rows count; legend text such as
-`` `[ ]` absent or not reliable enough to claim `` is rejected.
+The first cycle-2 repair was incomplete: it added literal status anchors and an
+honest receipt, but ordinary lexical anchors and document expansion could still
+place the marker legend and `[~]`/`[x]` rows in the final packet. Structural
+packet validation did not test that query-specific evidence contract.
+
+The corrected implementation treats status as a typed retrieval operand:
+
+- Markdown table rows are indexed as individual document nodes instead of one
+  combined table paragraph;
+- status-bearing rows receive a bounded per-status extraction reserve, so a
+  rare `[ ]` row cannot be truncated behind common `[x]` rows;
+- list and table row grammars recognize one literal status operand and reject
+  legends, prose mentions, and legacy combined-table nodes;
+- requested status rows become the complete anchor set rather than a score
+  boost;
+- final packets are projected to matching rows and their section/file
+  ancestors;
+- `packet_status_rows`, `conflicting_status_rows`, and `packet_constrained`
+  make the evidence-type contract machine-checkable;
+- a no-match result emits an empty packet and marks packet validation
+  `not_applicable`.
 
 The current Locus `gap-analysis.md` no longer contains a real `[ ]` capability
 row after Statistical Learning Theory moved to `[~]`. GraphGraph therefore
-returns an explicit abstention:
+returns an explicit zero-token abstention:
 
 ```text
 no literal absent capability rows were found in the requested roadmap documents
@@ -52,6 +70,12 @@ no literal absent capability rows were found in the requested roadmap documents
 
 This satisfies the acceptance contract's second branch instead of fabricating a
 capability from the checkbox legend.
+
+The positive branch was verified against the real `[ ]` rows in
+`docs/roadmap/execution-backlog.md`: four matching rows, zero conflicting
+statuses, an answerable receipt, and all control gates passing. Explicit
+documentation scope also now reaches both routing passes; the compiler no
+longer drops scope or overwrites the service's `doc_summary` decision.
 
 ### GG-LOCUS2-002 — Malformed facets
 

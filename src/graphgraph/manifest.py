@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-MANIFEST_VERSION = 2
+MANIFEST_VERSION = 3
 
 
 def compute_file_hash(path: Path) -> str:

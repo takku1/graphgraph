@@ -90,6 +90,15 @@ class PlanningTest(unittest.TestCase):
                     route.reasons,
                 )
 
+    def test_query_router_uses_explicit_document_scope_as_an_instruction(self) -> None:
+        route = route_query(
+            "Identify one capability currently marked absent.",
+            scopes=("docs/roadmap/coverage-matrix.md",),
+        )
+
+        self.assertEqual(route.query_class, "doc_summary")
+        self.assertIn("explicit document scope", route.reasons)
+
     def test_query_router_consumer_wording_stays_source_orientation(self) -> None:
         route = route_query(
             "Where is SourceCaseBaseline, what metrics does it enforce, and which test consumes it?"
@@ -175,7 +184,7 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(direct.packet, "gg")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
-        self.assertIn("context_plan_v10", direct.planner_version)
+        self.assertIn("context_plan_v13", direct.planner_version)
 
         docs = plan_context("subsystem_summary", "README installation usage")
         self.assertEqual(docs.packet, "doc_summary")

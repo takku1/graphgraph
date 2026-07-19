@@ -294,7 +294,7 @@ def render_query_context(
     snippet_max_lines: int = 24,
 ) -> str:
     requested_query_class = query_class
-    route = route_query(query, query_class)
+    route = route_query(query, query_class, scopes=scopes)
     query_class = route.query_class
     resolved_graph_path = graph_path or find_graph_path()
     source_signature = source_state_signature(resolved_graph_path.parent)

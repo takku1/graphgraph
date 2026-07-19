@@ -3688,6 +3688,15 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     "docs/roadmap/gap-analysis.md",
                     facts=("- `[ ]` absent or not reliable enough to claim.",),
                 ),
+                "PARTIAL": Node(
+                    "PARTIAL",
+                    "Finite VC dimension",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=(
+                        "* `[~]` **Finite VC dimension:** A bounded fragment is implemented.",
+                    ),
+                ),
             },
         )
 
@@ -3706,6 +3715,99 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             result.metadata["answerability"]["reason"],
             status["warning"],
         )
+        self.assertEqual(result.matches, ())
+        self.assertEqual(result.nodes, set())
+        self.assertTrue(status["packet_constrained"])
+        self.assertEqual(status["packet_status_rows"], [])
+        self.assertEqual(status["conflicting_status_rows"], [])
+
+    def test_absent_capability_query_projects_packet_to_matching_table_rows(self) -> None:
+        path = "docs/roadmap/coverage-matrix.md"
+        graph = Graph(
+            nodes={
+                "FILE": Node("FILE", "coverage-matrix.md", "markdown", path),
+                "SECTION": Node("SECTION", "Capability coverage", "section", path),
+                "LEGEND": Node(
+                    "LEGEND",
+                    "`[ ]` absent or not reliable enough to claim",
+                    "paragraph",
+                    path,
+                    facts=("- `[ ]` absent or not reliable enough to claim.",),
+                    parent="SECTION",
+                ),
+                "PARTIAL": Node(
+                    "PARTIAL",
+                    "Finite VC dimension",
+                    "paragraph",
+                    path,
+                    facts=("| Finite VC dimension | `[~]` | Bounded classes only. |",),
+                    parent="SECTION",
+                ),
+                "ABSENT": Node(
+                    "ABSENT",
+                    "Symbolic PAC learning",
+                    "paragraph",
+                    path,
+                    facts=("| Symbolic PAC learning | `[ ]` | Not implemented. |",),
+                    parent="SECTION",
+                ),
+            },
+            edges=[
+                Edge("SECTION", "FILE", "section_of"),
+                Edge("SECTION", "LEGEND", "contains"),
+                Edge("SECTION", "PARTIAL", "contains"),
+                Edge("SECTION", "ABSENT", "contains"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "From the roadmap, identify one capability currently marked absent.",
+            "doc_summary",
+            hops=1,
+            scopes=(path,),
+        )
+
+        self.assertEqual(result.starts, ("ABSENT",))
+        self.assertEqual(result.matches[0].node.id, "ABSENT")
+        self.assertEqual(result.nodes, {"FILE", "SECTION", "ABSENT"})
+        self.assertNotIn("LEGEND", result.nodes)
+        self.assertNotIn("PARTIAL", result.nodes)
+        status = result.metadata["document_status_evidence"]
+        self.assertEqual(status["evidence"], ["ABSENT"])
+        self.assertEqual(status["packet_status_rows"], ["ABSENT"])
+        self.assertEqual(status["conflicting_status_rows"], [])
+        self.assertTrue(status["packet_constrained"])
+        self.assertFalse(result.metadata["answerability"]["abstained"])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_absent_status_evidence_fulfills_redundant_marker_facet(self) -> None:
+        path = "docs/roadmap/execution-backlog.md"
+        graph = Graph(nodes={
+            "ITEM": Node(
+                "ITEM",
+                "Reconcile the coverage survey",
+                "paragraph",
+                path,
+                facts=("- `[ ]` Reconcile the coverage survey.",),
+            ),
+        })
+
+        result = retrieve_context(
+            graph,
+            (
+                "From this roadmap, identify one item currently marked absent "
+                "and return only that status class."
+            ),
+            "doc_summary",
+            hops=1,
+            scopes=(path,),
+        )
+
+        self.assertEqual(result.starts, ("ITEM",))
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+        self.assertFalse(result.metadata["answerability"]["abstained"])
+        self.assertNotIn("facet_coverage", result.metadata)
 
     def test_query_facets_compile_contract_and_covered_cases_canonically(self) -> None:
         from graphgraph.retrieval.context import facet_coverage, query_facets

@@ -175,7 +175,11 @@ class GraphRuntime:
             else:
                 raise ValueError(f"unknown GraphGraph compiler pass: {compiler_pass}")
             applied.append(compiler_pass)
-        route = route_query(program.query, program.query_class)
+        route = route_query(
+            program.query,
+            program.query_class,
+            scopes=program.scopes,
+        )
         plan = plan_context(
             route.query_class,
             program.query,

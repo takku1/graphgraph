@@ -30,6 +30,7 @@ from graphgraph.io import (
     graph_to_json,
     save_graph,
 )
+from graphgraph.manifest import MANIFEST_VERSION
 from graphgraph.ontology import relation_spec
 from graphgraph.terms import canonical_concept_label, concept_id, term_key
 from graphgraph.validate import validate_graph_json
@@ -1477,6 +1478,49 @@ class ScannerTest(unittest.TestCase):
                     manifest_path=manifest_path,
                 )
 
+    def test_full_scan_rebuilds_files_from_incompatible_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "roadmap.md").write_text(
+                "# Roadmap\n\n* `[ ]` **Proof search:** Not implemented.\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                docs=True,
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            raw["version"] = 0
+            manifest_path.write_text(json.dumps(raw), encoding="utf-8")
+            events: list[tuple[str, str]] = []
+
+            rebuilt = scan_directory(
+                root,
+                depth="symbols",
+                docs=True,
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+                progress=lambda phase, detail: events.append((phase, detail)),
+            )
+
+            self.assertTrue(any(
+                phase == "hash" and "dirty=1 restored=0" in detail
+                for phase, detail in events
+            ))
+            self.assertTrue(any(
+                node.kind == "paragraph" and "Proof search" in node.label
+                for node in rebuilt.nodes.values()
+            ))
+            self.assertEqual(
+                json.loads(manifest_path.read_text(encoding="utf-8"))["version"],
+                MANIFEST_VERSION,
+            )
+
     def test_update_paths_treats_missing_target_as_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1839,6 +1883,39 @@ class ScannerTest(unittest.TestCase):
             self.assertIn("Stochastic Processes", paragraphs[1].label)
             self.assertIn("stationarity remains unproved", paragraphs[1].facts[0])
             self.assertFalse(paragraphs[1].label.startswith("*"))
+
+    def test_document_context_indexes_table_rows_and_reserves_rare_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "coverage.md"
+            text = (
+                "# Capability coverage\n\n"
+                "| Capability | Status | Note |\n"
+                "| --- | --- | --- |\n"
+                "| Parser | `[x]` | Complete. |\n"
+                "| Emitter | `[x]` | Complete. |\n"
+                "| Optimizer | `[x]` | Complete. |\n"
+                "| Solver | `[~]` | Bounded fragment only. |\n"
+                "| Verifier | `[~]` | Partial proof surface. |\n"
+                "| Symbolic PAC learning | `[ ]` | Not implemented. |\n"
+            )
+            doc.write_text(text, encoding="utf-8")
+
+            nodes, _edges = extract_document_context(
+                [DocumentInput(doc, "docs/roadmap/coverage.md", "coverage_md", text)],
+                {"docs/roadmap/coverage.md": "coverage_md"},
+                max_paragraphs_per_section=2,
+            )
+
+            paragraphs = sorted(
+                (node for node in nodes.values() if node.kind == "paragraph"),
+                key=lambda node: node.line or 0,
+            )
+            facts = [node.facts[0] for node in paragraphs]
+            self.assertTrue(any("Symbolic PAC learning" in fact for fact in facts))
+            self.assertTrue(any("| `[~]` |" in fact for fact in facts))
+            self.assertTrue(all("\n" not in fact for fact in facts))
+            self.assertFalse(any("| --- | --- |" in fact for fact in facts))
 
     def test_document_context_coarse_document_still_indexes_paragraphs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

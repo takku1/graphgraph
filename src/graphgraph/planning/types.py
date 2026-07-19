@@ -21,7 +21,7 @@ class ContextPlan:
     weak_edge_limit: int
     min_confidence: float
     reason: str
-    planner_version: str = "context_plan_v10_cycle2_macro_complete"
+    planner_version: str = "context_plan_v13_status_evidence_ir"
 
 
 @dataclass(frozen=True)

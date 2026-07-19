@@ -1273,6 +1273,8 @@ def preferred_path_anchor_matches(
 _DOCUMENT_STATUS_MARKER = re.compile(
     r"^\s*(?:[-+*]\s*)?`?\[\s*([xX~]?)\s*\]`?",
 )
+_DOCUMENT_STATUS_CELL = re.compile(r"^`?\[\s*([xX~]?)\s*\]`?$")
+_DOCUMENT_TABLE_ROW = re.compile(r"^\s*\|(?:[^|\r\n]*\|){2,}\s*$")
 _ABSENT_DOCUMENT_INTENT = re.compile(
     r"\b(?:marked|currently|explicitly)\s+absent\b|"
     r"\b(?:unimplemented|not\s+implemented|missing\s+capabilit(?:y|ies))\b",
@@ -1292,6 +1294,65 @@ def _requested_document_statuses(query: str) -> set[str]:
     if _PARTIAL_DOCUMENT_INTENT.search(query):
         wanted.add("~")
     return wanted
+
+
+def _document_status_facet(
+    terms: tuple[str, ...],
+    requested_statuses: set[str],
+) -> bool:
+    words = set(terms)
+    return (
+        ("" in requested_statuses and "absent" in words)
+        or ("~" in requested_statuses and bool(words & {"partial", "partially"}))
+        or (
+            bool(requested_statuses)
+            and "status" in words
+            and bool(words & {"class", "only"})
+        )
+    )
+
+
+def _document_status_row(body: str) -> tuple[str, str] | None:
+    """Decode one status-bearing document row into status and subject.
+
+    This is intentionally a row grammar, not a substring search. A legend,
+    prose mentioning ``[ ]``, and an old graph node containing an entire table
+    must not masquerade as one capability operand.
+    """
+    marker = _DOCUMENT_STATUS_MARKER.match(body)
+    if marker:
+        remainder = body[marker.end():].strip()
+        subject = re.match(
+            r"\*\*([^*]{2,160}?)(?::\*\*|\*\*\s*:)",
+            remainder,
+        )
+        return marker.group(1).casefold(), subject.group(1).strip() if subject else ""
+
+    stripped = body.strip()
+    if not _DOCUMENT_TABLE_ROW.fullmatch(stripped):
+        return None
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    status_cells = [
+        (index, match.group(1).casefold())
+        for index, cell in enumerate(cells)
+        if (match := _DOCUMENT_STATUS_CELL.fullmatch(cell))
+    ]
+    # A row has one status operand. Multiple markers indicate a legacy node
+    # containing a whole unsplit table and must fail closed until reindexed.
+    if len(status_cells) != 1:
+        return None
+    status_index, status = status_cells[0]
+    subject = next(
+        (
+            re.sub(r"^[`*_]+|[`*_]+$", "", cell).strip()
+            for cell in reversed(cells[:status_index])
+            if cell
+        ),
+        "",
+    )
+    if term_key(subject) in {"capability", "status", "item", "feature"}:
+        subject = ""
+    return status, subject
 
 
 def document_status_anchor_matches(
@@ -1319,20 +1380,18 @@ def document_status_anchor_matches(
             continue
         body = " ".join(str(fact) for fact in node.facts)
         normalized_path = node.path.replace("\\", "/").casefold()
-        if roadmap_intent and "/roadmap/" not in f"/{normalized_path}/":
+        path_terms = set(plan_terms(normalized_path))
+        if roadmap_intent and "roadmap" not in path_terms:
             continue
-        marker = _DOCUMENT_STATUS_MARKER.search(body)
-        status = marker.group(1).casefold() if marker else None
+        row = _document_status_row(body)
+        status, subject = row if row is not None else (None, "")
         if status not in wanted:
             continue
-        if capability_intent and not re.search(
-            r"\*\*[^*]+(?::\*\*|\*\*\s*:)",
-            body,
-        ):
-            # Legend rows such as "`[ ]` absent" describe the marker rather
-            # than naming an absent capability.
+        if capability_intent and not subject:
+            # Legend rows such as "`[ ]` absent" and task rows without a
+            # capability field describe status syntax or work, not a named
+            # capability.
             continue
-        path_terms = set(plan_terms(node.path))
         body_terms = set(plan_terms(f"{node.label} {body}"))
         overlap = len(query_terms & (path_terms | body_terms)) / max(1, len(query_terms))
         roadmap_path = int("roadmap" in path_terms)
@@ -1360,6 +1419,47 @@ def document_status_anchor_matches(
     return tuple(match for _rank, match in sorted(ranked)[:12])
 
 
+def _constrain_document_status_packet(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    evidence_ids: set[str],
+) -> tuple[set[str], list[Edge]]:
+    """Project a status query to matching rows plus their document ancestors."""
+    keep = set(evidence_ids)
+    for node_id in tuple(evidence_ids):
+        node = graph.nodes.get(node_id)
+        if node is not None and node.parent in graph.nodes:
+            keep.add(str(node.parent))
+    for edge in graph.edges:
+        if edge.active and edge.type == "section_of" and edge.source in keep:
+            if edge.target in graph.nodes:
+                keep.add(edge.target)
+    constrained_nodes = nodes & keep
+    constrained_nodes.update(evidence_ids)
+    constrained_nodes.update(node_id for node_id in keep if node_id in graph.nodes)
+    constrained_edges = [
+        edge
+        for edge in edges
+        if edge.source in constrained_nodes and edge.target in constrained_nodes
+    ]
+    # The expansion budget may stop at the section parent. Preserve its direct
+    # section/file relation without reopening sibling paragraph expansion.
+    seen = {(edge.source, edge.target, edge.type) for edge in constrained_edges}
+    for edge in graph.edges:
+        key = (edge.source, edge.target, edge.type)
+        if (
+            edge.active
+            and edge.type in {"contains", "section_of"}
+            and edge.source in constrained_nodes
+            and edge.target in constrained_nodes
+            and key not in seen
+        ):
+            constrained_edges.append(edge)
+            seen.add(key)
+    return constrained_nodes, constrained_edges
+
+
 def retrieve_context(
     graph: Graph,
     query: str,
@@ -1375,6 +1475,12 @@ def retrieve_context(
     if scope_mode not in {"strict", "expand"}:
         raise ValueError(f"unknown scope mode: {scope_mode}")
     query = sanitize_query(query)
+    requested_statuses = (
+        _requested_document_statuses(query)
+        if query_class == "doc_summary"
+        else set()
+    )
+    status_constrained = bool(requested_statuses)
     if query_class == "doc_summary" and not scopes:
         explicit_doc_paths = _explicit_document_paths(graph, query)
         if len(explicit_doc_paths) == 1:
@@ -1390,6 +1496,16 @@ def retrieve_context(
         query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers)
     )
     facets = query_facets(query) if facet_aware else ()
+    if status_constrained:
+        # The typed status-row matcher owns this predicate. Leaving the same
+        # words in generic lexical facets creates a contradictory second gate:
+        # a literal `[ ]` row can prove absence without repeating the word
+        # "absent" in its body.
+        facets = tuple(
+            facet
+            for facet in facets
+            if not _document_status_facet(facet[1], requested_statuses)
+        )
     anchor_query = structural_anchor_query(query, query_class)
     path_matches = preferred_path_anchor_matches(
         graph,
@@ -1512,6 +1628,12 @@ def retrieve_context(
                         merged.append(match)
                         seen_match_ids.add(match.node.id)
         matches = tuple(merged)
+    if status_constrained:
+        # Status is an evidence type, not a ranking preference. Facet searches,
+        # source seeds, and path roots may orient an ordinary document query,
+        # but they cannot substitute legend prose or a different status class
+        # for a requested literal capability row.
+        matches = status_matches
     inferred_scope = "" if scopes else infer_dominant_scope(matches, query)
     if inferred_scope and not facets:
         coherent = tuple(match for match in matches if _path_in_scopes(match.node.path, (inferred_scope,)))
@@ -1557,7 +1679,7 @@ def retrieve_context(
             effective_anchor_limit,
             min(12, len(token_symbol_matches)),
         )
-    if path_matches:
+    if path_matches and not status_constrained:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(path_matches)))
     if facets and not path_matches and not exact_anchor_fast_path:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(facets)))
@@ -1656,6 +1778,57 @@ def retrieve_context(
 
     starts = tuple(starts_list[:12])
     if not starts:
+        if status_constrained:
+            status_labels = [
+                "absent" if status == "" else "partial"
+                for status in sorted(requested_statuses)
+            ]
+            status_warning = (
+                "no literal "
+                + "/".join(status_labels)
+                + " capability rows were found in the requested roadmap documents"
+            )
+            effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
+            metadata = packet_quality_metadata(
+                graph,
+                set(),
+                [],
+                (),
+                effective_scope,
+                query_class=query_class,
+            )
+            metadata.update({
+                "scope": list(scopes),
+                "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
+                "inferred_scope": inferred_scope,
+                "anchor_strategy": "literal_document_status",
+                "plan_reason": plan.reason,
+                "planner_version": plan.planner_version,
+                "node_budget": plan.node_budget,
+                "anchor_limit": effective_anchor_limit,
+                "anchor_paths": [],
+                "document_status_evidence": {
+                    "requested": status_labels,
+                    "capability_rows": 0,
+                    "evidence": [],
+                    "packet_status_rows": [],
+                    "conflicting_status_rows": [],
+                    "packet_constrained": True,
+                    "warning": status_warning,
+                },
+                "answerability": {
+                    "status": "incomplete",
+                    "abstained": True,
+                    "reason": status_warning,
+                },
+            })
+            return RetrievalResult(
+                starts=(),
+                matches=(),
+                nodes=set(),
+                edges=[],
+                metadata=metadata,
+            )
         return RetrievalResult(
             starts=(),
             matches=matches,
@@ -1729,6 +1902,13 @@ def retrieve_context(
     if scopes and scope_mode == "strict":
         nodes = {node_id for node_id in nodes if _path_in_scopes(graph.nodes[node_id].path, scopes)}
         edges = [edge for edge in edges if edge.source in nodes and edge.target in nodes]
+    if status_constrained:
+        nodes, edges = _constrain_document_status_packet(
+            graph,
+            nodes,
+            edges,
+            {match.node.id for match in status_matches},
+        )
     effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
     metadata = packet_quality_metadata(
         graph,
@@ -1828,7 +2008,6 @@ def retrieve_context(
             "abstained": True,
             "reason": document_warning,
         }
-    requested_statuses = _requested_document_statuses(query)
     if query_class == "doc_summary" and requested_statuses:
         status_labels = [
             "absent" if status == "" else "partial"
@@ -1843,17 +2022,31 @@ def retrieve_context(
                 + " capability rows were found in the requested roadmap documents"
             )
         )
+        packet_status_rows: list[str] = []
+        conflicting_status_rows: list[str] = []
+        for node_id in sorted(nodes):
+            node = graph.nodes[node_id]
+            row = _document_status_row(" ".join(str(fact) for fact in node.facts))
+            if row is None:
+                continue
+            if row[0] in requested_statuses:
+                packet_status_rows.append(node_id)
+            else:
+                conflicting_status_rows.append(node_id)
         metadata["document_status_evidence"] = {
             "requested": status_labels,
             "capability_rows": len(status_matches),
             "evidence": [match.node.id for match in status_matches],
+            "packet_status_rows": packet_status_rows,
+            "conflicting_status_rows": conflicting_status_rows,
+            "packet_constrained": True,
             "warning": status_warning,
         }
-        if status_warning:
+        if status_warning or conflicting_status_rows:
             metadata["answerability"] = {
                 "status": "incomplete",
                 "abstained": True,
-                "reason": status_warning,
+                "reason": status_warning or "document packet contains conflicting status rows",
             }
     if query_class == "reverse_lookup":
         truncation = reverse_lookup_truncation(
