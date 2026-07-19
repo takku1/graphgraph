@@ -655,8 +655,9 @@ required-literal prefilters, full verification only around candidates,
 input-shape-specific read strategies, worker-state reuse, early termination,
 and explicit work bounds. These are translated into GraphGraph as exact
 symbol/path/facet activation, typed-edge verification, changed-path splices,
-process-local graph/index reuse, facet-complete stop conditions, and
-node/edge/source/token budgets.
+process-local graph/index reuse, bounded facet search with post-retrieval
+completeness receipts, and node/edge/source/token budgets. General
+facet-complete expansion stopping remains unimplemented and benchmark-gated.
 
 Two concrete changes survived measurement and correctness review:
 
@@ -673,6 +674,43 @@ and the small difference does not establish a causal topology speedup. The
 branch was removed because it demonstrated no advantage. The corrected
 semantic-locality model and its limits are documented in
 `semantic-locality-and-llm-efficiency.md`.
+
+## Native Exact-Lookup Staging (2026-07-19)
+
+The semantic-locality implementation audit found one concrete runtime gap:
+unambiguous direct identifiers still initialized the full lexical index,
+executed topology ranking, and paid for graph-wide document/code and shape
+profiles.
+
+The retained native GraphGraph path now:
+
+- resolves explicit IDs, identifiers, filenames, and paths through a small
+  node-revision-aware literal index;
+- falls back to ranked/PPR retrieval when an exact name is ambiguous or the
+  query is prose;
+- bypasses full token/search index construction, PageRank/PPR, document/code
+  profiling, shape profiling, and auxiliary semantic sources for an
+  unambiguous direct lookup;
+- records `anchor_strategy=exact_fast_path` and
+  `sources.mode=exact_fast_path` in the production receipt.
+
+The measurement used five repetitions, a newly parsed Graph object for each
+measured retrieval, the 5,170-node saved GraphGraph self-graph, and the exact
+identifier `recommend_node_budget`:
+
+| Stage | Median |
+| --- | ---: |
+| Native exact search | 17.277 ms |
+| Normal ranked/PPR search | 532.094 ms |
+| Full production exact context | 65.087 ms |
+
+Exact and ranked search returned the same first node. The 30.8x search-stage
+ratio measures avoided GraphGraph work only. Graph parsing was outside the
+timed region, and the experiment is neither a ripgrep comparison nor evidence
+of lower LLM compute or better model answers.
+
+Graphify was comparison-only during this audit. No Graphify dependency,
+wrapper, adapter, fallback, or runtime call was added.
 
 ## What Is Still Unproven
 

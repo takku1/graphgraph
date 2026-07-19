@@ -270,6 +270,7 @@ class Graph:
     _search_index_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
     _search_token_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
     _search_index_by_id_cache: tuple[tuple[object, ...], dict[str, object]] | None = field(default=None, init=False, repr=False)
+    _exact_lookup_cache: tuple[int, dict[str, tuple[str, ...]]] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Always copy into independent mutation-tracked containers. Reusing a

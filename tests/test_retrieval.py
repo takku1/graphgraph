@@ -242,6 +242,254 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(result.starts[0], "N1")
         self.assertEqual(result.nodes, {"N1", "N2", "N3"})
 
+    def test_exact_identifier_fast_path_bypasses_topology_ranking(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node(
+                    "TARGET",
+                    "resolve_packet_budget",
+                    "function",
+                    "src/graphgraph/planning/budget.py",
+                ),
+                "RELATED": Node(
+                    "RELATED",
+                    "resolve_packet_budget_fallback",
+                    "function",
+                    "src/graphgraph/planning/fallback.py",
+                ),
+            },
+            edges=[Edge("RELATED", "TARGET", "calls")],
+        )
+
+        with (
+            patch.object(
+                graph,
+                "pagerank",
+                side_effect=AssertionError("global PageRank ran for an exact identifier"),
+            ),
+            patch.object(
+                graph,
+                "personalized_pagerank",
+                side_effect=AssertionError("personalized PageRank ran for an exact identifier"),
+            ),
+            patch.object(
+                graph,
+                "localized_personalized_pagerank",
+                side_effect=AssertionError("localized PPR ran for an exact identifier"),
+            ),
+        ):
+            matches = search_nodes(
+                graph,
+                "resolve_packet_budget",
+                personalize=True,
+                exact_fast_path=True,
+            )
+
+        self.assertEqual([match.node.id for match in matches], ["TARGET"])
+        self.assertIn("exact_fast_path", matches[0].reasons)
+        self.assertIsNone(graph._search_index_cache)
+        self.assertIsNone(graph._search_token_cache)
+
+    def test_exact_path_fast_path_bypasses_topology_ranking(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node(
+                    "TARGET",
+                    "budget.py",
+                    "python",
+                    "src/graphgraph/planning/budget.py",
+                ),
+            }
+        )
+
+        with (
+            patch.object(
+                graph,
+                "pagerank",
+                side_effect=AssertionError("global PageRank ran for an exact path"),
+            ),
+            patch.object(
+                graph,
+                "personalized_pagerank",
+                side_effect=AssertionError("personalized PageRank ran for an exact path"),
+            ),
+        ):
+            matches = search_nodes(
+                graph,
+                "src/graphgraph/planning/budget.py",
+                personalize=True,
+                exact_fast_path=True,
+            )
+
+        self.assertEqual([match.node.id for match in matches], ["TARGET"])
+        self.assertIn("path_exact:src/graphgraph/planning/budget.py", matches[0].reasons)
+        self.assertIn("exact_fast_path", matches[0].reasons)
+
+    def test_ambiguous_exact_identifier_keeps_topology_ranking(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "ResolvePacketBudget", "function", "src/a.py"),
+                "B": Node("B", "ResolvePacketBudget", "function", "src/b.py"),
+            },
+            edges=[Edge("A", "B", "calls")],
+        )
+        original = graph.personalized_pagerank
+        with patch.object(graph, "personalized_pagerank", wraps=original) as personalized:
+            matches = search_nodes(
+                graph,
+                "ResolvePacketBudget",
+                personalize=True,
+                exact_fast_path=True,
+            )
+
+        self.assertTrue(personalized.called)
+        self.assertEqual({match.node.id for match in matches}, {"A", "B"})
+        self.assertTrue(all("exact_fast_path" not in match.reasons for match in matches))
+
+    def test_exact_lookup_index_invalidates_on_node_mutation(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "old_packet_budget", "function", "src/budget.py"),
+            }
+        )
+        first = search_nodes(
+            graph,
+            "old_packet_budget",
+            personalize=True,
+            exact_fast_path=True,
+        )
+        first_revision = graph._exact_lookup_cache[0] if graph._exact_lookup_cache else -1
+
+        graph.nodes["TARGET"] = Node(
+            "TARGET",
+            "new_packet_budget",
+            "function",
+            "src/budget.py",
+        )
+        old = search_nodes(
+            graph,
+            "old_packet_budget",
+            personalize=True,
+            exact_fast_path=True,
+        )
+        new = search_nodes(
+            graph,
+            "new_packet_budget",
+            personalize=True,
+            exact_fast_path=True,
+        )
+
+        self.assertTrue(all("exact_fast_path" not in match.reasons for match in old))
+        self.assertTrue(all(match.node.label != "old_packet_budget" for match in old))
+        self.assertEqual([match.node.id for match in new], ["TARGET"])
+        self.assertIn("exact_fast_path", new[0].reasons)
+        self.assertIsNotNone(graph._exact_lookup_cache)
+        self.assertNotEqual(graph._exact_lookup_cache[0], first_revision)
+
+    def test_direct_lookup_receipt_reports_exact_anchor_strategy(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node(
+                    "TARGET",
+                    "resolve_packet_budget",
+                    "function",
+                    "src/graphgraph/planning/budget.py",
+                ),
+                "CALLER": Node("CALLER", "plan_context", "function", "src/graphgraph/planning/plan.py"),
+            },
+            edges=[Edge("CALLER", "TARGET", "calls")],
+        )
+
+        with patch.object(
+            graph,
+            "personalized_pagerank",
+            side_effect=AssertionError("direct exact lookup executed PPR"),
+        ), patch(
+            "graphgraph.retrieval.context.doc_code_bias",
+            side_effect=AssertionError("direct exact lookup scanned document/code bias"),
+        ), patch(
+            "graphgraph.retrieval.context.apply_shape_budget",
+            side_effect=AssertionError("direct exact lookup profiled whole-graph shape"),
+        ):
+            result = retrieve_context(
+                graph,
+                "resolve_packet_budget",
+                "direct_lookup",
+                hops=1,
+            )
+
+        self.assertEqual(result.starts, ("TARGET",))
+        self.assertEqual(result.metadata["anchor_strategy"], "exact_fast_path")
+
+    def test_production_context_exact_lookup_skips_all_topology_rankers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            graph = Graph(
+                nodes={
+                    "TARGET": Node(
+                        "TARGET",
+                        "resolve_packet_budget",
+                        "function",
+                        "src/graphgraph/planning/budget.py",
+                        summary="L1",
+                    ),
+                    "CALLER": Node(
+                        "CALLER",
+                        "plan_context",
+                        "function",
+                        "src/graphgraph/planning/plan.py",
+                        summary="L1",
+                    ),
+                },
+                edges=[Edge("CALLER", "TARGET", "calls")],
+            )
+            save_graph(graph, graph_path)
+
+            with (
+                patch.object(
+                    graph,
+                    "pagerank",
+                    side_effect=AssertionError("production exact lookup executed global PageRank"),
+                ),
+                patch.object(
+                    graph,
+                    "personalized_pagerank",
+                    side_effect=AssertionError("production exact lookup executed PPR"),
+                ),
+                patch.object(
+                    graph,
+                    "localized_personalized_pagerank",
+                    side_effect=AssertionError("production exact lookup executed local PPR"),
+                ),
+                patch(
+                    "graphgraph.platform.compiler.apply_shape_budget",
+                    side_effect=AssertionError("production exact lookup profiled compiler graph shape"),
+                ),
+                patch(
+                    "graphgraph.retrieval.context.apply_shape_budget",
+                    side_effect=AssertionError("production exact lookup profiled retrieval graph shape"),
+                ),
+                patch(
+                    "graphgraph.retrieval.context.doc_code_bias",
+                    side_effect=AssertionError("production exact lookup scanned document/code bias"),
+                ),
+            ):
+                payload = json.loads(render_query_context(
+                    query="resolve_packet_budget",
+                    query_class="auto",
+                    graph_path=graph_path,
+                    graph=graph,
+                    json_anchors=True,
+                    show_anchors=True,
+                ))
+
+        self.assertEqual(payload["anchors"][0]["id"], "TARGET")
+        self.assertEqual(payload["retrieval"]["anchor_strategy"], "exact_fast_path")
+        self.assertTrue(payload["retrieval"]["sources"]["exact_fast_path"])
+        self.assertEqual(payload["retrieval"]["sources"]["mode"], "exact_fast_path")
+        self.assertIsNone(graph._search_index_cache)
+        self.assertIsNone(graph._search_token_cache)
+
     def test_recent_changes_query_class_surfaces_fixes_edges_deprioritized_elsewhere(self) -> None:
         # Concrete, scoped instance of the "time-scoped query" idea in
         # docs/planned-work.md: extract_commit_history already puts commit

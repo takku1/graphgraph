@@ -135,10 +135,75 @@ def search_nodes(
     personalize: bool = False,
     scopes: tuple[str, ...] = (),
     ppr_mode: str = "auto",
+    exact_fast_path: bool = False,
+    exact_only: bool = False,
 ) -> tuple[Match, ...]:
     """Rank graph nodes with a deterministic lexical score."""
     if ppr_mode not in {"auto", "exact", "local"}:
         raise ValueError(f"unknown personalized PageRank mode: {ppr_mode}")
+    if exact_fast_path:
+        raw = query.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"`", "'", '"'}:
+            raw = raw[1:-1].strip()
+        if raw:
+            normalized = raw.replace("\\", "/").lower()
+            explicit_label = (
+                any(marker in raw for marker in ("_", "::", ".", "/", "\\", "-"))
+                or any(char.isupper() for char in raw)
+            )
+            if graph._exact_lookup_cache and graph._exact_lookup_cache[0] == graph.node_revision:
+                index = graph._exact_lookup_cache[1]
+            else:
+                index_sets: dict[str, set[str]] = defaultdict(set)
+                for node in graph.nodes.values():
+                    if not node.active:
+                        continue
+                    path = node.path.replace("\\", "/").lower() if node.path else ""
+                    for alias_kind, value in (
+                        ("id", node.id.lower()),
+                        ("label", node.label.lower()),
+                        ("path", path),
+                        ("basename", path.rsplit("/", 1)[-1] if path else ""),
+                    ):
+                        if value:
+                            index_sets[f"{alias_kind}:{value}"].add(node.id)
+                index = {
+                    alias: tuple(sorted(node_ids))
+                    for alias, node_ids in index_sets.items()
+                }
+                graph._exact_lookup_cache = (graph.node_revision, index)
+            aliases = [("id", f"id:{normalized}"), ("path", f"path_exact:{normalized}")]
+            if explicit_label:
+                aliases.extend((
+                    ("label", f"label_exact:{normalized}"),
+                    ("basename", f"basename_exact:{normalized}"),
+                ))
+            normalized_scopes = tuple(scope.replace("\\", "/").strip("/") for scope in scopes)
+            candidate_reasons: dict[str, list[str]] = defaultdict(list)
+            for alias_kind, reason in aliases:
+                for node_id in index.get(f"{alias_kind}:{normalized}", ()):
+                    node = graph.nodes[node_id]
+                    if not normalized_scopes or any(
+                        value == scope or value.startswith(scope + "/")
+                        for value in node.normalized_scope_values
+                        for scope in normalized_scopes
+                    ):
+                        candidate_reasons[node_id].append(reason)
+            if len(candidate_reasons) == 1:
+                node_id, reasons = next(iter(candidate_reasons.items()))
+                node = graph.nodes[node_id]
+                quality = identifier_quality_bonus(node.label)
+                return (Match(
+                    node=node,
+                    score=64.0 + quality,
+                    reasons=tuple((
+                        *dict.fromkeys(reasons),
+                        *(("well_named_identifier",) if quality else ()),
+                        "exact_fast_path",
+                    )),
+                ),)
+        if exact_only:
+            return ()
     terms = tokenize(query)
     if not terms:
         return ()

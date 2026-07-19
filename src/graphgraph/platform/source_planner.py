@@ -23,6 +23,7 @@ _FEDERATION_TERMS = {"repository", "repositories", "repo", "repos", "project", "
 class SourcePlannerReceipt:
     mode: str
     lexical_strength: float
+    exact_fast_path: bool = False
     semantic_seeds: int = 0
     semantic_rebuilt: bool = False
     memories: int = 0
@@ -67,7 +68,13 @@ class QuerySourcePlanner:
     ) -> SourcePlan:
         if mode not in {"auto", "off", "all"}:
             raise ValueError(f"unknown source planner mode: {mode}")
-        base_matches = search_nodes(graph, query, limit=12, personalize=False)
+        base_matches = search_nodes(
+            graph,
+            query,
+            limit=12,
+            personalize=False,
+            exact_fast_path=mode == "auto",
+        )
         preferred_paths = tuple(dict.fromkeys(
             match.node.path.replace("\\", "/")
             for match in base_matches
@@ -78,6 +85,21 @@ class QuerySourcePlanner:
             return SourcePlan(
                 graph,
                 receipt=SourcePlannerReceipt(mode, lexical_strength),
+                preferred_paths=preferred_paths,
+            )
+        if (
+            mode == "auto"
+            and len(base_matches) == 1
+            and "exact_fast_path" in base_matches[0].reasons
+        ):
+            return SourcePlan(
+                graph,
+                receipt=SourcePlannerReceipt(
+                    mode="exact_fast_path",
+                    lexical_strength=lexical_strength,
+                    exact_fast_path=True,
+                    sources=("exact_lexical",),
+                ),
                 preferred_paths=preferred_paths,
             )
 

@@ -45,6 +45,12 @@ that a particular model will interpret every packet correctly.
 - Agent round-trip floor: `query_context` can optionally fuse bounded source
   windows, and standalone `source_snippets` reuses the process-local graph
   cache instead of reparsing the graph.
+- Exact direct lookup: a revision-aware literal index bypasses topology
+  ranking, full lexical indexing, source expansion, document/code bias, and
+  shape profiling when one explicit node is unambiguous. On five fresh Graph
+  objects from the 5,170-node self-graph, exact search measured 17.277 ms
+  median versus 532.094 ms for ranked/PPR search; full production context
+  compilation measured 65.087 ms median.
 
 ## P0: Accuracy Gates
 
@@ -162,6 +168,9 @@ Completed platform hot-path work:
    synthetic graphs before adding more compression formats.
 4. Track cold process startup, graph load, search, expansion, selection, rendering,
    and validation as separate latency stages.
+5. General facet-complete early termination is not yet implemented. Benchmark
+   it against the current bounded searches plus post-retrieval coverage receipt
+   before changing expansion; require unchanged typed-support recall.
 
 ## P2: Source Organization
 

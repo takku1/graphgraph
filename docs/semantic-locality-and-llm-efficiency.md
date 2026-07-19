@@ -121,7 +121,7 @@ implementation:
 | Full regex verification around candidates | Verify candidates with typed edges and bounded source |
 | Input-shaped buffer choice | Choose cached graph, changed-path splice, or live source window |
 | Reused matchers and worker buffers | Reuse graph, lexical/topology indexes, and packet caches |
-| Early match termination | Stop when requested facets have attributed evidence |
+| Early match termination | Candidate: stop when requested facets have attributed evidence |
 | Regex-size bounds | Bound nodes, edges, hops, source lines, and tokens |
 | Ignore rules before search | Exclude generated, vendored, secret-bearing, and irrelevant artifacts |
 
@@ -131,6 +131,27 @@ The round-three implementation adds two concrete pieces of this staged path:
 - MCP `query_context` can fuse bounded, current source windows with its graph
   packet, avoiding a second tool call. Whole-response caching is bypassed for
   fused raw source so a file edit cannot return stale lines.
+
+The follow-up audit adds the missing required-literal fast path. An unambiguous
+explicit ID, identifier, filename, or path now resolves through a small
+revision-aware literal index before tokenization. It bypasses PageRank, PPR,
+the full lexical/token index, document/code profiling, graph-shape profiling,
+and auxiliary semantic sources. Ambiguous identifiers and prose still use the
+ranked, typed-topology path.
+
+The early-termination row is only partly realized. GraphGraph bounds facet
+searches and reports post-retrieval facet completeness, while spreading
+activation has a marginal-utility cutoff. General typed expansion does not yet
+stop as soon as every requested facet is attributed. That optimization remains
+benchmark-gated because an early stop can silently discard structural support.
+
+## Graphify boundary
+
+Graphify is a comparison baseline only for this work. The semantic-locality
+implementation is native GraphGraph code. It does not call Graphify, wrap it,
+depend on it, adapt to it, or fall back to it. GraphGraph's pre-existing,
+explicit external-graph import compatibility is a separate offline boundary
+and is not used by the production path or by these measurements.
 
 ## What the evidence currently supports
 
@@ -153,6 +174,18 @@ existing path. This was not a controlled flat-file-search benchmark, and the
 small difference does not establish a causal topology speedup. The branch
 delivered no demonstrated advantage and was removed. The useful result is the
 rejection decision, not the 4.2% ratio.
+
+On the 5,170-node saved GraphGraph self-graph, five fresh-object repetitions of
+an unambiguous `recommend_node_budget` lookup measured:
+
+- native exact search: **17.277 ms median**;
+- the normal ranked/PPR search: **532.094 ms median**;
+- full production context compilation on the exact path: **65.087 ms median**.
+
+Both search paths returned the same first node. The 30.8x search-stage ratio
+demonstrates avoided GraphGraph work for this exact case. It does not compare
+against ripgrep, include graph parsing time, measure LLM inference, or establish
+answer-quality improvement.
 
 `gg_lex` is also still a hypothesis. Self-describing lexical handles may be
 easier for a model to follow than numeric indirection, but they cost roughly

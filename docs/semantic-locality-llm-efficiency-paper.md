@@ -170,7 +170,7 @@ The transferable idea from ripgrep is staged work:
 | Verify only around candidates | Typed-edge checks and bounded source around selected anchors |
 | Input-shaped buffer strategy | Cached graph, changed-path splice, or live source by query shape |
 | Reused workers and buffers | Persistent graph and index caches |
-| Early match termination | Stop when requested facets have attributed evidence |
+| Early match termination | Candidate: stop when requested facets have attributed evidence |
 | Explicit regex bounds | Node, edge, hop, source-line, and token budgets |
 | Ignore rules before matching | Exclude generated, vendored, secret-bearing, and irrelevant files |
 
@@ -218,6 +218,27 @@ The retained changes target correctness and agent-loop cost:
 - `query_context` can return graph topology and bounded, current source in one
   response without caching stale raw lines.
 
+### 6.4 Native exact-anchor fast path
+
+A source audit found that exact direct lookups still paid for PageRank, full
+lexical indexing, document/code profiling, and graph-shape budgeting. The
+production path now checks a small revision-aware literal index first.
+Unambiguous explicit IDs, identifiers, filenames, and paths bypass those
+ranked/topological preparation stages and auxiliary semantic sources.
+Ambiguous names and natural-language queries retain the full ranked path.
+
+Five repetitions on freshly parsed Graph objects from the 5,170-node saved
+self-graph used `recommend_node_budget` as the exact identifier. Median native
+exact search was 17.277 ms, compared with 532.094 ms for normal ranked/PPR
+search; both returned the same first node. Full context compilation on the
+exact route measured 65.087 ms median and reported the exact-path receipt.
+These figures exclude graph parsing, are not a comparison with ripgrep, and say
+nothing about LLM answer quality.
+
+This implementation is entirely native GraphGraph. Graphify was used only as a
+comparison baseline during the design audit; it is not a runtime dependency,
+wrapper, adapter, or fallback.
+
 ## 7. Constants versus adaptive formulas
 
 Constants remain appropriate for protocol tags, hard safety ceilings,
@@ -243,6 +264,12 @@ The semantic-locality thesis should be evaluated with:
 5. distractor ablations that hold relevant evidence and approximate token
    length constant;
 6. confidence intervals and repeated runs rather than single timing ratios.
+
+Facet-aware early termination remains an explicit test candidate rather than a
+claimed production feature. Current retrieval performs bounded facet searches
+and computes completeness after expansion. Promoting an earlier cutoff requires
+a frozen coverage/latency benchmark showing that it does not remove typed
+support needed by the final receipt.
 
 Until those tests pass, semantic locality is a disciplined retrieval hypothesis
 with encouraging structural results—not a claim that latent proximity changes

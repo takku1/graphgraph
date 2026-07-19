@@ -1150,17 +1150,6 @@ def retrieve_context(
         query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers)
     )
     facets = query_facets(query) if facet_aware else ()
-    doc_intensity = doc_intensity_score(query_class, query)
-    graph_bias = doc_code_bias(graph)
-    doc_intensity *= 0.75 + graph_bias * 0.5
-    plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
-    if max_nodes is None:
-        plan = apply_shape_budget(graph, plan, query)
-    candidate_limit = max(plan.anchor_limit, plan.anchor_limit * 3 if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit)
-    if facets:
-        candidate_limit = max(candidate_limit, min(36, len(facets) * 3))
-    if query_class == "direct_lookup" and len(plan_terms(query)) == 1:
-        candidate_limit = max(candidate_limit, 24)
     anchor_query = structural_anchor_query(query, query_class)
     path_matches = preferred_path_anchor_matches(
         graph,
@@ -1169,13 +1158,44 @@ def retrieve_context(
         anchor_paths,
         facets,
     )
-    matches = path_matches or search_nodes(
-        graph,
-        anchor_query,
-        limit=max(candidate_limit, 1),
-        doc_intensity=doc_intensity,
-        personalize=True,
-        scopes=scopes,
+    exact_matches = (
+        search_nodes(
+            graph,
+            anchor_query,
+            limit=1,
+            scopes=scopes,
+            exact_fast_path=True,
+            exact_only=True,
+        )
+        if query_class == "direct_lookup" and not path_matches
+        else ()
+    )
+    exact_match = exact_matches[0] if exact_matches else None
+    doc_intensity = 0.0
+    if exact_match is None:
+        doc_intensity = doc_intensity_score(query_class, query)
+        graph_bias = doc_code_bias(graph)
+        doc_intensity *= 0.75 + graph_bias * 0.5
+    plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
+    if max_nodes is None and exact_match is None:
+        plan = apply_shape_budget(graph, plan, query)
+    candidate_limit = max(plan.anchor_limit, plan.anchor_limit * 3 if query_class in STRUCTURAL_QUERY_CLASSES else plan.anchor_limit)
+    if facets:
+        candidate_limit = max(candidate_limit, min(36, len(facets) * 3))
+    if query_class == "direct_lookup" and len(plan_terms(query)) == 1:
+        candidate_limit = max(candidate_limit, 24)
+    matches = (
+        path_matches
+        or ((exact_match,) if exact_match is not None else ())
+        or search_nodes(
+            graph,
+            anchor_query,
+            limit=max(candidate_limit, 1),
+            doc_intensity=doc_intensity,
+            personalize=True,
+            scopes=scopes,
+            exact_fast_path=query_class == "direct_lookup",
+        )
     )
     source_matches = tuple(
         Match(
@@ -1192,7 +1212,10 @@ def retrieve_context(
         matches = priority_matches + tuple(
             match for match in matches if match.node.id not in priority_ids
         )
-    if facets and not path_matches:
+    exact_anchor_fast_path = (
+        len(matches) == 1 and "exact_fast_path" in matches[0].reasons
+    )
+    if facets and not path_matches and not exact_anchor_fast_path:
         # A single bag-of-words search for a conjunction is dominated by nodes
         # that repeat the query's common subsystem terms. Search each facet
         # independently, then merge its best evidence into the candidate pool
@@ -1257,7 +1280,7 @@ def retrieve_context(
         )
     if path_matches:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(path_matches)))
-    if facets and not path_matches:
+    if facets and not path_matches and not exact_anchor_fast_path:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(facets)))
     selected_matches = select_anchor_matches(
         matches,
@@ -1268,7 +1291,7 @@ def retrieve_context(
         graph=graph,
         dominant_scope=inferred_scope,
     )
-    if facets and not path_matches:
+    if facets and not path_matches and not exact_anchor_fast_path:
         selected_matches = reserve_facet_matches(
             selected_matches,
             matches,
@@ -1383,6 +1406,12 @@ def retrieve_context(
         "scope": list(scopes),
         "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
         "inferred_scope": inferred_scope,
+        "anchor_strategy": (
+            "exact_fast_path"
+            if selected_matches
+            and all("exact_fast_path" in match.reasons for match in selected_matches)
+            else "ranked"
+        ),
         "plan_reason": plan.reason,
         "planner_version": plan.planner_version,
         "node_budget": plan.node_budget,

@@ -184,7 +184,19 @@ class GraphRuntime:
             hops=program.hops,
             anchor_limit=program.anchor_limit,
         )
-        if program.max_nodes is None:
+        exact_direct_lookup = (
+            route.query_class == "direct_lookup"
+            and not program.anchor_paths
+            and bool(search_nodes(
+                graph,
+                program.query,
+                limit=1,
+                scopes=program.scopes,
+                exact_fast_path=True,
+                exact_only=True,
+            ))
+        )
+        if program.max_nodes is None and not exact_direct_lookup:
             plan = apply_shape_budget(graph, plan, program.query)
         retrieval = retrieve_context(
             graph,
