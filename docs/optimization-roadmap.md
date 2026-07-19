@@ -108,6 +108,12 @@ same evaluation signal as the accuracy gates below.
    evidence. The relevant primary result is
    [MAB-DQA](https://aclanthology.org/2026.acl-long.1053/), which treats aspects
    as bandit arms and reallocates retrieval budget from observed utility.
+   The low-latency receiver-evidence baseline is now implemented: Python
+   annotations, stable constructor/literal bindings, direct class receivers,
+   and stable `self.field` types can activate trusted call edges. Unknown
+   receivers remain telemetry rather than name-only candidate topology, and
+   ontology relations with zero traversal strength are hard-blocked during
+   expansion.
 3. Add an optional, query-local typed Rust refinement tier for unresolved member
    calls. Tree-sitter remains the low-latency default; only the selected crate or
    files should pay for compiler-grade evidence. Rust's

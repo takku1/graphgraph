@@ -593,6 +593,37 @@ They do not close global Rust receiver inference: the fresh scan still reports
 That remaining uncertainty is explicitly retained rather than converted into
 false edges.
 
+## Member-Call Topology Invariant and Python Evidence (2026-07-18)
+
+A GraphGraph self-scan exposed two different problems behind the global
+member-call warning:
+
+- external and builtin method calls were counted as failed internal topology;
+- `calls_candidate` was declared non-traversable but a zero-strength edge could
+  still enter `Graph.expand` as a zero-score frontier node.
+
+The graph runtime now treats nonpositive traversal strength as a hard boundary
+at both hop zero and later expansion. The extractor only materializes ambiguous
+candidate edges when receiver-type evidence exists. An untyped name collision
+such as `values.append(...)` is recorded as `unknown_receiver`; it does not
+become a graph edge.
+
+Python receiver evidence now includes:
+
+- parameter and local annotations;
+- stable constructor and literal assignments;
+- direct class receivers;
+- stable annotated or constructor-bound `self.field` assignments;
+- `self` and `cls` owner evidence.
+
+A production-file extraction probe over the repository's 232 parseable inputs
+reported 210 resolved member sites, zero typed-ambiguous sites, 725
+unknown-receiver sites, 5,664 external-or-unmatched sites, and zero
+`calls_candidate` edges. The prior saved graph contained 2,403 candidate edges.
+The status surface now reports trusted-resolution precision separately from
+receiver-evidence coverage and identifies pre-v2 snapshots as legacy telemetry
+until a full symbol scan refreshes them.
+
 ## What Is Still Unproven
 
 The remaining major proof is live model-answer scoring:

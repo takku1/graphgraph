@@ -527,9 +527,11 @@ def cmd_status(args: argparse.Namespace) -> None:
         "Member calls: "
         f"resolved={member_calls.get('resolved', 0)} "
         f"ambiguous={member_calls.get('ambiguous', 0)} "
-        f"unresolved={member_calls.get('unresolved', 0)} "
+        f"unknown_receiver={member_calls.get('unknown_receiver', 0)} "
+        f"external_or_unmatched={member_calls.get('external_or_unmatched', member_calls.get('unresolved', 0))} "
         f"scope={member_calls.get('scope', 'unavailable')} "
-        f"trust={member_calls.get('trust', 'unavailable')}"
+        f"trust={member_calls.get('trust', 'unavailable')} "
+        f"coverage={member_calls.get('coverage', 'unavailable')}"
     )
     if member_calls.get("warning"):
         print(f"  !  WARNING: {member_calls['warning']}")
@@ -539,7 +541,8 @@ def cmd_status(args: argparse.Namespace) -> None:
             "  Last update: "
             f"resolved={last_update.get('resolved', 0)} "
             f"ambiguous={last_update.get('ambiguous', 0)} "
-            f"unresolved={last_update.get('unresolved', 0)} "
+            f"unknown_receiver={last_update.get('unknown_receiver', 0)} "
+            f"external_or_unmatched={last_update.get('external_or_unmatched', last_update.get('unresolved', 0))} "
             f"scope={last_update.get('scope', 'unavailable')}"
         )
     concept_linking = graph.get("concept_linking") or {}
@@ -756,7 +759,8 @@ def cmd_scan(args: argparse.Namespace) -> None:
             "  Member calls  : "
             f"resolved={graph.metadata.get('member_calls_resolved', '0')} "
             f"ambiguous={graph.metadata.get('member_calls_ambiguous', '0')} "
-            f"unresolved={graph.metadata.get('member_calls_unresolved', '0')} "
+            f"unknown_receiver={graph.metadata.get('member_calls_unknown_receiver', '0')} "
+            f"external_or_unmatched={graph.metadata.get('member_calls_unresolved', '0')} "
             f"scope={graph.metadata.get('member_call_telemetry_scope', 'unavailable')}"
         )
     if "docs_profile_ms" in graph.metadata:

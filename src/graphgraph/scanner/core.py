@@ -19,6 +19,8 @@ from .imports import add_file_edges
 
 logger = logging.getLogger(__name__)
 ScanProgress = Callable[[str, str], None]
+_MEMBER_CALL_TELEMETRY_VERSION = "2"
+_MEMBER_CALL_TELEMETRY_FIELDS = ("resolved", "ambiguous", "unknown_receiver", "unresolved")
 
 
 def _emit_progress(progress: ScanProgress | None, phase: str, detail: str) -> None:
@@ -539,13 +541,17 @@ def _build_graph_from_split(
         "default_pruned_dirs": ",".join(default_pruned_dirs[:20]),
     }
     if previous_graph is not None:
-        for name in ("resolved", "ambiguous", "unresolved"):
+        for name in _MEMBER_CALL_TELEMETRY_FIELDS:
             prior = previous_graph.metadata.get(
                 f"member_calls_global_{name}",
                 previous_graph.metadata.get(f"member_calls_{name}", ""),
             )
             if prior:
                 metadata[f"member_calls_global_{name}"] = prior
+        metadata["member_calls_global_version"] = previous_graph.metadata.get(
+            "member_calls_global_version",
+            previous_graph.metadata.get("member_call_telemetry_version", "1"),
+        )
         prior_scope = previous_graph.metadata.get(
             "member_calls_global_scope",
             previous_graph.metadata.get("member_call_telemetry_scope", ""),
@@ -591,7 +597,9 @@ def _build_graph_from_split(
             metadata["frontend"] = extraction.frontend
             metadata["member_calls_resolved"] = str(extraction.resolved_member_calls)
             metadata["member_calls_ambiguous"] = str(extraction.ambiguous_member_calls)
+            metadata["member_calls_unknown_receiver"] = str(extraction.unknown_receiver_member_calls)
             metadata["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
+            metadata["member_call_telemetry_version"] = _MEMBER_CALL_TELEMETRY_VERSION
             telemetry_scope = (
                 "full_scan"
                 if not scope_concepts_to_dirty and len(dirty_rels) == len(active_rels)
@@ -601,14 +609,17 @@ def _build_graph_from_split(
             for name, value in (
                 ("resolved", extraction.resolved_member_calls),
                 ("ambiguous", extraction.ambiguous_member_calls),
+                ("unknown_receiver", extraction.unknown_receiver_member_calls),
                 ("unresolved", extraction.unresolved_member_calls),
             ):
                 metadata[f"member_calls_last_update_{name}"] = str(value)
                 if telemetry_scope == "full_scan":
                     metadata[f"member_calls_global_{name}"] = str(value)
             metadata["member_calls_last_update_scope"] = telemetry_scope
+            metadata["member_calls_last_update_version"] = _MEMBER_CALL_TELEMETRY_VERSION
             if telemetry_scope == "full_scan":
                 metadata["member_calls_global_scope"] = "full_scan_snapshot"
+                metadata["member_calls_global_version"] = _MEMBER_CALL_TELEMETRY_VERSION
             metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
             metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
             metadata["frontend_unsupported_count"] = str(len(extraction.unsupported_files))
@@ -633,7 +644,8 @@ def _build_graph_from_split(
                 f"frontend={extraction.frontend} nodes={len(extraction.nodes)} edges={len(extraction.edges)} "
                 f"fallbacks={len(extraction.fallback_files)} failures={len(extraction.failed_files)} "
                 f"member_calls={extraction.resolved_member_calls}/{extraction.ambiguous_member_calls}/"
-                f"{extraction.unresolved_member_calls} resolved/ambiguous/unresolved",
+                f"{extraction.unknown_receiver_member_calls}/{extraction.unresolved_member_calls} "
+                "resolved/ambiguous/unknown-receiver/external-or-unmatched",
             )
             if extraction.truncated:
                 # Symbol extraction hit max_total_symbols before every

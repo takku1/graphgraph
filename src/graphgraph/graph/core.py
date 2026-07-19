@@ -675,6 +675,12 @@ class Graph:
         # endpoints are already selected.
         for nid in included:
             for edge in outgoing.get(nid, []) + incoming.get(nid, []):
+                # Ontology-level non-traversability is a hard semantic
+                # boundary, not merely a low ranking signal.  In particular,
+                # `calls_candidate` has zero traversal strength because it is
+                # diagnostic uncertainty, not executable topology.
+                if edge.traversal_val <= 0.0:
+                    continue
                 if edge.source in included and edge.target in included:
                     ekey = (edge.source, edge.target, edge.type)
                     if ekey not in seen_edges:
@@ -704,6 +710,13 @@ class Graph:
                     if gated_edges:
                         candidate_edges = gated_edges
                 for edge in candidate_edges:
+                    # Keep the custom-relation fallback above, but only for
+                    # relations the ontology permits traversal through.  A
+                    # zero-weight edge used to create a zero-score frontier
+                    # entry and could therefore expand when no stronger edge
+                    # competed with it.
+                    if edge.traversal_val <= 0.0:
+                        continue
                     ekey = (edge.source, edge.target, edge.type)
                     if ekey not in seen_edges:
                         new_edges.append(edge)

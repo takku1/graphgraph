@@ -768,7 +768,7 @@ class ScannerTest(unittest.TestCase):
         self.assertTrue(all(edge.provenance == "tree_sitter_type_resolved" for edge in calls))
         self.assertEqual(result.resolved_member_calls, 2)
 
-    def test_tree_sitter_keeps_untyped_rust_member_calls_as_nontraversable_candidates(self) -> None:
+    def test_tree_sitter_keeps_untyped_rust_member_calls_out_of_topology(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
         sources = {
@@ -793,9 +793,102 @@ class ScannerTest(unittest.TestCase):
             and result.nodes[edge.source].label == "run"
             and edge.type == "calls_candidate"
         ]
-        self.assertEqual(len(candidates), 2)
-        self.assertEqual(result.ambiguous_member_calls, 1)
-        self.assertFalse(any(edge.type == "calls" and edge.source == candidates[0].source for edge in result.edges))
+        self.assertEqual(candidates, [])
+        self.assertEqual(result.ambiguous_member_calls, 0)
+        self.assertEqual(result.unknown_receiver_member_calls, 1)
+        run_id = next(node.id for node in result.nodes.values() if node.label == "run")
+        self.assertFalse(any(edge.type == "calls" and edge.source == run_id for edge in result.edges))
+
+    def test_tree_sitter_resolves_python_member_calls_from_explicit_type_evidence(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "class Graph:\n"
+            "    def outgoing(self):\n"
+            "        return []\n"
+            "\n"
+            "class Runtime:\n"
+            "    def __init__(self):\n"
+            "        self.graph = Graph()\n"
+            "\n"
+            "    def compile(self):\n"
+            "        return self.graph.outgoing()\n"
+            "\n"
+            "def from_annotation(graph: \"Graph | None\"):\n"
+            "    return graph.outgoing()\n"
+            "\n"
+            "def from_constructor():\n"
+            "    graph = Graph()\n"
+            "    return graph.outgoing()\n"
+            "\n"
+            "def from_class_receiver():\n"
+            "    return Graph.outgoing(Graph())\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "runtime.py"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "runtime.py", "runtime_py", text)],
+                max_total_symbols=100,
+            )
+
+        outgoing = next(node for node in result.nodes.values() if node.label == "outgoing")
+        callers = {
+            result.nodes[edge.source].label
+            for edge in result.edges
+            if edge.type == "calls" and edge.target == outgoing.id
+        }
+        self.assertEqual(callers, {"compile", "from_annotation", "from_constructor", "from_class_receiver"})
+        self.assertEqual(result.resolved_member_calls, 4)
+        self.assertTrue(
+            all(
+                edge.provenance == "tree_sitter_type_resolved"
+                for edge in result.edges
+                if edge.type == "calls" and edge.target == outgoing.id
+            )
+        )
+
+    def test_tree_sitter_classifies_builtin_and_unknown_python_receivers_without_candidate_edges(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "class Bucket:\n"
+            "    def append(self, value):\n"
+            "        pass\n"
+            "\n"
+            "def builtin_receiver():\n"
+            "    values = []\n"
+            "    values.append(1)\n"
+            "\n"
+            "def unknown_receiver(values):\n"
+            "    values.append(1)\n"
+            "\n"
+            "def make_bucket():\n"
+            "    return Bucket()\n"
+            "\n"
+            "def factory_receiver():\n"
+            "    bucket = make_bucket()\n"
+            "    bucket.append(1)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bucket.py"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "bucket.py", "bucket_py", text)],
+                max_total_symbols=100,
+            )
+
+        self.assertFalse(any(edge.type == "calls_candidate" for edge in result.edges))
+        self.assertFalse(
+            any(
+                edge.type == "calls"
+                and result.nodes.get(edge.target)
+                and result.nodes[edge.target].label == "append"
+                for edge in result.edges
+            )
+        )
+        self.assertEqual(result.unknown_receiver_member_calls, 2)
+        self.assertEqual(result.unresolved_member_calls, 1)
 
     def test_tree_sitter_resolves_rust_self_field_receiver_type(self) -> None:
         if not tree_sitter_available():

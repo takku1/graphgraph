@@ -358,6 +358,22 @@ class GraphCoreTest(unittest.TestCase):
         self.assertEqual(nodes, {"A", "B"})
         self.assertEqual([edge.type for edge in edges], ["custom_relation"])
 
+    def test_graph_expansion_never_crosses_nontraversable_edges(self) -> None:
+        graph = Graph(
+            nodes={"A": Node("A", "A"), "B": Node("B", "B")},
+            edges=[Edge("A", "B", "calls_candidate")],
+        )
+
+        nodes, edges = graph.expand(["A"], hops=1, allowed_relations={"calls"})
+        self.assertEqual(nodes, {"A"})
+        self.assertEqual(edges, [])
+
+        # Hop-zero evidence must enforce the same ontology boundary when both
+        # endpoints were supplied as starts.
+        nodes, edges = graph.expand(["A", "B"], hops=0)
+        self.assertEqual(nodes, {"A", "B"})
+        self.assertEqual(edges, [])
+
     def test_graph_expansion_with_energy_decay(self) -> None:
         nodes = {
             "A": Node("A", "A"),

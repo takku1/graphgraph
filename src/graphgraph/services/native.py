@@ -478,6 +478,72 @@ def _absent_graph_status(directory: Path, status: str, message: str) -> dict[str
     }
 
 
+def _member_call_snapshot(metadata: dict[str, str], scope: str) -> dict[str, object]:
+    prefix = f"member_calls_{scope}_"
+    counts = {
+        name: int(metadata.get(f"{prefix}{name}", metadata.get(f"member_calls_{name}", "0")))
+        for name in ("resolved", "ambiguous", "unknown_receiver", "unresolved")
+    }
+    version = metadata.get(
+        f"member_calls_{scope}_version",
+        metadata.get("member_call_telemetry_version", "1"),
+    )
+    typed_total = counts["resolved"] + counts["ambiguous"]
+    topology_total = typed_total + counts["unknown_receiver"]
+    resolved_ratio = counts["resolved"] / max(1, topology_total)
+    trusted_resolution_ratio = counts["resolved"] / max(1, typed_total)
+    receiver_evidence_ratio = typed_total / max(1, topology_total)
+
+    if version != "2":
+        trust = "legacy_unclassified" if topology_total else "not_applicable"
+        coverage = "unknown" if topology_total else "not_applicable"
+        warning = (
+            "member-call telemetry predates receiver-evidence classification; run a full symbol scan"
+            if topology_total
+            else ""
+        )
+    else:
+        if typed_total == 0:
+            trust = "not_applicable"
+        elif counts["ambiguous"] == 0:
+            trust = "high"
+        elif counts["resolved"] == 0:
+            trust = "low"
+        else:
+            trust = "mixed"
+
+        if topology_total == 0:
+            coverage = "not_applicable"
+        elif counts["unknown_receiver"] == 0:
+            coverage = "complete"
+        elif typed_total:
+            coverage = "partial"
+        else:
+            coverage = "unresolved"
+        warnings: list[str] = []
+        if counts["unknown_receiver"]:
+            warnings.append(
+                f"{counts['unknown_receiver']} member-call sites lack receiver evidence and are excluded from topology"
+            )
+        if counts["ambiguous"]:
+            warnings.append(
+                f"{counts['ambiguous']} typed member-call sites have multiple internal targets"
+            )
+        warning = "; ".join(warnings)
+
+    return {
+        **counts,
+        "external_or_unmatched": counts["unresolved"],
+        "telemetry_version": version,
+        "resolved_ratio": round(resolved_ratio, 4),
+        "trusted_resolution_ratio": round(trusted_resolution_ratio, 4),
+        "receiver_evidence_ratio": round(receiver_evidence_ratio, 4),
+        "trust": trust,
+        "coverage": coverage,
+        "warning": warning,
+    }
+
+
 def build_project_status(
     *,
     directory: Path = Path("."),
@@ -550,24 +616,12 @@ def build_project_status(
     if graph.metadata.get("symbols_truncated") == "true":
         graph_report["symbols_truncated"] = True
         graph_report["symbols_cap"] = graph.metadata.get("symbols_cap")
-    global_calls = {
-        name: int(graph.metadata.get(f"member_calls_global_{name}", graph.metadata.get(f"member_calls_{name}", "0")))
-        for name in ("resolved", "ambiguous", "unresolved")
-    }
-    last_update_calls = {
-        name: int(graph.metadata.get(f"member_calls_last_update_{name}", graph.metadata.get(f"member_calls_{name}", "0")))
-        for name in ("resolved", "ambiguous", "unresolved")
-    }
-    global_total = sum(global_calls.values())
-    resolved_ratio = global_calls["resolved"] / max(1, global_total)
-    trust = "high" if resolved_ratio >= 0.8 else "moderate" if resolved_ratio >= 0.5 else "low"
+    global_calls = _member_call_snapshot(graph.metadata, "global")
+    last_update_calls = _member_call_snapshot(graph.metadata, "last_update")
     graph_report["member_calls"] = {
         **global_calls,
         "scope": graph.metadata.get("member_calls_global_scope", graph.metadata.get("member_call_telemetry_scope", "unavailable")),
-        "resolved_ratio": round(resolved_ratio, 4),
-        "trust": trust,
-        "warning": "member-call topology is weak; ambiguous/unresolved sites are not trusted call edges"
-        if global_total and trust == "low" else "",
+        "candidate_edges": sum(1 for edge in graph.edges if edge.active and edge.type == "calls_candidate"),
         "last_update": {
             **last_update_calls,
             "scope": graph.metadata.get("member_calls_last_update_scope", graph.metadata.get("member_call_telemetry_scope", "unavailable")),

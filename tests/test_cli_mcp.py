@@ -1122,6 +1122,61 @@ class CliMcpTest(unittest.TestCase):
             self.assertFalse(files["present"])
             self.assertEqual(files["symbol_nodes"], 0)
 
+    def test_project_status_separates_member_call_trust_coverage_and_external_sites(self) -> None:
+        from graphgraph.services.native import build_project_status
+
+        graph = Graph(
+            nodes={
+                "A": Node("A", "caller", "function", "a.py"),
+                "B": Node("B", "target", "method", "a.py"),
+                "C": Node("C", "other", "method", "a.py"),
+            },
+            edges=[Edge("A", "C", "calls_candidate")],
+            metadata={
+                "member_calls_global_resolved": "3",
+                "member_calls_global_ambiguous": "0",
+                "member_calls_global_unknown_receiver": "7",
+                "member_calls_global_unresolved": "90",
+                "member_calls_global_version": "2",
+                "member_calls_global_scope": "full_scan_snapshot",
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "graph.json"
+            save_graph(graph, graph_path)
+            calls = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
+
+        self.assertEqual(calls["trust"], "high")
+        self.assertEqual(calls["coverage"], "partial")
+        self.assertEqual(calls["resolved_ratio"], 0.3)
+        self.assertEqual(calls["trusted_resolution_ratio"], 1.0)
+        self.assertEqual(calls["receiver_evidence_ratio"], 0.3)
+        self.assertEqual(calls["external_or_unmatched"], 90)
+        self.assertEqual(calls["candidate_edges"], 1)
+        self.assertIn("7 member-call sites lack receiver evidence", calls["warning"])
+
+    def test_project_status_marks_legacy_member_call_telemetry_unclassified(self) -> None:
+        from graphgraph.services.native import build_project_status
+
+        graph = Graph(
+            nodes={"A": Node("A", "caller", "function", "a.py")},
+            metadata={
+                "member_calls_global_resolved": "2",
+                "member_calls_global_ambiguous": "8",
+                "member_calls_global_unresolved": "20",
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "graph.json"
+            save_graph(graph, graph_path)
+            calls = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
+
+        self.assertEqual(calls["trust"], "legacy_unclassified")
+        self.assertEqual(calls["coverage"], "unknown")
+        self.assertIn("full symbol scan", calls["warning"])
+
     def test_project_status_reports_validation_package_and_runtime_hint(self) -> None:
         from graphgraph.services.native import build_project_status
 
