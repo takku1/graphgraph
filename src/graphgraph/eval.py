@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .graph.core import Edge, Graph
 from .io import load_any
-from .packets import render_packet
+from .packets import estimate_tokens, render_packet
 from .planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
 from .retrieval import retrieve_context
 
@@ -157,11 +157,6 @@ def rank_nodes_by_subgraph_pagerank(graph: Graph, retrieved_nodes: set[str], ret
     )
     pr = subgraph.pagerank(damping=0.85, max_iter=20, use_cache=False)
     return sorted(retrieved_nodes, key=lambda nid: pr.get(nid, 0.0), reverse=True)
-
-
-def estimate_tokens(text: str) -> int:
-    # Cheap deterministic proxy; replace with tokenizer-specific count in model benchmarks.
-    return len(re.findall(r"\w+|[^\s\w]", text))
 
 
 def results_to_json(results: list[EvalResult]) -> str:

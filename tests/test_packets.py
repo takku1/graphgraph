@@ -248,6 +248,23 @@ class PacketsTest(unittest.TestCase):
         self.assertTrue(result.ok, result.errors)
         self.assertEqual(result.format, "doc_summary")
 
+    def test_doc_summary_validation_counts_rows_after_partial_result_preamble(self) -> None:
+        packet = (
+            "GraphGraph partial result: unfulfilled query facets.\n\n"
+            "[d]\n"
+            "Stage 1 [section] docs/pipeline.md Parse source\n"
+            " grounded stage one fact\n"
+            "Stage 2 [section] docs/pipeline.md Lower expressions\n"
+            " grounded stage two fact"
+        )
+
+        result = validate_packet(packet)
+
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.format, "doc_summary")
+        self.assertEqual(result.node_count, 2)
+        self.assertEqual(result.edge_count, 0)
+
     def test_gg_max_hybrid_detected_with_multi_word_labels(self) -> None:
         # Regression: doc-scanned "section" nodes use free-text titles as their
         # label (e.g. "Getting Started"), which can contain spaces. The hybrid

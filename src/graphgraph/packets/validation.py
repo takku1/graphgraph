@@ -72,7 +72,10 @@ def _require_nonempty_nodes(result: ValidationResult) -> ValidationResult:
 
 def _from_marker_line(text: str, marker: str) -> str:
     match = re.search(rf"^\s*{re.escape(marker)}\s*$", text, re.MULTILINE)
-    return text[match.start():] if match is not None else text
+    # ``\s`` includes newlines, so ``match.start()`` can point at the blank
+    # separator before a marker in wrapped CLI output. Reconstruct from the
+    # marker itself to guarantee the delegated validator sees it on line one.
+    return marker + text[match.end():] if match is not None else text
 
 
 def validate_graph_json(graph_json: str) -> ValidationResult:

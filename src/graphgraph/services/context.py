@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 from ..graph.core import Graph, Query
 from ..io import (
     find_graph_path,
@@ -12,7 +13,7 @@ from ..io import (
     load_policies,
     remember_graph,
 )
-from ..packets import render_packet
+from ..packets import estimate_tokens, render_packet
 from ..packets.validation import validate_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph, route_query
 from ..planning.budgets import plan_terms
@@ -314,7 +315,8 @@ def render_query_context(
             f"request_v2|{resolved_graph_path.resolve()}|{cache_namespace}|{plan.planner_version}|"
             f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
             f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"
-            f"{response_metadata}|{source_mode}|{memory_scopes}|{source_signature}|{_session_signature()}"
+            f"{_cache_metadata_signature(response_metadata)}|"
+            f"{source_mode}|{memory_scopes}|{source_signature}|{_session_signature()}"
             f"|{anchor_paths}|{include_snippets}|{snippet_limit}|"
             f"{snippet_context_lines}|{snippet_max_lines}"
         ),
@@ -329,7 +331,13 @@ def render_query_context(
         if not include_snippets:
             cached_packet = cache.get(resolved_graph_path, cache_key)
             if cached_packet:
-                return cached_packet
+                return _with_cache_receipt(
+                    cached_packet,
+                    state="hit",
+                    namespace=cache_namespace,
+                    response_metadata=response_metadata,
+                    json_response=json_anchors,
+                )
         graph = load_any_cached(resolved_graph_path)
     else:
         remember_graph(resolved_graph_path, graph)
@@ -361,6 +369,11 @@ def render_query_context(
     query_class = route.query_class
     plan = compiled.plan
     result = compiled.retrieval
+    control, packet_metrics = _compiled_control_receipt(
+        compiled,
+        requested_query_class=requested_query_class,
+        response_metadata=response_metadata,
+    )
     if not result.starts:
         answerability = result.metadata.get("answerability", {})
         reason = str(answerability.get("reason", "no matching graph anchors"))
@@ -370,6 +383,8 @@ def render_query_context(
                 "actionable": _actionable_receipt(result, response_metadata),
                 "anchors": [],
                 "packet": "",
+                "control": control,
+                "metrics": {"packet": packet_metrics},
                 "query_class": query_class,
                 "routing": {
                     "confidence": route.confidence,
@@ -419,6 +434,8 @@ def render_query_context(
             },
             "retrieval": result.metadata,
             "packet": graph_packet,
+            "control": control,
+            "metrics": {"packet": packet_metrics},
         }
         if partial_message:
             payload["message"] = partial_message
@@ -439,6 +456,12 @@ def render_query_context(
             )
         if response_metadata:
             payload.update(response_metadata)
+        workflow = payload.setdefault("workflow", {})
+        if isinstance(workflow, dict):
+            workflow["cache"] = {
+                "state": "miss",
+                "namespace": cache_namespace,
+            }
         response = json.dumps(payload, indent=2)
     elif show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
@@ -467,6 +490,128 @@ def render_query_context(
             paths=_node_paths(graph, result.nodes),
         )
     return response
+
+
+def _cache_metadata_signature(
+    response_metadata: dict[str, object] | None,
+) -> object:
+    """Keep only response state that can change answer/control correctness."""
+    def stable(value: object) -> object:
+        if isinstance(value, dict):
+            return tuple(
+                (key, stable(item))
+                for key, item in sorted(value.items())
+                if key not in {"milliseconds", "query_milliseconds", "total_milliseconds", "cache"}
+            )
+        if isinstance(value, (list, tuple)):
+            return tuple(stable(item) for item in value)
+        return value
+
+    if not response_metadata:
+        return ()
+    workflow = response_metadata.get("workflow", {})
+    if not isinstance(workflow, dict):
+        return ()
+    graph_validation = workflow.get("graph_validation", {})
+    validation_ok = (
+        graph_validation.get("ok")
+        if isinstance(graph_validation, dict)
+        else None
+    )
+    # Refresh/build telemetry describes how the already-hash-validated graph
+    # was obtained. It must not split cache keys (`built=True` on call one,
+    # `built=False` on call two). Freshness and graph validity can alter the
+    # control gates, so they remain part of the key.
+    return stable({
+        "freshness": workflow.get("freshness", {}),
+        "graph_validation_ok": validation_ok,
+    })
+
+
+def _with_cache_receipt(
+    cached_response: str,
+    *,
+    state: str,
+    namespace: str,
+    response_metadata: dict[str, object] | None,
+    json_response: bool,
+) -> str:
+    if not json_response:
+        return cached_response
+    try:
+        payload = json.loads(cached_response)
+    except json.JSONDecodeError:
+        return cached_response
+    if response_metadata:
+        payload.update(response_metadata)
+    workflow = payload.setdefault("workflow", {})
+    if isinstance(workflow, dict):
+        workflow["cache"] = {
+            "state": state,
+            "namespace": namespace,
+        }
+    return json.dumps(payload, indent=2)
+
+
+def _compiled_control_receipt(
+    compiled: object,
+    *,
+    requested_query_class: str,
+    response_metadata: dict[str, object] | None,
+) -> tuple[str, dict[str, int]]:
+    """Compile rich receipts into one fixed-order LLM decision instruction."""
+    result = compiled.retrieval
+    answerability = result.metadata.get("answerability", {})
+    state = str(answerability.get("status", "unknown"))
+    packet = str(compiled.packet)
+    packet_tokens = estimate_tokens(packet)
+    packet_metrics = {
+        "proxy_tokens": packet_tokens,
+        "characters": len(packet),
+    }
+    freshness: bool | None = None
+    if response_metadata:
+        workflow = response_metadata.get("workflow", {})
+        if isinstance(workflow, dict):
+            freshness_receipt = workflow.get("freshness", {})
+            if isinstance(freshness_receipt, dict):
+                value = freshness_receipt.get(
+                    "requested_scope_fresh",
+                    freshness_receipt.get("fresh"),
+                )
+                if isinstance(value, bool):
+                    freshness = value
+    automatic_route = (requested_query_class or "auto").strip().lower() == "auto"
+    route_ok = not automatic_route or float(compiled.route.confidence) >= 0.25
+    truncation = result.metadata.get("truncation", {})
+    truncated = bool(truncation.get("truncated")) if isinstance(truncation, dict) else False
+    gates: dict[str, bool | None] = {
+        "fresh": freshness,
+        "route": route_ok,
+        "anchor": bool(result.starts),
+        "evidence": state == "answerable" and not truncated,
+        "semantic": compiled.receipt.semantic_validation == "pass",
+        "packet": (
+            compiled.receipt.structural_validation == "pass"
+            if packet
+            else None
+        ),
+    }
+    receipt = ControlReceipt(
+        operation=str(compiled.route.query_class),
+        state=state,
+        next_action=choose_next_action(state, gates),
+        anchor=str(result.metadata.get("anchor_strategy", "none" if not result.starts else "ranked")),
+        hops=int(compiled.plan.hops),
+        direction=str(compiled.plan.direction),
+        node_budget=compiled.plan.node_budget,
+        nodes=len(result.nodes),
+        edges=len(result.edges),
+        packet=str(compiled.receipt.packet) if packet else "",
+        packet_tokens=packet_tokens,
+        gates=tuple((name, gates[name]) for name in GATE_ORDER),
+    )
+    return render_control_ir(receipt), packet_metrics
 
 
 def _actionable_receipt(

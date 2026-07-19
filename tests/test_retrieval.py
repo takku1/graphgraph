@@ -1989,7 +1989,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
         self.assertEqual(
             affected["commands"],
-            ["cargo test -p locus-engine scheduling::tests --lib"],
+            ["cargo test -p locus-engine reports_template --lib"],
         )
 
     def test_affected_tests_recovers_inline_rust_tests_from_legacy_graph_source(self) -> None:
@@ -2040,7 +2040,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         affected = result.metadata["affected_tests"]
         self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
         self.assertIn(
-            "cargo test -p locus-frontends planner::tests --lib",
+            "cargo test -p locus-frontends plan_writes_reports_each_target_once --lib",
             affected["commands"],
         )
 
@@ -3025,3 +3025,179 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
         self.assertFalse(affected["direct"][0]["in_packet"])
         self.assertEqual(affected["direct"][0]["evidence"][0]["provenance"], "tree_sitter_type_resolved")
+
+    def test_reverse_lookup_reports_known_callers_omitted_by_node_budget(self) -> None:
+        nodes = {
+            "TARGET": Node("TARGET", "normalize_rust", "function", "src/normalize.rs"),
+            "FILE": Node("FILE", "normalize.rs", "file", "src/normalize.rs"),
+            "SIBLING": Node("SIBLING", "normalize_cast_calls", "function", "src/normalize.rs"),
+        }
+        edges = [
+            Edge("FILE", "TARGET", "contains"),
+            Edge("FILE", "SIBLING", "contains"),
+        ]
+        for index in range(8):
+            node_id = f"CALLER_{index}"
+            nodes[node_id] = Node(node_id, f"caller_{index}", "function", f"src/caller_{index}.rs")
+            edges.append(Edge(node_id, "TARGET", "calls", confidence=0.95, provenance="tree_sitter"))
+        graph = Graph(nodes=nodes, edges=edges)
+
+        result = retrieve_context(
+            graph,
+            "What directly calls normalize_rust?",
+            "reverse_lookup",
+            hops=1,
+            anchor_limit=1,
+            max_nodes=8,
+        )
+
+        truncation = result.metadata["truncation"]
+        self.assertTrue(truncation["truncated"])
+        self.assertEqual(truncation["known_direct_neighbors"], 8)
+        self.assertEqual(truncation["returned_direct_neighbors"], 7)
+        self.assertEqual(truncation["omitted_direct_neighbors"], 1)
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        returned_callers = {
+            edge.source
+            for edge in result.edges
+            if edge.type == "calls" and edge.target == "TARGET"
+        }
+        self.assertEqual(len(returned_callers), 7)
+        self.assertNotIn("SIBLING", result.nodes)
+
+    def test_inline_rust_test_command_uses_exact_test_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-frontends"
+            source = crate / "src" / "source" / "normalize.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-frontends"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (crate / "src" / "lib.rs").write_text("mod source;\n", encoding="utf-8")
+            source.write_text(
+                "fn normalize_rust() {}\n"
+                "#[cfg(test)] mod normalize_tests {\n"
+                "    #[test] fn normalize_rust_rewrites_calls() { normalize_rust(); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            graph = Graph(
+                nodes={
+                    "TARGET": Node(
+                        "TARGET",
+                        "normalize_rust",
+                        "function",
+                        "crates/locus-frontends/src/source/normalize.rs",
+                    ),
+                    "TEST": Node(
+                        "TEST",
+                        "normalize_rust_rewrites_calls",
+                        "function",
+                        "crates/locus-frontends/src/source/normalize.rs",
+                        facts=("role:test", "rust_attribute:test"),
+                        source=str(source),
+                    ),
+                },
+                edges=[Edge("TEST", "TARGET", "calls", provenance="tree_sitter")],
+            )
+
+            result = retrieve_context(
+                graph,
+                "which tests cover normalize_rust",
+                "affected_tests",
+                hops=2,
+            )
+
+        self.assertEqual(
+            result.metadata["affected_tests"]["commands"],
+            ["cargo test -p locus-frontends normalize_rust_rewrites_calls --lib"],
+        )
+
+    def test_doc_stage_enumeration_reserves_all_numbered_stage_siblings(self) -> None:
+        from graphgraph.planning import plan_context
+        from graphgraph.retrieval.context import reserve_ordered_doc_siblings
+
+        nodes = {
+            "DOC": Node("DOC", "backbone-pipeline.md", "file", "docs/backbone-pipeline.md"),
+        }
+        edges = []
+        for index in range(1, 9):
+            node_id = f"STAGE_{index}"
+            nodes[node_id] = Node(
+                node_id,
+                f"Stage {index}: operation {index}",
+                "section",
+                "docs/backbone-pipeline.md",
+                summary=f"L{index * 10} stage {index}",
+            )
+            edges.append(Edge(node_id, "DOC", "section_of"))
+        graph = Graph(nodes=nodes, edges=edges)
+        plan = plan_context(
+            "doc_summary",
+            "what stages form the pipeline?",
+            max_nodes=12,
+        )
+
+        selected, selected_edges = reserve_ordered_doc_siblings(
+            graph,
+            {"DOC", "STAGE_1"},
+            [edges[0]],
+            ("STAGE_1",),
+            "what stages form the pipeline?",
+            plan,
+        )
+
+        self.assertEqual(
+            {node_id for node_id in selected if node_id.startswith("STAGE_")},
+            {f"STAGE_{index}" for index in range(1, 9)},
+        )
+        self.assertEqual(
+            {edge.source for edge in selected_edges if edge.type == "section_of"},
+            {f"STAGE_{index}" for index in range(1, 9)},
+        )
+
+    def test_affected_test_candidate_cap_reports_omitted_direct_tests(self) -> None:
+        nodes = {
+            "EXPR": Node("EXPR", "Expr", "enum", "src/expression.rs"),
+        }
+        edges = []
+        for index in range(14):
+            node_id = f"TEST_{index:02d}"
+            nodes[node_id] = Node(
+                node_id,
+                f"expr_case_{index:02d}",
+                "function",
+                f"tests/expr_case_{index:02d}.rs",
+            )
+            edges.append(Edge(
+                node_id,
+                "EXPR",
+                "references",
+                confidence=0.88,
+                provenance="tree_sitter_type_reference",
+            ))
+        result = retrieve_context(
+            Graph(nodes=nodes, edges=edges),
+            "If Expr changes, which tests are affected?",
+            "affected_tests",
+            hops=2,
+            anchor_limit=1,
+            max_nodes=40,
+        )
+        from graphgraph.planning import QueryRoute
+        from graphgraph.retrieval.context import reconcile_semantic_retrieval_receipt
+
+        reconcile_semantic_retrieval_receipt(
+            Graph(nodes=nodes, edges=edges),
+            result,
+            route=QueryRoute("affected_tests", 1.0, 1.0, ("explicit query class",)),
+            automatic_route=False,
+        )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual(len(affected["direct"]), 12)
+        self.assertEqual(affected["omitted_direct"], 2)
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(result.metadata["answerability"]["abstained"])

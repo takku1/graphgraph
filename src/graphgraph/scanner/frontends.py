@@ -215,6 +215,7 @@ class TreeSitterExtractor:
         _add_returns(defs_by_file, nodes, name_to_symbols, edges)
         _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
         member_call_stats = _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
+        _add_rust_type_references(defs_by_file, nodes, name_to_symbols, edges)
         _add_rust_test_field_references(defs_by_file, nodes, edges)
         _add_tree_sitter_callback_references(defs_by_file, nodes, name_to_symbols, edges)
 
@@ -1233,15 +1234,131 @@ def _add_tree_sitter_calls(
                     )
                     stats = stats.add(outcome)
                     continue
-                tgt_id = local_resolutions.get(call.name)
+                tgt_id = (
+                    _resolve_path_qualified_target(call, name_to_symbols, nodes)
+                    if call.qualifier
+                    else None
+                ) or local_resolutions.get(call.name)
                 if not tgt_id or tgt_id == src_id:
                     continue
                 tgt_node = nodes.get(tgt_id)
                 tgt_lang = _lang_family(tgt_node.path) if tgt_node else None
                 if src_lang is not None and tgt_lang is not None and src_lang != tgt_lang:
                     continue
-                edges.append(Edge(src_id, tgt_id, "calls", confidence=0.9, provenance="tree_sitter"))
+                edges.append(Edge(
+                    src_id,
+                    tgt_id,
+                    "calls",
+                    confidence=0.96 if call.qualifier else 0.9,
+                    provenance="tree_sitter_path_resolved" if call.qualifier else "tree_sitter",
+                ))
     return stats
+
+
+def _normalized_path_part(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def _resolve_path_qualified_target(
+    call: _CallSite,
+    name_to_symbols: dict[str, list[str]],
+    nodes: dict[str, Node],
+) -> str | None:
+    """Resolve ``module::function`` using the qualifier instead of its ambiguous leaf."""
+    qualifier = tuple(
+        part
+        for raw in call.qualifier.split("::")
+        if (part := _normalized_path_part(raw)) and part not in {"crate", "self", "super"}
+    )
+    if not qualifier:
+        return None
+    scored: list[tuple[int, str]] = []
+    for target_id in name_to_symbols.get(call.name, ()):
+        target = nodes.get(target_id)
+        if target is None or target.kind not in {"function", "method"}:
+            continue
+        path_parts = {
+            _normalized_path_part(part)
+            for part in re.split(r"[/\\]", target.path)
+            if _normalized_path_part(part)
+        }
+        context = _normalized_path_part(f"{target.path} {target.summary}")
+        # The nearest module/type qualifier is mandatory. Earlier crate or
+        # namespace components only break ties.
+        if qualifier[-1] not in path_parts and qualifier[-1] not in context:
+            continue
+        score = 4
+        score += sum(
+            2
+            for part in qualifier[:-1]
+            if part in path_parts or part in context
+        )
+        scored.append((score, target_id))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][1]
+
+
+def _rust_type_names_in_range(text: bytes, start: int, end: int) -> set[str]:
+    """Return conservative Rust type/enum references from one definition body."""
+    snippet = _node_text_range(text, start, end)
+    names: set[str] = set()
+    patterns = (
+        r"\b([A-Z][A-Za-z0-9_]*)\s*::",
+        r"(?:[:&<,(]\s*)([A-Z][A-Za-z0-9_]*)\b",
+        r"->\s*(?:Result\s*<\s*)?(?:Option\s*<\s*)?([A-Z][A-Za-z0-9_]*)\b",
+    )
+    for pattern in patterns:
+        names.update(match.group(1) for match in re.finditer(pattern, snippet))
+    return names
+
+
+def _add_rust_type_references(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    nodes: dict[str, Node],
+    name_to_symbols: dict[str, list[str]],
+    edges: list[Edge],
+) -> None:
+    """Link Rust functions/tests to uniquely named schema types they use.
+
+    These are ``references`` rather than ``calls`` edges. They make type-level
+    impact queries (for example, tests constructing ``Expr::Constant``) visible
+    without claiming runtime dispatch.
+    """
+    type_kinds = {"class", "enum", "interface", "struct", "trait", "type"}
+    unique_types = {
+        name: ids[0]
+        for name, ids in name_to_symbols.items()
+        if len(ids) == 1 and nodes[ids[0]].kind in type_kinds
+    }
+    if not unique_types:
+        return
+    existing = {(edge.source, edge.target, edge.type) for edge in edges}
+    for source, defs, _root in defs_by_file:
+        if source.path.suffix.lower() != ".rs":
+            continue
+        text_bytes = source.text.encode("utf-8", errors="replace")
+        for definition in (item for item in defs if item.kind in {"function", "method"}):
+            source_id = _definition_node_id(source, definition)
+            if source_id not in nodes:
+                continue
+            for name in _rust_type_names_in_range(text_bytes, definition.start, definition.end):
+                target_id = unique_types.get(name)
+                key = (source_id, target_id or "", "references")
+                if not target_id or target_id == source_id or key in existing:
+                    continue
+                edges.append(Edge(
+                    source_id,
+                    target_id,
+                    "references",
+                    confidence=0.88,
+                    provenance="tree_sitter_type_reference",
+                    source_location=f"{source.rel}:{definition.line}",
+                ))
+                existing.add(key)
 
 
 @dataclass(frozen=True)
@@ -1724,6 +1841,7 @@ class _CallSite:
     name: str
     qualified: bool
     receiver: str = ""
+    qualifier: str = ""
 
 
 def _rust_qualified_type_receiver(value: str) -> bool:
@@ -1789,6 +1907,12 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
         name = _call_name(fn, text)
         if name:
             receiver = ""
+            qualifier = ""
+            if fn.type in _PATH_QUALIFIED_CALL_TYPES:
+                qualified_text = _node_text(fn, text).strip()
+                parts = qualified_text.split("::")
+                if len(parts) >= 2:
+                    qualifier = "::".join(parts[:-1])
             if is_qualified:
                 for field in ("value", "object", "receiver"):
                     try:
@@ -1810,7 +1934,12 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                     and not _rust_qualified_type_receiver(receiver)
                 ):
                     receiver = ""
-            sites.add(_CallSite(name=name, qualified=is_qualified, receiver=receiver))
+            sites.add(_CallSite(
+                name=name,
+                qualified=is_qualified,
+                receiver=receiver,
+                qualifier=qualifier,
+            ))
     return sites
 
 

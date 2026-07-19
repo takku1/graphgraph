@@ -1190,6 +1190,9 @@ class CliMcpTest(unittest.TestCase):
         self.assertTrue(validation["ok"])
         self.assertEqual(validation["status"], "packet_and_receipt_pass")
         self.assertEqual(validation["scope"], "packet_and_receipt")
+        self.assertNotIn(validation["format"], {"", "unknown", "none"})
+        self.assertGreater(validation["nodes"], 0)
+        self.assertGreaterEqual(validation["edges"], 0)
 
     def test_native_compact_json_keeps_actionable_tests_and_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

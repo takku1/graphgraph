@@ -151,13 +151,17 @@ def run_tests(
             "tests": None,
             "tail": "",
         }
+    tests = _test_count(proc.stdout)
+    zero_selected = tests == 0
+    ok = proc.returncode == 0 and not zero_selected
     return {
-        "status": "passed" if proc.returncode == 0 else "failed",
-        "ok": proc.returncode == 0,
+        "status": "passed" if ok else "failed",
+        "ok": ok,
+        "reason": "test command selected zero tests" if zero_selected else "",
         "returncode": proc.returncode,
         "ecosystem": ecosystem,
         "command": command,
-        "tests": _test_count(proc.stdout),
+        "tests": tests,
         "tail": "\n".join(proc.stdout.strip().splitlines()[-12:]),
     }
 

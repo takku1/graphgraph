@@ -68,7 +68,135 @@ STRUCTURAL_RELATIONS = {
     "tests", "configures", "returns", "defines", "data_flow", "control_flow",
     "formalizes", "implements_algorithm",
 }
-_ORDERED_DOC_QUERY = re.compile(r"\b(before|after|next|previous|prior|ordered|phase|roadmap|backlog|milestone)\b", re.I)
+_ORDERED_DOC_QUERY = re.compile(
+    r"\b(before|after|next|previous|prior|ordered|phase|phases|stage|stages|"
+    r"step|steps|sequence|roadmap|backlog|milestone)\b",
+    re.I,
+)
+_ENUMERATED_DOC_QUERY = re.compile(r"\b(stage|stages|phase|phases|step|steps|sequence)\b", re.I)
+
+
+def _reverse_lookup_relations(query: str) -> set[str]:
+    terms = set(plan_terms(query))
+    if terms & {"call", "calls", "caller", "callers", "called"}:
+        return {"calls"}
+    if terms & {"test", "tests", "tested", "cover", "covers"}:
+        return {"tests"}
+    return set(traversal_policy("reverse_lookup").preferred_relations)
+
+
+def reserve_reverse_direct_neighbors(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    query: str,
+    plan: ContextPlan,
+    scopes: tuple[str, ...] = (),
+) -> tuple[set[str], list[Edge]]:
+    """Spend a reverse-lookup budget on direct answers before siblings."""
+    relations = _reverse_lookup_relations(query)
+    start_set = set(starts)
+    candidates = sorted(
+        (
+            edge
+            for edge in graph.edges
+            if edge.active
+            and edge.target in start_set
+            and edge.type in relations
+            and edge.confidence * provenance_confidence(edge.provenance) >= plan.min_confidence
+            and (
+                not scopes
+                or (
+                    edge.source in graph.nodes
+                    and _path_in_scopes(graph.nodes[edge.source].path, scopes)
+                )
+            )
+        ),
+        key=lambda edge: (
+            *relation_rank(edge.type, traversal_policy("reverse_lookup")),
+            -edge.confidence,
+            edge.source,
+            edge.target,
+        ),
+    )
+    out_nodes = set(nodes)
+    direct_nodes = {
+        edge.source
+        for edge in candidates
+        if edge.source in out_nodes
+    }
+    max_nodes = plan.node_budget
+    for edge in candidates:
+        if edge.source in out_nodes:
+            continue
+        if max_nodes is not None and len(out_nodes) >= max_nodes:
+            removable = _least_valuable_context_node(
+                graph,
+                out_nodes,
+                protected=start_set | direct_nodes | {edge.source},
+            )
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(edge.source)
+        direct_nodes.add(edge.source)
+    out_edges = [
+        edge
+        for edge in edges
+        if edge.source in out_nodes and edge.target in out_nodes
+    ]
+    seen = {(edge.source, edge.target, edge.type) for edge in out_edges}
+    for edge in candidates:
+        key = (edge.source, edge.target, edge.type)
+        if edge.source in out_nodes and edge.target in out_nodes and key not in seen:
+            out_edges.append(edge)
+            seen.add(key)
+    return out_nodes, out_edges
+
+
+def reverse_lookup_truncation(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    query: str,
+    plan: ContextPlan,
+    scopes: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Compare selected direct reverse neighbors with known graph adjacency."""
+    relations = _reverse_lookup_relations(query)
+    start_set = set(starts)
+    known = {
+        edge.source
+        for edge in graph.edges
+        if edge.active
+        and edge.target in start_set
+        and edge.type in relations
+        and edge.confidence * provenance_confidence(edge.provenance) >= plan.min_confidence
+        and (
+            not scopes
+            or (
+                edge.source in graph.nodes
+                and _path_in_scopes(graph.nodes[edge.source].path, scopes)
+            )
+        )
+    }
+    returned = {
+        edge.source
+        for edge in edges
+        if edge.target in start_set
+        and edge.type in relations
+        and edge.source in nodes
+    }
+    omitted = known - returned
+    return {
+        "truncated": bool(omitted),
+        "reason": "node_budget" if omitted and plan.node_budget is not None else "",
+        "known_direct_neighbors": len(known),
+        "returned_direct_neighbors": len(known & returned),
+        "omitted_direct_neighbors": len(omitted),
+    }
 
 
 def expand_context(
@@ -1161,13 +1289,19 @@ def retrieve_context(
     exact_matches = (
         search_nodes(
             graph,
-            anchor_query,
+            identifiers[0] if query_class == "reverse_lookup" and len(identifiers) == 1 else anchor_query,
             limit=1,
             scopes=scopes,
             exact_fast_path=True,
             exact_only=True,
         )
-        if query_class == "direct_lookup" and not path_matches
+        if (
+            not path_matches
+            and (
+                query_class == "direct_lookup"
+                or (query_class == "reverse_lookup" and len(identifiers) == 1)
+            )
+        )
         else ()
     )
     exact_match = exact_matches[0] if exact_matches else None
@@ -1391,6 +1525,16 @@ def retrieve_context(
         nodes, edges = expand_context(graph, starts, plan, scopes=expansion_scopes, query_terms=plan_terms(query))
         nodes, edges = reserve_query_named_siblings(graph, nodes, edges, starts, query, plan)
         nodes, edges = reserve_ordered_doc_siblings(graph, nodes, edges, starts, query, plan)
+        if query_class == "reverse_lookup":
+            nodes, edges = reserve_reverse_direct_neighbors(
+                graph,
+                nodes,
+                edges,
+                starts,
+                query,
+                plan,
+                scopes=expansion_scopes,
+            )
         if query_class == "affected_tests":
             nodes, edges = reserve_affected_test_evidence(graph, nodes, edges, starts, plan)
     if query_class in STRUCTURAL_QUERY_CLASSES:
@@ -1474,6 +1618,26 @@ def retrieve_context(
             "abstained": False,
             "reason": "",
         }
+    if query_class == "reverse_lookup":
+        truncation = reverse_lookup_truncation(
+            graph,
+            nodes,
+            edges,
+            starts,
+            query,
+            plan,
+            scopes=scopes if scope_mode == "strict" else (),
+        )
+        metadata["truncation"] = truncation
+        if truncation["truncated"]:
+            metadata["answerability"] = {
+                "status": "incomplete",
+                "abstained": True,
+                "reason": (
+                    f"node budget omitted {truncation['omitted_direct_neighbors']} "
+                    "known direct reverse neighbor(s)"
+                ),
+            }
     changed_path_tests = changed_path_test_recommendations(graph, anchor_paths)
     if query_class == "affected_tests":
         affected = affected_test_recommendations(graph, starts, nodes)
@@ -1744,6 +1908,7 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "documentation", "documents", "document", "docs", "doc",
         "say", "says", "said", "under",
         "affected", "affecting", "impact", "impacted",
+        "call", "calls", "called", "caller", "callers", "calling",
         "consume", "consumes", "consumed", "consumer", "use", "uses", "used",
         "should", "if", "change", "changes", "changed", "changing", "behavior", "behaviour",
         "evaluate", "evaluates", "evaluated", "evaluating",
@@ -2139,14 +2304,25 @@ def _cargo_inline_rust_test_target(source: str) -> tuple[str, str, str] | None:
     return package, module_filter, target
 
 
-def _test_command(path: str, source: str = "", *, inline_test: bool = False) -> str:
+def _test_command(
+    path: str,
+    source: str = "",
+    *,
+    inline_test: bool = False,
+    test_label: str = "",
+) -> str:
     normalized = path.replace("\\", "/")
     parts = normalized.split("/")
     if inline_test and normalized.endswith(".rs"):
         cargo_target = _cargo_inline_rust_test_target(source)
         if cargo_target is not None:
             package, module_filter, target = cargo_target
-            return f"cargo test -p {package} {module_filter} {target}"
+            # The graph already carries the exact test function label. Cargo
+            # accepts it as a filter regardless of whether the containing
+            # module is named `tests`, `normalize_tests`, or something else.
+            # Retain the module fallback only for legacy nodes without labels.
+            test_filter = test_label.strip() or module_filter
+            return f"cargo test -p {package} {test_filter} {target}"
     if len(parts) >= 4 and parts[0] == "crates" and "tests" in parts and normalized.endswith(".rs"):
         cargo_target = _cargo_test_target(source)
         if cargo_target is not None:
@@ -2387,6 +2563,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
 
     direct.sort(key=recommendation_rank)
     transitive.sort(key=recommendation_rank)
+    omitted_direct = max(0, len(direct) - 12)
     omitted_transitive = max(0, len(transitive) - 12)
     direct = direct[:12]
     transitive = transitive[:12]
@@ -2400,6 +2577,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
                     str(item["path"]),
                     graph.nodes[str(item["id"])].source,
                     inline_test=not _is_test_path(str(item["path"])),
+                    test_label=str(item.get("label", "")),
                 )
             )
         ))
@@ -2421,6 +2599,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
                     str(item["path"]),
                     graph.nodes[str(item["id"])].source,
                     inline_test=not _is_test_path(str(item["path"])),
+                    test_label=str(item.get("label", "")),
                 ) == command
             ],
         }
@@ -2435,6 +2614,7 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
             "transitive_regression": transitive_commands,
         },
         "command_provenance": command_provenance,
+        "omitted_direct": omitted_direct,
         "omitted_transitive": omitted_transitive,
     }
 
@@ -2522,6 +2702,15 @@ def reconcile_semantic_retrieval_receipt(
             status = "incomplete"
             abstained = True
             reasons.append("no affected-test evidence was found")
+        omitted_direct = int(affected.get("omitted_direct", 0) or 0)
+        omitted_transitive = int(affected.get("omitted_transitive", 0) or 0)
+        if omitted_direct or omitted_transitive:
+            status = "incomplete"
+            abstained = True
+            reasons.append(
+                "affected-test recommendation cap omitted "
+                f"{omitted_direct} direct and {omitted_transitive} transitive candidate(s)"
+            )
 
     quality = metadata.get("quality", {})
     document_warning = str(quality.get("document_warning", "")) if isinstance(quality, dict) else ""
@@ -3241,7 +3430,7 @@ def reserve_ordered_doc_siblings(
     protected = set(starts)
     for start in starts:
         anchor = graph.nodes.get(start)
-        if anchor is None or anchor.kind != "section" or not anchor.path:
+        if anchor is None or not anchor.path:
             continue
         siblings = sorted(
             (
@@ -3250,15 +3439,40 @@ def reserve_ordered_doc_siblings(
             ),
             key=lambda node_id: (graph.nodes[node_id].line or 10**9, graph.nodes[node_id].label, node_id),
         )
-        try:
-            index = siblings.index(start)
-        except ValueError:
+        enumerated = bool(_ENUMERATED_DOC_QUERY.search(query))
+        if enumerated:
+            terms = set(plan_terms(query))
+            if terms & {"stage", "stages"}:
+                siblings = [
+                    node_id
+                    for node_id in siblings
+                    if re.search(r"\bstage\s+\d+\b", graph.nodes[node_id].label, re.I)
+                ]
+            elif terms & {"phase", "phases"}:
+                siblings = [
+                    node_id
+                    for node_id in siblings
+                    if re.search(r"\bphase\s+\d+\b", graph.nodes[node_id].label, re.I)
+                ]
+            elif terms & {"step", "steps"}:
+                siblings = [
+                    node_id
+                    for node_id in siblings
+                    if re.search(r"\bstep\s+\d+\b", graph.nodes[node_id].label, re.I)
+                ]
+            candidates = siblings
+        elif anchor.kind != "section":
             continue
-        candidates: list[str] = []
-        if index > 0:
-            candidates.append(siblings[index - 1])
-        if index + 1 < len(siblings):
-            candidates.append(siblings[index + 1])
+        else:
+            try:
+                index = siblings.index(start)
+            except ValueError:
+                continue
+            candidates = []
+            if index > 0:
+                candidates.append(siblings[index - 1])
+            if index + 1 < len(siblings):
+                candidates.append(siblings[index + 1])
         for node_id in candidates:
             if plan.node_budget is not None and len(out_nodes) >= plan.node_budget:
                 removable = _least_valuable_context_node(graph, out_nodes, protected=protected | {node_id})

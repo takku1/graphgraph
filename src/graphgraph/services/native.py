@@ -994,6 +994,9 @@ def render_native_context(
                     else "structural_fail"
                 ),
                 "scope": "packet_and_receipt",
+                "format": packet_validation.format,
+                "nodes": packet_validation.node_count,
+                "edges": packet_validation.edge_count,
                 "errors": [
                     *packet_validation.errors,
                     *semantic_validation.get("errors", ()),
@@ -1004,11 +1007,16 @@ def render_native_context(
                 "ok": None,
                 "status": "not_applicable",
                 "scope": "packet_structure_only",
+                "format": "none",
+                "nodes": 0,
+                "edges": 0,
                 "errors": [],
             }
         if not json_details:
             payload = {
                 "actionable": payload.get("actionable", {}),
+                "control": payload.get("control", ""),
+                "metrics": payload.get("metrics", {}),
                 "query_class": payload.get("query_class", query_class),
                 "routing": payload.get("routing", {}),
                 "workflow": payload.get("workflow", {}),

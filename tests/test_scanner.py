@@ -2587,3 +2587,80 @@ class ScannerTest(unittest.TestCase):
         self.assertEqual(js_sources.get("transform"), "my_helper")
         self.assertEqual(js_sources.get("load"), "my_helper")
         self.assertEqual(js_sources.get("other"), "another")
+
+    def test_tree_sitter_resolves_rust_module_qualified_call_among_duplicate_names(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "crates/locus-frontends/src/formula.rs": "pub fn parse(input: &str) -> i32 { 1 }\n",
+            "crates/other/src/parser.rs": "pub fn parse(input: &str) -> i32 { 2 }\n",
+            "crates/locus-pipeline/src/lib.rs": (
+                "pub fn parse_to_ir(input: &str) -> i32 {\n"
+                "    locus_frontends::formula::parse(input)\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_"), text))
+
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        parse_to_ir = next(
+            node.id for node in result.nodes.values()
+            if node.label == "parse_to_ir"
+        )
+        formula_parse = next(
+            node.id for node in result.nodes.values()
+            if node.label == "parse" and node.path.endswith("locus-frontends/src/formula.rs")
+        )
+        self.assertTrue(
+            any(
+                edge.source == parse_to_ir
+                and edge.target == formula_parse
+                and edge.type == "calls"
+                for edge in result.edges
+            )
+        )
+
+    def test_tree_sitter_links_rust_test_expr_type_use_to_enum(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "crates/locus-engine/src/expression.rs": (
+                "pub enum Expr { Constant(i32), Add(Box<Expr>, Box<Expr>) }\n"
+            ),
+            "crates/locus-engine/tests/expression_test.rs": (
+                "#[test]\n"
+                "fn simplifies_expr() {\n"
+                "    let expr = Expr::Constant(1);\n"
+                "    assert!(matches!(expr, Expr::Constant(1)));\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_"), text))
+
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        test_id = next(node.id for node in result.nodes.values() if node.label == "simplifies_expr")
+        expr_id = next(node.id for node in result.nodes.values() if node.label == "Expr")
+        self.assertTrue(
+            any(
+                edge.source == test_id
+                and edge.target == expr_id
+                and edge.type == "references"
+                for edge in result.edges
+            )
+        )

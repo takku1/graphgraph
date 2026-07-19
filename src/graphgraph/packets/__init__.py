@@ -1,3 +1,4 @@
+from .metrics import estimate_tokens
 from .renderers import (
     DEFAULT_RELATION_ORDER,
     render_doc_summary,
@@ -28,6 +29,7 @@ from .validation import (
 __all__ = [
     "DEFAULT_RELATION_ORDER",
     "ValidationResult",
+    "estimate_tokens",
     "looks_like_graph_json",
     "render_doc_summary",
     "render_gg",
