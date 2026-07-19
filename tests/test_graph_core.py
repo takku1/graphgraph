@@ -501,6 +501,36 @@ class GraphCoreTest(unittest.TestCase):
         matches = search_nodes(g, "AuthService", personalize=True)
         self.assertEqual(matches[0].node.id, "A")
 
+    def test_pagerank_paths_include_edge_and_provenance_confidence(self) -> None:
+        graph = Graph(
+            nodes={
+                "A": Node("A", "Source"),
+                "B": Node("B", "Verified"),
+                "C": Node("C", "Ambiguous"),
+                "D": Node("D", "Low Confidence"),
+            },
+            edges=[
+                Edge("A", "B", "calls", confidence=1.0, provenance="tree_sitter"),
+                Edge("A", "C", "calls", confidence=1.0, provenance="ambiguous"),
+                Edge("A", "D", "calls", confidence=0.1, provenance="tree_sitter"),
+            ],
+        )
+
+        global_scores = graph.pagerank()
+        personalized_scores = graph.personalized_pagerank({"A": 1.0})
+        localized_scores = graph.localized_personalized_pagerank(
+            {"A": 1.0},
+            max_nodes=10,
+            max_pushes=100,
+        )
+
+        self.assertGreater(global_scores["B"], global_scores["C"])
+        self.assertGreater(global_scores["B"], global_scores["D"])
+        self.assertGreater(personalized_scores["B"], personalized_scores["C"])
+        self.assertGreater(personalized_scores["B"], personalized_scores["D"])
+        self.assertGreater(localized_scores["B"], localized_scores["C"])
+        self.assertGreater(localized_scores["B"], localized_scores["D"])
+
     def test_localized_personalized_pagerank_is_bounded_and_seeded(self) -> None:
         nodes = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(1000)}
         edges = [Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(999)]

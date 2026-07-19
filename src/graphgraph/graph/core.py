@@ -400,7 +400,7 @@ class Graph:
             s = 0.0
             for edge in outgoing.get(nid, []):
                 if edge.target in pr:
-                    s += edge.weight * traversal_strength(edge.type)
+                    s += edge.traversal_val
             sum_out[nid] = s
 
         dangling_nodes = [nid for nid in active_nodes if sum_out[nid] == 0.0]
@@ -413,8 +413,7 @@ class Graph:
             for edge in incoming_edges:
                 source_id = edge.source
                 if source_id in pr and sum_out[source_id] > 0.0:
-                    weight = edge.weight * traversal_strength(edge.type)
-                    factor = damping * (weight / sum_out[source_id])
+                    factor = damping * (edge.traversal_val / sum_out[source_id])
                     valid_incoming.append((source_id, factor))
             transitions[target_id] = valid_incoming
 
@@ -478,7 +477,7 @@ class Graph:
             s = 0.0
             for edge in outgoing.get(nid, []):
                 if edge.target in nid_to_idx:
-                    s += edge.weight * traversal_strength(edge.type)
+                    s += edge.traversal_val
             sum_out_arr[i] = s
 
         dangling_indices = [i for i, val in enumerate(sum_out_arr) if val == 0.0]
@@ -492,8 +491,7 @@ class Graph:
                 source_id = edge.source
                 src_idx = nid_to_idx.get(source_id)
                 if src_idx is not None and sum_out_arr[src_idx] > 0.0:
-                    weight = edge.weight * traversal_strength(edge.type)
-                    factor = damping * (weight / sum_out_arr[src_idx])
+                    factor = damping * (edge.traversal_val / sum_out_arr[src_idx])
                     valid_incoming.append((src_idx, factor))
             transitions_arr[i] = valid_incoming
 
@@ -574,7 +572,7 @@ class Graph:
             scores[node_id] = scores.get(node_id, 0.0) + retained
             distributable = damping * mass
             transitions = [
-                (edge.target, edge.weight * traversal_strength(edge.type))
+                (edge.target, edge.traversal_val)
                 for edge in outgoing.get(node_id, ())
                 if edge.target in self.nodes and self.nodes[edge.target].active
             ]
