@@ -6,8 +6,8 @@ from pathlib import Path
 from ..graph.core import Graph, Node
 from .terms import term_key
 
-DOC_KINDS = {"section", "concept", "markdown", "rst", "html", "text", "doc"}
-CODE_KINDS = {
+DOC_KINDS = frozenset({"section", "concept", "markdown", "rst", "html", "text", "doc"})
+CODE_KINDS = frozenset({
     "file",
     "module",
     "class",
@@ -21,10 +21,10 @@ CODE_KINDS = {
     "package",
     "service",
     "data",
-}
+})
 
-DOC_EXTENSIONS = {".md", ".mdx", ".rst", ".txt", ".html", ".htm"}
-CODE_EXTENSIONS = {
+DOC_EXTENSIONS = frozenset({".md", ".mdx", ".rst", ".txt", ".html", ".htm"})
+CODE_EXTENSIONS = frozenset({
     ".py",
     ".rs",
     ".ts",
@@ -46,7 +46,10 @@ CODE_EXTENSIONS = {
     ".php",
     ".lua",
     ".sql",
-}
+})
+
+COVERAGE_EXAMPLE_LIMIT = 8
+BALANCED_DOC_CODE_BIAS = 0.5
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,11 @@ def is_code_like(node: Node) -> bool:
 
 
 def summarize_doc_code_coverage(graph: Graph) -> DocCodeCoverage:
+    revision = graph.mutation_revision
+    cached = getattr(graph, "_doc_code_coverage_cache", None)
+    if cached is not None and cached[0] == revision:
+        return cached[1]
+
     grouped: dict[str, DictBucket] = {}
     for node in graph.nodes.values():
         key = node_semantic_key(node)
@@ -149,19 +157,26 @@ def summarize_doc_code_coverage(graph: Graph) -> DocCodeCoverage:
     code_only.sort(key=_pairing_sort_key)
     unlabeled.sort(key=_pairing_sort_key)
 
-    return DocCodeCoverage(
+    coverage = DocCodeCoverage(
         paired_keys=len(paired),
         doc_only_keys=len(doc_only),
         code_only_keys=len(code_only),
         unlabeled_keys=len(unlabeled),
-        paired_examples=tuple(paired[:8]),
-        doc_only_examples=tuple(doc_only[:8]),
-        code_only_examples=tuple(code_only[:8]),
-        unlabeled_examples=tuple(unlabeled[:8]),
+        paired_examples=tuple(paired[:COVERAGE_EXAMPLE_LIMIT]),
+        doc_only_examples=tuple(doc_only[:COVERAGE_EXAMPLE_LIMIT]),
+        code_only_examples=tuple(code_only[:COVERAGE_EXAMPLE_LIMIT]),
+        unlabeled_examples=tuple(unlabeled[:COVERAGE_EXAMPLE_LIMIT]),
     )
+    graph._doc_code_coverage_cache = (revision, coverage)
+    return coverage
 
 
 def summarize_doc_code_components(graph: Graph) -> DocCodeComponentCoverage:
+    revision = graph.mutation_revision
+    cached = getattr(graph, "_doc_code_component_coverage_cache", None)
+    if cached is not None and cached[0] == revision:
+        return cached[1]
+
     components = _active_components(graph)
     paired: list[DocCodeComponentPairing] = []
     doc_only: list[DocCodeComponentPairing] = []
@@ -210,16 +225,18 @@ def summarize_doc_code_components(graph: Graph) -> DocCodeComponentCoverage:
     code_only.sort(key=_component_sort_key)
     unlabeled.sort(key=_component_sort_key)
 
-    return DocCodeComponentCoverage(
+    coverage = DocCodeComponentCoverage(
         paired_components=len(paired),
         doc_only_components=len(doc_only),
         code_only_components=len(code_only),
         unlabeled_components=len(unlabeled),
-        paired_examples=tuple(paired[:8]),
-        doc_only_examples=tuple(doc_only[:8]),
-        code_only_examples=tuple(code_only[:8]),
-        unlabeled_examples=tuple(unlabeled[:8]),
+        paired_examples=tuple(paired[:COVERAGE_EXAMPLE_LIMIT]),
+        doc_only_examples=tuple(doc_only[:COVERAGE_EXAMPLE_LIMIT]),
+        code_only_examples=tuple(code_only[:COVERAGE_EXAMPLE_LIMIT]),
+        unlabeled_examples=tuple(unlabeled[:COVERAGE_EXAMPLE_LIMIT]),
     )
+    graph._doc_code_component_coverage_cache = (revision, coverage)
+    return coverage
 
 
 def doc_code_bias(graph: Graph) -> float:
@@ -229,7 +246,7 @@ def doc_code_bias(graph: Graph) -> float:
     code_side = coverage.paired_components + coverage.code_only_components
     total = doc_side + code_side
     if total <= 0:
-        return 0.5
+        return BALANCED_DOC_CODE_BIAS
     return doc_side / total
 
 
@@ -254,9 +271,11 @@ def _paired_node_count(pairing: DocCodePairing | DocCodeComponentPairing) -> int
 
 def _active_components(graph: Graph) -> list[tuple[str, ...]]:
     parent: dict[str, str] = {}
+    size: dict[str, int] = {}
 
     def find(node_id: str) -> str:
         parent.setdefault(node_id, node_id)
+        size.setdefault(node_id, 1)
         while parent[node_id] != node_id:
             parent[node_id] = parent[parent[node_id]]
             node_id = parent[node_id]
@@ -266,11 +285,15 @@ def _active_components(graph: Graph) -> list[tuple[str, ...]]:
         root_left = find(left)
         root_right = find(right)
         if root_left != root_right:
+            if size[root_left] < size[root_right]:
+                root_left, root_right = root_right, root_left
             parent[root_right] = root_left
+            size[root_left] += size[root_right]
 
     active_nodes = [node_id for node_id, node in graph.nodes.items() if node.active]
     for node_id in active_nodes:
         parent.setdefault(node_id, node_id)
+        size.setdefault(node_id, 1)
 
     for edge in graph.edges:
         if not edge.active:

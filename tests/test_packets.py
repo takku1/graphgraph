@@ -30,7 +30,7 @@ from graphgraph.policies import render_policy_packet
 from graphgraph.retrieval import (
     budget_edges,
 )
-from graphgraph.traversal import relation_rank, traversal_policy
+from graphgraph.traversal import TraversalPolicy, relation_rank, traversal_policy
 
 
 class PacketsTest(unittest.TestCase):
@@ -463,6 +463,29 @@ N1,N2,1,0.9
         self.assertLess(relation_rank("calls", blast), relation_rank("references", blast))
         self.assertEqual(direct.direction, "out")
         self.assertEqual(reverse.direction, "in")
+
+    def test_relation_rank_maps_preserve_tuple_ordering_for_custom_policy(self) -> None:
+        policy = TraversalPolicy(
+            "custom",
+            ("document", "execution"),
+            ("explains", "calls"),
+            weak_edge_limit=2,
+            min_confidence=0.0,
+        )
+        for relation in ("explains", "calls", "references", "unknown_relation"):
+            family = relation_spec(relation).family
+            expected = (
+                policy.preferred_relations.index(relation)
+                if relation in policy.preferred_relations
+                else 999,
+                policy.preferred_families.index(family)
+                if family in policy.preferred_families
+                else 999,
+                relation,
+            )
+            self.assertEqual(relation_rank(relation, policy), expected)
+        self.assertIs(policy._relation_positions, policy._relation_positions)
+        self.assertIs(policy._family_positions, policy._family_positions)
 
     def test_render_svo_basic(self) -> None:
         g = sample_graph()

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 
 from .ontology import relation_spec
+
+UNPREFERRED_RANK = 999
 
 
 @dataclass(frozen=True)
@@ -13,6 +16,16 @@ class TraversalPolicy:
     weak_edge_limit: int
     min_confidence: float
     direction: str = "both"
+
+    @cached_property
+    def _relation_positions(self) -> dict[str, int]:
+        """Precomputed relation ordering for edge-sort hot paths."""
+        return {relation: position for position, relation in enumerate(self.preferred_relations)}
+
+    @cached_property
+    def _family_positions(self) -> dict[str, int]:
+        """Precomputed ontology-family ordering for edge-sort hot paths."""
+        return {family: position for position, family in enumerate(self.preferred_families)}
 
 
 DEFAULT_POLICY = TraversalPolicy(
@@ -119,6 +132,6 @@ def traversal_policy(query_class: str) -> TraversalPolicy:
 
 def relation_rank(relation: str, policy: TraversalPolicy) -> tuple[int, int, str]:
     spec = relation_spec(relation)
-    relation_pos = policy.preferred_relations.index(relation) if relation in policy.preferred_relations else 999
-    family_pos = policy.preferred_families.index(spec.family) if spec.family in policy.preferred_families else 999
+    relation_pos = policy._relation_positions.get(relation, UNPREFERRED_RANK)
+    family_pos = policy._family_positions.get(spec.family, UNPREFERRED_RANK)
     return relation_pos, family_pos, relation

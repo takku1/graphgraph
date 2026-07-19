@@ -91,6 +91,7 @@ PROVENANCE_CONFIDENCE = {
     "federation": 0.75,
     "python_ast_provider": 0.95,
 }
+DEFAULT_PROVENANCE_CONFIDENCE = 0.6
 
 
 def relation_spec(relation: str) -> RelationSpec:
@@ -110,4 +111,4 @@ def is_weak_relation(relation: str) -> bool:
 
 
 def provenance_confidence(provenance: str) -> float:
-    return PROVENANCE_CONFIDENCE.get(provenance, 0.6)
+    return PROVENANCE_CONFIDENCE.get(provenance, DEFAULT_PROVENANCE_CONFIDENCE)

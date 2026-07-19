@@ -14,7 +14,11 @@ from ..storage.backends import (
     save_graph_binary,
 )
 
-_BINARY_GRAPH_SUFFIXES = {".gg", ".ggb"}
+_BINARY_GRAPH_SUFFIXES = frozenset({".gg", ".ggb"})
+# Self-describing version markers for the legacy text adjacency `.gg` format.
+_GG_TEXT_VERSIONS = frozenset({"gg/1", "gg/2"})
+# Column names that identify a header row in a CSV/TSV edge list.
+_CSV_SOURCE_HEADERS = frozenset({"source", "from", "src", "node1", "subject", "edge_source"})
 
 
 def _label_to_id(lbl: str) -> str:
@@ -278,7 +282,7 @@ def load_gg_text(path: Path) -> Graph:
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if stripped in ("gg/1", "gg/2"):
+        if stripped in _GG_TEXT_VERSIONS:
             continue
 
         is_indented = raw_line[0] in (" ", "\t")
@@ -364,7 +368,7 @@ def load_csv_edges(path: Path) -> Graph:
         return Graph()
 
     header = [c.lower().strip() for c in rows[0]]
-    is_header = any(h in ("source", "from", "src", "node1", "subject", "edge_source") for h in header)
+    is_header = any(column in _CSV_SOURCE_HEADERS for column in header)
     data_rows = rows[1:] if is_header else rows
 
     nodes: dict[str, Node] = {}

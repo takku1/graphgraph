@@ -12,14 +12,34 @@ from .ontology import provenance_confidence, traversal_strength
 _LINE_RE = re.compile(r"\bL(\d+)\b")
 _MISSING = object()
 
+# Calibrated local-PPR work curves. These preserve the former operating point
+# near 3,000 nodes while adapting the residual threshold and frontier to graph
+# size and seed count.
+LOCAL_PPR_TOLERANCE_SCALE = 0.4
+LOCAL_PPR_MIN_TOLERANCE = 1e-6
+LOCAL_PPR_MAX_TOLERANCE = 3e-4
+LOCAL_PPR_SEED_GAIN = 0.25
+LOCAL_PPR_FRONTIER_SCALE = 9.0
+LOCAL_PPR_MIN_NODES = 256
+LOCAL_PPR_MAX_NODES = 8192
+LOCAL_PPR_PUSHES_PER_NODE = 8
+LOCAL_PPR_MIN_PUSHES = 1024
+LOCAL_PPR_MAX_PUSHES = 65536
+
+# Hub-decayed expansion treats traversal as an energy budget. Strength is
+# inverted into resistance, degree increases drain, and the calibrated cost
+# determines how quickly weak/high-degree routes exhaust the budget.
+EXPANSION_INITIAL_ENERGY = 100.0
+EXPANSION_HUB_DECAY_COST = 25.0
+MIN_TRAVERSAL_STRENGTH = 1e-9
+
 
 class _RevisionedDict(dict):
-    """Dictionary with an O(1) mutation register for derived-state caches.
+    """Dictionary with an O(1) mutation counter for derived-state caches.
 
     Graph nodes are public and intentionally mutable for compatibility. The
-    revision is the graph-level equivalent of a CPU state/version register:
-    every store/delete instruction advances it, so caches can compare one
-    integer instead of rescanning every node to infer whether state changed.
+    revision advances on every write or delete, so caches compare one integer
+    instead of rescanning every node to infer whether state changed.
     """
 
     def __init__(self, values=()):
@@ -63,7 +83,7 @@ class _RevisionedDict(dict):
     def update(self, *args, **kwargs) -> None:
         if not args and not kwargs:
             return
-        # Decode the complete write set before mutating so a failing iterator
+        # Materialize the complete write set before mutating so a failing iterator
         # cannot leave changed state behind without advancing the revision.
         incoming = dict(*args, **kwargs)
         if not incoming:
@@ -96,7 +116,7 @@ class _RevisionedList(list):
         self.revision += 1
 
     def extend(self, values) -> None:
-        # Materialize first for the same instruction-level atomicity as update.
+        # Materialize first for the same failure atomicity as update.
         decoded = list(values)
         if not decoded:
             return
@@ -160,10 +180,26 @@ def adaptive_local_ppr_params(n_nodes: int, n_seeds: int) -> tuple[float, int, i
     """
     n_nodes = max(1, n_nodes)
     n_seeds = max(1, n_seeds)
-    tolerance = min(3e-4, max(1e-6, 0.4 / n_nodes))
-    seed_factor = 1.0 + 0.25 * (n_seeds - 1)
-    max_nodes = int(min(8192, max(256, round(9.0 * (n_nodes ** 0.5) * seed_factor))))
-    max_pushes = int(min(65536, max(1024, 8 * max_nodes)))
+    tolerance = min(
+        LOCAL_PPR_MAX_TOLERANCE,
+        max(LOCAL_PPR_MIN_TOLERANCE, LOCAL_PPR_TOLERANCE_SCALE / n_nodes),
+    )
+    seed_factor = 1.0 + LOCAL_PPR_SEED_GAIN * (n_seeds - 1)
+    max_nodes = int(
+        min(
+            LOCAL_PPR_MAX_NODES,
+            max(
+                LOCAL_PPR_MIN_NODES,
+                round(LOCAL_PPR_FRONTIER_SCALE * (n_nodes**0.5) * seed_factor),
+            ),
+        )
+    )
+    max_pushes = int(
+        min(
+            LOCAL_PPR_MAX_PUSHES,
+            max(LOCAL_PPR_MIN_PUSHES, LOCAL_PPR_PUSHES_PER_NODE * max_nodes),
+        )
+    )
     return tolerance, max_nodes, max_pushes
 
 
@@ -688,7 +724,9 @@ class Graph:
                         seen_edges.add(ekey)
                         edge_list.append(edge)
         frontier = set(included)
-        node_energies: dict[str, float] = {s: 100.0 for s in included}
+        node_energies: dict[str, float] = {
+            node_id: EXPANSION_INITIAL_ENERGY for node_id in included
+        }
 
         for _ in range(hops):
             new_edges: list[Edge] = []
@@ -698,7 +736,7 @@ class Graph:
             for nid in frontier:
                 deg = degrees.get(nid, 1)
                 deg_penalty = 1.0 / math.sqrt(max(1, deg))
-                current_energy = node_energies.get(nid, 100.0)
+                current_energy = node_energies.get(nid, EXPANSION_INITIAL_ENERGY)
 
                 if direction == "out":
                     candidate_edges = outgoing.get(nid, [])
@@ -730,13 +768,18 @@ class Graph:
                         and _node_in_scope(self.nodes[neighbor], normalized_scopes)
                     ):
                         if decay_hubs:
-                            resistance = 1.0 / max(1e-9, edge.traversal_val)
+                            resistance = 1.0 / max(MIN_TRAVERSAL_STRENGTH, edge.traversal_val)
                             degree_drain = 1.0 + math.log10(max(1, deg))
-                            decay = resistance * degree_drain * 25.0
+                            decay = resistance * degree_drain * EXPANSION_HUB_DECAY_COST
                             new_energy = current_energy - decay
                             if new_energy > 0:
                                 next_energies[neighbor] = max(next_energies.get(neighbor, 0.0), new_energy)
-                                scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty * (new_energy / 100.0)
+                                scores[neighbor] = (
+                                    scores.get(neighbor, 0.0)
+                                    + edge.traversal_val
+                                    * deg_penalty
+                                    * (new_energy / EXPANSION_INITIAL_ENERGY)
+                                )
                         else:
                             scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty
 

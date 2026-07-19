@@ -3,36 +3,36 @@ from __future__ import annotations
 from .budgets import is_doc_query
 from .types import PacketChoice, SubgraphStats
 
+# Empirically measured optimal (hops, packet) per query class. gg is the token
+# floor for any non-empty structural graph; the exceptions are documented inline.
+#   negative_query: hops=1 not 0, so the packet can prove connectivity rather
+#     than reading every node as isolated (confirmed on a real repo).
+_PACKET_BY_CLASS: dict[str, PacketChoice] = {
+    "direct_lookup": PacketChoice(1, "gg", "1-hop direct lookups: gg is the measured token floor"),
+    "reverse_lookup": PacketChoice(1, "gg", "1-hop reverse lookups: gg is the measured token floor"),
+    "affected_tests": PacketChoice(2, "gg", "affected tests use 2-hop incoming execution/validation evidence"),
+    "multi_hop_path": PacketChoice(2, "gg", "path queries need 2-hop topology; gg is the measured token floor"),
+    "blast_radius": PacketChoice(2, "gg", "blast-radius needs 2-hop topology; gg is the measured token floor"),
+    "subsystem_summary": PacketChoice(1, "gg", "subsystem summaries: gg is the measured token floor"),
+    "spreading_activation": PacketChoice(2, "gg", "spreading activation leverages 2-step energy propagation; gg is the measured token floor"),
+    "recent_changes": PacketChoice(1, "gg", "recent-changes queries need 1-hop commit/fixes evidence; gg is the measured token floor"),
+    "negative_query": PacketChoice(1, "semantic_arrow", "negative queries need 1-hop evidence to actually prove connectivity, not just anchor existence"),
+}
+_DOC_PACKET = PacketChoice(1, "doc_summary", "documentation summaries need grounded snippets more than topology")
+_DEFAULT_PACKET = PacketChoice(2, "gg_hybrid", "unknown query class: conservative 2-hop gg_hybrid")
+
+# Structural classes keep their packet even when the query uses documentation
+# vocabulary; the doc redirect applies only to the remaining classes.
+_STRUCTURAL_FIRST = frozenset(
+    {"direct_lookup", "reverse_lookup", "affected_tests", "multi_hop_path", "blast_radius"}
+)
+
 
 def choose_packet(query_class: str, query: str = "") -> PacketChoice:
     """Return the empirically measured optimal packet strategy per query class."""
-    if query_class == "direct_lookup":
-        return PacketChoice(1, "gg", "1-hop direct lookups: gg is the measured token floor")
-    if query_class == "reverse_lookup":
-        return PacketChoice(1, "gg", "1-hop reverse lookups: gg is the measured token floor")
-    if query_class == "affected_tests":
-        return PacketChoice(2, "gg", "affected tests use 2-hop incoming execution/validation evidence")
-    if query_class == "multi_hop_path":
-        return PacketChoice(2, "gg", "path queries need 2-hop topology; gg is the measured token floor")
-    if query_class == "blast_radius":
-        return PacketChoice(2, "gg", "blast-radius needs 2-hop topology; gg is the measured token floor")
-    if is_doc_query(query_class, query):
-        return PacketChoice(1, "doc_summary", "documentation summaries need grounded snippets more than topology")
-    if query_class == "subsystem_summary":
-        return PacketChoice(1, "gg", "subsystem summaries: gg is the measured token floor")
-    if query_class == "spreading_activation":
-        return PacketChoice(2, "gg", "spreading activation leverages 2-step energy propagation; gg is the measured token floor")
-    if query_class == "recent_changes":
-        return PacketChoice(1, "gg", "recent-changes queries need 1-hop commit/fixes evidence; gg is the measured token floor")
-    if query_class == "negative_query":
-        # hops=1, not 0: at hops=0 the packet can never show connectivity
-        # evidence for *any* node regardless of the graph, so a query like
-        # "is X isolated/unused" always reads as isolated even when X has
-        # real callers -- confirmed on a real repo (an actively-called Rust
-        # struct read as fully isolated). 1 hop is enough to prove real
-        # usage exists while staying far short of a full expansion.
-        return PacketChoice(1, "semantic_arrow", "negative queries need 1-hop evidence to actually prove connectivity, not just anchor existence")
-    return PacketChoice(2, "gg_hybrid", "unknown query class: conservative 2-hop gg_hybrid")
+    if query_class not in _STRUCTURAL_FIRST and is_doc_query(query_class, query):
+        return _DOC_PACKET
+    return _PACKET_BY_CLASS.get(query_class, _DEFAULT_PACKET)
 
 
 def refine_packet_for_subgraph(choice: PacketChoice, edge_count: int) -> PacketChoice:

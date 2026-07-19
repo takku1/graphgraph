@@ -801,6 +801,24 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(coverage.code_only_components, 1)
         self.assertTrue(any("D" in example.doc_nodes for example in coverage.paired_examples))
 
+    def test_doc_code_coverage_caches_follow_graph_mutation_revisions(self) -> None:
+        graph = Graph(
+            nodes={"D": Node("D", "Guide", "section", "docs/guide.md")},
+        )
+        semantic_before = summarize_doc_code_coverage(graph)
+        components_before = summarize_doc_code_components(graph)
+        self.assertIs(summarize_doc_code_coverage(graph), semantic_before)
+        self.assertIs(summarize_doc_code_components(graph), components_before)
+
+        graph.nodes["C"] = Node("C", "render_guide", "function", "src/guide.py")
+
+        semantic_after = summarize_doc_code_coverage(graph)
+        components_after = summarize_doc_code_components(graph)
+        self.assertIsNot(semantic_after, semantic_before)
+        self.assertIsNot(components_after, components_before)
+        self.assertEqual(semantic_after.code_only_keys, 1)
+        self.assertEqual(components_after.code_only_components, 1)
+
     def test_doc_code_alignment_fixture_cases(self) -> None:
         fixture = Path(__file__).with_name("fixtures") / "doc_code_alignment_cases.json"
         data = json.loads(fixture.read_text(encoding="utf-8"))

@@ -82,12 +82,29 @@ INTERPRETATION_CONCEPTS: tuple[InterpretationConcept, ...] = (
     ),
 )
 
-_ALIAS_INDEX = {
-    term_key(alias): concept
-    for concept in INTERPRETATION_CONCEPTS
-    for alias in concept.aliases
-    if term_key(alias)
-}
+_ALIAS_INDEX: dict[str, InterpretationConcept] = {}
+for _concept in INTERPRETATION_CONCEPTS:
+    for _alias in _concept.aliases:
+        if _alias_key := term_key(_alias):
+            _ALIAS_INDEX[_alias_key] = _concept
+
+# The registry is immutable at runtime, so compile its longest-first matcher
+# once. Scans call concept detection per source node; rebuilding this ordering
+# and every regex per call was pure repeated work.
+_ALIAS_MATCHERS = tuple(
+    (
+        re.compile(rf"(?<![a-z0-9]){re.escape(alias_key)}(?![a-z0-9])"),
+        concept,
+    )
+    for alias_key, concept in sorted(
+        _ALIAS_INDEX.items(),
+        key=lambda item: (-len(item[0]), item[0]),
+    )
+)
+
+_INTERPRETATION_PROVENANCE = "interpretation_registry"
+_FORMALIZES_CONFIDENCE = 0.85
+_IMPLEMENTS_CONFIDENCE = 0.8
 
 
 def interpretation_concept_id(concept: InterpretationConcept) -> str:
@@ -103,14 +120,13 @@ def detect_interpretation_concepts(text: str) -> tuple[InterpretationConcept, ..
     """
     if not text.strip():
         return ()
-    normalized = f" {term_key(text)} "
+    normalized = term_key(text)
     found: list[InterpretationConcept] = []
     seen: set[str] = set()
-    for alias_key, concept in sorted(_ALIAS_INDEX.items(), key=lambda item: (-len(item[0]), item[0])):
-        if not alias_key or concept.label in seen:
+    for pattern, concept in _ALIAS_MATCHERS:
+        if concept.label in seen:
             continue
-        pattern = rf"(?<![a-z0-9]){re.escape(alias_key)}(?![a-z0-9])"
-        if re.search(pattern, normalized):
+        if pattern.search(normalized):
             found.append(concept)
             seen.add(concept.label)
     return tuple(found)
@@ -135,21 +151,14 @@ def link_interpretation_concepts(
     source: str = "",
     source_location: str = "",
 ) -> tuple[dict[str, Node], list[Edge]]:
-    nodes: dict[str, Node] = {}
-    edges: list[Edge] = []
-    for concept in detect_interpretation_concepts(text):
-        node = concept_node(concept, source=source)
-        nodes[node.id] = node
-        edges.append(Edge(
-            source_id,
-            node.id,
-            "formalizes",
-            weight=1.0,
-            confidence=0.85,
-            provenance="interpretation_registry",
-            source_location=source_location,
-        ))
-    return nodes, edges
+    return _link_detected_concepts(
+        source_id,
+        text,
+        relation="formalizes",
+        confidence=_FORMALIZES_CONFIDENCE,
+        source=source,
+        source_location=source_location,
+    )
 
 
 def link_source_interpretation_concepts(
@@ -158,18 +167,38 @@ def link_source_interpretation_concepts(
     source_location: str = "",
 ) -> tuple[dict[str, Node], list[Edge]]:
     text = " ".join((node.label, node.path, node.summary, " ".join(node.facts)))
+    return _link_detected_concepts(
+        node.id,
+        text,
+        relation="implements_algorithm",
+        confidence=_IMPLEMENTS_CONFIDENCE,
+        source=node.source,
+        source_location=source_location or node.path,
+    )
+
+
+def _link_detected_concepts(
+    source_id: str,
+    text: str,
+    *,
+    relation: str,
+    confidence: float,
+    source: str,
+    source_location: str,
+) -> tuple[dict[str, Node], list[Edge]]:
+    """Materialize registry matches as nodes plus one typed edge per match."""
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
     for concept in detect_interpretation_concepts(text):
-        target = concept_node(concept, source=node.source)
+        target = concept_node(concept, source=source)
         nodes[target.id] = target
         edges.append(Edge(
-            node.id,
+            source_id,
             target.id,
-            "implements_algorithm",
+            relation,
             weight=1.0,
-            confidence=0.8,
-            provenance="interpretation_registry",
-            source_location=source_location or node.path,
+            confidence=confidence,
+            provenance=_INTERPRETATION_PROVENANCE,
+            source_location=source_location,
         ))
     return nodes, edges

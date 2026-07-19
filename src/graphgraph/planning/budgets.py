@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-DOC_TERMS = re.compile(r"\b(readme|docs?|documentation|guide|install(?:ation)?|usage|setup|tutorial|manual)\b", re.IGNORECASE)
 PLAN_TOKEN = re.compile(r"[A-Za-z0-9_]+")
 
 QUERY_STOPWORDS = {
@@ -69,6 +68,13 @@ DEFAULT_NODE_BUDGETS = {
 DEFAULT_FALLBACK_NODE_BUDGET = 120
 DOC_NODE_BUDGET = 12
 
+# A query is treated as documentation-intent when this fraction of its words hit
+# a doc keyword (query_class == "doc_summary" always qualifies).
+DOC_INTENSITY_THRESHOLD = 0.25
+DOC_KEYWORDS = frozenset(
+    {"readme", "install", "usage", "documentation", "guide", "setup", "docs", "markdown", "md"}
+)
+
 
 def default_anchor_limit(query: str, query_class: str) -> int:
     term_count = len(plan_terms(query))
@@ -112,17 +118,16 @@ def default_node_budget(query_class: str, query: str = "") -> int:
 
 
 def is_doc_query(query_class: str, query: str) -> bool:
-    return doc_intensity_score(query_class, query) >= 0.25
+    return doc_intensity_score(query_class, query) >= DOC_INTENSITY_THRESHOLD
 
 
 def doc_intensity_score(query_class: str, query: str) -> float:
     if query_class == "doc_summary":
         return 1.0
-    doc_keywords = {"readme", "install", "usage", "documentation", "guide", "setup", "docs", "markdown", "md"}
     query_words = [w for w in query.lower().split() if len(w) > 1]
     if not query_words:
         return 0.0
-    matches = sum(1 for w in query_words if any(k in w for k in doc_keywords))
+    matches = sum(1 for w in query_words if any(k in w for k in DOC_KEYWORDS))
     return matches / len(query_words)
 
 

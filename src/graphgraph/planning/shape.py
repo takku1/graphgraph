@@ -14,6 +14,58 @@ LOCAL_EDGE_DENSITY_CAP = 1.5
 SOURCE_KINDS = {"python", "typescript", "javascript", "rust", "go", "java", "c", "cpp", "header", "lean"}
 SYMBOL_KINDS = {"function", "method", "class", "struct", "enum", "trait", "theorem"}
 DOC_KINDS = {"markdown", "rst", "text", "section", "paragraph", "concept"}
+
+# Query-complexity prior (lambda) per class: higher means the target evidence is
+# concentrated, lower means it is distributed. Drives the regularized budget.
+QUERY_COMPLEXITY_LAMBDA = {
+    "direct_lookup": 0.08,
+    "reverse_lookup": 0.08,
+    "multi_hop_path": 0.05,
+    "blast_radius": 0.035,
+    "subsystem_summary": 0.035,
+    "spreading_activation": 0.035,
+}
+DEFAULT_COMPLEXITY_LAMBDA = 0.04
+
+# Shape-driven multipliers applied to the complexity prior.
+DOC_HEAVY_NODE_RATIO = 0.65
+DOC_HEAVY_LAMBDA_GAIN = 1.2
+SMALL_GRAPH_NODES = 500
+SMALL_GRAPH_LAMBDA_GAIN = 1.25
+LARGE_GRAPH_NODES = 5000
+LARGE_GRAPH_LAMBDA_GAIN = 1.15
+DENSE_GRAPH_EDGE_DENSITY = 2.5
+WEAK_EDGE_HEAVY_RATIO = 0.45
+UNDEREXTRACTED_IMPORTS_PER_FILE = 0.05
+UNDEREXTRACTED_MIN_SOURCE_FILES = 20
+
+# Regularized budget U(n) = (1 - e^{-lambda*n}) - c*(tau*n); n* is its closed-form
+# optimum. c is the empirically tuned token penalty; the ratio floor keeps ln>0.
+TOKEN_PENALTY_COST = 1e-4
+MIN_BUDGET_RATIO = 1.1
+
+# Effective edge density inflates raw density by structural noise, then caps it.
+WEAK_EDGE_NOISE = 0.30
+DOC_NODE_NOISE = 0.20
+
+# Token-window target by query class (fallback DEFAULT for unlisted classes).
+DOC_TOKEN_TARGET = 220
+DEFAULT_TOKEN_TARGET = 1600
+_CONTEXT_TOKEN_TARGET = {
+    "negative_query": 64,
+    "direct_lookup": 600,
+    "reverse_lookup": 600,
+    "multi_hop_path": 900,
+}
+
+# Node-count bounds by query class: (floor, hard_ceiling); ceiling is further
+# clamped to the graph size at call time.
+DEFAULT_NODE_BOUNDS = (48, 200)
+_NODE_BOUNDS = {
+    "direct_lookup": (24, 96),
+    "reverse_lookup": (24, 96),
+    "multi_hop_path": (32, 140),
+}
 @dataclass(frozen=True)
 class GraphShape:
     nodes: int
@@ -95,56 +147,45 @@ def recommend_node_budget(query_class: str, query: str, shape: GraphShape) -> Bu
 
     reasons: list[str] = []
 
-    # 1. Map query class to baseline query complexity parameter lambda_
-    # Higher lambda_ means target evidence is concentrated; lower lambda_ means it is distributed.
-    lambda_map = {
-        "direct_lookup": 0.08,
-        "reverse_lookup": 0.08,
-        "multi_hop_path": 0.05,
-        "blast_radius": 0.035,
-        "subsystem_summary": 0.035,
-        "spreading_activation": 0.035,
-    }
-    lambda_ = lambda_map.get(query_class, 0.04)
+    # 1. Complexity prior for the query class.
+    lambda_ = QUERY_COMPLEXITY_LAMBDA.get(query_class, DEFAULT_COMPLEXITY_LAMBDA)
 
-    # 2. Adjust query complexity based on graph shape parameters
-    if shape.doc_node_ratio >= 0.65:
-        lambda_ *= 1.2
+    # 2. Adjust the prior for graph shape.
+    if shape.doc_node_ratio >= DOC_HEAVY_NODE_RATIO:
+        lambda_ *= DOC_HEAVY_LAMBDA_GAIN
         if query_class in {"multi_hop_path", "reverse_lookup"}:
             reasons.append("doc-heavy graph trims structural noise")
         else:
             reasons.append("doc-heavy graph keeps recall-first broad expansion")
 
-    if shape.nodes <= 500:
-        lambda_ *= 1.25
+    if shape.nodes <= SMALL_GRAPH_NODES:
+        lambda_ *= SMALL_GRAPH_LAMBDA_GAIN
         if query_class in {"direct_lookup", "reverse_lookup"}:
             reasons.append("small graph direct/reverse lookup")
-    elif shape.nodes >= 5000:
-        lambda_ *= 1.15
+    elif shape.nodes >= LARGE_GRAPH_NODES:
+        lambda_ *= LARGE_GRAPH_LAMBDA_GAIN
         if query_class in {"direct_lookup", "reverse_lookup"}:
             reasons.append("large graph narrows direct/reverse lookup")
-        elif query_class in {"blast_radius", "subsystem_summary"} and shape.edge_density >= 2.5:
+        elif query_class in {"blast_radius", "subsystem_summary"} and shape.edge_density >= DENSE_GRAPH_EDGE_DENSITY:
             reasons.append("large dense graph keeps recall-first broad expansion")
 
-    if shape.weak_edge_ratio >= 0.45 and query_class in {"blast_radius", "subsystem_summary"}:
+    if shape.weak_edge_ratio >= WEAK_EDGE_HEAVY_RATIO and query_class in {"blast_radius", "subsystem_summary"}:
         reasons.append("weak-edge-heavy graph keeps recall-first broad expansion")
 
-    if shape.imports_per_source_file < 0.05 and shape.source_files >= 20:
+    if (
+        shape.imports_per_source_file < UNDEREXTRACTED_IMPORTS_PER_FILE
+        and shape.source_files >= UNDEREXTRACTED_MIN_SOURCE_FILES
+    ):
         reasons.append("warning: import topology looks under-extracted")
 
-    # 3. Dynamic marginal token cost per node (tau) from fitted regression surface
+    # 3. Marginal token cost per node (tau) from the fitted regression surface.
     density = adjusted_edge_density(shape)
     node_cost, edge_cost = packet_marginal_costs("gg")
     tau = node_cost + edge_cost * density
 
-    # 4. Coarse Planning: Regularized Budget Heuristic:
-    # Objective: Maximize expected information gain minus token cost:
-    # U(n) = (1 - exp(-lambda_ * n)) - c * (tau * n)
-    # Taking the derivative and setting to zero yields the closed-form optimum:
-    # n* = (1 / lambda_) * ln(lambda_ / (c * tau))
-    # where c = 10^-4 is the empirically tuned token penalty cost.
-    c = 1e-4
-    ratio = max(1.1, lambda_ / (c * tau))
+    # 4. Closed-form optimum of the regularized budget:
+    #    U(n) = (1 - e^{-lambda*n}) - c*(tau*n)  =>  n* = (1/lambda) * ln(lambda / (c*tau)).
+    ratio = max(MIN_BUDGET_RATIO, lambda_ / (TOKEN_PENALTY_COST * tau))
     budget_n = int(round((1.0 / lambda_) * math.log(ratio)))
 
     # 5. Enforce operational bounds
@@ -322,22 +363,13 @@ def recommend_observed_context_window(
 
 def default_context_token_target(query_class: str, query: str = "") -> int:
     if is_doc_query(query_class, query):
-        return 220
-    if query_class == "negative_query":
-        return 64
-    if query_class in {"direct_lookup", "reverse_lookup"}:
-        return 600
-    if query_class == "multi_hop_path":
-        return 900
-    return 1600
+        return DOC_TOKEN_TARGET
+    return _CONTEXT_TOKEN_TARGET.get(query_class, DEFAULT_TOKEN_TARGET)
 
 
 def context_node_bounds(query_class: str, shape: GraphShape) -> tuple[int, int]:
-    if query_class in {"direct_lookup", "reverse_lookup"}:
-        return 24, min(96, max(24, shape.nodes))
-    if query_class == "multi_hop_path":
-        return 32, min(140, max(32, shape.nodes))
-    return 48, min(200, max(48, shape.nodes))
+    floor, ceiling = _NODE_BOUNDS.get(query_class, DEFAULT_NODE_BOUNDS)
+    return floor, min(ceiling, max(floor, shape.nodes))
 
 
 def nodes_for_token_target(target_tokens: int, shape: GraphShape) -> int:
@@ -351,7 +383,7 @@ def estimate_gg_max_tokens(nodes: int, shape: GraphShape) -> int:
 
 
 def adjusted_edge_density(shape: GraphShape) -> float:
-    noise_factor = 1.0 + 0.30 * shape.weak_edge_ratio + 0.20 * shape.doc_node_ratio
+    noise_factor = 1.0 + WEAK_EDGE_NOISE * shape.weak_edge_ratio + DOC_NODE_NOISE * shape.doc_node_ratio
     raw_density = shape.edge_density * noise_factor
     return max(0.05, min(LOCAL_EDGE_DENSITY_CAP, raw_density))
 
