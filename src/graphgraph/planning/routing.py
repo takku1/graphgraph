@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from .budgets import explicit_query_identifiers, plan_terms
 
-ROUTER_VERSION = "query_router_v3_calibrated_recovery"
+ROUTER_VERSION = "query_router_v4_grounded_documents"
 
 # Broad class used both as the default prior and the low-evidence fallback.
 BROAD_FALLBACK = "subsystem_summary"
@@ -111,9 +111,17 @@ _CONTEXT_SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
 # precondition also holds).
 _GENERIC_LOOKUP_RE = re.compile(r"\b(what is|where|show|find|locate)\b")
 _RELATION_BETWEEN_RE = re.compile(r"\b(depends? on|dependency between|connects? to|relationship between)\b")
+_EXPLICIT_DOC_PATH_RE = re.compile(
+    r"(?:^|[\s`\"'(])(?:[a-z]:)?[^\s`\"']+\.(?:md|mdx|rst|txt|html?)\b"
+)
+_DOC_REQUEST_RE = re.compile(
+    r"\b(summar(?:y|ize|ise)|incomplete items?|acceptance criteria|documented behavior|"
+    r"what does|what remains|claims?|unproved|roadmap|backlog)\b"
+)
 MULTI_SYMBOL_DEPENDENCY_WEIGHT = 5.5
 FOCUSED_IDENTIFIER_WEIGHT = 3.0
 FOCUSED_IDENTIFIER_MAX_TERMS = 2
+EXPLICIT_DOCUMENT_REQUEST_WEIGHT = 10.0
 
 # Tie-break priors: higher wins when two classes share a score.
 _PRECEDENCE = {
@@ -163,6 +171,10 @@ def route_query(query: str, requested_class: str | None = "auto") -> QueryRoute:
         if pattern.search(normalized):
             scores[query_class] += weight
             reasons[query_class].append(reason)
+
+    if _EXPLICIT_DOC_PATH_RE.search(normalized) and _DOC_REQUEST_RE.search(normalized):
+        scores["doc_summary"] += EXPLICIT_DOCUMENT_REQUEST_WEIGHT
+        reasons["doc_summary"].append("explicit document path and summary intent")
 
     identifiers = explicit_query_identifiers(query)
     terms = plan_terms(query)

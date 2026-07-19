@@ -85,7 +85,7 @@ def _reverse_lookup_relations(query: str) -> set[str]:
     if terms & {"call", "calls", "caller", "callers", "called"}:
         return {"calls"}
     if terms & {"test", "tests", "tested", "cover", "covers"}:
-        return {"tests"}
+        return {"calls", "references", "tests"}
     return set(traversal_policy("reverse_lookup").preferred_relations)
 
 
@@ -1277,6 +1277,11 @@ def retrieve_context(
     if scope_mode not in {"strict", "expand"}:
         raise ValueError(f"unknown scope mode: {scope_mode}")
     query = sanitize_query(query)
+    if query_class == "doc_summary" and not scopes:
+        explicit_doc_paths = _explicit_document_paths(graph, query)
+        if len(explicit_doc_paths) == 1:
+            scopes = explicit_doc_paths
+            scope_mode = "strict"
     identifiers = explicit_query_identifiers(query)
     qualified_matches = (
         qualified_symbol_anchor_matches(graph, query, scopes=scopes)
@@ -1486,6 +1491,7 @@ def retrieve_context(
                 },
             )
     starts_list = list(match.node.id for match in selected_matches)
+    facet_roots = tuple(starts_list[:12])
     if query_class == "reverse_lookup":
         starts_list = list(reserve_reverse_contract_starts(graph, tuple(starts_list), query=query))
 
@@ -1552,6 +1558,12 @@ def retrieve_context(
                 plan,
                 scopes=expansion_scopes,
             )
+            nodes, edges = prune_concrete_contract_siblings(
+                graph,
+                nodes,
+                edges,
+                roots=facet_roots,
+            )
         if query_class == "affected_tests":
             nodes, edges = reserve_affected_test_evidence(graph, nodes, edges, starts, plan)
     if (
@@ -1581,7 +1593,21 @@ def retrieve_context(
         nodes = {node_id for node_id in nodes if _path_in_scopes(graph.nodes[node_id].path, scopes)}
         edges = [edge for edge in edges if edge.source in nodes and edge.target in nodes]
     effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
-    metadata = packet_quality_metadata(graph, nodes, edges, starts, effective_scope)
+    metadata = packet_quality_metadata(
+        graph,
+        nodes,
+        edges,
+        starts,
+        effective_scope,
+        query_class=query_class,
+    )
+    if (
+        query_class == "doc_summary"
+        and metadata["quality"]["grounded_doc_nodes"] == 0
+    ):
+        metadata["quality"]["document_warning"] = (
+            "doc_summary selected zero grounded document body nodes"
+        )
     metadata.update({
         "scope": list(scopes),
         "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
@@ -1622,7 +1648,7 @@ def retrieve_context(
         ],
     })
     if facets:
-        coverage = facet_coverage(graph, nodes, facets)
+        coverage = facet_coverage(graph, nodes, facets, roots=facet_roots or starts)
         metadata["facet_coverage"] = coverage
         structural_coverage = None
         if query_class in {"multi_hop_path", "direct_lookup", "reverse_lookup"}:
@@ -1634,6 +1660,7 @@ def retrieve_context(
                     if is_code_like(graph.nodes[node_id])
                 },
                 facets,
+                roots=facet_roots or starts,
             )
             metadata["structural_facet_coverage"] = structural_coverage
         incomplete = bool(coverage["unfulfilled"]) or bool(
@@ -1653,6 +1680,13 @@ def retrieve_context(
             "status": "answerable",
             "abstained": False,
             "reason": "",
+        }
+    document_warning = str(metadata["quality"].get("document_warning", ""))
+    if query_class == "doc_summary" and document_warning:
+        metadata["answerability"] = {
+            "status": "incomplete",
+            "abstained": True,
+            "reason": document_warning,
         }
     if query_class == "reverse_lookup":
         truncation = reverse_lookup_truncation(
@@ -1777,6 +1811,19 @@ def _path_in_scopes(path: str, scopes: tuple[str, ...]) -> bool:
     )
 
 
+def _explicit_document_paths(graph: Graph, query: str) -> tuple[str, ...]:
+    """Resolve graph-known document paths embedded in natural-language input."""
+    normalized_query = query.replace("\\", "/").casefold()
+    return tuple(sorted({
+        node.path.replace("\\", "/").strip("/")
+        for node in graph.nodes.values()
+        if node.active
+        and node.path
+        and Path(node.path).suffix.casefold() in {".md", ".mdx", ".rst", ".txt", ".html", ".htm"}
+        and node.path.replace("\\", "/").strip("/").casefold() in normalized_query
+    }))
+
+
 def _package_scope(path: str) -> str:
     parts = path.replace("\\", "/").strip("/").split("/")
     if len(parts) >= 2 and parts[0] in {"crates", "packages", "apps", "libs", "modules"}:
@@ -1809,6 +1856,8 @@ def packet_quality_metadata(
     edges: list[Edge],
     starts: tuple[str, ...],
     scope: str,
+    *,
+    query_class: str = "",
 ) -> dict[str, object]:
     covered = {endpoint for edge in edges for endpoint in (edge.source, edge.target)}
     isolated = nodes - covered - set(starts)
@@ -1822,7 +1871,36 @@ def packet_quality_metadata(
     }
     doc_nodes = [graph.nodes[node_id] for node_id in nodes if graph.nodes[node_id].kind in NON_STRUCTURAL_KINDS]
     grounded_doc_nodes = sum(1 for node in doc_nodes if node.facts)
-    topology_trust = query_topology_trust(edges)
+    topology_trust = query_topology_trust(
+        edges,
+        metadata=graph.metadata,
+        query_class=query_class,
+    )
+    concept_eligible = int(graph.metadata.get("source_concepts_eligible", "0") or 0)
+    concept_linked = int(graph.metadata.get("source_concepts_linked_nodes", "0") or 0)
+    concept_coverage = concept_linked / max(1, concept_eligible)
+    semantic_support = {
+        "status": (
+            "unavailable"
+            if concept_eligible == 0
+            else "sparse"
+            if concept_coverage < 0.2
+            else "partial"
+            if concept_coverage < 0.8
+            else "strong"
+        ),
+        "linked_nodes": concept_linked,
+        "eligible_nodes": concept_eligible,
+        "coverage_ratio": round(concept_coverage, 4),
+        "scope": graph.metadata.get("source_concepts_scope", "unavailable"),
+        "retrieval_mode": (
+            "lexical_document_fallback"
+            if query_class == "doc_summary" and concept_coverage < 0.2
+            else "lexical_structural_fallback"
+            if query_class == "subsystem_summary" and concept_coverage < 0.2
+            else "graph_supported"
+        ),
+    }
     return {
         "quality": {
             "nodes": len(nodes),
@@ -1836,12 +1914,18 @@ def packet_quality_metadata(
             "ungrounded_doc_nodes": len(doc_nodes) - grounded_doc_nodes,
             "document_warning": "no grounded document body content" if doc_nodes and grounded_doc_nodes == 0 else "",
             "topology_trust": topology_trust,
+            "semantic_support": semantic_support,
         }
     }
 
 
-def query_topology_trust(edges: list[Edge]) -> dict[str, object]:
-    """Calibrate topology claims against only the selected packet's call edges."""
+def query_topology_trust(
+    edges: list[Edge],
+    *,
+    metadata: dict[str, str] | None = None,
+    query_class: str = "",
+) -> dict[str, object]:
+    """Combine selected-edge trust with global call-extraction coverage."""
     call_edges = [edge for edge in edges if edge.type == "calls"]
     ambiguous_calls = [
         edge for edge in call_edges
@@ -1861,13 +1945,41 @@ def query_topology_trust(edges: list[Edge]) -> dict[str, object]:
         if ambiguous_calls
         else "high"
     )
-    return {
+    result: dict[str, object] = {
         "status": topology_status,
         "call_edges": len(call_edges),
         "trusted_call_edges": len(trusted_calls),
         "ambiguous_call_edges": len(ambiguous_calls),
         "scope": "selected_packet",
     }
+    if query_class not in {
+        "affected_tests",
+        "blast_radius",
+        "multi_hop_path",
+        "reverse_lookup",
+    }:
+        return result
+    graph_metadata = metadata or {}
+    global_counts = {
+        name: int(graph_metadata.get(f"member_calls_global_{name}", "0") or 0)
+        for name in ("resolved", "ambiguous", "unknown_receiver", "unresolved")
+    }
+    total = sum(global_counts.values())
+    if total == 0:
+        return result
+    usable = global_counts["resolved"]
+    coverage = usable / total
+    global_status = "high" if coverage >= 0.8 else "partial" if coverage >= 0.2 else "low"
+    result.update({
+        "local_status": topology_status,
+        "global_status": global_status,
+        "global_call_coverage_ratio": round(coverage, 4),
+        "global_counts": global_counts,
+        "scope": "selected_packet+global_extraction",
+    })
+    if global_status != "high":
+        result["status"] = global_status
+    return result
 
 
 def cap_inferred_scope_crossings(
@@ -1989,6 +2101,8 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "positive", "negative",
         "documentation", "documents", "document", "docs", "doc",
         "say", "says", "said", "under",
+        "roadmap", "row", "now", "claim", "claims", "claimed",
+        "capability", "capabilities", "remain", "remains",
         "affected", "affecting", "impact", "impacted",
         "call", "calls", "called", "caller", "callers", "calling",
         "consume", "consumes", "consumed", "consumer", "use", "uses", "used",
@@ -2068,6 +2182,8 @@ def facet_coverage(
     graph: Graph,
     nodes: set[str],
     facets: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    roots: tuple[str, ...] = (),
 ) -> dict[str, object]:
     fulfilled: list[dict[str, object]] = []
     unfulfilled: list[str] = []
@@ -2076,6 +2192,13 @@ def facet_coverage(
             node_id for node_id in sorted(nodes)
             if _facet_matches_node(graph.nodes[node_id], terms)
         ]
+        if not evidence:
+            evidence = _facet_structural_evidence(
+                graph,
+                nodes,
+                terms,
+                roots=roots,
+            )
         if not evidence and len(_facet_evidence_terms(terms)) >= 3:
             needed = set(_facet_evidence_terms(terms))
             distributed = sorted(
@@ -2106,6 +2229,60 @@ def facet_coverage(
         "coverage_ratio": round(len(fulfilled) / max(1, len(facets)), 4),
         "warning": "unfulfilled query facets" if unfulfilled else "",
     }
+
+
+def _facet_structural_evidence(
+    graph: Graph,
+    nodes: set[str],
+    terms: tuple[str, ...],
+    *,
+    roots: tuple[str, ...],
+) -> list[str]:
+    """Credit relationship facets from selected topology, not only node text."""
+    if not roots:
+        return []
+    targets = set(roots)
+    targets.update(
+        node_id
+        for node_id in nodes
+        if graph.nodes[node_id].parent in targets
+    )
+    targets.update(
+        edge.target
+        for edge in graph.edges
+        if edge.active
+        and edge.type == "contains"
+        and edge.source in targets
+        and edge.target in nodes
+    )
+    relation_edges = [
+        edge
+        for edge in graph.edges
+        if edge.active
+        and edge.source in nodes
+        and edge.target in targets
+        and edge.type in {"calls", "references", "tests", "registers"}
+    ]
+    forms = {
+        form
+        for term in terms
+        for form in _facet_term_forms(term)
+    }
+    if forms & {"exercise", "exercises", "exercised"}:
+        return sorted({
+            edge.source
+            for edge in relation_edges
+            if _is_test_node(graph.nodes[edge.source])
+        })
+    if forms & {"register", "registers", "registered", "registration", "registry"}:
+        return sorted({
+            edge.source
+            for edge in relation_edges
+            if edge.type == "registers"
+            or set(_facet_node_text(graph.nodes[edge.source]).split())
+            & {"default", "domain", "register", "registered", "registry"}
+        })
+    return []
 
 
 def reserve_facet_matches(
@@ -2208,6 +2385,7 @@ def _facet_term_forms(term: str) -> set[str]:
         "equality": {"equal", "equals", "exact", "exactly"},
         "readiness": {"ready"},
         "reconciliation": {"reconcile", "reconciled"},
+        "unproved": {"unproven", "prove", "proved", "proof"},
     }
     forms.update(aliases.get(term, ()))
     if term.endswith("ies") and len(term) > 4:
@@ -2557,11 +2735,33 @@ def affected_test_recommendations(graph: Graph, starts: tuple[str, ...], selecte
     # whichever set element is visited first can miss the later-propagated
     # anchor. The product is bounded by <=12 starts and two hops.
     for start in starts:
-        frontier = {start}
-        seen = {start}
+        owned_edges = [
+            edge
+            for edge in graph.edges
+            if edge.active
+            and edge.type == "contains"
+            and edge.source == start
+            and edge.target in graph.nodes
+        ]
+        owned_targets = {
+            node_id
+            for node_id, node in graph.nodes.items()
+            if node.active and node.parent == start
+        } | {edge.target for edge in owned_edges}
+        frontier = {start, *owned_targets}
+        seen = set(frontier)
         root_paths: dict[str, tuple[tuple[str, ...], tuple[Edge, ...]]] = {
             start: ((start,), ())
         }
+        for target in owned_targets:
+            containment = next(
+                (edge for edge in owned_edges if edge.target == target),
+                None,
+            )
+            root_paths[target] = (
+                (target, start),
+                (containment,) if containment is not None else (),
+            )
         for distance in (1, 2):
             next_frontier: set[str] = set()
             for target in frontier:
@@ -3478,27 +3678,31 @@ def reserve_reverse_contract_starts(
     """Promote both sides of a named contract before one-hop reverse lookup.
 
     A trait's implementor is one hop away and tests importing that implementor
-    are another. Making the verified ``implements`` counterpart a start keeps
-    reverse lookup at its measured one-hop policy while exposing direct users
-    of both the declaration and concrete type.
+    are another. Promote implementors when the requested root is the contract;
+    do not promote a concrete type's trait, which would fan back out through
+    every sibling implementor.
     """
     out = list(starts)
     seen = set(starts)
+    initial = set(starts)
     for edge in graph.edges:
         if not edge.active or edge.type != "implements":
             continue
         counterpart = None
-        if edge.target in seen:
+        if edge.target in initial:
             counterpart = edge.source
-        elif edge.source in seen:
-            counterpart = edge.target
         if counterpart and counterpart in graph.nodes and counterpart not in seen:
             out.append(counterpart)
             seen.add(counterpart)
         if len(out) >= 12:
             break
     consumer_query = bool(
-        re.search(r"\b(?:test|tests)\b.{0,40}\b(?:uses?|consumes?|calls?|verifies?)\b", query, re.I)
+        re.search(
+            r"\b(?:test|tests)\b.{0,40}\b"
+            r"(?:uses?|consumes?|calls?|exercises?|verifies?)\b",
+            query,
+            re.I,
+        )
     )
     if consumer_query:
         explicit = set(explicit_query_identifiers(query))
@@ -3527,7 +3731,10 @@ def reserve_reverse_contract_starts(
         )
         members.sort(
             key=lambda node: (
-                0 if node.label.casefold() in {"evaluate", "validate", "check", "verify", "enforce"} else 1,
+                0
+                if node.label.casefold()
+                in {"check", "enforce", "evaluate", "examine", "validate", "verify"}
+                else 1,
                 0 if node.kind == "field" else 1,
                 node.label,
             )
@@ -3539,6 +3746,48 @@ def reserve_reverse_contract_starts(
             if len(out) >= 12:
                 break
     return tuple(out)
+
+
+def prune_concrete_contract_siblings(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    *,
+    roots: tuple[str, ...],
+) -> tuple[set[str], list[Edge]]:
+    """Do not turn a concrete-type reverse lookup into all trait implementors."""
+    root_set = {
+        node_id
+        for node_id in roots
+        if node_id in graph.nodes
+        and graph.nodes[node_id].kind not in {"interface", "trait"}
+    }
+    contract_ids = {
+        edge.target
+        for edge in graph.edges
+        if edge.active
+        and edge.type == "implements"
+        and edge.source in root_set
+        and edge.target not in root_set
+    }
+    if not contract_ids:
+        return nodes, edges
+    siblings = {
+        edge.source
+        for edge in graph.edges
+        if edge.active
+        and edge.type == "implements"
+        and edge.target in contract_ids
+        and edge.source not in root_set
+    }
+    if not siblings:
+        return nodes, edges
+    kept = nodes - siblings
+    return kept, [
+        edge
+        for edge in edges
+        if edge.source in kept and edge.target in kept
+    ]
 
 
 def reserve_query_named_siblings(

@@ -558,8 +558,22 @@ def cmd_status(args: argparse.Namespace) -> None:
             "Concept linking: "
             f"linked={concept_linking.get('linked_nodes', 0)}/{concept_linking.get('eligible_nodes', 0)} "
             f"coverage={concept_linking.get('coverage_ratio', 0):.2%} "
-            f"mode={concept_linking.get('mode', 'unavailable')}"
+            f"mode={concept_linking.get('mode', 'unavailable')} "
+            f"scope={concept_linking.get('scope', 'unavailable')}"
         )
+        concept_update = concept_linking.get("last_update") or {}
+        if concept_update.get("scope") not in {
+            "",
+            "unavailable",
+            concept_linking.get("scope"),
+        }:
+            print(
+                "  Last update: "
+                f"linked={concept_update.get('linked_nodes', 0)}/"
+                f"{concept_update.get('eligible_nodes', 0)} "
+                f"coverage={concept_update.get('coverage_ratio', 0):.2%} "
+                f"scope={concept_update.get('scope')}"
+            )
     if graph.get("files_truncated"):
         print(
             f"  !  WARNING: file scan was truncated -- only some of "

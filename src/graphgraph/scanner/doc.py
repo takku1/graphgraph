@@ -18,7 +18,7 @@ _EMPHASIS = re.compile(r"`([^`\n]{3,80})`|\*\*([^*\n]{3,80})\*\*")
 _CAP_PHRASE = re.compile(r"\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){1,3})\b")
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _SENTENCE = re.compile(r"([A-Z0-9][^.!?\n]{20,220}[.!?])")
-_ORDERED_LIST_ITEM = re.compile(r"(?m)^[ \t]*\d+[.)]\s+\S")
+_MARKDOWN_LIST_ITEM = re.compile(r"(?m)^[ \t]*(?:[-+*]|\d+[.)])\s+\S")
 MAX_PARAGRAPH_FACT_CHARS = 1200
 
 _STOP_CONCEPTS = {
@@ -439,6 +439,14 @@ def _bounded_file_mentions(
 
 def _paragraphs(text: str, start: int, end: int, *, limit: int) -> tuple[list[tuple[int, str]], bool]:
     body = text[start:end]
+    body_offset = 0
+    markdown_heading = re.match(r"^#{1,6}\s+.*(?:\n|$)", body)
+    if markdown_heading:
+        body_offset = markdown_heading.end()
+        leading_space = re.match(r"\s*", body[body_offset:])
+        if leading_space:
+            body_offset += leading_space.end()
+        body = body[body_offset:]
     paragraphs: list[tuple[int, str]] = []
     for match in re.finditer(r"(?:^|\n\s*\n)([^\n#][\s\S]*?)(?=\n\s*\n|\Z)", body):
         for offset, raw in _paragraph_chunks(match.group(1)):
@@ -447,7 +455,7 @@ def _paragraphs(text: str, start: int, end: int, *, limit: int) -> tuple[list[tu
             normalized = normalize_label(re.sub(r"\s+", " ", raw))
             if len(normalized) < 24:
                 continue
-            line = text[:start + match.start(1) + offset].count("\n") + 1
+            line = text[:start + body_offset + match.start(1) + offset].count("\n") + 1
             paragraphs.append((line, normalized))
             if len(paragraphs) > max(0, limit):
                 return paragraphs[:max(0, limit)], True
@@ -456,7 +464,7 @@ def _paragraphs(text: str, start: int, end: int, *, limit: int) -> tuple[list[tu
 
 def _paragraph_chunks(raw: str) -> tuple[tuple[int, str], ...]:
     """Split consecutive Markdown list items without losing continuations."""
-    item_starts = [match.start() for match in _ORDERED_LIST_ITEM.finditer(raw)]
+    item_starts = [match.start() for match in _MARKDOWN_LIST_ITEM.finditer(raw)]
     if not item_starts:
         stripped = raw.strip()
         return ((raw.find(stripped), stripped),) if stripped else ()
@@ -473,6 +481,6 @@ def _paragraph_chunks(raw: str) -> tuple[tuple[int, str], ...]:
 
 
 def _paragraph_label(paragraph: str) -> str:
-    without_marker = re.sub(r"^\d+[.)]\s+", "", paragraph)
+    without_marker = re.sub(r"^(?:[-+*]|\d+[.)])\s+", "", paragraph)
     first = re.split(r"(?<=[.!?])\s+", without_marker, maxsplit=1)[0]
     return first[:120]

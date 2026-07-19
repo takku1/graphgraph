@@ -69,6 +69,27 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(route.query_class, "reverse_lookup")
         self.assertGreater(route.margin, 0.0)
 
+    def test_query_router_prioritizes_explicit_document_path_for_summary_intent(self) -> None:
+        queries = (
+            (
+                "Summarize incomplete items and acceptance criteria in "
+                "docs/roadmap/gap-analysis.md, including where each is implemented."
+            ),
+            (
+                r"What does C:\work\locus\docs\roadmap\gap-analysis.md claim remains "
+                "unproved and which tests reference it?"
+            ),
+        )
+
+        for query in queries:
+            with self.subTest(query=query):
+                route = route_query(query)
+                self.assertEqual(route.query_class, "doc_summary")
+                self.assertIn(
+                    "explicit document path and summary intent",
+                    route.reasons,
+                )
+
     def test_query_router_consumer_wording_stays_source_orientation(self) -> None:
         route = route_query(
             "Where is SourceCaseBaseline, what metrics does it enforce, and which test consumes it?"
@@ -154,7 +175,7 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(direct.packet, "gg")
         self.assertEqual(direct.node_budget, 80)
         self.assertGreaterEqual(direct.anchor_limit, 1)
-        self.assertIn("context_plan_v4", direct.planner_version)
+        self.assertIn("context_plan_v5", direct.planner_version)
 
         docs = plan_context("subsystem_summary", "README installation usage")
         self.assertEqual(docs.packet, "doc_summary")

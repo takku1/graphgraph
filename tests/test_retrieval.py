@@ -1099,6 +1099,118 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(nodes, {"DOC", "ROADMAP", "STATUS"})
         self.assertEqual({edge.type for edge in edges}, {"section_of"})
 
+    def test_doc_summary_with_zero_grounded_nodes_is_never_answerable(self) -> None:
+        graph = Graph(
+            nodes={
+                "DOC": Node(
+                    "DOC",
+                    "gap-analysis.md",
+                    "markdown",
+                    "docs/roadmap/gap-analysis.md",
+                ),
+                "CODE": Node(
+                    "CODE",
+                    "StochasticProcessesAdvisor",
+                    "struct",
+                    "src/stochastic_processes.rs",
+                ),
+            },
+            edges=[Edge("DOC", "CODE", "references")],
+            metadata={
+                "source_concepts_eligible": "6865",
+                "source_concepts_linked_nodes": "4",
+                "source_concepts_scope": "full_graph_snapshot",
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "Summarize incomplete items in docs/roadmap/gap-analysis.md",
+            "doc_summary",
+            hops=1,
+        )
+
+        self.assertEqual(result.metadata["quality"]["grounded_doc_nodes"], 0)
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertIn(
+            "zero grounded document body nodes",
+            result.metadata["answerability"]["reason"],
+        )
+        semantic = result.metadata["quality"]["semantic_support"]
+        self.assertEqual(semantic["status"], "sparse")
+        self.assertEqual(semantic["retrieval_mode"], "lexical_document_fallback")
+
+    def test_doc_summary_credits_subject_and_unproved_clause_from_exact_bullet(self) -> None:
+        statement = (
+            "Stochastic Processes now recognizes a finite-state Markov transition "
+            "foothold. It does not yet prove that a matrix is stochastic or solve "
+            "stationary distributions."
+        )
+        graph = Graph(
+            nodes={
+                "ROW": Node(
+                    "ROW",
+                    "Stochastic Processes",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=(statement,),
+                )
+            }
+        )
+
+        result = retrieve_context(
+            graph,
+            (
+                "What does the Stochastic Processes roadmap row now claim is "
+                "implemented, and what exact capabilities remain unproved?"
+            ),
+            "doc_summary",
+            hops=1,
+        )
+
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+        self.assertEqual(
+            {item["facet"] for item in result.metadata["facet_coverage"]["fulfilled"]},
+            {"stochastic processes", "unproved"},
+        )
+
+    def test_doc_summary_compiles_embedded_document_path_to_strict_scope(self) -> None:
+        graph = Graph(
+            nodes={
+                "GAP": Node(
+                    "GAP",
+                    "Stochastic Processes remains partial",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=("Stationarity proof remains incomplete.",),
+                ),
+                "OTHER": Node(
+                    "OTHER",
+                    "Stochastic Processes historical notes",
+                    "paragraph",
+                    "docs/archive/old-roadmap.md",
+                    facts=("This obsolete roadmap claimed full support.",),
+                ),
+            }
+        )
+
+        result = retrieve_context(
+            graph,
+            (
+                "Summarize incomplete items in docs/roadmap/gap-analysis.md "
+                "and their acceptance criteria."
+            ),
+            "doc_summary",
+            hops=1,
+        )
+
+        self.assertEqual(result.metadata["scope"], ["docs/roadmap/gap-analysis.md"])
+        self.assertEqual(result.metadata["scope_mode"], "strict")
+        self.assertIn("GAP", result.nodes)
+        self.assertNotIn("OTHER", result.nodes)
+
     def test_doc_summary_deduplicates_copied_content_and_excludes_source_anchors(self) -> None:
         from graphgraph.retrieval.context import select_anchor_matches
         from graphgraph.retrieval.models import Match
@@ -1930,6 +2042,84 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertTrue({"BASE", "EVAL", "MIN", "TEST"} <= result.nodes)
         self.assertEqual(result.metadata["answerability"]["status"], "answerable")
 
+    def test_reverse_lookup_fulfills_registration_and_exercise_from_topology(self) -> None:
+        graph = Graph(
+            nodes={
+                "ADVISOR": Node(
+                    "ADVISOR",
+                    "StochasticProcessesAdvisor",
+                    "struct",
+                    "src/stochastic_processes.rs",
+                ),
+                "EXAMINE": Node(
+                    "EXAMINE",
+                    "examine",
+                    "method",
+                    "src/stochastic_processes.rs",
+                    parent="ADVISOR",
+                ),
+                "REGISTRY": Node(
+                    "REGISTRY",
+                    "default_advisors",
+                    "function",
+                    "src/lib.rs",
+                ),
+                "TEST": Node(
+                    "TEST",
+                    "markov_gemv_emits_refutable_transition_hypothesis",
+                    "function",
+                    "tests/suite/stochastic_processes_test.rs",
+                ),
+                "TRAIT": Node(
+                    "TRAIT",
+                    "Advisor",
+                    "trait",
+                    "src/advisor.rs",
+                ),
+                "OTHER": Node(
+                    "OTHER",
+                    "ControlTheoryAdvisor",
+                    "struct",
+                    "src/control_theory.rs",
+                ),
+            },
+            edges=[
+                Edge("ADVISOR", "EXAMINE", "contains"),
+                Edge("ADVISOR", "TRAIT", "implements"),
+                Edge("OTHER", "TRAIT", "implements"),
+                Edge("REGISTRY", "ADVISOR", "references"),
+                Edge(
+                    "TEST",
+                    "EXAMINE",
+                    "calls",
+                    provenance="tree_sitter_type_resolved",
+                ),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            (
+                "Where is StochasticProcessesAdvisor registered and which tests "
+                "exercise it?"
+            ),
+            "reverse_lookup",
+            hops=1,
+            anchor_limit=1,
+            max_nodes=12,
+        )
+
+        self.assertIn("TEST", result.nodes)
+        self.assertNotIn("OTHER", result.nodes)
+        self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+        fulfilled = {
+            item["facet"]: set(item["evidence"])
+            for item in result.metadata["facet_coverage"]["fulfilled"]
+        }
+        self.assertEqual(fulfilled["registered"], {"REGISTRY"})
+        self.assertEqual(fulfilled["exercise"], {"TEST"})
+
     def test_affected_tests_uses_aggregated_cargo_harness_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             crate = Path(tmp) / "locus-frontends"
@@ -1959,6 +2149,54 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         affected = result.metadata["affected_tests"]
         self.assertEqual(affected["commands"], ["cargo test -p locus-frontends --test suite fpcore_test"])
         self.assertEqual(affected["direct"][0]["covers"], [{"id": "RUN", "label": "parse_fpcore"}])
+
+    def test_affected_tests_include_tests_that_call_an_owned_method(self) -> None:
+        graph = Graph(
+            nodes={
+                "ADVISOR": Node(
+                    "ADVISOR",
+                    "StochasticProcessesAdvisor",
+                    "struct",
+                    "src/stochastic_processes.rs",
+                ),
+                "EXAMINE": Node(
+                    "EXAMINE",
+                    "examine",
+                    "method",
+                    "src/stochastic_processes.rs",
+                    parent="ADVISOR",
+                ),
+                "POSITIVE": Node(
+                    "POSITIVE",
+                    "markov_gemv_emits_refutable_transition_hypothesis",
+                    "function",
+                    "tests/suite/stochastic_processes_test.rs",
+                ),
+            },
+            edges=[
+                Edge("ADVISOR", "EXAMINE", "contains"),
+                Edge(
+                    "POSITIVE",
+                    "EXAMINE",
+                    "calls",
+                    provenance="tree_sitter_type_resolved",
+                ),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Which tests cover StochasticProcessesAdvisor?",
+            "affected_tests",
+            hops=2,
+        )
+
+        affected = result.metadata["affected_tests"]
+        self.assertEqual([item["id"] for item in affected["direct"]], ["POSITIVE"])
+        self.assertEqual(
+            affected["direct"][0]["covers"],
+            [{"id": "ADVISOR", "label": "StochasticProcessesAdvisor"}],
+        )
 
     def test_affected_tests_treats_inline_rust_test_facts_as_direct_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2099,6 +2337,41 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual(
             result.metadata["affected_tests"]["commands_by_role"]["changed_path_regression"],
             ["cargo test -p locus-engine --test suite groebner_test"],
+        )
+
+    def test_changed_cargo_directory_main_uses_directory_integration_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "locus-advisors"
+            source = crate / "tests" / "suite" / "main.rs"
+            source.parent.mkdir(parents=True)
+            (crate / "Cargo.toml").write_text(
+                '[package]\nname = "locus-advisors"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            source.write_text("fn main() {}\n", encoding="utf-8")
+            graph = Graph(
+                nodes={
+                    "MAIN": Node(
+                        "MAIN",
+                        "suite",
+                        "function",
+                        "crates/locus-advisors/tests/suite/main.rs",
+                        source=str(source),
+                    ),
+                }
+            )
+
+            result = retrieve_context(
+                graph,
+                "stochastic advisor suite",
+                "subsystem_summary",
+                hops=1,
+                anchor_paths=("crates/locus-advisors/tests/suite/main.rs",),
+            )
+
+        self.assertEqual(
+            result.metadata["affected_tests"]["commands"],
+            ["cargo test -p locus-advisors --test suite"],
         )
 
     def test_test_path_does_not_turn_file_fields_or_locals_into_test_cases(self) -> None:
@@ -2413,6 +2686,43 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual(topology["status"], "mixed")
         self.assertEqual(topology["trusted_call_edges"], 1)
         self.assertEqual(topology["ambiguous_call_edges"], 1)
+
+    def test_call_dependent_queries_include_global_topology_coverage(self) -> None:
+        graph = Graph(
+            nodes={
+                "CALLER": Node("CALLER", "caller", "function", "src/app.py"),
+                "TARGET": Node("TARGET", "target", "function", "src/app.py"),
+            },
+            edges=[
+                Edge(
+                    "CALLER",
+                    "TARGET",
+                    "calls",
+                    confidence=0.95,
+                    provenance="tree_sitter_type_resolved",
+                )
+            ],
+            metadata={
+                "member_calls_global_resolved": "10",
+                "member_calls_global_ambiguous": "2",
+                "member_calls_global_unknown_receiver": "40",
+                "member_calls_global_unresolved": "48",
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "what calls target",
+            "reverse_lookup",
+            hops=1,
+        )
+
+        topology = result.metadata["quality"]["topology_trust"]
+        self.assertEqual(topology["local_status"], "high")
+        self.assertEqual(topology["global_status"], "low")
+        self.assertEqual(topology["status"], "low")
+        self.assertEqual(topology["global_call_coverage_ratio"], 0.1)
+        self.assertEqual(topology["scope"], "selected_packet+global_extraction")
 
     def test_qualified_method_query_selects_only_its_own_test(self) -> None:
         path = "crates/locus-pipeline/src/yield_benchmark.rs"

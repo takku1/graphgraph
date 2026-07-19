@@ -198,6 +198,13 @@ def scan_policy_receipt(graph: Any, max_nodes: int) -> dict[str, Any]:
         })
     metadata = getattr(graph, "metadata", {}) or {}
     return {
+        "graph_mode": "independent_full_scan",
+        "active_graph_comparable": False,
+        "comparison_note": (
+            "The harness builds a separate graph with its own exclusion list, "
+            "generic_mentions=false, no history, and no prior incremental snapshot. "
+            "Its edge count is not expected to equal the repository's active graph."
+        ),
         "max_files": max_nodes,
         "skip_dirs": list(DEFAULT_SKIP_DIRS),
         "exclusions": exclusions,
@@ -464,6 +471,9 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         "",
         "## Scan policy",
         "",
+        f"- Graph mode: `{report['scan_policy']['graph_mode']}`",
+        f"- Active graph comparable: `{report['scan_policy']['active_graph_comparable']}`",
+        f"- Comparison note: {report['scan_policy']['comparison_note']}",
         f"- File collection cap: `{report['scan_policy']['max_files']}`",
         f"- Audited exclusions valid: `{report['scan_policy']['exclusions_valid']}`",
         f"- Truncation receipt: `{json.dumps(report['scan_policy']['truncation'], sort_keys=True)}`",

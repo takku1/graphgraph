@@ -585,7 +585,7 @@ class CliMcpTest(unittest.TestCase):
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["query_class"], "reverse_lookup")
-            self.assertEqual(data["routing"]["version"], "query_router_v3_calibrated_recovery")
+            self.assertEqual(data["routing"]["version"], "query_router_v4_grounded_documents")
             self.assertEqual(
                 data["actionable"]["status"],
                 data["retrieval"]["answerability"]["status"],
@@ -1376,6 +1376,13 @@ class CliMcpTest(unittest.TestCase):
                 '[workspace]\nmembers = ["crates/core", "crates/cli"]\n',
                 encoding="utf-8",
             )
+            for crate in ("core", "cli"):
+                member = root / "crates" / crate
+                member.mkdir(parents=True)
+                (member / "Cargo.toml").write_text(
+                    f'[package]\nname = "{crate}"\nversion = "0.1.0"\n',
+                    encoding="utf-8",
+                )
             graph_path = root / ".graphgraph" / "graph.json"
             graph_path.parent.mkdir(parents=True)
             save_graph(Graph(nodes={"R": Node("R", "workspace", "rust", "crates/core/src/lib.rs")}), graph_path)
@@ -1385,6 +1392,55 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(report["package"]["ecosystem"], "rust")
         self.assertEqual(report["package"]["rust"]["kind"], "workspace")
         self.assertEqual(report["package"]["rust"]["members"], ["crates/core", "crates/cli"])
+
+    def test_project_status_expands_cargo_workspace_globs_and_excludes(self) -> None:
+        from graphgraph.services.native import build_project_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.toml").write_text(
+                '[workspace]\nmembers = ["crates/*"]\nexclude = ["crates/dev-only"]\n',
+                encoding="utf-8",
+            )
+            for crate in ("advisors", "cli", "core", "dev-only", "engine", "frontends", "pipeline"):
+                member = root / "crates" / crate
+                member.mkdir(parents=True)
+                (member / "Cargo.toml").write_text(
+                    f'[package]\nname = "{crate}"\nversion = "0.1.0"\n',
+                    encoding="utf-8",
+                )
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True)
+            save_graph(
+                Graph(
+                    nodes={
+                        "R": Node(
+                            "R",
+                            "workspace",
+                            "rust",
+                            "crates/core/src/lib.rs",
+                        )
+                    }
+                ),
+                graph_path,
+            )
+
+            report = build_project_status(directory=root, graph_path=graph_path)
+
+        rust = report["package"]["rust"]
+        self.assertEqual(rust["member_patterns"], ["crates/*"])
+        self.assertEqual(rust["exclude_patterns"], ["crates/dev-only"])
+        self.assertEqual(
+            rust["members"],
+            [
+                "crates/advisors",
+                "crates/cli",
+                "crates/core",
+                "crates/engine",
+                "crates/frontends",
+                "crates/pipeline",
+            ],
+        )
 
     def test_cli_validate_graph_accepts_positional_path(self) -> None:
         import os
@@ -1782,6 +1838,9 @@ class CliMcpTest(unittest.TestCase):
 
         self.assertTrue(receipt["exclusions_valid"])
         self.assertTrue(all(row["indexed_nodes"] == 0 for row in receipt["exclusions"]))
+        self.assertEqual(receipt["graph_mode"], "independent_full_scan")
+        self.assertFalse(receipt["active_graph_comparable"])
+        self.assertIn("edge count is not expected to equal", receipt["comparison_note"])
         self.assertEqual(receipt["max_files"], 1800)
         self.assertFalse(receipt["truncation"]["files"])
         self.assertTrue(receipt["truncation"]["symbols"])

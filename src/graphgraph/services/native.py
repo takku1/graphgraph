@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Callable
 
@@ -687,6 +688,7 @@ def build_project_status(
     }
     graph_report["concept_linking"] = {
         "mode": graph.metadata.get("source_concepts_mode", "unavailable"),
+        "scope": graph.metadata.get("source_concepts_scope", "unavailable"),
         "eligible_nodes": int(graph.metadata.get("source_concepts_eligible", "0")),
         "linked_nodes": int(graph.metadata.get("source_concepts_linked_nodes", "0")),
         "links": int(graph.metadata.get("source_concepts_links", "0")),
@@ -694,6 +696,21 @@ def build_project_status(
         "rejections": {
             "excluded_kind": int(graph.metadata.get("source_concepts_rejected_excluded_kind", "0")),
             "no_registry_alias": int(graph.metadata.get("source_concepts_rejected_no_registry_alias", "0")),
+        },
+        "last_update": {
+            "scope": graph.metadata.get(
+                "source_concepts_last_update_scope",
+                "unavailable",
+            ),
+            "eligible_nodes": int(
+                graph.metadata.get("source_concepts_last_update_eligible", "0")
+            ),
+            "linked_nodes": int(
+                graph.metadata.get("source_concepts_last_update_linked_nodes", "0")
+            ),
+            "coverage_ratio": float(
+                graph.metadata.get("source_concepts_last_update_coverage_ratio", "0")
+            ),
         },
     }
     graph_report["frontend_fallbacks"] = {
@@ -709,6 +726,54 @@ def build_project_status(
         "runtime_probes": probes,
         "runtime_notes": runtime_notes,
     }
+
+
+def _resolve_cargo_workspace_members(
+    directory: Path,
+    workspace: dict[str, object],
+) -> list[str]:
+    """Expand Cargo workspace member globs and apply excludes deterministically."""
+    patterns = [
+        str(pattern).replace("\\", "/").strip("/")
+        for pattern in workspace.get("members", ())
+        if str(pattern).strip()
+    ]
+    excludes = [
+        str(pattern).replace("\\", "/").strip("/")
+        for pattern in workspace.get("exclude", ())
+        if str(pattern).strip()
+    ]
+    root = directory.resolve()
+    members: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        try:
+            candidates = (
+                tuple(sorted(directory.glob(pattern), key=lambda path: path.as_posix()))
+                if any(marker in pattern for marker in "*?[")
+                else (directory / pattern,)
+            )
+        except (OSError, ValueError):
+            continue
+        for candidate in candidates:
+            member_dir = candidate.parent if candidate.name == "Cargo.toml" else candidate
+            if not (member_dir / "Cargo.toml").is_file():
+                continue
+            try:
+                relative = member_dir.resolve().relative_to(root).as_posix()
+            except (OSError, ValueError):
+                continue
+            if any(
+                relative == excluded
+                or fnmatchcase(relative, excluded)
+                for excluded in excludes
+            ):
+                continue
+            normalized = relative or "."
+            if normalized not in seen:
+                members.append(normalized)
+                seen.add(normalized)
+    return members
 
 
 def _read_package_status(directory: Path) -> dict[str, object]:
@@ -733,11 +798,20 @@ def _read_package_status(directory: Path) -> dict[str, object]:
             cargo = tomllib.loads(cargo_manifest.read_text(encoding="utf-8"))
             cargo_package = cargo.get("package") or {}
             workspace = cargo.get("workspace") or {}
+            member_patterns = [
+                str(member)
+                for member in workspace.get("members", ())
+            ]
             rust = {
                 "kind": "workspace" if workspace else "package",
                 "name": str(cargo_package.get("name") or directory.name),
                 "version": str(cargo_package.get("version") or ""),
-                "members": [str(member) for member in workspace.get("members", ())],
+                "members": _resolve_cargo_workspace_members(directory, workspace),
+                "member_patterns": member_patterns,
+                "exclude_patterns": [
+                    str(member)
+                    for member in workspace.get("exclude", ())
+                ],
             }
             package["rust"] = rust
             ecosystems = list(package["ecosystems"])

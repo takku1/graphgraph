@@ -12,7 +12,14 @@ from ..concepts import link_source_interpretation_concepts
 from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph, Node
 from .doc import DocumentInput, extract_document_context
-from .files import DEFAULT_SCAN_MAX_NODES, DOC_SUFFIXES, EXT_KIND, PARSEABLE_SUFFIXES, collect_files, node_id
+from .files import (
+    DEFAULT_SCAN_MAX_NODES,
+    DOC_SUFFIXES,
+    EXT_KIND,
+    SOURCE_SUFFIXES,
+    collect_files,
+    node_id,
+)
 from .frontends import SourceFile, select_extractor
 from .history import extract_commit_history
 from .imports import add_file_edges
@@ -580,7 +587,7 @@ def _build_graph_from_split(
         source_files: list[SourceFile] = []
         for f, rel, fhash in dirty_files:
             suffix = f.suffix.lower()
-            if suffix not in PARSEABLE_SUFFIXES:
+            if suffix not in SOURCE_SUFFIXES:
                 continue
             file_nid = file_map[rel]
             try:
@@ -789,6 +796,21 @@ def _build_graph_from_split(
     metadata["source_concepts_rejected_no_registry_alias"] = str(
         len(eligible_concept_nodes) - len(linked_source_nodes)
     )
+    for field in (
+        "candidates",
+        "eligible",
+        "links",
+        "linked_nodes",
+        "coverage_ratio",
+        "rejected_excluded_kind",
+        "rejected_no_registry_alias",
+    ):
+        metadata[f"source_concepts_last_update_{field}"] = metadata[
+            f"source_concepts_{field}"
+        ]
+    metadata["source_concepts_last_update_scope"] = (
+        "changed_files" if scope_concepts_to_dirty else "full_scan"
+    )
     _emit_progress(
         progress,
         "concepts",
@@ -859,6 +881,37 @@ def _build_graph_from_split(
     # that an edge exists, so applying them here made confidence change when an
     # unrelated file was added or removed. Keep those signals in retrieval-time
     # ranking and preserve the frontend/provenance calibration in the graph.
+    global_eligible_concept_nodes = {
+        node_id
+        for node_id, node in nodes.items()
+        if node.active and node.kind not in excluded_concept_kinds
+    }
+    global_interpretation_edges = [
+        edge
+        for edge in edges
+        if edge.active
+        and edge.type == "implements_algorithm"
+        and edge.source in global_eligible_concept_nodes
+    ]
+    global_linked_source_nodes = {
+        edge.source for edge in global_interpretation_edges
+    }
+    metadata.update({
+        "source_concepts_candidates": str(len(nodes)),
+        "source_concepts_eligible": str(len(global_eligible_concept_nodes)),
+        "source_concepts_links": str(len(global_interpretation_edges)),
+        "source_concepts_linked_nodes": str(len(global_linked_source_nodes)),
+        "source_concepts_coverage_ratio": (
+            f"{len(global_linked_source_nodes) / max(1, len(global_eligible_concept_nodes)):.6f}"
+        ),
+        "source_concepts_rejected_excluded_kind": str(
+            len(nodes) - len(global_eligible_concept_nodes)
+        ),
+        "source_concepts_rejected_no_registry_alias": str(
+            len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
+        ),
+        "source_concepts_scope": "full_graph_snapshot",
+    })
     _emit_progress(progress, "complete", f"nodes={len(nodes)} edges={len(edges)}")
     return Graph(nodes=nodes, edges=edges, metadata=metadata)
 

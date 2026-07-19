@@ -17,6 +17,7 @@ from graphgraph import (
 from graphgraph.ast_scanner import extract_symbols
 from graphgraph.doc_scanner import DocumentInput, extract_document_context
 from graphgraph.frontends import (
+    ExtractionResult,
     RegexExtractor,
     SourceFile,
     TreeSitterExtractor,
@@ -1375,6 +1376,26 @@ class ScannerTest(unittest.TestCase):
                 (e.source, e.target, e.type) for e in targeted.edges if e.type == "implements_algorithm"
             }
             self.assertEqual(concept_edges_before, concept_edges_after)
+            self.assertEqual(
+                targeted.metadata["source_concepts_linked_nodes"],
+                graph.metadata["source_concepts_linked_nodes"],
+            )
+            self.assertEqual(
+                targeted.metadata["source_concepts_eligible"],
+                graph.metadata["source_concepts_eligible"],
+            )
+            self.assertEqual(
+                targeted.metadata["source_concepts_scope"],
+                "full_graph_snapshot",
+            )
+            self.assertEqual(
+                targeted.metadata["source_concepts_last_update_scope"],
+                "changed_files",
+            )
+            self.assertEqual(
+                targeted.metadata["source_concepts_last_update_linked_nodes"],
+                "0",
+            )
 
     def test_update_paths_requires_prior_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1742,6 +1763,33 @@ class ScannerTest(unittest.TestCase):
             self.assertEqual([node.line for node in paragraphs], [3, 4, 5])
             self.assertEqual(paragraphs[2].label, "Accept a build only after checking the selected frontend, fallback counts, validation, and truncation")
             self.assertNotIn("1.", paragraphs[0].label)
+
+    def test_document_context_indexes_each_unordered_list_item_as_a_paragraph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            doc = root / "roadmap.md"
+            text = (
+                "## Probability & Statistics\n"
+                "* `[~]` **Statistics:** Conjugate updates are implemented.\n"
+                "* `[~]` **Stochastic Processes:** A Markov foothold is recognized, "
+                "but stationarity remains unproved.\n"
+                "* `[ ]` **Learning Theory:** PAC support remains absent.\n"
+            )
+            doc.write_text(text, encoding="utf-8")
+
+            nodes, _edges = extract_document_context(
+                [DocumentInput(doc, "roadmap.md", "roadmap_md", text)],
+                {"roadmap.md": "roadmap_md"},
+            )
+
+            paragraphs = sorted(
+                (node for node in nodes.values() if node.kind == "paragraph"),
+                key=lambda node: node.line or 0,
+            )
+            self.assertEqual([node.line for node in paragraphs], [2, 3, 4])
+            self.assertIn("Stochastic Processes", paragraphs[1].label)
+            self.assertIn("stationarity remains unproved", paragraphs[1].facts[0])
+            self.assertFalse(paragraphs[1].label.startswith("*"))
 
     def test_document_context_coarse_document_still_indexes_paragraphs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2166,18 +2214,46 @@ class ScannerTest(unittest.TestCase):
             contains_edges = [e for e in graph.edges if e.type == "contains"]
             self.assertGreaterEqual(len(contains_edges), 2)
 
+    def test_symbol_extractor_receives_source_files_not_documents(self) -> None:
+        captured_paths: list[str] = []
+
+        class CapturingExtractor:
+            def extract_symbols(
+                self,
+                files: list[SourceFile],
+                max_total_symbols: int,
+                context_nodes: dict | None = None,
+            ) -> ExtractionResult:
+                captured_paths.extend(source.rel for source in files)
+                return ExtractionResult(nodes={}, edges=[], frontend="capture")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("def run():\n    pass\n", encoding="utf-8")
+            (root / "README.md").write_text("# Usage\n\nRun the application.\n", encoding="utf-8")
+
+            with patch(
+                "graphgraph.scanner.core.select_extractor",
+                return_value=CapturingExtractor(),
+            ):
+                graph = scan_directory(root, depth="symbols", docs=True)
+
+        self.assertEqual(captured_paths, ["app.py"])
+        self.assertTrue(
+            any(
+                node.path == "README.md" and node.kind == "section"
+                for node in graph.nodes.values()
+            )
+        )
+
     def test_scanner_depth_symbols_kotlin_scala_swift_via_scan_directory(self) -> None:
         # Regression: .kt/.scala/.swift are advertised in the README as
         # supported symbol-scan languages, and TreeSitterExtractor fully
         # supports them (test_tree_sitter_extractor_captures_additional_languages
-        # proves the extractor itself works) -- but PARSEABLE_SUFFIXES
-        # (files.py) never included these three extensions. Since
-        # _build_graph_from_split filters dirty_files against
-        # PARSEABLE_SUFFIXES *before* ever calling select_extractor(), these
-        # files were silently skipped for symbol extraction end-to-end
-        # through the real scan_directory pipeline, regardless of whether
-        # tree-sitter was installed -- a gap invisible to extractor-level
-        # unit tests that call select_extractor(...) directly.
+        # proves the extractor itself works). These extensions were once absent
+        # from the scanner's source-file gate, so they were silently skipped
+        # before select_extractor() could see them -- a gap invisible to
+        # extractor-level unit tests.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             # Realistic multi-line formatting (the regex fallback is
