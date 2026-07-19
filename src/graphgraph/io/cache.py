@@ -5,11 +5,22 @@ from pathlib import Path
 from threading import RLock
 
 from ..graph.core import Graph
+from . import core as _core
 from .core import load_any
 
 _CACHE_LIMIT = 8
 _CACHE: OrderedDict[Path, tuple[int, int, Graph]] = OrderedDict()
 _LOCK = RLock()
+
+
+def clear_graph_cache() -> int:
+    """Clear both graph-load cache layers and return removed entries."""
+    with _LOCK:
+        removed = len(_CACHE)
+        _CACHE.clear()
+        removed += len(_core._graph_load_cache)
+        _core._graph_load_cache.clear()
+    return removed
 
 
 def load_any_cached(path: Path) -> Graph:

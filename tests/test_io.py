@@ -690,3 +690,15 @@ class IOTest(unittest.TestCase):
             removed = cache.clear()
             self.assertEqual(removed, 1)
             self.assertEqual(len(cache.cache_data), 0)
+
+    def test_public_graph_cache_clear_resets_every_load_layer(self) -> None:
+        from graphgraph.io import clear_graph_cache, load_any_cached
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), path)
+            first = load_any_cached(path)
+            self.assertIs(load_any_cached(path), first)
+
+            self.assertGreaterEqual(clear_graph_cache(), 1)
+            self.assertIsNot(load_any_cached(path), first)

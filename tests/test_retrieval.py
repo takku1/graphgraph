@@ -352,7 +352,7 @@ class RetrievalTest(unittest.TestCase):
                 "TARGET": Node("TARGET", "old_packet_budget", "function", "src/budget.py"),
             }
         )
-        first = search_nodes(
+        search_nodes(
             graph,
             "old_packet_budget",
             personalize=True,
@@ -1218,7 +1218,7 @@ class RetrievalTest(unittest.TestCase):
                     "graphgraph.services.context.retrieve_context",
                     side_effect=AssertionError("retrieval ran on a cache hit"),
                 ), patch(
-                    "graphgraph.services.context._load_graph_cached",
+                    "graphgraph.services.context.load_any_cached",
                     side_effect=AssertionError("graph loaded on a cache hit"),
                 ):
                     second = render_query_context(
@@ -1248,7 +1248,7 @@ class RetrievalTest(unittest.TestCase):
                     "graphgraph.services.context.expand_context",
                     side_effect=AssertionError("expansion ran on a cache hit"),
                 ), patch(
-                    "graphgraph.services.context._load_graph_cached",
+                    "graphgraph.services.context.load_any_cached",
                     side_effect=AssertionError("graph loaded on a cache hit"),
                 ):
                     second = render_final_packet(

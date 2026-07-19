@@ -25,7 +25,7 @@ from ..runtime.cache import TopologicalKVCache, compute_cache_key
 
 def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg") -> str:
     resolved_graph_path = graph_path or find_graph_path()
-    graph = _load_graph_cached(resolved_graph_path)
+    graph = load_any_cached(resolved_graph_path)
     pr = graph.pagerank()
     top_nodes = sorted(pr, key=pr.get, reverse=True)[:max_nodes]
     top_set = set(top_nodes)
@@ -69,7 +69,7 @@ def render_full_graph(
     the guard entirely.
     """
     resolved_graph_path = graph_path or find_graph_path()
-    graph = _load_graph_cached(resolved_graph_path)
+    graph = load_any_cached(resolved_graph_path)
     all_nodes = {node_id for node_id, node in graph.nodes.items() if node.active}
     all_edges = [edge for edge in graph.edges if edge.active]
     rendered = render_packet(graph, all_nodes, all_edges, packet)
@@ -116,19 +116,19 @@ def render_final_packet(
     if cached_packet:
         return cached_packet
 
-    graph = _load_graph_cached(resolved_graph_path)
+    graph = load_any_cached(resolved_graph_path)
     if max_nodes is None:
         plan = apply_shape_budget(graph, plan, query_text)
     resolved_starts = resolve_start_nodes(graph, starts)
     if not resolved_starts:
         # Build a helpful diagnostic: search the graph for candidates
         from ..findnodes import suggest_node_ids
+
         suggestions = suggest_node_ids(graph, starts, limit=6)
         hint = ""
         if suggestions:
             hint = "  Closest matches in graph:\n" + "\n".join(
-                f"    {m.node.id}  ({m.node.label}, {m.node.kind}, {m.node.path})"
-                for m in suggestions
+                f"    {m.node.id}  ({m.node.label}, {m.node.kind}, {m.node.path})" for m in suggestions
             )
         raise ValueError(
             f"No graph nodes matched the requested starts: {starts!r}\n"
@@ -138,9 +138,7 @@ def render_final_packet(
             "   2. Use 'query_context' tool with a natural-language query — no node IDs needed.\n"
             "   3. Re-scan if the file was recently added: graphgraph scan --depth symbols --docs"
         )
-    nodes, edges = expand_context(
-        graph, tuple(resolved_starts), plan, query_terms=plan_terms(query_text)
-    )
+    nodes, edges = expand_context(graph, tuple(resolved_starts), plan, query_terms=plan_terms(query_text))
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
     policies = load_policies(resolved_policies_path) if resolved_policies_path else []
     query = Query(text=query_text, query_class=query_class, paths=paths, tags=tags)
@@ -332,9 +330,9 @@ def render_query_context(
             cached_packet = cache.get(resolved_graph_path, cache_key)
             if cached_packet:
                 return cached_packet
-        graph = _load_graph_cached(resolved_graph_path)
+        graph = load_any_cached(resolved_graph_path)
     else:
-        _remember_graph(resolved_graph_path, graph)
+        remember_graph(resolved_graph_path, graph)
 
     compiled = GraphRuntime(
         graph,
@@ -345,17 +343,19 @@ def render_query_context(
         source_mode=source_mode,
         memory_scopes=memory_scopes,
         changed_paths=anchor_paths,
-    ).compile(GraphProgram(
-        query=query,
-        query_class=requested_query_class,
-        packet=packet,
-        scopes=scopes,
-        max_nodes=max_nodes,
-        hops=hops,
-        anchor_limit=anchor_limit,
-        scope_mode=scope_mode,
-        anchor_paths=anchor_paths,
-    ))
+    ).compile(
+        GraphProgram(
+            query=query,
+            query_class=requested_query_class,
+            packet=packet,
+            scopes=scopes,
+            max_nodes=max_nodes,
+            hops=hops,
+            anchor_limit=anchor_limit,
+            scope_mode=scope_mode,
+            anchor_paths=anchor_paths,
+        )
+    )
     graph = compiled.graph
     route = compiled.route
     query_class = route.query_class
@@ -425,7 +425,7 @@ def render_query_context(
         if include_snippets:
             from .snippets import render_source_snippets
 
-            snippet_ids = list(result.starts[:max(0, snippet_limit)])
+            snippet_ids = list(result.starts[: max(0, snippet_limit)])
             payload["source_snippets"] = (
                 render_source_snippets(
                     starts=snippet_ids,
@@ -484,6 +484,7 @@ def _actionable_receipt(
             freshness = workflow.get("freshness", {})
         if not freshness:
             freshness = response_metadata.get("freshness", {})
+
     def compact_tests(role: str) -> list[dict[str, object]]:
         if not isinstance(affected, dict):
             return []
@@ -501,6 +502,7 @@ def _actionable_receipt(
             for item in affected.get(role, ())
             if isinstance(item, dict)
         ]
+
     return {
         "status": answerability.get("status", "unknown"),
         "change_points": [
@@ -512,18 +514,12 @@ def _actionable_receipt(
             }
             for match in getattr(result, "matches", ())[:5]
         ],
-        "missing_evidence": list(facet_coverage.get("unfulfilled", ()))
-        if isinstance(facet_coverage, dict)
-        else [],
+        "missing_evidence": list(facet_coverage.get("unfulfilled", ())) if isinstance(facet_coverage, dict) else [],
         "tests": {
             "direct": compact_tests("direct"),
             "transitive": compact_tests("transitive"),
-            "commands_by_role": affected.get("commands_by_role", {})
-            if isinstance(affected, dict)
-            else {},
-            "commands": list(affected.get("commands", ()))
-            if isinstance(affected, dict)
-            else [],
+            "commands_by_role": affected.get("commands_by_role", {}) if isinstance(affected, dict) else {},
+            "commands": list(affected.get("commands", ())) if isinstance(affected, dict) else [],
         },
         "freshness": freshness,
         "semantic_validation": metadata.get("semantic_validation", {}),
@@ -538,11 +534,7 @@ def _raise_if_invalid(packet: str) -> None:
 
 def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
     return tuple(
-        sorted(
-            node.path
-            for node_id in node_ids
-            if (node := graph.nodes.get(node_id)) is not None and node.path
-        )
+        sorted(node.path for node_id in node_ids if (node := graph.nodes.get(node_id)) is not None and node.path)
     )
 
 
@@ -565,12 +557,3 @@ def _file_signature(path: Path | None) -> tuple[str, int, int] | None:
         return None
     stat = path.stat()
     return str(path.resolve()), stat.st_mtime_ns, stat.st_size
-
-
-def _load_graph_cached(path: Path) -> Graph:
-    return load_any_cached(path)
-
-
-def _remember_graph(path: Path, graph: Graph) -> None:
-    """Seed the service cache with a graph that was just persisted in-process."""
-    remember_graph(path, graph)

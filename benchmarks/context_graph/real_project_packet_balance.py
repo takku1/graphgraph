@@ -6,7 +6,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -14,14 +13,13 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from benchmarks.context_graph.local_corpus import small_medium_paths  # noqa: E402
 from graphgraph.core import Edge, Graph  # noqa: E402
 from graphgraph.eval import estimate_tokens  # noqa: E402
 from graphgraph.io import save_graph  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
 from graphgraph.validate import validate_packet  # noqa: E402
-from benchmarks.context_graph.local_corpus import small_medium_paths  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 RESULTS_CSV = OUT / "real_project_packet_balance.csv"
@@ -362,9 +360,19 @@ def safe_name(value: str) -> str:
 
 
 def main() -> None:
+    if not any(path.exists() for path in project_paths()):
+        print(
+            "SKIP: no real-project corpus is configured. "
+            "Set REAL_PROJECT_PATHS or provide the documented local corpus."
+        )
+        return
     rows = run()
     if not rows:
-        raise SystemExit("No rows generated.")
+        print(
+            "SKIP: no real-project corpus is configured. "
+            "Set REAL_PROJECT_PATHS or provide the documented local corpus."
+        )
+        return
     write(rows)
     print(SUMMARY_MD.read_text(encoding="utf-8"))
 

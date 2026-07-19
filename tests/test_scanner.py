@@ -49,6 +49,57 @@ class ScannerTest(unittest.TestCase):
         self.assertIn("tree_sitter", names)
         self.assertTrue(next(cap for cap in caps if cap.name == "regex").available)
 
+    def test_frontend_capabilities_report_per_language_readiness(self) -> None:
+        with patch(
+            "graphgraph.scanner.frontends._language_available",
+            side_effect=lambda name: name == "python",
+        ):
+            tree_sitter = next(
+                capability
+                for capability in available_frontends()
+                if capability.name == "tree_sitter"
+            )
+
+        self.assertEqual(tree_sitter.ready_languages, ("python",))
+        self.assertIn("typescript", tree_sitter.unavailable_languages)
+        self.assertTrue(tree_sitter.available)
+
+    def test_language_readiness_requires_a_constructible_parser(self) -> None:
+        with patch(
+            "graphgraph.scanner.frontends._parser_for_language",
+            return_value=None,
+        ):
+            self.assertFalse(tree_sitter_available())
+
+    def test_transient_grammar_failure_is_retried_instead_of_cached(self) -> None:
+        import graphgraph.scanner.frontends as frontends
+
+        class RecoveringPack:
+            calls = 0
+
+            @classmethod
+            def get_language(cls, _name):
+                cls.calls += 1
+                if cls.calls == 1:
+                    raise PermissionError("temporary read-only cache")
+                return object()
+
+        language_name = "retry_language"
+        try:
+            with (
+                patch.object(frontends, "find_spec", return_value=object()),
+                patch.object(frontends, "import_module", return_value=RecoveringPack),
+            ):
+                first = frontends._language_for_name(language_name)
+                second = frontends._language_for_name(language_name)
+
+            self.assertIsNone(first)
+            self.assertIsNotNone(second)
+            self.assertEqual(RecoveringPack.calls, 2)
+        finally:
+            frontends._LANGUAGE_CACHE.pop(language_name, None)
+            frontends._LANGUAGE_LOAD_ERRORS.pop(language_name, None)
+
     def test_regex_extractor_interface(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -124,6 +175,43 @@ class ScannerTest(unittest.TestCase):
         with patch("graphgraph.scanner.frontends._parser_for_suffix", return_value=BrokenParser()):
             with self.assertRaisesRegex(RuntimeError, "broken.rs"):
                 TreeSitterExtractor().extract_symbols([source], max_total_symbols=20)
+
+    def test_explicit_tree_sitter_fails_when_supported_grammar_is_unavailable(self) -> None:
+        source = SourceFile(Path("sample.ts"), "sample.ts", "sample_ts", "export function run() {}\n")
+        with (
+            patch("graphgraph.scanner.frontends._parser_for_suffix", return_value=None),
+            patch(
+                "graphgraph.scanner.frontends.parser_unavailable_reason",
+                return_value="OSError: grammar cache is read-only",
+            ),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"sample\.ts.*typescript.*grammar cache is read-only",
+            ):
+                TreeSitterExtractor().extract_symbols([source], max_total_symbols=20)
+
+    def test_auto_tree_sitter_records_grammar_failure_before_regex_fallback(self) -> None:
+        source = SourceFile(Path("sample.go"), "sample.go", "sample_go", "func Run() {}\n")
+        with (
+            patch("graphgraph.scanner.frontends._parser_for_suffix", return_value=None),
+            patch(
+                "graphgraph.scanner.frontends.parser_unavailable_reason",
+                return_value="PermissionError: grammar cache is read-only",
+            ),
+        ):
+            result = TreeSitterExtractor(fallback_on_error=True).extract_symbols(
+                [source],
+                max_total_symbols=20,
+            )
+
+        self.assertEqual(result.frontend, "tree_sitter+regex")
+        self.assertEqual(result.unsupported_files, ("sample.go",))
+        self.assertEqual(
+            result.grammar_errors,
+            ("sample.go:PermissionError: grammar cache is read-only",),
+        )
+        self.assertTrue(any(node.label == "Run" for node in result.nodes.values()))
 
     def test_tree_sitter_reports_unsupported_fallback_separately_from_parse_failures(self) -> None:
         source = SourceFile(Path("notes.md"), "notes.md", "notes_md", "# Notes\n")

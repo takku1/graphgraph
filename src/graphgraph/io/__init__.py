@@ -1,4 +1,4 @@
-from .cache import load_any_cached, remember_graph
+from .cache import clear_graph_cache, load_any_cached, remember_graph
 from .core import (
     graph_to_json,
     load_any,
@@ -25,6 +25,7 @@ __all__ = [
     "find_graph_path",
     "find_lessons_path",
     "find_policies_path",
+    "clear_graph_cache",
     "graph_to_json",
     "load_any",
     "load_any_cached",

@@ -19,6 +19,7 @@ from ..manifest import Manifest, compute_file_hash
 from ..packets.validation import ValidationResult, validate_any
 from ..retrieval.git_utils import get_git_ignored_paths, get_git_worktree_paths
 from ..scanner import DEFAULT_SCAN_MAX_NODES, remove_paths, scan_directory, update_paths
+from ..scanner.core import _normalize_rels
 from ..scanner.files import SKIP_DIRS, SKIP_FILE_NAMES, SKIP_SUFFIXES, path_ignored_by_rules
 from .context import render_query_context
 
@@ -74,6 +75,7 @@ def scan_validated_graph(
         history=history,
         previous_graph_path=previous_graph_path,
         manifest_path=manifest_path,
+        exclude_paths=[output_path, manifest_path],
         progress=progress,
     )
     try:
@@ -101,6 +103,7 @@ def scan_validated_graph(
         history=history,
         previous_graph_path=None,
         manifest_path=manifest_path_for_graph(output_path),
+        exclude_paths=[output_path, manifest_path_for_graph(output_path)],
         progress=progress,
     )
     if progress is not None:
@@ -137,6 +140,7 @@ def _full_rescan_fallback(
         history=history,
         previous_graph_path=None,
         manifest_path=manifest_path_for_graph(output_path),
+        exclude_paths=[output_path, manifest_path_for_graph(output_path)],
     )
     validation = save_validated_graph(graph, output_path)
     return GraphBuildStatus(output_path, graph, built=True, repaired=True, validation=validation)
@@ -161,11 +165,20 @@ def update_paths_validated_graph(
     rebuild if that's missing or the result fails validation.
     """
     manifest_path = manifest_path_for_graph(output_path)
+    owned_artifacts = _normalize_rels(
+        directory.resolve(),
+        [output_path, manifest_path],
+    )
+    update_candidates = [
+        path for path in paths
+        if _normalize_rels(directory.resolve(), [path]).isdisjoint(owned_artifacts)
+    ]
+    authoritative_deletions = list(dict.fromkeys([*(deleted_paths or ()), *owned_artifacts]))
     try:
         graph = update_paths(
             directory,
-            paths,
-            deleted_paths=deleted_paths,
+            update_candidates,
+            deleted_paths=authoritative_deletions,
             max_nodes=max_nodes,
             depth=depth,
             frontend=frontend,
@@ -686,6 +699,7 @@ def build_project_status(
     graph_report["frontend_fallbacks"] = {
         "total": int(graph.metadata.get("frontend_fallback_count", "0")),
         "unsupported": int(graph.metadata.get("frontend_unsupported_count", "0")),
+        "grammar_errors": int(graph.metadata.get("frontend_grammar_error_count", "0")),
         "timeouts": int(graph.metadata.get("frontend_timeout_count", "0")),
         "parse_errors": int(graph.metadata.get("frontend_parse_error_count", "0")),
     }

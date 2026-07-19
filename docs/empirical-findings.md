@@ -712,6 +712,49 @@ of lower LLM compute or better model answers.
 Graphify was comparison-only during this audit. No Graphify dependency,
 wrapper, adapter, fallback, or runtime call was added.
 
+## GRAPH.md Closure Audit (2026-07-19)
+
+All three confirmed `docs/bugs/GRAPH.md` findings were still reproducible before
+this pass and are now closed in native GraphGraph code:
+
+- **GG-001:** grammar readiness now probes each advertised language instead of
+  treating package presence as readiness. Successful language/parser loads are
+  cached, transient failures are retried, and their concrete errors survive in
+  scan metadata and CPG receipts. Explicit Tree-sitter scans fail on a supported
+  but unavailable grammar; auto mode records the downgrade before regex
+  fallback. `graphgraph frontends` and `graphgraph doctor` expose ready and
+  unavailable language sets.
+- **GG-002:** the selected output graph and its bound manifest are exact
+  scan exclusions. The invariant covers repeated full/incremental scans,
+  repair scans, and targeted reconciliation, including absolute changed paths.
+  Legitimate JSON evidence remains indexable.
+- **GG-003:** the packet-cache benchmark uses the public two-layer graph-cache
+  reset API. The real-project benchmark and suite runner now distinguish a
+  missing corpus from a failed benchmark, honor explicit `REAL_PROJECT_PATHS`,
+  and print a final ran/skipped summary.
+
+`tree-sitter-language-pack==1.10.9` is intentionally an exact dependency
+protocol, not an adaptive retrieval threshold: the value identifies the
+offline-ready grammar artifact verified by the install and lockfile tests.
+Runtime readiness remains dynamic and per-language.
+
+Validation after implementation:
+
+- 462 unit tests passed;
+- changed Python files passed Ruff;
+- source compilation and `uv lock --check` passed;
+- every installed advertised grammar reported ready;
+- the packet-cache benchmark completed with a 1.714 ms hit median;
+- the source-graph estimate remained below its existing ceiling at
+  92,935/93,000 tokens after redundant cache wrappers were removed.
+
+The Graphify skill was invoked only because its installed trigger broadly
+claims codebase questions. Its comparison traversal returned generic manifest
+and benchmark neighbors; the native GraphGraph context packet and source/test
+audit found the actionable boundaries. This is skill-routing evidence, not a
+reason to add Graphify to GraphGraph. No Graphify code, wrapper, dependency,
+fallback, or runtime integration was added.
+
 ## What Is Still Unproven
 
 The remaining major proof is live model-answer scoring:

@@ -111,6 +111,13 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         import tree_sitter  # noqa: F401
         import tree_sitter_language_pack  # noqa: F401
         print("  tree-sitter: Installed (OK)")
+        capability = next(cap for cap in available_frontends() if cap.name == "tree_sitter")
+        print(f"  Tree-sitter grammars ready: {', '.join(capability.ready_languages) or 'none'}")
+        if capability.unavailable_languages:
+            print(
+                "  Tree-sitter grammars unavailable: "
+                + ", ".join(capability.unavailable_languages)
+            )
     except ImportError:
         print("  tree-sitter: Missing (WARN - AST symbols scanning disabled)")
 
@@ -752,6 +759,8 @@ def cmd_scan(args: argparse.Namespace) -> None:
             f"parse_error={graph.metadata.get('frontend_parse_error_count', '0')})"
         )
         print(f"  Fallback files: {graph.metadata.get('frontend_fallback_files', '')}")
+    if graph.metadata.get("frontend_grammar_errors"):
+        print(f"  Grammar errors: {graph.metadata['frontend_grammar_errors']}")
     if graph.metadata.get("frontend_failures"):
         print(f"  Parse reasons : {graph.metadata['frontend_failures']}")
     if "member_calls_resolved" in graph.metadata:

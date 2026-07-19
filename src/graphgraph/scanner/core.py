@@ -109,6 +109,7 @@ def scan_directory(
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
     include: list[str] | None = None,
+    exclude_paths: list[str] | list[Path] | None = None,
     progress: ScanProgress | None = None,
 ) -> Graph:
     """Scan *root* and build a Graph of file-level (and optionally symbol-level) nodes.
@@ -124,12 +125,20 @@ def scan_directory(
     root = root.resolve()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
     include_set = frozenset(include) if include else frozenset()
+    excluded_rels = frozenset(_normalize_rels(root, exclude_paths or []))
 
     _emit_progress(progress, "discover", f"root={root}")
     # Gather git metadata early so staged files get scan priority.
     dirty_git, churn_git = _get_git_metadata(root)
 
-    collected = collect_files(root, max_nodes, extra_skip, git_staged=dirty_git, include=include_set)
+    collected = collect_files(
+        root,
+        max_nodes,
+        extra_skip,
+        git_staged=dirty_git,
+        include=include_set,
+        exclude_paths=excluded_rels,
+    )
     files = collected.files
     _emit_progress(
         progress,
@@ -624,6 +633,8 @@ def _build_graph_from_split(
             metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
             metadata["frontend_unsupported_count"] = str(len(extraction.unsupported_files))
             metadata["frontend_unsupported_files"] = ",".join(extraction.unsupported_files)
+            metadata["frontend_grammar_error_count"] = str(len(extraction.grammar_errors))
+            metadata["frontend_grammar_errors"] = ",".join(extraction.grammar_errors)
             metadata["frontend_timeout_count"] = str(len(extraction.timeout_files))
             metadata["frontend_timeout_files"] = ",".join(extraction.timeout_files)
             metadata["frontend_parse_error_count"] = str(len(extraction.parse_error_files))

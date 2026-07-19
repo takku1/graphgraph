@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "pathspec>=0.12",
     "tree-sitter>=0.22",
-    "tree-sitter-language-pack>=0.7",
+    "tree-sitter-language-pack==1.10.9",
     "keyring>=24.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
 ]

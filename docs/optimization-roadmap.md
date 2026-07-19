@@ -42,6 +42,14 @@ that a particular model will interpret every packet correctly.
   `candidate_only`; packet validity can no longer mask that contradiction.
 - Refresh receipts separate requested paths, refreshed/removed paths, graph
   writes, and post-refresh remaining stale paths across CLI and MCP.
+- Frontend readiness is measured per language; transient grammar failures are
+  retried and surfaced as concrete scan/CPG evidence instead of being cached as
+  silent unsupported-language state.
+- Generated graph ownership is exact: custom output and manifest paths are
+  excluded from full, repair, incremental, and targeted scan inputs without
+  excluding legitimate JSON evidence.
+- The public graph-cache reset clears both process-load layers; benchmark
+  orchestration reports missing real-project corpora as explicit skips.
 - Agent round-trip floor: `query_context` can optionally fuse bounded source
   windows, and standalone `source_snippets` reuses the process-local graph
   cache instead of reparsing the graph.

@@ -15,6 +15,11 @@ import time
 import unittest
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
+    import tomli as tomllib
+
 ROOT = Path(__file__).parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -25,6 +30,61 @@ from graphgraph.scanner.ast import extract_symbols
 
 
 class BenchmarkExtractionTest(unittest.TestCase):
+    def test_runtime_pins_the_offline_ready_tree_sitter_language_pack(self):
+        data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIn(
+            "tree-sitter-language-pack==1.10.9",
+            data["project"]["dependencies"],
+        )
+
+    def test_packet_cache_benchmark_uses_public_graph_cache_reset(self):
+        from benchmarks.context_graph import packet_cache_benchmark
+        from graphgraph.io import clear_graph_cache
+
+        self.assertIs(packet_cache_benchmark.clear_graph_cache, clear_graph_cache)
+
+    def test_real_project_packet_balance_skips_cleanly_without_a_corpus(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+
+        from benchmarks.context_graph import real_project_packet_balance
+
+        output = StringIO()
+        with (
+            patch.object(
+                real_project_packet_balance,
+                "project_paths",
+                return_value=[Path("definitely-missing-corpus")],
+            ),
+            patch.object(real_project_packet_balance, "run") as run,
+            redirect_stdout(output),
+        ):
+            real_project_packet_balance.main()
+
+        run.assert_not_called()
+        self.assertIn("SKIP", output.getvalue())
+
+    def test_benchmark_runner_reports_prerequisite_skips_and_continues(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from unittest.mock import patch
+
+        from benchmarks.context_graph import run_all
+
+        output = StringIO()
+        with (
+            patch.object(run_all, "SCRIPTS", ["real_project_packet_balance.py", "ready.py"]),
+            patch.object(run_all, "project_paths", return_value=[]),
+            patch.object(run_all.subprocess, "run") as run,
+            redirect_stdout(output),
+        ):
+            run_all.main()
+
+        run.assert_called_once()
+        self.assertIn("1 ran, 1 skipped", output.getvalue())
+        self.assertIn("SKIP real_project_packet_balance.py", output.getvalue())
+
     def test_negative_query_benchmark_uses_real_isolation_state(self):
         from benchmarks.context_graph.real_project_answerability_limit import make_tasks
 

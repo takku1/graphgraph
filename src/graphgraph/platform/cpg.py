@@ -10,6 +10,7 @@ from ..scanner.frontends import (
     NAME_NODE_TYPES,
     parse_with_timeout,
     parser_for_suffix,
+    parser_unavailable_reason,
 )
 from .contracts import (
     CapabilityReceipt,
@@ -153,7 +154,9 @@ class CpgEvidenceProvider:
                 continue
             parser = parser_for_suffix(source.suffix)
             if parser is None:
-                warnings.append(f"{rel_path}:unsupported_language")
+                warnings.append(
+                    f"{rel_path}:grammar_unavailable:{parser_unavailable_reason(source.suffix)}"
+                )
                 continue
             try:
                 text = source.read_text(encoding="utf-8", errors="replace")

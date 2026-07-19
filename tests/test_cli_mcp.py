@@ -477,6 +477,46 @@ class CliMcpTest(unittest.TestCase):
             self.assertTrue(result.ok, result.errors)
             self.assertEqual(result.node_count, 3)
 
+    def test_custom_scan_output_and_manifest_never_enter_their_own_graph(self) -> None:
+        from graphgraph.manifest import Manifest
+        from graphgraph.services.native import (
+            manifest_path_for_graph,
+            scan_validated_graph,
+            update_paths_validated_graph,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+            graph_path = root / "custom.gg"
+
+            for _ in range(3):
+                status = scan_validated_graph(
+                    directory=root,
+                    output_path=graph_path,
+                    depth="symbols",
+                    frontend="regex",
+                    docs=False,
+                )
+
+            indexed_paths = {node.path for node in status.graph.nodes.values() if node.path}
+            self.assertEqual(indexed_paths, {"app.py"})
+            manifest = Manifest.load(manifest_path_for_graph(graph_path))
+            self.assertEqual(set(manifest.files), {"app.py"})
+
+            status = update_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=[str(graph_path.resolve()), "app.py"],
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+            )
+            indexed_paths = {node.path for node in status.graph.nodes.values() if node.path}
+            self.assertEqual(indexed_paths, {"app.py"})
+            manifest = Manifest.load(manifest_path_for_graph(graph_path))
+            self.assertEqual(set(manifest.files), {"app.py"})
+
     def test_mcp_full_graph_renders_everything_and_errors_over_guard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"
@@ -682,7 +722,7 @@ class CliMcpTest(unittest.TestCase):
             # Keep this file on disk deliberately: deleted_paths is an
             # authoritative graph instruction, not an existence heuristic.
             with patch(
-                "graphgraph.services.context._load_graph_cached",
+                "graphgraph.services.context.load_any_cached",
                 side_effect=AssertionError("fused query reloaded the just-written graph"),
             ):
                 response = dispatch(

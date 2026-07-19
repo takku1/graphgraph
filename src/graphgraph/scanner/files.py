@@ -133,6 +133,7 @@ def collect_files(
     extra_skip: frozenset[str] = frozenset(),
     git_staged: set[str] | None = None,
     include: frozenset[str] = frozenset(),
+    exclude_paths: frozenset[str] = frozenset(),
 ) -> CollectFilesResult:
     """Collect files from *root*, honouring skip rules.
 
@@ -203,6 +204,8 @@ def collect_files(
                 continue
             suffix_l = path.suffix.lower()
             rel = path.relative_to(root).as_posix()
+            if rel in exclude_paths:
+                continue
             if rel in staged_posix:
                 priority_files.append(path)
             elif suffix_l in SOURCE_SUFFIXES:

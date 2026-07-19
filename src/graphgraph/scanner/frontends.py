@@ -5,7 +5,6 @@ import re
 import textwrap
 import warnings
 from dataclasses import dataclass, replace
-from functools import lru_cache
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
@@ -29,6 +28,7 @@ __all__ = [
     "available_frontends",
     "parse_with_timeout",
     "parser_for_suffix",
+    "parser_unavailable_reason",
     "select_extractor",
 ]
 
@@ -46,6 +46,8 @@ class FrontendCapability:
     available: bool
     confidence: float
     description: str
+    ready_languages: tuple[str, ...] = ()
+    unavailable_languages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,7 @@ class ExtractionResult:
     fallback_files: tuple[str, ...] = ()
     failed_files: tuple[str, ...] = ()
     unsupported_files: tuple[str, ...] = ()
+    grammar_errors: tuple[str, ...] = ()
     timeout_files: tuple[str, ...] = ()
     parse_error_files: tuple[str, ...] = ()
     resolved_member_calls: int = 0
@@ -125,6 +128,7 @@ class TreeSitterExtractor:
         fallback_sources: list[SourceFile] = []
         failed_files: list[str] = []
         unsupported_files: list[str] = []
+        grammar_errors: list[str] = []
         timeout_files: list[str] = []
         parse_error_files: list[str] = []
 
@@ -135,10 +139,18 @@ class TreeSitterExtractor:
         for source in files:
             parser = _parser_for_suffix(source.path.suffix.lower())
             if parser is None:
+                language = _SUFFIX_LANGUAGE.get(source.path.suffix.lower(), "")
+                reason = parser_unavailable_reason(source.path.suffix)
                 if self.fallback_on_error:
                     fallback_sources.append(source)
                     unsupported_files.append(source.rel)
-                continue
+                    if language:
+                        grammar_errors.append(f"{source.rel}:{reason}")
+                    continue
+                detail = f" ({language})" if language else ""
+                raise RuntimeError(
+                    f"Tree-sitter grammar unavailable for {source.rel}{detail}: {reason}"
+                )
             text_bytes = source.text.encode("utf-8", errors="replace")
             try:
                 tree = _parse_with_timeout(parser, text_bytes, self.parse_timeout_micros)
@@ -227,6 +239,7 @@ class TreeSitterExtractor:
             fallback_files=tuple(source.rel for source in fallback_sources),
             failed_files=tuple(failed_files),
             unsupported_files=tuple(unsupported_files),
+            grammar_errors=tuple(grammar_errors),
             timeout_files=tuple(timeout_files),
             parse_error_files=tuple(parse_error_files),
             resolved_member_calls=member_call_stats.resolved,
@@ -271,6 +284,9 @@ def tree_sitter_available() -> bool:
 
 
 def available_frontends() -> list[FrontendCapability]:
+    languages = tuple(dict.fromkeys(_SUFFIX_LANGUAGE.values()))
+    ready = tuple(name for name in languages if _language_available(name))
+    unavailable = tuple(name for name in languages if name not in ready)
     return [
         FrontendCapability(
             name="regex",
@@ -283,12 +299,16 @@ def available_frontends() -> list[FrontendCapability]:
             available=tree_sitter_available(),
             confidence=0.95,
             description="Optional per-language CST frontend; normalizes into graphgraph IR when installed.",
+            ready_languages=ready,
+            unavailable_languages=unavailable,
         ),
         FrontendCapability(
             name="cpg",
             available=tree_sitter_available(),
             confidence=0.95,
             description="Multi-language control, data, field, and type evidence normalized into GraphGraph IR.",
+            ready_languages=ready,
+            unavailable_languages=unavailable,
         ),
     ]
 
@@ -426,27 +446,38 @@ NAME_NODE_TYPES = frozenset(_NAME_NODE_TYPES)
 
 
 def _language_available(name: str) -> bool:
-    if find_spec("tree_sitter_language_pack") is not None:
-        return True
-    return any(find_spec(module_name) is not None for module_name in _LANGUAGE_MODULES.get(name, ()))
+    return _parser_for_language(name) is not None
 
 
-@lru_cache(maxsize=16)
+_LANGUAGE_CACHE: dict[str, Any] = {}
+_LANGUAGE_LOAD_ERRORS: dict[str, str] = {}
+_PARSER_CACHE: dict[str, Any] = {}
+_PARSER_LOAD_ERRORS: dict[str, str] = {}
+
+
 def _language_for_name(name: str) -> Any | None:
+    if name in _LANGUAGE_CACHE:
+        return _LANGUAGE_CACHE[name]
     if find_spec("tree_sitter") is None:
+        _LANGUAGE_LOAD_ERRORS[name] = "tree_sitter is not installed"
         return None
     try:
         from tree_sitter import Language
-    except Exception:
+    except Exception as exc:
+        _LANGUAGE_LOAD_ERRORS[name] = f"{type(exc).__name__}: {exc}"
         return None
 
+    errors: list[str] = []
     if find_spec("tree_sitter_language_pack") is not None:
         try:
             pack = import_module("tree_sitter_language_pack")
             get_language = getattr(pack, "get_language")
-            return get_language("typescript" if name == "tsx" else name)
-        except Exception:
-            pass
+            language = get_language("typescript" if name == "tsx" else name)
+            _LANGUAGE_CACHE[name] = language
+            _LANGUAGE_LOAD_ERRORS.pop(name, None)
+            return language
+        except Exception as exc:
+            errors.append(f"tree_sitter_language_pack: {type(exc).__name__}: {exc}")
 
     for module_name in _LANGUAGE_MODULES.get(name, ()):
         if find_spec(module_name) is None:
@@ -455,28 +486,40 @@ def _language_for_name(name: str) -> Any | None:
             module = import_module(module_name)
             language_obj = module.language()
             try:
-                return Language(language_obj)
+                language = Language(language_obj)
             except TypeError:
-                return language_obj
-        except Exception:
-            continue
+                language = language_obj
+            _LANGUAGE_CACHE[name] = language
+            _LANGUAGE_LOAD_ERRORS.pop(name, None)
+            return language
+        except Exception as exc:
+            errors.append(f"{module_name}: {type(exc).__name__}: {exc}")
+    _LANGUAGE_LOAD_ERRORS[name] = " | ".join(errors) or "no installed grammar provider"
     return None
 
 
-@lru_cache(maxsize=16)
 def _parser_for_language(name: str) -> Any | None:
+    if name in _PARSER_CACHE:
+        return _PARSER_CACHE[name]
     language = _language_for_name(name)
     if language is None:
         return None
     try:
         from tree_sitter import Parser
-    except Exception:
+    except Exception as exc:
+        _PARSER_LOAD_ERRORS[name] = f"{type(exc).__name__}: {exc}"
         return None
-    parser = Parser()
-    if hasattr(parser, "set_language"):
-        parser.set_language(language)
-    else:
-        parser.language = language
+    try:
+        parser = Parser()
+        if hasattr(parser, "set_language"):
+            parser.set_language(language)
+        else:
+            parser.language = language
+    except Exception as exc:
+        _PARSER_LOAD_ERRORS[name] = f"{type(exc).__name__}: {exc}"
+        return None
+    _PARSER_CACHE[name] = parser
+    _PARSER_LOAD_ERRORS.pop(name, None)
     return parser
 
 
@@ -490,6 +533,19 @@ def _parser_for_suffix(suffix: str) -> Any | None:
 def parser_for_suffix(suffix: str) -> Any | None:
     """Return the cached Tree-sitter parser registered for a file suffix."""
     return _parser_for_suffix(suffix.casefold())
+
+
+def parser_unavailable_reason(suffix: str) -> str:
+    """Return the last concrete grammar/parser failure for a source suffix."""
+    suffix = suffix.casefold()
+    name = _SUFFIX_LANGUAGE.get(suffix)
+    if name is None:
+        return f"no Tree-sitter language registered for {suffix or '<no suffix>'}"
+    return (
+        _PARSER_LOAD_ERRORS.get(name)
+        or _LANGUAGE_LOAD_ERRORS.get(name)
+        or f"{name} grammar is unavailable"
+    )
 
 
 def parse_with_timeout(parser: Any, text: bytes, timeout_micros: int) -> Any | None:

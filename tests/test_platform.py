@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 from graphgraph import Edge, Graph, Node
 from graphgraph.cli.parser import build_parser
@@ -191,6 +192,35 @@ class PlatformTest(unittest.TestCase):
             self.assertEqual(receipts[0].provider, "cpg")
             self.assertEqual(receipts[0].paths_processed, 5)
             self.assertTrue(all(edge.evidence and edge.source_location for edge in enriched.edges))
+
+    def test_cpg_receipt_preserves_concrete_grammar_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "sample.go"
+            source.write_text("package sample\nfunc run() {}\n", encoding="utf-8")
+            graph = Graph({
+                "run": Node(
+                    "run",
+                    "run",
+                    "function",
+                    "sample.go",
+                    "L2",
+                    source=str(source),
+                ),
+            })
+
+            with (
+                patch("graphgraph.platform.cpg.parser_for_suffix", return_value=None),
+                patch(
+                    "graphgraph.platform.cpg.parser_unavailable_reason",
+                    return_value="PermissionError: grammar cache is read-only",
+                ),
+            ):
+                batch = CpgEvidenceProvider().collect(graph)
+
+        self.assertIn(
+            "sample.go:grammar_unavailable:PermissionError: grammar cache is read-only",
+            batch.receipt.warnings,
+        )
 
     def test_multi_repository_benchmark_enforces_quality_and_cost_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

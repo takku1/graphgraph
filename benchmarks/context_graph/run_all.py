@@ -5,6 +5,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from benchmarks.context_graph.real_project_packet_balance import project_paths  # noqa: E402
 
 SCRIPTS = [
     "format_benchmark.py",
@@ -39,12 +44,30 @@ SCRIPTS = [
     "integration_inventory.py",
 ]
 
-
 def main() -> None:
+    completed: list[str] = []
+    skipped: list[tuple[str, str]] = []
     for script in SCRIPTS:
         path = ROOT / script
         print(f"\n=== {script} ===", flush=True)
+        reason = ""
+        if (
+            script == "real_project_packet_balance.py"
+            and not any(path.exists() for path in project_paths())
+        ):
+            reason = "no real-project corpus; set REAL_PROJECT_PATHS or configure the documented local corpus"
+        if reason:
+            print(f"SKIP: {reason}", flush=True)
+            skipped.append((script, reason))
+            continue
         subprocess.run([sys.executable, str(path)], cwd=ROOT.parent.parent, check=True)
+        completed.append(script)
+    print(
+        f"\nBenchmark suite complete: {len(completed)} ran, {len(skipped)} skipped.",
+        flush=True,
+    )
+    for script, reason in skipped:
+        print(f"  SKIP {script}: {reason}", flush=True)
 
 
 if __name__ == "__main__":

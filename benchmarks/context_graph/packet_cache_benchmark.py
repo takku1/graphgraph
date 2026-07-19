@@ -13,9 +13,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.io import find_graph_path  # noqa: E402
+from graphgraph.io import clear_graph_cache, find_graph_path  # noqa: E402
 from graphgraph.runtime.cache import TopologicalKVCache  # noqa: E402
-from graphgraph.services.context import _GRAPH_CACHE, render_query_context  # noqa: E402
+from graphgraph.services.context import render_query_context  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "live"
 REPORT_JSON = OUT / "packet_cache.json"
@@ -43,7 +43,7 @@ def main() -> None:
                 cache_namespace=namespace,
             )
 
-        _GRAPH_CACHE.clear()
+        clear_graph_cache()
         with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
             cold_ms = elapsed_ms(query)
             cache.clear()
