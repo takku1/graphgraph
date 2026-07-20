@@ -17,6 +17,7 @@ from graphgraph import (
 )
 from graphgraph.io import (
     load_any,
+    project_root_for_graph,
     save_graph,
 )
 from graphgraph.mcp import dispatch
@@ -27,6 +28,7 @@ from graphgraph.scanner import scan_directory
 from graphgraph.services.native import (
     GraphBuildStatus,
     graph_shape,
+    inspect_saved_graph_freshness,
     refresh_receipt,
     render_native_context,
     scope_freshness,
@@ -34,6 +36,24 @@ from graphgraph.services.native import (
 
 
 class CliMcpTest(unittest.TestCase):
+    def test_graph_artifacts_bind_to_their_own_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.assertEqual(
+                project_root_for_graph(root / ".graphgraph" / "graph.gg"),
+                root,
+            )
+            self.assertEqual(
+                project_root_for_graph(
+                    root / ".graphgraph" / "skill-validation" / "live.graph.json"
+                ),
+                root,
+            )
+            self.assertEqual(
+                project_root_for_graph(root / "exports" / "graph.json"),
+                root / "exports",
+            )
+
     def test_scope_freshness_separates_requested_slice_from_repository_drift(self) -> None:
         freshness = scope_freshness(
             {
@@ -607,6 +627,129 @@ class CliMcpTest(unittest.TestCase):
             )
             self.assertTrue(data["actionable"]["change_points"])
             self.assertIn("reverse dependency intent", data["routing"]["reasons"])
+
+    def test_documented_gap_is_evidence_not_an_actionable_change_point(self) -> None:
+        graph = Graph(
+            nodes={
+                "DOC": Node(
+                    "DOC",
+                    "gap-analysis.md",
+                    "markdown",
+                    "docs/roadmap/gap-analysis.md",
+                ),
+                "SECTION": Node(
+                    "SECTION",
+                    "Applied domains",
+                    "section",
+                    "docs/roadmap/gap-analysis.md",
+                    parent="DOC",
+                ),
+                "GAP": Node(
+                    "GAP",
+                    "[~] Imaging: camera models remain absent",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=(
+                        "[~] Imaging: camera models, state estimation, and "
+                        "source recognition remain absent.",
+                    ),
+                    parent="SECTION",
+                ),
+                "GENERIC": Node(
+                    "GENERIC",
+                    "Locus currently has these real models",
+                    "paragraph",
+                    "docs/roadmap/gap-analysis.md",
+                    facts=("Locus currently has these real implementation models.",),
+                    parent="SECTION",
+                ),
+            },
+            edges=[
+                Edge("SECTION", "DOC", "section_of"),
+                Edge("GAP", "SECTION", "contains"),
+                Edge("GENERIC", "SECTION", "contains"),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(graph, graph_path)
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 561,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_context",
+                        "arguments": {
+                            "query": "What does the roadmap say about absent camera models?",
+                            "query_class": "doc_summary",
+                            "graph_path": str(graph_path),
+                            "show_anchors": True,
+                        },
+                    },
+                }
+            )
+
+        assert response is not None
+        data = json.loads(response["result"]["content"][0]["text"])
+        actionable = data["actionable"]
+        self.assertEqual(actionable["evidence_role"], "documentation")
+        self.assertEqual(actionable["change_points"], [])
+        self.assertEqual(actionable["evidence_points"][0]["id"], "GAP")
+        self.assertFalse(actionable["implementation"]["authorized"])
+        self.assertEqual(
+            actionable["implementation"]["documented_gap_policy"],
+            "a documented absence is evidence, not a work order",
+        )
+
+    def test_explicit_foreign_graph_does_not_inherit_caller_project_state(self) -> None:
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp).resolve()
+            graph_path = project_root / ".graphgraph" / "graph.gg"
+            graph_path.parent.mkdir()
+            save_graph(sample_graph(), graph_path)
+            with (
+                patch(
+                    "graphgraph.services.native.get_git_worktree_paths",
+                    return_value=([], []),
+                ) as worktree_paths,
+                patch(
+                    "graphgraph.services.native.get_git_ignored_paths",
+                    return_value=[],
+                ),
+                patch(
+                    "graphgraph.services.context.QuerySourcePlanner",
+                    wraps=QuerySourcePlanner,
+                ) as planner,
+            ):
+                response = dispatch(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 562,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "query_context",
+                            "arguments": {
+                                "query": "auth service",
+                                "query_class": "direct_lookup",
+                                "graph_path": str(graph_path),
+                                "show_anchors": True,
+                            },
+                        },
+                    }
+                )
+                freshness = inspect_saved_graph_freshness(
+                    directory=Path("."),
+                    output_path=graph_path,
+                )
+
+        assert response is not None
+        self.assertNotIn("error", response)
+        self.assertTrue(freshness["fresh"])
+        self.assertEqual(worktree_paths.call_args.args[0], project_root)
+        self.assertEqual(planner.call_args.args[0], project_root)
 
     def test_mcp_query_context_honors_hops_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2101,7 +2244,7 @@ class CliMcpTest(unittest.TestCase):
             orig_find_graph = ctx.find_graph_path
             orig_find_lessons = ctx.find_lessons_path
             ctx.find_graph_path = lambda: g_path
-            ctx.find_lessons_path = lambda: lessons_file
+            ctx.find_lessons_path = lambda _root=Path("."): lessons_file
 
             try:
                 packet = render_final_packet(starts=["A"], query_class="direct_lookup")

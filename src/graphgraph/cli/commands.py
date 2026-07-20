@@ -10,7 +10,15 @@ from ..analysis.eval import evaluate_graph, load_eval_tasks, results_to_json
 from ..analysis.metrics import compare_graphs
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..graph.traversal import POLICIES, traversal_policy
-from ..io import find_graph_path, find_policies_path, load_any, save_gg, save_validated_graph, validate_graph_file
+from ..io import (
+    find_graph_path,
+    find_policies_path,
+    load_any,
+    project_root_for_graph,
+    save_gg,
+    save_validated_graph,
+    validate_graph_file,
+)
 from ..packets import render_packet
 from ..packets.validation import validate_any
 from ..planning import (
@@ -444,7 +452,10 @@ def cmd_final(args: argparse.Namespace) -> None:
 
 def cmd_query(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
-    freshness = inspect_saved_graph_freshness(directory=Path("."), output_path=graph_path)
+    freshness = inspect_saved_graph_freshness(
+        directory=project_root_for_graph(graph_path),
+        output_path=graph_path,
+    )
     if not freshness["fresh"]:
         print(
             f"GraphGraph WARNING: graph is stale for {freshness['changed_count']} changed and "
@@ -496,11 +507,19 @@ def cmd_context(args: argparse.Namespace) -> None:
     exclude_dirs: list[str] = list(getattr(args, "exclude_dirs", None) or [])
     all_skip = tuple(skip_dirs + [d for d in exclude_dirs if d not in skip_dirs])
     include_dirs: list[str] = list(getattr(args, "include", None) or [])
+    graph_path = Path(args.graph) if args.graph else None
+    directory = (
+        Path(args.directory)
+        if args.directory
+        else project_root_for_graph(graph_path)
+        if graph_path is not None
+        else Path(".")
+    )
     output, status = render_native_context(
         query=args.query,
         query_class=args.query_class,
-        directory=Path(args.directory) if args.directory else Path("."),
-        graph_path=Path(args.graph) if args.graph else None,
+        directory=directory,
+        graph_path=graph_path,
         rebuild=args.rebuild,
         max_nodes=args.max_nodes,
         scan_max_nodes=args.scan_max_nodes,

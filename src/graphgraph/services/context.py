@@ -10,6 +10,7 @@ from ..io import (
     find_policies_path,
     load_any_cached,
     load_policies,
+    project_root_for_graph,
     remember_graph,
 )
 from ..packets import estimate_tokens, render_packet
@@ -23,7 +24,17 @@ from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # 
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
-QUERY_RESPONSE_CACHE_VERSION = "request_v6_hybrid_test_receipts"
+QUERY_RESPONSE_CACHE_VERSION = "request_v7_non_authorizing_evidence"
+
+_DOCUMENT_EVIDENCE_KINDS = frozenset({
+    "concept",
+    "section",
+    "paragraph",
+    "markdown",
+    "rst",
+    "html",
+    "text",
+})
 
 
 def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg") -> str:
@@ -99,10 +110,15 @@ def render_final_packet(
     packet: str | None = None,
 ) -> str:
     resolved_graph_path = graph_path or find_graph_path()
-    resolved_policies_path = policies_path if policies_path is not None else find_policies_path()
+    project_root = project_root_for_graph(resolved_graph_path)
+    resolved_policies_path = (
+        policies_path
+        if policies_path is not None
+        else find_policies_path(project_root)
+    )
 
     plan = plan_context(query_class, query_text, max_nodes=max_nodes, packet=packet)
-    lessons_path = find_lessons_path()
+    lessons_path = find_lessons_path(project_root)
     cache = TopologicalKVCache()
     cache_key = compute_cache_key(
         starts,
@@ -111,7 +127,8 @@ def render_final_packet(
         (
             f"request_v2|{resolved_graph_path.resolve()}|{packet or 'auto'}|{plan.packet}|"
             f"{cache_namespace}|{plan.planner_version}|{query_text}|{paths}|{tags}|"
-            f"{plan.node_budget}|{plan.direction}|{tuple(starts)}|{_session_signature()}|"
+            f"{plan.node_budget}|{plan.direction}|{tuple(starts)}|"
+            f"{_session_signature(project_root)}|"
             f"{_file_signature(resolved_policies_path)}|{_file_signature(lessons_path)}"
         ),
     )
@@ -299,7 +316,8 @@ def render_query_context(
     route = route_query(query, query_class, scopes=scopes)
     query_class = route.query_class
     resolved_graph_path = graph_path or find_graph_path()
-    source_signature = source_state_signature(resolved_graph_path.parent)
+    project_root = project_root_for_graph(resolved_graph_path)
+    source_signature = source_state_signature(project_root)
     plan = plan_context(
         query_class,
         query,
@@ -319,7 +337,8 @@ def render_query_context(
             f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
             f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"
             f"{_cache_metadata_signature(response_metadata)}|"
-            f"{source_mode}|{memory_scopes}|{source_signature}|{_session_signature()}"
+            f"{source_mode}|{memory_scopes}|{source_signature}|"
+            f"{_session_signature(project_root)}"
             f"|{anchor_paths}|{include_snippets}|{snippet_limit}|"
             f"{snippet_context_lines}|{snippet_max_lines}"
         ),
@@ -348,7 +367,7 @@ def render_query_context(
     compiled = GraphRuntime(
         graph,
         source_planner=QuerySourcePlanner(
-            resolved_graph_path.parent,
+            project_root,
             graph_path=resolved_graph_path,
         ),
         source_mode=source_mode,
@@ -383,7 +402,11 @@ def render_query_context(
         message = f"GraphGraph abstained: {reason}."
         if json_anchors:
             payload: dict[str, object] = {
-                "actionable": _actionable_receipt(result, response_metadata),
+                "actionable": _actionable_receipt(
+                    result,
+                    response_metadata,
+                    query_class=query_class,
+                ),
                 "anchors": [],
                 "packet": "",
                 "control": control,
@@ -415,7 +438,11 @@ def render_query_context(
     if json_anchors and (show_anchors or include_snippets):
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         payload = {
-            "actionable": _actionable_receipt(result, response_metadata),
+            "actionable": _actionable_receipt(
+                result,
+                response_metadata,
+                query_class=query_class,
+            ),
             "anchors": [
                 {
                     "id": match.node.id,
@@ -620,6 +647,8 @@ def _compiled_control_receipt(
 def _actionable_receipt(
     result: object,
     response_metadata: dict[str, object] | None,
+    *,
+    query_class: str,
 ) -> dict[str, object]:
     metadata = getattr(result, "metadata", {})
     answerability = metadata.get("answerability", {})
@@ -651,17 +680,75 @@ def _actionable_receipt(
             if isinstance(item, dict)
         ]
 
+    priority_ids: list[str] = []
+    if isinstance(facet_coverage, dict):
+        for facet in facet_coverage.get("fulfilled", ()):
+            if not isinstance(facet, dict):
+                continue
+            priority_ids.extend(
+                str(node_id)
+                for node_id in facet.get("evidence", ())
+                if node_id
+            )
+    document_status = metadata.get("document_status_evidence", {})
+    if isinstance(document_status, dict):
+        priority_ids[0:0] = [
+            str(node_id)
+            for node_id in document_status.get("evidence", ())
+            if node_id
+        ]
+    priority_rank = {
+        node_id: rank
+        for rank, node_id in enumerate(dict.fromkeys(priority_ids))
+    }
+    ranked_matches = sorted(
+        enumerate(getattr(result, "matches", ())),
+        key=lambda item: (
+            0 if item[1].node.id in priority_rank else 1,
+            priority_rank.get(item[1].node.id, item[0]),
+            item[0],
+        ),
+    )
+    evidence_points = [
+        {
+            "id": match.node.id,
+            "label": match.node.label,
+            "path": match.node.path,
+            "line": match.node.line,
+            "kind": match.node.kind,
+        }
+        for _index, match in ranked_matches[:5]
+    ]
+    change_points = (
+        []
+        if query_class in {"doc_summary", "negative_query"}
+        else [
+            point
+            for point in evidence_points
+            if str(point["kind"]) not in _DOCUMENT_EVIDENCE_KINDS
+        ]
+    )
+    evidence_role = (
+        "document_status"
+        if document_status
+        else "documentation"
+        if query_class == "doc_summary"
+        else "absence_check"
+        if query_class == "negative_query"
+        else "structural_context"
+    )
+
     return {
         "status": answerability.get("status", "unknown"),
-        "change_points": [
-            {
-                "id": match.node.id,
-                "label": match.node.label,
-                "path": match.node.path,
-                "line": match.node.line,
-            }
-            for match in getattr(result, "matches", ())[:5]
-        ],
+        "evidence_role": evidence_role,
+        "evidence_points": evidence_points,
+        "change_points": change_points,
+        "implementation": {
+            "authorized": False,
+            "reason": "retrieval evidence does not authorize source changes",
+            "documented_gap_policy": "a documented absence is evidence, not a work order",
+        },
+        "document_status": document_status,
         "missing_evidence": list(facet_coverage.get("unfulfilled", ())) if isinstance(facet_coverage, dict) else [],
         "tests": {
             "direct": compact_tests("direct"),
@@ -686,12 +773,13 @@ def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
     )
 
 
-def _session_signature() -> tuple[tuple[str, int, int, int], ...]:
+def _session_signature(start: Path | None = None) -> tuple[tuple[str, int, int, int], ...]:
     from ..retrieval.git_utils import get_git_modified_files
 
     signature = []
-    for path, change_count in get_git_modified_files().items():
-        source_path = Path(path)
+    root = start.resolve() if start is not None else Path.cwd().resolve()
+    for path, change_count in get_git_modified_files(root).items():
+        source_path = root / path
         try:
             stat = source_path.stat()
             signature.append((path, change_count, stat.st_mtime_ns, stat.st_size))

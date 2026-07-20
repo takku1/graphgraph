@@ -16,7 +16,13 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
 
 from ..concepts import concept_link_health
 from ..graph.core import Graph
-from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
+from ..io import (
+    find_graph_path,
+    load_any,
+    project_root_for_graph,
+    save_validated_graph,
+    validate_graph_file,
+)
 from ..packets.validation import ValidationResult, validate_any
 from ..retrieval.git_utils import get_git_ignored_paths, get_git_worktree_paths
 from ..runtime.manifest import Manifest, compute_file_hash
@@ -234,6 +240,8 @@ def refresh_saved_graph(
     already represented by the graph, making repeated sync calls idempotent
     without a repository walk.
     """
+    if directory == Path("."):
+        directory = project_root_for_graph(output_path)
     directory = directory.resolve()
     current_graph = load_any(output_path)
     changed = list(dict.fromkeys(changed_paths or ()))
@@ -293,6 +301,8 @@ def refresh_saved_graph(
 
 def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict[str, object]:
     """Read-only manifest check for stale Git candidates in O(changed files)."""
+    if directory == Path("."):
+        directory = project_root_for_graph(output_path)
     directory = directory.resolve()
     changed, deleted = get_git_worktree_paths(directory)
     manifest = Manifest.load(manifest_path_for_graph(output_path))
@@ -986,7 +996,10 @@ def render_native_context(
 ) -> tuple[str, GraphBuildStatus]:
     import time
     started = time.monotonic()
-    output_path = graph_path or Path(".graphgraph/graph.gg")
+    if graph_path is not None and directory == Path("."):
+        directory = project_root_for_graph(graph_path)
+    directory = directory.resolve()
+    output_path = graph_path or directory / ".graphgraph" / "graph.gg"
     status = ensure_native_graph(
         directory=directory,
         output_path=output_path,

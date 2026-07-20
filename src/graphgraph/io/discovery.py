@@ -18,6 +18,21 @@ _EXTERNAL_GRAPH_CANDIDATES = [
     "graphify/graph.json",
 ]
 
+def project_root_for_graph(graph_path: Path) -> Path:
+    """Resolve the project that owns a graph artifact.
+
+    Native graphs and validation snapshots may sit below ``.graphgraph``.
+    Walking to that boundary prevents an explicit foreign graph path from
+    inheriting Git state, semantic caches, policies, or lessons from the
+    caller's current working directory.
+    """
+    resolved = graph_path.resolve()
+    graphgraph_dir = next(
+        (parent for parent in resolved.parents if parent.name == ".graphgraph"),
+        None,
+    )
+    return graphgraph_dir.parent if graphgraph_dir is not None else resolved.parent
+
 
 def find_external_graph_path(workspace_root: Path = Path(".")) -> Path | None:
     """Find a non-native graph that can be ingested explicitly.

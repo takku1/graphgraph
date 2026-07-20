@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..graph.core import Graph, Node
-from ..io import find_graph_path, load_any_cached
+from ..io import find_graph_path, load_any_cached, project_root_for_graph
 from .context import resolve_start_nodes
 
 # Kinds that never have a source-file location -- a label match against one
@@ -85,10 +85,7 @@ def render_source_snippets(
 
 
 def _graph_root(graph_path: Path) -> Path:
-    resolved = graph_path.resolve()
-    if resolved.parent.name == ".graphgraph":
-        return resolved.parent.parent
-    return Path.cwd().resolve()
+    return project_root_for_graph(graph_path)
 
 
 def _resolve_source_path(graph: Graph, root: Path, node: Node) -> Path | None:

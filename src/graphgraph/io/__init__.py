@@ -18,6 +18,7 @@ from .discovery import (
     find_graph_path,
     find_lessons_path,
     find_policies_path,
+    project_root_for_graph,
 )
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "find_graph_path",
     "find_lessons_path",
     "find_policies_path",
+    "project_root_for_graph",
     "clear_graph_cache",
     "graph_to_json",
     "load_any",
