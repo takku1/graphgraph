@@ -5,7 +5,9 @@ GraphGraph graphs. It is dictionary-coded, sequential to load, and intentionally
 does not carry generic object-map overhead from JSON/msgpack/SQL rows.
 
 Legacy text ``.gg`` adjacency files are still readable through ``io.load_gg``;
-new ``.gg`` writes use this binary format.
+the brief GGB2/``.ggb`` bake-off format remains readable for explicit
+migration. New writes use only the canonical ``.gg`` suffix and this binary
+format.
 """
 
 from __future__ import annotations

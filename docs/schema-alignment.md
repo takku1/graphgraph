@@ -71,8 +71,8 @@ python -m graphgraph ingest --input graphify-out/graph.json --output .graphgraph
 ```
 
 Do not rely on implicit discovery of external graph directories. The default
-graph lookup should prefer `.graphgraph/graph.gg`; `.graphgraph/graph.json`
-remains a compatibility/import path.
+graph lookup accepts only `.graphgraph/graph.gg`; `.graphgraph/graph.json` and
+`.graphgraph/graph.ggb` remain explicit compatibility/import paths.
 Normal install, scan, context, query, and MCP workflows do not touch external
 graph tools or their generated output directories unless an explicit input path
 is supplied.

@@ -335,10 +335,13 @@ promotion criterion because every backend deserializes into the same in-memory
 `Graph` dataclass before retrieval runs.
 
 The old human-readable text `.gg` adjacency format remains readable for
-backward compatibility, but new `.gg` writes use the full-fidelity binary store.
+backward compatibility, and the brief `.ggb`/GGB2 bake-off format remains an
+explicit migration input. New writes use only the full-fidelity binary `.gg`
+store.
 
 Operational rule: default native scans should write `.graphgraph/graph.gg`;
-JSON and legacy text `.gg` should remain readable for compatibility.
+automatic discovery should select only that path. JSON, `.ggb`, and legacy text
+`.gg` remain readable only through explicit paths or `ingest`.
 
 ## Live Query Noise
 

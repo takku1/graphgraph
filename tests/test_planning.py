@@ -514,7 +514,7 @@ class PlanningTest(unittest.TestCase):
 
             gg_dir = root / ".graphgraph"
             gg_dir.mkdir()
-            mock_graph = gg_dir / "graph.json"
+            mock_graph = gg_dir / "graph.gg"
             mock_graph.write_text("{}", encoding="utf-8")
 
             self.assertEqual(find_graph_path(workspace_root=root), mock_graph)
@@ -529,6 +529,11 @@ class PlanningTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 find_graph_path(workspace_root=root)
             self.assertEqual(find_graph_path(workspace_root=root, include_external=True), graphify_graph)
+
+            legacy_graph = gg_dir / "graph.json"
+            legacy_graph.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(FileNotFoundError, "Migrate explicitly"):
+                find_graph_path(workspace_root=root)
 
             mock_policies = root / "policies.json"
             mock_policies.write_text("[]", encoding="utf-8")

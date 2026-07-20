@@ -23,7 +23,6 @@ from graphgraph.mcp import dispatch
 from graphgraph.packets import (
     render_gg_max,
 )
-from graphgraph.packets.validation import validate_graph_json
 from graphgraph.scanner import scan_directory
 from graphgraph.services.native import (
     GraphBuildStatus,
@@ -405,7 +404,7 @@ class CliMcpTest(unittest.TestCase):
 
             self.assertEqual(graph_path.read_text(encoding="utf-8"), before)
 
-    def test_bare_scan_reuses_single_existing_graph_shape_and_owns_its_manifest(self) -> None:
+    def test_bare_scan_writes_canonical_gg_despite_legacy_store(self) -> None:
         from graphgraph.cli.commands import cmd_scan
 
         class Args:
@@ -439,13 +438,23 @@ class CliMcpTest(unittest.TestCase):
 
             cmd_scan(args)
 
-            refreshed = load_any(graph_path)
-            self.assertEqual(refreshed.metadata["scan_depth"], "symbols")
-            self.assertEqual(refreshed.metadata["docs"], "true")
-            self.assertFalse((root / ".graphgraph" / "graph.gg").exists())
-            self.assertTrue((root / ".graphgraph" / "graph.json.manifest.json").exists())
+            canonical_path = root / ".graphgraph" / "graph.gg"
+            refreshed = load_any(canonical_path)
+            self.assertEqual(
+                refreshed.metadata["scan_depth"],
+                "files",
+                "legacy store metadata is not reused implicitly",
+            )
+            self.assertEqual(
+                refreshed.metadata["docs"],
+                "false",
+                "legacy store metadata is not reused implicitly",
+            )
+            self.assertTrue(canonical_path.exists())
+            self.assertTrue((root / ".graphgraph" / "graph.gg.manifest.json").exists())
+            self.assertTrue(graph_path.exists(), "legacy input is not deleted implicitly")
 
-    def test_graph_auto_detection_refuses_multiple_native_candidates(self) -> None:
+    def test_graph_auto_detection_uses_only_canonical_gg(self) -> None:
         from graphgraph.io import find_graph_path
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -455,7 +464,10 @@ class CliMcpTest(unittest.TestCase):
             save_graph(sample_graph(), graph_dir / "graph.json")
             save_graph(sample_graph(), graph_dir / "graph.gg")
 
-            with self.assertRaisesRegex(RuntimeError, "Multiple GraphGraph files"):
+            self.assertEqual(find_graph_path(root), graph_dir / "graph.gg")
+
+            (graph_dir / "graph.gg").unlink()
+            with self.assertRaisesRegex(FileNotFoundError, "graphgraph ingest"):
                 find_graph_path(root)
 
     def test_scan_validated_graph_repairs_invalid_incremental_scan(self) -> None:
@@ -463,7 +475,7 @@ class CliMcpTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path = root / ".graphgraph" / "graph.gg"
             graph_path.parent.mkdir(parents=True, exist_ok=True)
             bad_graph = Graph(nodes={"A": Node("A", "A")}, edges=[Edge("A", "B", "calls")])
             clean_graph = sample_graph()
@@ -473,8 +485,11 @@ class CliMcpTest(unittest.TestCase):
 
             self.assertTrue(status.repaired)
             self.assertTrue(graph_path.exists())
-            result = validate_graph_json(graph_path.read_text(encoding="utf-8"))
+            from graphgraph.io import validate_graph_file
+
+            result = validate_graph_file(graph_path)
             self.assertTrue(result.ok, result.errors)
+            self.assertEqual(result.format, "graph.gg")
             self.assertEqual(result.node_count, 3)
 
     def test_custom_scan_output_and_manifest_never_enter_their_own_graph(self) -> None:
@@ -2205,7 +2220,7 @@ class CliMcpTest(unittest.TestCase):
         env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path = root / ".graphgraph" / "graph.gg"
             graph_path.parent.mkdir(parents=True)
             save_graph(sample_graph(), graph_path)
             proc = subprocess.run(

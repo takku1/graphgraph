@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from ..graph.core import Graph, Node
 from . import git_utils
 from .models import Match
+from .scoping import _is_test_node
 from .text import node_search_text, tokenize
 
 DEPENDENCY_QUERY_TERMS = {"dependency", "dependencies", "external", "import", "imports", "module", "package", "vendor"}
@@ -572,19 +573,6 @@ def _search_token_index(graph: Graph) -> dict[str, tuple[str, ...]]:
     cached = {term: tuple(sorted(node_ids)) for term, node_ids in by_term.items()}
     graph._search_token_cache = (key, cached)
     return cached
-
-
-def _is_test_node(node: Node) -> bool:
-    path = node.path.replace("\\", "/").lower() if node.path else ""
-    label = node.label.lower()
-    return (
-        path.startswith("tests/")
-        or "/tests/" in path
-        or path.startswith("test/")
-        or "/test/" in path
-        or label.startswith("test_")
-        or label.endswith("_test")
-    )
 
 
 def _is_generated_node(node: Node) -> bool:

@@ -739,7 +739,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
             output_path = find_graph_path(root)
             existing_graph = load_any(output_path)
         except FileNotFoundError:
-            output_path = Path(".graphgraph/graph.gg")
+            output_path = root / ".graphgraph" / "graph.gg"
     if existing_graph is None and output_path.exists():
         existing_graph = load_any(output_path)
     existing_metadata = existing_graph.metadata if existing_graph is not None else {}
@@ -971,7 +971,7 @@ def cmd_ingest(args: argparse.Namespace) -> None:
 
 def cmd_export(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if args.graph else find_graph_path()
-    output_path = Path(args.output) if args.output else Path(str(graph_path).replace(".json", ".gg"))
+    output_path = Path(args.output) if args.output else graph_path.with_suffix(".gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     graph = load_any(graph_path)
     save_gg(graph, output_path)

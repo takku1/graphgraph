@@ -136,7 +136,8 @@ Use a ladder instead of a single favorite format:
 
 ## Near-Term Direction
 
-1. Make `.graphgraph/graph.gg` and `.graphgraph/graph.json` the native stores.
+1. Keep `.graphgraph/graph.gg` as the single native store; retain JSON only as
+   an explicit interchange and debugging format.
 2. Enforce active-graph quality checks so symbol/doc scans do not silently
    degrade to file-only graphs.
 3. Add hybrid retrieval: lexical anchors, graph expansion, optional embeddings,

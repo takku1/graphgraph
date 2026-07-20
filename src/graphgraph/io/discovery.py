@@ -4,6 +4,9 @@ from pathlib import Path
 
 _NATIVE_GRAPH_CANDIDATES = [
     ".graphgraph/graph.gg",
+]
+
+_LEGACY_GRAPH_CANDIDATES = [
     ".graphgraph/graph.ggb",
     ".graphgraph/graph.json",
 ]
@@ -41,6 +44,18 @@ def find_graph_path(workspace_root: Path = Path("."), *, include_external: bool 
         raise RuntimeError(
             "Multiple GraphGraph files are present; refusing ambiguous auto-detection: "
             f"{[str(path) for path in existing]}. Specify --graph/--output explicitly or remove the stale artifact."
+        )
+    legacy = [
+        workspace_root / candidate
+        for candidate in _LEGACY_GRAPH_CANDIDATES
+        if (workspace_root / candidate).exists()
+    ]
+    if legacy:
+        raise FileNotFoundError(
+            "Found legacy GraphGraph store(s), but automatic discovery only accepts "
+            f".graphgraph/graph.gg: {[str(path) for path in legacy]}. Migrate explicitly "
+            "with `graphgraph ingest --input <legacy-path> --output .graphgraph/graph.gg`, "
+            "or pass the legacy path through --graph for a read-only operation."
         )
     raise FileNotFoundError(
         "Could not find a native GraphGraph file in default paths: "

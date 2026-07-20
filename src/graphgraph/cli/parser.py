@@ -227,8 +227,18 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--history", action="store_true", default=False)
     remove.set_defaults(func=cmd_remove)
 
-    ingest = sub.add_parser("ingest", help="Ingest any graph format (.gg, .ggb, .json, .csv, .tsv) into .graphgraph/graph.gg.")
-    ingest.add_argument("--input", "-i", help="Input file (.gg, .json, .csv, .tsv). Auto-detected if omitted.")
+    ingest = sub.add_parser(
+        "ingest",
+        help=(
+            "Migrate or ingest .gg, legacy .ggb, JSON, CSV, or TSV into the "
+            "single native .graphgraph/graph.gg store."
+        ),
+    )
+    ingest.add_argument(
+        "--input",
+        "-i",
+        help="Explicit input file (.gg, .ggb, .json, .csv, .tsv).",
+    )
     ingest.add_argument("--output", "-o", help="Output path (default: .graphgraph/graph.gg).")
     ingest.set_defaults(func=cmd_ingest)
 

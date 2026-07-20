@@ -96,9 +96,27 @@ def _package_scope(path: str) -> str:
     return "/".join(parts[:-1]) if len(parts) > 1 else ""
 
 def _is_test_path(path: str) -> bool:
-    normalized = path.replace("\\", "/").casefold()
-    name = normalized.rsplit("/", 1)[-1]
-    return "/tests/" in f"/{normalized}" or name.startswith("test_") or name.endswith(("_test.py", ".test.ts", ".spec.ts"))
+    """Identify test files without promoting production modules by name alone."""
+    normalized = path.replace("\\", "/").strip("/").casefold()
+    parts = tuple(part for part in normalized.split("/") if part)
+    if not parts:
+        return False
+    directories, name = parts[:-1], parts[-1]
+    if set(directories) & {"test", "tests", "__tests__"}:
+        return True
+    if re.search(
+        r"\.(?:test|spec)\.(?:py|js|jsx|ts|tsx|mjs|cjs)$",
+        name,
+    ) or name.endswith(("_test.go", "_spec.rb")):
+        return True
+    # Python permits root-level test_*.py and *_test.py files. Inside `src/`,
+    # however, that spelling is also a legitimate production module name
+    # (for example retrieval/test_recommendations.py), so require stronger
+    # structural evidence there.
+    python_convention = name.endswith(".py") and (
+        name.startswith("test_") or name.endswith("_test.py")
+    )
+    return python_convention and "src" not in directories
 
 def _is_test_node(node: object) -> bool:
     facts = {

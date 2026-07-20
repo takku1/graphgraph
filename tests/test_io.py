@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from conftest import sample_graph
 
@@ -449,6 +450,91 @@ class IOTest(unittest.TestCase):
             self.assertTrue(path.exists())
             g2 = load_any(path)
             self.assertEqual(set(g.nodes), set(g2.nodes))
+
+    def test_native_save_validates_graph_without_materializing_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg"
+            with patch(
+                "graphgraph.io.core.graph_to_json",
+                side_effect=AssertionError("native saves must not serialize JSON"),
+            ):
+                result = save_validated_graph(sample_graph(), path)
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.format, "graph.gg")
+            self.assertEqual(set(load_any(path).nodes), set(sample_graph().nodes))
+
+    def test_ggb_is_read_only_and_migrates_to_gg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical = root / "graph.gg"
+            legacy = root / "graph.ggb"
+            save_gg(sample_graph(), canonical)
+            canonical.replace(legacy)
+
+            loaded = load_any(legacy)
+            self.assertEqual(set(loaded.nodes), set(sample_graph().nodes))
+            with self.assertRaisesRegex(ValueError, "read-only migration format"):
+                save_graph(sample_graph(), legacy)
+            with self.assertRaisesRegex(ValueError, "read-only migration format"):
+                save_validated_graph(sample_graph(), legacy)
+            with self.assertRaisesRegex(ValueError, "must use the .gg suffix"):
+                save_gg(sample_graph(), legacy)
+
+    def test_explicit_test_root_remains_attributed_direct_evidence(self) -> None:
+        from graphgraph.retrieval.context import affected_test_recommendations
+
+        graph = Graph(
+            nodes={
+                "SAVE": Node(
+                    "SAVE",
+                    "save_validated_graph",
+                    "function",
+                    "src/graphgraph/io/core.py",
+                ),
+                "TEST": Node(
+                    "TEST",
+                    "test_native_save_avoids_json",
+                    "function",
+                    "tests/test_io.py",
+                ),
+            },
+            edges=[Edge("TEST", "SAVE", "calls")],
+        )
+
+        affected = affected_test_recommendations(
+            graph,
+            ("SAVE", "TEST"),
+            {"SAVE", "TEST"},
+        )
+
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertEqual(affected["direct"][0]["distance"], 1)
+        self.assertEqual(
+            affected["commands"],
+            ["python -m pytest tests/test_io.py"],
+        )
+
+    def test_test_path_detection_requires_structural_evidence_under_src(self) -> None:
+        from graphgraph.retrieval.scoping import _is_test_node, _is_test_path
+
+        production_path = "src/graphgraph/retrieval/test_recommendations.py"
+        self.assertFalse(_is_test_path(production_path))
+        self.assertFalse(_is_test_node(Node(
+            "PRODUCTION",
+            "affected_test_recommendations",
+            "function",
+            production_path,
+        )))
+
+        self.assertTrue(_is_test_path("tests/test_recommendations.py"))
+        self.assertTrue(_is_test_path("src/ui/recommendations.test.ts"))
+        self.assertTrue(_is_test_node(Node(
+            "TEST",
+            "test_recommendations",
+            "function",
+            "tests/test_recommendations.py",
+        )))
 
     def test_load_csv_edges_basic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

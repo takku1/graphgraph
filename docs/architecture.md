@@ -20,6 +20,29 @@ They are compatibility inputs, not default runtime sources. Installing
 GraphGraph and running normal scan/query/context commands does not invoke or
 read Graphify, code-review-graph, or other graph-tool outputs.
 
+## Native Storage Contract
+
+The only automatically discovered native store is
+`.graphgraph/graph.gg`. New `.gg` files use the full-fidelity, dictionary-coded
+GGB3 binary encoding. The in-memory `Graph`/`Node`/`Edge` model remains the
+canonical logical IR.
+
+Legacy `.ggb`/GGB2, human-readable adjacency `.gg`, graph JSON, CSV, and TSV are
+explicit migration or interchange inputs. They remain readable through
+`load_any`/`ingest`, but GraphGraph does not create new `.ggb` stores or
+auto-select legacy files as the active project graph.
+
+The compact `#gg` text returned to an LLM is a packet encoding, not the binary
+`.gg` persistence encoding:
+
+```text
+source -> Graph IR -> binary graph.gg -> selected subgraph -> #gg packet
+                                                    \-> JSON receipt envelope
+```
+
+JSON remains necessary for MCP/CLI control receipts and optional interchange,
+not for the native graph write path.
+
 ## Shared IR
 
 Every source route compiles to the same logical shape:
@@ -32,8 +55,8 @@ To support compatibility with tools like Graphify, code-review graph stores, and
 CSV edge lists, the internal loader permits loose schema binding with explicit
 fallback mappings (e.g., fallback from `label` to `name` or `id`, `kind` to
 `file_type` or `type`, `path` to `source_file`, and `summary` to
-`properties.description`). This is an ingestion convenience. Native graphgraph
-graphs live under `.graphgraph/`.
+`properties.description`). This is an ingestion convenience. The native
+GraphGraph artifact is `.graphgraph/graph.gg`.
 
 ## Source Routes
 

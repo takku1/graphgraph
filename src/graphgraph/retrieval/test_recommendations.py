@@ -305,14 +305,24 @@ def affected_test_recommendations(
     transitive: list[dict[str, object]] = []
     for node_id, distance in sorted(distances.items(), key=lambda item: (item[1], item[0])):
         node = graph.nodes.get(node_id)
-        if distance == 0 or node is None or not _is_test_node(node):
+        if node is None or not _is_test_node(node):
             continue
         evidence_edges = evidence_by_node.get(node_id, ())
+        effective_distance = distance
+        if distance == 0:
+            # A compound affected-test query can name both an implementation
+            # symbol and an exact test. The test then becomes a traversal root,
+            # but it is still direct test evidence when a calls/references/tests
+            # edge connects it to another selected root. Do not let the root
+            # designation erase evidence that is present in the packet.
+            if node_id not in selected_nodes or not evidence_edges:
+                continue
+            effective_distance = 1
         item = {
             "id": node.id,
             "label": node.label,
             "path": node.path,
-            "distance": distance,
+            "distance": effective_distance,
             "in_packet": node_id in selected_nodes,
             "evidence": [
                 {
@@ -350,7 +360,7 @@ def affected_test_recommendations(
                 if start in graph.nodes
             ],
         }
-        (direct if distance == 1 else transitive).append(item)
+        (direct if effective_distance == 1 else transitive).append(item)
     def recommendation_rank(item: dict[str, object]) -> tuple[object, ...]:
         evidence = item.get("evidence", [])
         max_confidence = max(

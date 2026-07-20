@@ -14,7 +14,12 @@ from ..storage.backends import (
     save_graph_binary,
 )
 
-_BINARY_GRAPH_SUFFIXES = frozenset({".gg", ".ggb"})
+_NATIVE_GRAPH_SUFFIX = ".gg"
+_LEGACY_BINARY_GRAPH_SUFFIX = ".ggb"
+_READABLE_BINARY_GRAPH_SUFFIXES = frozenset({
+    _NATIVE_GRAPH_SUFFIX,
+    _LEGACY_BINARY_GRAPH_SUFFIX,
+})
 # Self-describing version markers for the legacy text adjacency `.gg` format.
 _GG_TEXT_VERSIONS = frozenset({"gg/1", "gg/2"})
 # Column names that identify a header row in a CSV/TSV edge list.
@@ -154,9 +159,14 @@ def _float_or(value: object, default: float) -> float:
 
 def save_graph(graph: Graph, path: Path) -> None:
     suffix = path.suffix.lower()
-    if suffix in _BINARY_GRAPH_SUFFIXES:
+    if suffix == _NATIVE_GRAPH_SUFFIX:
         save_gg(graph, path)
         return
+    if suffix == _LEGACY_BINARY_GRAPH_SUFFIX:
+        raise ValueError(
+            ".ggb is a read-only migration format; write the canonical native "
+            "store as .gg"
+        )
     path.write_text(graph_to_json(graph) + "\n", encoding="utf-8")
 
 
@@ -220,6 +230,22 @@ def _portable_pagerank_payload(graph: Graph) -> dict[str, object]:
 
 def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
     suffix = path.suffix.lower()
+    if suffix == _LEGACY_BINARY_GRAPH_SUFFIX:
+        raise ValueError(
+            ".ggb is a read-only migration format; write the canonical native "
+            "store as .gg"
+        )
+    if suffix == _NATIVE_GRAPH_SUFFIX:
+        result = validate_graph_object(graph, format_name="graph.gg")
+        if not result.ok:
+            raise ValueError(
+                "Refusing to write invalid native graph: "
+                + "; ".join(result.errors[:5])
+                + (f"; ... {len(result.errors) - 5} more" if len(result.errors) > 5 else "")
+            )
+        save_gg(graph, path)
+        return result
+
     payload = graph_to_json(graph)
     result = validate_graph_json(payload)
     if not result.ok:
@@ -228,10 +254,6 @@ def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
             + "; ".join(result.errors[:5])
             + (f"; ... {len(result.errors) - 5} more" if len(result.errors) > 5 else "")
         )
-
-    if suffix in _BINARY_GRAPH_SUFFIXES:
-        save_graph(graph, path)
-        return validate_graph_object(graph, format_name="graph.gg")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -350,6 +372,11 @@ def load_gg_text(path: Path) -> Graph:
 
 def save_gg(graph: Graph, path: Path) -> None:
     """Save a Graph as the native full-fidelity binary .gg store."""
+    if path.suffix.lower() != _NATIVE_GRAPH_SUFFIX:
+        raise ValueError(
+            f"native GraphGraph stores must use the .gg suffix, not "
+            f"{path.suffix or '<none>'}"
+        )
     save_graph_binary(graph, path)
 
 
@@ -407,6 +434,9 @@ _graph_load_cache: dict[tuple[str, bool], tuple[int, int, Graph]] = {}
 def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
     """Load a graph from any supported format: .gg, .ggb, .json, .csv, .tsv.
 
+    ``.gg`` is the sole writable native store. The other suffixes are explicit
+    migration/interchange inputs; ``.ggb`` is retained only as a read path.
+
     Memoized by (resolved path, normalize_external_refs) plus an (mtime, size)
     fingerprint, so repeated calls against an unchanged file within one
     long-lived process (e.g. the MCP server making many tool calls against
@@ -431,7 +461,7 @@ def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
             return cached[2]
 
     suffix = path.suffix.lower()
-    if suffix in _BINARY_GRAPH_SUFFIXES:
+    if suffix in _READABLE_BINARY_GRAPH_SUFFIXES:
         graph = load_gg(path)
     elif suffix in (".csv", ".tsv"):
         graph = load_csv_edges(path)
