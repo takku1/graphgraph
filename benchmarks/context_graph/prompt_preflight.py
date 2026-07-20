@@ -9,7 +9,6 @@ from pathlib import Path
 from model_reasoning_benchmark import load_expected, packet_edges, packet_node_ids
 from protocol_benchmark import get_token_counter
 
-
 ROOT = Path(__file__).resolve().parent
 PROTOCOL_OUT = ROOT / "out" / "protocol"
 PROMPTS_JSONL = PROTOCOL_OUT / "model_reasoning_prompts.jsonl"

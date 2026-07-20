@@ -2,8 +2,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path("src").resolve()))
+from graphgraph.graph.ontology import provenance_confidence, traversal_strength
 from graphgraph.io import load_any
-from graphgraph.ontology import provenance_confidence, traversal_strength
 
 graph = load_any(Path("benchmarks/context_graph/out/real_projects/graphs/herbie.json"))
 node_id = "www_doc_html"

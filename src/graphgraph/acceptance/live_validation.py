@@ -401,8 +401,8 @@ def derived_queries(graph: Any) -> list[tuple[str, str]]:
 
 
 def validate_queries(graph: Any, graph_path: Path, query_texts: Sequence[str]) -> list[dict[str, Any]]:
+    from graphgraph.packets.validation import validate_packet
     from graphgraph.services import render_query_context
-    from graphgraph.validate import validate_packet
 
     queries = [(query, "auto") for query in query_texts] if query_texts else derived_queries(graph)
     rows: list[dict[str, Any]] = []
@@ -506,8 +506,8 @@ def validate_query_actionability(query: str, data: dict[str, Any]) -> list[str]:
 
 
 def validate_gate_packets(graph: Any, graph_path: Path) -> list[dict[str, Any]]:
+    from graphgraph.packets.validation import validate_packet
     from graphgraph.services import render_final_packet
-    from graphgraph.validate import validate_packet
 
     outgoing = graph.outgoing()
     candidates = [

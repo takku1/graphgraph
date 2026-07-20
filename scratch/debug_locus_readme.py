@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path("src").resolve()))
-from graphgraph.doccode import doc_code_bias
+from graphgraph.concepts.doccode import doc_code_bias
 from graphgraph.io import load_any
 from graphgraph.planning.budgets import doc_intensity_score
 from graphgraph.retrieval.context import select_anchor_matches

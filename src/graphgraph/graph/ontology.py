@@ -44,6 +44,8 @@ DEFAULT_RELATIONS: dict[str, RelationSpec] = {
     "explains": RelationSpec("explains", "document", strength=0.95, description="Source text explains target concept or implementation detail."),
     "formalizes": RelationSpec("formalizes", "interpretation", strength=0.9, description="Source grounds a known algorithm, math, runtime, or model-interpretation concept."),
     "implements_algorithm": RelationSpec("implements_algorithm", "interpretation", strength=0.9, description="Source implements a known algorithmic or mathematical concept."),
+    "uses_semantic_operator": RelationSpec("uses_semantic_operator", "interpretation", strength=0.95, description="Source contains a frontend-verified normalized semantic operator."),
+    "performs_semantic_operation": RelationSpec("performs_semantic_operation", "interpretation", strength=0.95, description="Source performs a frontend-verified normalized semantic operation."),
     "relates": RelationSpec("relates", "generic", strength=0.35, weak=True, description="Generic relation."),
     "similar_to": RelationSpec("similar_to", "similarity", direction="symmetric", strength=0.4, weak=True),
     "contradicts": RelationSpec("contradicts", "logic", strength=0.9, description="Source contradicts target."),
@@ -90,6 +92,8 @@ PROVENANCE_CONFIDENCE = {
     "community": 0.8,
     "federation": 0.75,
     "python_ast_provider": 0.95,
+    "interpretation_registry": 0.9,
+    "interpretation_registry_fact": 1.0,
 }
 DEFAULT_PROVENANCE_CONFIDENCE = 0.6
 

@@ -3,10 +3,8 @@ from __future__ import annotations
 import csv
 import json
 from collections import defaultdict
-from pathlib import Path
 
 from protocol_benchmark import OUT, ROOT, get_token_counter
-
 
 CONSTRAINT_OUT = OUT / "constraints"
 RESULTS_CSV = CONSTRAINT_OUT / "constraint_context_results.csv"

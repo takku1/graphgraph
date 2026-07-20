@@ -6,9 +6,9 @@ full service layer from search code.
 """
 from __future__ import annotations
 
-from .graph.core import Graph
-from .retrieval.models import Match
-from .retrieval.search import search_nodes
+from ..graph.core import Graph
+from .models import Match
+from .search import search_nodes
 
 
 def suggest_node_ids(graph: Graph, hints: list[str], limit: int = 6) -> list[Match]:

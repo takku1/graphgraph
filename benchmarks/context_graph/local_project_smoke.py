@@ -6,16 +6,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.metrics import summarize_graph  # noqa: E402
-from graphgraph.scanner import scan_directory  # noqa: E402
+from graphgraph.analysis.metrics import summarize_graph  # noqa: E402
 from graphgraph.io import save_graph  # noqa: E402
-
+from graphgraph.scanner import scan_directory  # noqa: E402
 
 DEFAULT_PROJECTS = (
     "activation",

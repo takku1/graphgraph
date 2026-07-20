@@ -25,7 +25,6 @@ from protocol_benchmark import (
     score_packet,
 )
 
-
 SOURCE_OUT = OUT / "source_routes"
 RESULTS_CSV = SOURCE_OUT / "source_route_results.csv"
 SUMMARY_MD = SOURCE_OUT / "source_route_summary.md"

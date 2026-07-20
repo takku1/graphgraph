@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -15,7 +14,6 @@ if str(SRC) not in sys.path:
 
 from graphgraph.io import load_any  # noqa: E402
 from graphgraph.retrieval import search_nodes  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "live"
 REPORT_JSON = OUT / "search_hot_path.json"

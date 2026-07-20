@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from ..frontends import available_frontends
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..graph.traversal import POLICIES, traversal_policy
 from ..io import find_graph_path, load_any, save_gg, save_validated_graph, validate_graph_file
@@ -25,6 +24,7 @@ from ..platform import (
 )
 from ..retrieval import search_nodes
 from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..scanner.frontends import available_frontends
 from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
 from ..services.native import (
     build_project_status,

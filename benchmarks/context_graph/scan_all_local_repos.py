@@ -4,17 +4,17 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
 from collections import Counter
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.scanner import scan_directory
-from graphgraph.ontology import is_weak_relation
+from graphgraph.graph.ontology import is_weak_relation
 from graphgraph.io import save_graph
+from graphgraph.scanner import scan_directory
 
 OUT_DIR = ROOT / "benchmarks" / "context_graph" / "out" / "live"
 REPORT_MD = OUT_DIR / "all_local_repos_report.md"

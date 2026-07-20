@@ -6,19 +6,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.core import Edge, Graph  # noqa: E402
-from graphgraph.eval import estimate_tokens  # noqa: E402
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.core import Edge, Graph  # noqa: E402
+from graphgraph.graph.ontology import is_weak_relation, provenance_confidence, traversal_strength  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
-from graphgraph.ontology import is_weak_relation, provenance_confidence, traversal_strength  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.retrieval.text import tokenize  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 GRAPHS = OUT / "graphs"

@@ -7,10 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from graphgraph.eval import evaluate_graph, load_eval_tasks
-from graphgraph.metrics import compare_graphs
+from graphgraph.analysis.eval import evaluate_graph, load_eval_tasks
+from graphgraph.analysis.metrics import compare_graphs
 from graphgraph.io import load_any
-
 
 ROOT = Path(__file__).resolve().parents[2]
 BENCH = ROOT / "benchmarks" / "context_graph"

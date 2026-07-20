@@ -15,7 +15,7 @@ from graphgraph import (
     Node,
     expire_node,
 )
-from graphgraph.doccode import summarize_doc_code_components, summarize_doc_code_coverage
+from graphgraph.concepts.doccode import summarize_doc_code_components, summarize_doc_code_coverage
 from graphgraph.io import (
     save_graph,
 )
@@ -841,7 +841,7 @@ class RetrievalTest(unittest.TestCase):
             )
 
     def test_load_eval_tasks_accepts_repo_manifest_shapes(self) -> None:
-        from graphgraph.eval import load_eval_tasks
+        from graphgraph.analysis.eval import load_eval_tasks
 
         with tempfile.TemporaryDirectory() as tmp:
             flat = Path(tmp) / "flat.json"
@@ -4409,5 +4409,5 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual(semantic["status"], "unavailable")
         self.assertFalse(semantic["supported"])
         self.assertEqual(semantic["minimum_supported_coverage_ratio"], 0.2)
-        self.assertIn("no exact registry-alias links", semantic["diagnostic_reason"])
+        self.assertIn("no verified registry-evidence links", semantic["diagnostic_reason"])
         self.assertEqual(semantic["retrieval_mode"], "lexical_document_fallback")

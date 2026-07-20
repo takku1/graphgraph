@@ -56,8 +56,8 @@ POLICIES: dict[str, TraversalPolicy] = {
     ),
     "reverse_lookup": TraversalPolicy(
         "reverse_lookup",
-        ("dependency", "execution", "type", "validation", "document", "hierarchy"),
-        ("imports", "imports_from", "calls", "implements", "tests", "references", "links", "contains"),
+        ("dependency", "execution", "type", "validation", "interpretation", "document", "hierarchy"),
+        ("imports", "imports_from", "calls", "implements", "tests", "uses_semantic_operator", "performs_semantic_operation", "implements_algorithm", "references", "links", "contains"),
         weak_edge_limit=12,
         min_confidence=0.0,
         direction="in",
@@ -80,14 +80,14 @@ POLICIES: dict[str, TraversalPolicy] = {
     "blast_radius": TraversalPolicy(
         "blast_radius",
         ("execution", "dependency", "dataflow", "validation", "configuration", "type", "interpretation"),
-        ("calls", "imports", "imports_from", "reads", "writes", "tests", "configures", "implements", "formalizes", "implements_algorithm", "contains", "references"),
+        ("calls", "imports", "imports_from", "reads", "writes", "tests", "configures", "implements", "formalizes", "implements_algorithm", "uses_semantic_operator", "performs_semantic_operation", "contains", "references"),
         weak_edge_limit=10,
         min_confidence=0.0,
     ),
     "subsystem_summary": TraversalPolicy(
         "subsystem_summary",
         ("hierarchy", "dependency", "execution", "interpretation", "document", "type"),
-        ("contains", "imports", "imports_from", "calls", "formalizes", "implements_algorithm", "links", "references", "implements", "explains", "discusses", "mentions", "section_of"),
+        ("contains", "imports", "imports_from", "calls", "formalizes", "implements_algorithm", "uses_semantic_operator", "performs_semantic_operation", "links", "references", "implements", "explains", "discusses", "mentions", "section_of"),
         weak_edge_limit=20,
         min_confidence=0.0,
     ),

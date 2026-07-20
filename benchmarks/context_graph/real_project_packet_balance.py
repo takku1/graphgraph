@@ -14,12 +14,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from benchmarks.context_graph.local_corpus import small_medium_paths  # noqa: E402
-from graphgraph.core import Edge, Graph  # noqa: E402
-from graphgraph.eval import estimate_tokens  # noqa: E402
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.core import Edge, Graph  # noqa: E402
 from graphgraph.io import save_graph  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
+from graphgraph.packets.validation import validate_packet  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
-from graphgraph.validate import validate_packet  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 RESULTS_CSV = OUT / "real_project_packet_balance.csv"

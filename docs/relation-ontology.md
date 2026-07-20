@@ -3,7 +3,7 @@
 Typed edges are the difference between a context graph and a noisy shape.
 
 `graphgraph` keeps relation semantics in `src/graphgraph/graph/ontology.py`.
-The compatibility import `graphgraph.ontology` remains available. Each
+The compatibility import `graphgraph.graph.ontology` remains available. Each
 relation has:
 
 - `family`

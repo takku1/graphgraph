@@ -15,7 +15,7 @@ try:  # Package import under pytest.
 except ImportError:  # Direct script execution from benchmarks/context_graph.
     from real_project_answerability_limit import REAL_GRAPHS, edge_key, make_tasks, recall  # type: ignore[no-redef]
 
-from graphgraph.eval import estimate_tokens  # noqa: E402
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
 from graphgraph.graph.ontology import relation_spec  # noqa: E402
 from graphgraph.graph.traversal import (  # noqa: E402
     BLAST_IMPACT_RELATIONS,

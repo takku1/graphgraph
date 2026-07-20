@@ -1,0 +1,804 @@
+"""Graph expansion: paths, blast radius, evidence reservation, and edge budgeting."""
+
+from __future__ import annotations
+
+import math
+
+from ..graph.core import Edge, Graph
+from ..graph.ontology import provenance_confidence, relation_spec
+from ..graph.traversal import (
+    BLAST_IMPACT_RELATIONS,
+    BLAST_IMPACT_SHARE,
+    BLAST_OUTGOING_RELATIONS,
+    BLAST_SUPPORT_RELATIONS,
+    BLAST_SUPPORT_SHARE,
+    relation_rank,
+    traversal_policy,
+)
+from ..planning import ContextPlan, compute_subgraph_stats
+from ..planning.shape import LOCAL_EDGE_DENSITY_CAP
+from .budgeting import budget_edges, enrich_runtime_context
+from .pruning import (
+    _context_node_score,
+    _is_structural_node,
+    _least_valuable_context_node,
+    _least_valuable_doc_node,
+    _node_edge_scores,
+)
+from .scoping import (
+    NON_STRUCTURAL_KINDS,
+    STRUCTURAL_RELATIONS,
+)
+
+
+def expand_context(
+    graph: Graph,
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    scopes: tuple[str, ...] = (),
+    query_terms: tuple[str, ...] = (),
+) -> tuple[set[str], list[Edge]]:
+    policy = traversal_policy(plan.query_class)
+    if plan.query_class == "blast_radius" and plan.node_budget is not None:
+        nodes, edges = _expand_blast_radius(graph, starts, plan, scopes)
+    elif plan.query_class == "affected_tests":
+        nodes, edges = _expand_affected_tests(graph, starts, plan, scopes)
+    else:
+        # `graph.expand` truncates the frontier to the node budget by edge
+        # weight, which is query-blind: a document with more sections than the
+        # budget loses sections by graph shape alone, so which ones survive is
+        # unrelated to what was asked. For document-oriented retrieval, bias the
+        # frontier ranking by each candidate section's BM25 relevance to the
+        # query so the truncation keeps the sections that actually answer it.
+        priority_bias: dict[str, float] = {}
+        doc_oriented = bool(query_terms) and (
+            plan.packet == "doc_summary" or plan.query_class == "doc_summary"
+        )
+        if doc_oriented:
+            from .relevance import section_priority_bias
+            priority_bias = section_priority_bias(graph, starts, query_terms)
+        nodes, edges = graph.expand(
+            list(starts),
+            hops=plan.hops,
+            max_nodes=plan.node_budget,
+            scopes=scopes,
+            direction=plan.direction,
+            decay_hubs=(plan.query_class == "blast_radius"),
+            allowed_relations=set(policy.preferred_relations),
+            priority_bias=priority_bias or None,
+        )
+    if plan.query_class == "multi_hop_path" and len(starts) >= 2:
+        nodes, edges = _reserve_paths_between_starts(graph, nodes, edges, starts, plan)
+    if plan.query_class == "subsystem_summary":
+        nodes, edges = _reserve_relation_family_evidence(graph, nodes, edges, starts, plan, limit=4)
+    edges = [
+        edge for edge in edges
+        if edge.confidence * provenance_confidence(edge.provenance) >= plan.min_confidence
+    ]
+    edges = sorted(edges, key=lambda e: (*relation_rank(e.type, policy), e.source, e.target))
+
+    # --- DYNAMIC EDGE DENSITY THROTTLE ---
+    effective_node_budget = plan.node_budget
+    if plan.node_budget is not None and len(nodes) > 10:
+        density = len(edges) / max(1, len(nodes))
+        if density > LOCAL_EDGE_DENSITY_CAP:
+            scale = max(0.4, min(1.0, LOCAL_EDGE_DENSITY_CAP / density))
+            effective_node_budget = max(25, int(plan.node_budget * scale))
+
+        # Cohesion-guided budget trim:
+        # If the subgraph has high cohesion (tightly coupled module), we can reduce budget to save tokens.
+        unique_undirected_edges = {(min(e.source, e.target), max(e.source, e.target)) for e in edges if e.source in nodes and e.target in nodes}
+        n = len(nodes)
+        possible_edges = n * (n - 1) // 2 if n > 1 else 0
+        cohesion = len(unique_undirected_edges) / possible_edges if possible_edges > 0 else 0.0
+        if cohesion > 0.40:
+            cohesion_scale = max(0.6, min(1.0, 1.0 - (cohesion - 0.4) * 0.67))
+            effective_node_budget = max(20, int((effective_node_budget or plan.node_budget) * cohesion_scale))
+
+    stats = compute_subgraph_stats(graph, nodes, edges)
+    weak_limit = adaptive_weak_edge_limit(plan.weak_edge_limit, stats.weak_edge_ratio, stats.relation_entropy, stats.edges)
+    edges = budget_edges(edges, max_nodes=effective_node_budget, weak_limit=weak_limit)
+    nodes, edges = reserve_start_evidence(
+        graph,
+        nodes,
+        edges,
+        tuple(starts),
+        plan,
+        effective_node_budget,
+        reserve_limit=4 if plan.query_class == "blast_radius" else 16,
+    )
+    nodes, edges = prune_doc_concept_noise(graph, nodes, edges, tuple(starts), plan, effective_node_budget)
+
+    # Dynamic Programming Connected Tree Knapsack Context Partitioning
+    if effective_node_budget is not None and len(nodes) > effective_node_budget:
+        # Fast local BFS to propagate relevance scores from starts to candidates in O(nodes) time
+        import collections
+
+        from .selection import connected_greedy_context_partition, tree_knapsack_context_partition
+        node_values = {s: 1.0 for s in starts}
+        outgoing = graph.outgoing()
+        incoming = graph.incoming()
+        queue = collections.deque(starts)
+        visited = set(starts)
+        while queue:
+            curr = queue.popleft()
+            val = node_values.get(curr, 1.0)
+            neighbors = [e.target for e in outgoing.get(curr, [])] + [e.source for e in incoming.get(curr, [])]
+            for n in neighbors:
+                if n in nodes and n not in visited:
+                    visited.add(n)
+                    node_values[n] = val * 0.85
+                    queue.append(n)
+
+        if plan.query_class == "blast_radius":
+            start_set = set(starts)
+            for edge in edges:
+                neighbor = edge.source if edge.target in start_set else edge.target if edge.source in start_set else ""
+                if not neighbor:
+                    continue
+                if edge.type in {"tests", "configures", "fixes"}:
+                    node_values[neighbor] = max(node_values.get(neighbor, 0.0), 1.5)
+                elif edge.target in start_set:
+                    node_values[neighbor] = max(node_values.get(neighbor, 0.0), 1.1)
+
+        # Query-conditioned section ranking: when a document contributes more
+        # sections than the budget can hold, graph distance alone gives every
+        # same-hop section the same value, so the survivors are effectively
+        # arbitrary. Modulate doc/section node values by their BM25 relevance to
+        # the query so the sections that actually answer it win the connected
+        # selection below. Structural nodes get a 1.0 multiplier (no-op).
+        if query_terms:
+            from .relevance import relevance_multipliers
+            candidate_nodes = [graph.nodes[nid] for nid in nodes if nid in graph.nodes]
+            multipliers = relevance_multipliers(candidate_nodes, query_terms)
+            start_set = set(starts)
+            for node_id, factor in multipliers.items():
+                if node_id not in start_set:
+                    node_values[node_id] = node_values.get(node_id, 0.85) * factor
+
+        partition_edges = list(edges)
+        current_tokens = stats.estimated_tokens_by_packet.get(plan.packet, max(1, len(nodes) * 8))
+        token_budget = max(
+            effective_node_budget,
+            int(round(current_tokens * effective_node_budget / max(1, len(nodes)))),
+        )
+        partition = (
+            tree_knapsack_context_partition
+            if plan.query_class == "multi_hop_path"
+            else connected_greedy_context_partition
+        )
+        partitioned_nodes = partition(
+            graph,
+            tuple(starts),
+            nodes,
+            node_values,
+            token_budget,
+            edges=edges,
+            packet=plan.packet,
+            max_nodes=effective_node_budget,
+            include_orphans=False,
+        )
+        if partitioned_nodes:
+            nodes = partitioned_nodes
+            edges = [e for e in edges if e.source in nodes and e.target in nodes]
+        if plan.query_class == "blast_radius":
+            nodes, edges = _reserve_blast_support_evidence(
+                nodes,
+                edges,
+                partition_edges,
+                starts,
+                effective_node_budget,
+            )
+
+    if plan.query_class == "multi_hop_path" and len(starts) >= 2:
+        nodes, edges = _reserve_paths_between_starts(graph, nodes, edges, starts, plan)
+    if plan.query_class == "subsystem_summary":
+        nodes, edges = _reserve_relation_family_evidence(graph, nodes, edges, starts, plan, limit=4)
+
+    edges = shape_edge_budget(edges, tuple(starts), plan, node_count=len(nodes))
+    return enrich_runtime_context(graph, nodes, edges, max_nodes=effective_node_budget)
+
+PATH_BEAM_WIDTH = 32
+
+# How strongly a policy-preferred relation is favoured over an unrecognized one
+# when scoring a path edge. Large enough that a path made of recognized
+# relations outranks a same-length path through incidental edges, but finite so
+# a non-preferred edge is still usable when it is the only available route --
+# the graded form of the old `recognized or candidates` hard fallback.
+PATH_PREFERRED_RELATION_BONUS = 6.0
+
+def _path_edge_strength(edge: Edge, policy) -> float:
+    """Evidence strength of a single edge for path scoring (higher is better)."""
+    strength = max(edge.traversal_val, 1e-6) * provenance_confidence(edge.provenance) * edge.confidence
+    if edge.type in policy.preferred_relations:
+        strength *= PATH_PREFERRED_RELATION_BONUS
+    return strength
+
+def _beam_best_path(
+    graph: Graph,
+    root: str,
+    target: str,
+    hops: int,
+    policy,
+    outgoing: dict[str, list[Edge]],
+    incoming: dict[str, list[Edge]],
+    beam_width: int = PATH_BEAM_WIDTH,
+) -> tuple[Edge, ...]:
+    """Strongest shortest path from root to target within `hops`, via beam search.
+
+    Level-synchronous: it explores hop by hop, so the returned path is still of
+    minimal length (like the previous BFS). The improvement is the tie-break --
+    among equally short paths it keeps the one with the greatest cumulative edge
+    strength (confidence x provenance x traversal value, with policy-preferred
+    relations favoured) instead of whichever the adjacency happened to yield
+    first. The beam bounds width to the top `beam_width` partial paths per level
+    so cost stays linear in hops, not exponential.
+    """
+    # Each beam entry: (cumulative_log_strength, node, path_edges). Log-space so
+    # per-edge strengths combine additively and long products stay stable.
+    beam: list[tuple[float, str, tuple[Edge, ...]]] = [(0.0, root, ())]
+    for _ in range(hops):
+        completions: list[tuple[float, tuple[Edge, ...]]] = []
+        next_best: dict[str, tuple[float, tuple[Edge, ...]]] = {}
+        for score, current, path in beam:
+            for edge in outgoing.get(current, []) + incoming.get(current, []):
+                neighbor = edge.target if edge.source == current else edge.source
+                if neighbor not in graph.nodes or not graph.nodes[neighbor].active:
+                    continue
+                if any(neighbor in (e.source, e.target) for e in path) or neighbor == root:
+                    continue  # no cycles back through the path or root
+                new_score = score + math.log(_path_edge_strength(edge, policy))
+                new_path = (*path, edge)
+                if neighbor == target:
+                    completions.append((new_score, new_path))
+                    continue
+                best = next_best.get(neighbor)
+                if best is None or new_score > best[0]:
+                    next_best[neighbor] = (new_score, new_path)
+        if completions:
+            # Target reached at this (minimal) depth: return the strongest.
+            return max(completions, key=lambda item: item[0])[1]
+        if not next_best:
+            break
+        beam = sorted(
+            ((score, node, path) for node, (score, path) in next_best.items()),
+            key=lambda item: item[0],
+            reverse=True,
+        )[:beam_width]
+    return ()
+
+def _reserve_paths_between_starts(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+) -> tuple[set[str], list[Edge]]:
+    """Reserve the strongest bounded path from the first anchor to each other."""
+    root = starts[0]
+    policy = traversal_policy(plan.query_class)
+    outgoing = graph.outgoing()
+    incoming = graph.incoming()
+    reserved_nodes = set(starts)
+    reserved_edges: list[Edge] = []
+
+    for target in starts[1:]:
+        found = _beam_best_path(graph, root, target, plan.hops, policy, outgoing, incoming)
+        for edge in found:
+            reserved_edges.append(edge)
+            reserved_nodes.update((edge.source, edge.target))
+
+    if not reserved_edges:
+        return nodes, edges
+
+    out_nodes = set(nodes) | reserved_nodes
+    while plan.node_budget is not None and len(out_nodes) > plan.node_budget:
+        removable = _least_valuable_context_node(graph, out_nodes, protected=reserved_nodes)
+        if removable is None:
+            break
+        out_nodes.remove(removable)
+
+    edge_by_key = {
+        (edge.source, edge.target, edge.type): edge
+        for edge in (*edges, *reserved_edges)
+        if edge.source in out_nodes and edge.target in out_nodes
+    }
+    return out_nodes, list(edge_by_key.values())
+
+def _expand_affected_tests(
+    graph: Graph,
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    scopes: tuple[str, ...],
+) -> tuple[set[str], list[Edge]]:
+    """Union direction-consistent implementation and test traversals.
+
+    A single ``both`` traversal permits an in-then-out zigzag. For a method,
+    that walks to its containing file and immediately fans out to every sibling
+    definition. Separate incoming and outgoing traversals retain callers/tests
+    and implementation dependencies without paying for that irrelevant fanout.
+    The 60/40 split keeps the union within the original node budget because the
+    duplicated start nodes are added back to the outgoing allocation.
+    """
+    policy = traversal_policy(plan.query_class)
+    if plan.node_budget is None:
+        incoming_budget = outgoing_budget = None
+    else:
+        start_count = min(len(starts), plan.node_budget)
+        incoming_budget = max(start_count, math.ceil(plan.node_budget * 0.60))
+        outgoing_budget = max(start_count, plan.node_budget - incoming_budget + start_count)
+
+    incoming_nodes, incoming_edges = graph.expand(
+        list(starts),
+        hops=plan.hops,
+        max_nodes=incoming_budget,
+        scopes=scopes,
+        direction="in",
+        allowed_relations=set(policy.preferred_relations),
+    )
+    outgoing_nodes, outgoing_edges = graph.expand(
+        list(starts),
+        hops=plan.hops,
+        max_nodes=outgoing_budget,
+        scopes=scopes,
+        direction="out",
+        allowed_relations=set(policy.preferred_relations),
+    )
+    seen: set[tuple[str, str, str]] = set()
+    edges: list[Edge] = []
+    for edge in (*incoming_edges, *outgoing_edges):
+        key = (edge.source, edge.target, edge.type)
+        if key not in seen:
+            edges.append(edge)
+            seen.add(key)
+    return incoming_nodes | outgoing_nodes, edges
+
+def _reserve_relation_family_evidence(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    *,
+    limit: int,
+) -> tuple[set[str], list[Edge]]:
+    """Keep one incident edge per available relation family for summaries."""
+    policy = traversal_policy(plan.query_class)
+    incident = []
+    for start in starts:
+        incident.extend(graph.outgoing().get(start, ()))
+        incident.extend(graph.incoming().get(start, ()))
+    recognized = [edge for edge in incident if edge.type in policy.preferred_relations]
+    candidates = sorted(recognized or incident, key=lambda edge: (*relation_rank(edge.type, policy), edge.source, edge.target))
+
+    selected: list[Edge] = []
+    seen_families: set[str] = set()
+    for edge in candidates:
+        family = relation_spec(edge.type).family
+        if family in seen_families:
+            continue
+        selected.append(edge)
+        seen_families.add(family)
+        if len(selected) >= limit:
+            break
+
+    reserved_nodes = set(starts)
+    for edge in selected:
+        reserved_nodes.update((edge.source, edge.target))
+    out_nodes = set(nodes) | reserved_nodes
+    while plan.node_budget is not None and len(out_nodes) > plan.node_budget:
+        removable = _least_valuable_context_node(graph, out_nodes, protected=reserved_nodes)
+        if removable is None:
+            break
+        out_nodes.remove(removable)
+
+    edge_by_key = {
+        (edge.source, edge.target, edge.type): edge
+        for edge in (*edges, *selected)
+        if edge.source in out_nodes and edge.target in out_nodes
+    }
+    return out_nodes, list(edge_by_key.values())
+
+def _expand_blast_radius(
+    graph: Graph,
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    scopes: tuple[str, ...],
+) -> tuple[set[str], list[Edge]]:
+    total = max(len(starts), plan.node_budget or len(starts))
+    impact_budget = max(len(starts), int(round(total * BLAST_IMPACT_SHARE)))
+    support_budget = max(len(starts), int(round(total * BLAST_SUPPORT_SHARE)))
+    outgoing_budget = max(len(starts), total - impact_budget - support_budget)
+
+    branches = (
+        graph.expand(
+            list(starts),
+            hops=plan.hops,
+            max_nodes=impact_budget,
+            scopes=scopes,
+            direction="in",
+            decay_hubs=False,
+            allowed_relations=set(BLAST_IMPACT_RELATIONS),
+        ),
+        graph.expand(
+            list(starts),
+            hops=min(2, plan.hops),
+            max_nodes=support_budget,
+            scopes=scopes,
+            direction="both",
+            decay_hubs=False,
+            allowed_relations=set(BLAST_SUPPORT_RELATIONS),
+        ),
+        graph.expand(
+            list(starts),
+            hops=min(1, plan.hops),
+            max_nodes=outgoing_budget,
+            scopes=scopes,
+            direction="out",
+            decay_hubs=True,
+            allowed_relations=set(BLAST_OUTGOING_RELATIONS),
+        ),
+    )
+    nodes: set[str] = set()
+    edges_by_key: dict[tuple[str, str, str], Edge] = {}
+    for branch_nodes, branch_edges in branches:
+        nodes.update(branch_nodes)
+        for edge in branch_edges:
+            edges_by_key.setdefault((edge.source, edge.target, edge.type), edge)
+    return nodes, list(edges_by_key.values())
+
+def _reserve_blast_support_evidence(
+    nodes: set[str],
+    edges: list[Edge],
+    candidate_edges: list[Edge],
+    starts: tuple[str, ...],
+    max_nodes: int,
+    limit: int = 4,
+) -> tuple[set[str], list[Edge]]:
+    start_set = set(starts)
+    support: list[tuple[str, Edge]] = []
+    for edge in candidate_edges:
+        if edge.type not in {"tests", "configures", "fixes"}:
+            continue
+        if edge.target in start_set:
+            support.append((edge.source, edge))
+        elif edge.source in start_set:
+            support.append((edge.target, edge))
+
+    out_nodes = set(nodes)
+    protected = start_set | {node_id for node_id, _edge in support[:limit]}
+    for node_id, _edge in support[:limit]:
+        if node_id in out_nodes:
+            continue
+        if len(out_nodes) >= max_nodes:
+            outgoing_context = sorted(
+                edge.target
+                for edge in candidate_edges
+                if edge.source in start_set and edge.target in out_nodes and edge.target not in protected
+            )
+            removable = outgoing_context[0] if outgoing_context else next(
+                (candidate for candidate in sorted(out_nodes) if candidate not in protected),
+                None,
+            )
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(node_id)
+    out_edges = [edge for edge in candidate_edges if edge.source in out_nodes and edge.target in out_nodes]
+    return out_nodes, out_edges
+
+def adaptive_weak_edge_limit(base_limit: int, weak_edge_ratio: float, relation_entropy: float, edge_count: int) -> int:
+    if edge_count < base_limit * 2 or weak_edge_ratio < 0.75:
+        return base_limit
+    if relation_entropy <= 0.2:
+        return max(3, base_limit // 2)
+    return max(4, int(base_limit * 0.75))
+
+def shape_edge_budget(edges: list[Edge], starts: tuple[str, ...], plan: ContextPlan, node_count: int) -> list[Edge]:
+    """Sparsify dense rendered edge fans from observed subgraph shape.
+
+    The node set is the recall surface; very dense packets usually become noisy
+    because repetitive relations such as imports/explains dominate the edge
+    section. This keeps start-adjacent evidence, preserves every present
+    relation with a sqrt-sized floor, then fills the remaining edge budget by
+    traversal priority.
+    """
+    if plan.query_class not in {"blast_radius", "subsystem_summary"}:
+        return edges
+    if node_count <= 0 or not edges:
+        return edges
+
+    density = len(edges) / max(1, node_count)
+    if density <= 2.0:
+        return edges
+
+    target_density = 1.0 + (1.0 / math.sqrt(density))
+    target_edges = max(node_count, int(round(node_count * target_density)))
+    if target_edges >= len(edges):
+        return edges
+
+    start_set = set(starts)
+    relation_counts: dict[str, int] = {}
+    for edge in edges:
+        relation_counts[edge.type] = relation_counts.get(edge.type, 0) + 1
+
+    relation_floors = {
+        relation: max(1, int(math.sqrt(count)))
+        for relation, count in relation_counts.items()
+    }
+    relation_kept = {relation: 0 for relation in relation_counts}
+    kept: list[Edge] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(edge: Edge) -> None:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen:
+            return
+        kept.append(edge)
+        seen.add(key)
+        relation_kept[edge.type] = relation_kept.get(edge.type, 0) + 1
+
+    ranked = sorted(edges, key=lambda edge: _edge_shape_rank(edge, start_set, plan))
+
+    for edge in ranked:
+        if edge.source in start_set or edge.target in start_set:
+            add(edge)
+            if len(kept) >= target_edges:
+                return kept
+
+    for edge in ranked:
+        if relation_kept.get(edge.type, 0) < relation_floors.get(edge.type, 0):
+            add(edge)
+            if len(kept) >= target_edges:
+                return kept
+
+    for edge in ranked:
+        add(edge)
+        if len(kept) >= target_edges:
+            break
+    return kept
+
+def _edge_shape_rank(edge: Edge, starts: set[str], plan: ContextPlan) -> tuple[int, int, int, str, str, str]:
+    start_priority = 0 if edge.source in starts or edge.target in starts else 1
+    relation = relation_rank(edge.type, traversal_policy(plan.query_class))
+    return (start_priority, *relation, edge.source, edge.target, edge.type)
+
+def reserve_start_evidence(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    max_nodes: int | None,
+    reserve_limit: int = 16,
+) -> tuple[set[str], list[Edge]]:
+    """Keep first-order structural evidence for selected anchors.
+
+    Dense blast-radius neighborhoods can fill the node budget with high-degree
+    callers before keeping a selected file's children, a symbol's parent file,
+    or an immediate callee. Those neighbors are load-bearing context for the
+    selected anchor, so reserve a small deterministic slice for them.
+    """
+    if plan.query_class != "blast_radius" or plan.hops <= 0:
+        return nodes, edges
+
+    start_set = set(starts)
+    candidates: list[tuple[tuple[int, int, str], str, Edge]] = []
+    for edge in graph.edges:
+        if not edge.active:
+            continue
+        neighbor: str | None = None
+        if edge.type == "contains" and edge.source in start_set:
+            neighbor = edge.target
+        elif edge.type == "contains" and edge.target in start_set:
+            neighbor = edge.source
+        elif edge.type in STRUCTURAL_RELATIONS and edge.source in start_set:
+            neighbor = edge.target
+        if not neighbor or neighbor not in graph.nodes or not graph.nodes[neighbor].active:
+            continue
+        candidates.append((relation_rank(edge.type, traversal_policy(plan.query_class)), neighbor, edge))
+
+    test_support_nodes = reserve_test_support_files(graph, starts)
+
+    if not candidates and not test_support_nodes:
+        return nodes, edges
+
+    out_nodes = set(nodes)
+    ranked_candidates = sorted(
+        candidates,
+        key=lambda item: (
+            _start_evidence_priority(item[2], start_set),
+            *item[0],
+            item[1],
+            item[2].source,
+            item[2].target,
+            item[2].type,
+        ),
+    )
+    protected = start_set | set(test_support_nodes) | {neighbor for _rank, neighbor, _edge in ranked_candidates[:reserve_limit]}
+    for _rank, neighbor, _edge in ranked_candidates[:reserve_limit]:
+        if neighbor in out_nodes:
+            continue
+        if max_nodes is not None and len(out_nodes) >= max_nodes:
+            removable = _least_valuable_context_node(graph, out_nodes, protected=protected)
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(neighbor)
+    for node_id in test_support_nodes:
+        if node_id in out_nodes:
+            continue
+        if max_nodes is not None and len(out_nodes) >= max_nodes:
+            removable = _least_valuable_context_node(graph, out_nodes, protected=protected)
+            if removable is None:
+                break
+            out_nodes.remove(removable)
+        out_nodes.add(node_id)
+
+    seen = {(edge.source, edge.target, edge.type) for edge in edges}
+    out_edges = [edge for edge in edges if edge.source in out_nodes and edge.target in out_nodes]
+    for _rank, _neighbor, edge in ranked_candidates[:reserve_limit]:
+        key = (edge.source, edge.target, edge.type)
+        if key not in seen and edge.source in out_nodes and edge.target in out_nodes:
+            out_edges.append(edge)
+            seen.add(key)
+    for support_id in test_support_nodes:
+        if support_id not in out_nodes:
+            continue
+        support = graph.nodes[support_id]
+        support_dir = support.path.replace("\\", "/").rsplit("/", 1)[0]
+        source_id = next(
+            (
+                start for start in starts
+                if start in out_nodes
+                and (node := graph.nodes.get(start)) is not None
+                and node.path.replace("\\", "/").rsplit("/", 1)[0] == support_dir
+            ),
+            "",
+        )
+        key = (source_id, support_id, "configures")
+        if source_id and key not in seen:
+            out_edges.append(Edge(
+                source_id,
+                support_id,
+                "configures",
+                confidence=0.8,
+                provenance="runtime_context",
+                evidence="same test-directory support file",
+            ))
+            seen.add(key)
+    return out_nodes, out_edges
+
+def _start_evidence_priority(edge: Edge, starts: set[str]) -> int:
+    if edge.type == "contains" and edge.target in starts:
+        return 0
+    if edge.type != "contains" and edge.source in starts:
+        return 1
+    if edge.type == "contains" and edge.source in starts:
+        return 2
+    return 3
+
+def reserve_test_support_files(graph: Graph, starts: tuple[str, ...], limit: int = 4) -> tuple[str, ...]:
+    support_names = {"__init__.py", "compat.py", "conftest.py"}
+    start_dirs = {
+        node.path.replace("\\", "/").rsplit("/", 1)[0]
+        for start in starts
+        if (node := graph.nodes.get(start)) is not None
+        and node.path
+        and (node.path.replace("\\", "/").startswith("tests/") or "/tests/" in node.path.replace("\\", "/"))
+    }
+    if not start_dirs:
+        return ()
+    out: list[str] = []
+    for node_id, node in sorted(graph.nodes.items()):
+        if not node.active or not node.path:
+            continue
+        path = node.path.replace("\\", "/")
+        if path.rsplit("/", 1)[0] in start_dirs and path.rsplit("/", 1)[-1] in support_names:
+            out.append(node_id)
+            if len(out) >= limit:
+                break
+    return tuple(out)
+
+def prune_doc_concept_noise(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    plan: ContextPlan,
+    max_nodes: int | None,
+) -> tuple[set[str], list[Edge]]:
+    """Trim doc/concept spillover for broad non-document summaries.
+
+    The scanner should retain documentation and concepts because doc queries need
+    them. Broad status/subsystem packets are different: pathless concepts and
+    weak doc relation fans can crowd out implementation evidence.
+    """
+    if plan.query_class != "subsystem_summary":
+        return nodes, edges
+    if plan.packet == "doc_summary":
+        return nodes, edges
+
+    start_set = set(starts)
+    structural: set[str] = set()
+    doc_like: list[tuple[float, str]] = []
+    concepts: list[tuple[float, str]] = []
+    node_edge_scores = _node_edge_scores(edges)
+
+    budget = max_nodes or plan.node_budget or len(nodes)
+    doc_limit = max(6, min(18, budget // 5))
+    concept_limit = max(1, min(4, budget // 30))
+
+    for node_id in nodes:
+        node = graph.nodes.get(node_id)
+        if not node:
+            continue
+        if node_id in start_set:
+            structural.add(node_id)
+            continue
+        if node.kind == "concept":
+            concepts.append((_context_node_score(node_id, node_edge_scores, node.path), node_id))
+            continue
+        if node.kind in NON_STRUCTURAL_KINDS:
+            doc_like.append((_context_node_score(node_id, node_edge_scores, node.path), node_id))
+            continue
+        structural.add(node_id)
+
+    keep = set(structural)
+    keep.update(node_id for _score, node_id in sorted(doc_like, reverse=True)[:doc_limit])
+    keep.update(node_id for _score, node_id in sorted(concepts, reverse=True)[:concept_limit])
+    keep = reserve_structural_neighbors(graph, keep, structural, max_nodes or plan.node_budget, protected=start_set)
+    pruned_edges = [edge for edge in edges if edge.source in keep and edge.target in keep]
+    pruned_edges = include_reserved_structural_edges(graph, keep, pruned_edges)
+    return keep, pruned_edges
+
+def reserve_structural_neighbors(
+    graph: Graph,
+    keep: set[str],
+    structural: set[str],
+    max_nodes: int | None,
+    reserve_limit: int = 12,
+    protected: set[str] | None = None,
+) -> set[str]:
+    if not structural:
+        return keep
+
+    reserved: list[str] = []
+    seen = set(keep)
+    for edge in sorted(graph.edges, key=lambda e: (e.source, e.target, e.type)):
+        if edge.type not in STRUCTURAL_RELATIONS or not edge.active:
+            continue
+        if edge.source in structural and _is_structural_node(graph, edge.target) and edge.target not in seen:
+            reserved.append(edge.target)
+            seen.add(edge.target)
+        elif edge.target in structural and _is_structural_node(graph, edge.source) and edge.source not in seen:
+            reserved.append(edge.source)
+            seen.add(edge.source)
+        if len(reserved) >= reserve_limit:
+            break
+
+    if not reserved:
+        return keep
+
+    out = set(keep)
+    protected_nodes = protected or set()
+    for node_id in reserved:
+        if max_nodes is not None and len(out) >= max_nodes:
+            removable = _least_valuable_doc_node(graph, out, protected=protected_nodes)
+            if removable is None:
+                break
+            out.remove(removable)
+        out.add(node_id)
+    return out
+
+def include_reserved_structural_edges(graph: Graph, keep: set[str], edges: list[Edge]) -> list[Edge]:
+    seen = {(edge.source, edge.target, edge.type) for edge in edges}
+    out = list(edges)
+    for edge in graph.edges:
+        key = (edge.source, edge.target, edge.type)
+        if key in seen or edge.type not in STRUCTURAL_RELATIONS:
+            continue
+        if edge.source in keep and edge.target in keep:
+            out.append(edge)
+            seen.add(key)
+    return out

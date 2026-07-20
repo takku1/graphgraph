@@ -50,7 +50,7 @@ Current command:
 
 ```powershell
 $env:PYTHONPATH="src"
-python -m graphgraph.mcp_server
+python -m graphgraph.mcp
 ```
 
 Current tools:

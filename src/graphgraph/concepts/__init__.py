@@ -4,7 +4,9 @@ from .health import (
     concept_link_health,
 )
 from .registry import (
+    INTERPRETATION_CONCEPT_IDS,
     INTERPRETATION_CONCEPTS,
+    SOURCE_CONCEPT_RELATIONS,
     InterpretationConcept,
     concept_node,
     detect_interpretation_concepts,
@@ -16,6 +18,8 @@ from .terms import canonical_concept_label, concept_id, normalize_label, term_ke
 
 __all__ = [
     "INTERPRETATION_CONCEPTS",
+    "INTERPRETATION_CONCEPT_IDS",
+    "SOURCE_CONCEPT_RELATIONS",
     "InterpretationConcept",
     "concept_node",
     "detect_interpretation_concepts",

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from format_benchmark import make_graph
 
-
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "out"
 BITPACK_DIR = OUT / "bitpack"

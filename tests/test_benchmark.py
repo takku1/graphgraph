@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from graphgraph.benchmark.bench_utils import estimate_token_size
-from graphgraph.core import Edge, Graph, Node
+from graphgraph.graph.core import Edge, Graph, Node
 from graphgraph.scanner.ast import extract_symbols
 
 
@@ -179,7 +179,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
         # count), not a packet budget. Bumped as the codebase grows; raise it
         # again if a legitimate expansion trips it rather than treating it as a
         # regression.
-        self.assertLess(token_est, 96000, f"Token estimate too high: {token_est}")
+        self.assertLess(token_est, 128000, f"Token estimate too high: {token_est}")
 
         print(
             f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, edges: {len(symbol_edges)}, token_estimate: {token_est}"
@@ -216,6 +216,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
 
             self.assertEqual(server["cwd"], temp_root.resolve().as_posix())
             self.assertIn("--project", server["args"])
+            self.assertIn("--no-sync", server["args"])
             project_index = server["args"].index("--project") + 1
             self.assertEqual(server["args"][project_index], temp_root.resolve().as_posix())
             self.assertEqual(server["args"][-1], "graphgraph-mcp")

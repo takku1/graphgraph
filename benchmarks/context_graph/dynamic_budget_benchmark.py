@@ -5,18 +5,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-
-from graphgraph.core import Edge, Graph  # noqa: E402
-from graphgraph.eval import estimate_tokens  # noqa: E402
-from graphgraph.io import load_any  # noqa: E402
-from graphgraph.packets import render_packet  # noqa: E402
-from graphgraph.planning import compute_subgraph_stats, plan_context, profile_graph_shape, recommend_context_window, recommend_node_budget, recommend_observed_context_window  # noqa: E402
-from graphgraph.planning import PacketChoice, choose_packet_for_subgraph  # noqa: E402
 
 from real_project_answerability_limit import (  # noqa: E402
     QUERY_CLASSES,
@@ -30,6 +22,20 @@ from real_project_answerability_limit import (  # noqa: E402
     truthy,
 )
 
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.core import Graph  # noqa: E402
+from graphgraph.io import load_any  # noqa: E402
+from graphgraph.packets import render_packet  # noqa: E402
+from graphgraph.planning import (  # noqa: E402  # noqa: E402
+    PacketChoice,
+    choose_packet_for_subgraph,
+    compute_subgraph_stats,
+    plan_context,
+    profile_graph_shape,
+    recommend_context_window,
+    recommend_node_budget,
+    recommend_observed_context_window,
+)
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 RESULTS_CSV = OUT / "dynamic_budget_results.csv"

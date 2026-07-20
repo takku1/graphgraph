@@ -6,8 +6,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from ..manifest import compute_file_hash
-from ..state import STATE_VERSION, atomic_write_json, file_lock
+from .manifest import compute_file_hash
+from .state import STATE_VERSION, atomic_write_json, file_lock
 
 PLATFORM_STATE_VERSION = STATE_VERSION
 

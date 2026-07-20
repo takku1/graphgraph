@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 from ..graph.core import Edge, Graph, Node
-from ..manifest import Manifest, compute_file_hash
+from ..runtime.manifest import Manifest, compute_file_hash
 from .contracts import CapabilityReceipt, EvidenceBatch, EvidenceProvider
 from .persistence import atomic_write_json, file_lock
 

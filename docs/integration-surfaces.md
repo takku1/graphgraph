@@ -70,7 +70,8 @@ rendering, and validation stay in `src/graphgraph`; the plugin only teaches
 Codex when to use those tools and how to launch the MCP server.
 
 For the local Windows checkout, `.mcp.json` uses an absolute `cwd` and
-`uv --project` path so Codex starts the server from the repository root.
+`uv run --no-sync --project` path so Codex starts the server from the
+repository root without trying to replace a currently running console script.
 `graphgraph install --project --platform codex` writes those paths for the
 current checkout. `python scripts\configure_codex_plugin.py --repo-root
 <checkout>` remains available as a repair command after moving or copying the

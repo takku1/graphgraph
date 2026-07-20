@@ -5,14 +5,12 @@ import json
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.eval import EvalTask, evaluate_graph  # noqa: E402
-
+from graphgraph.analysis.eval import EvalTask, evaluate_graph  # noqa: E402
 
 TASKS = ROOT / "benchmarks" / "context_graph" / "data" / "local_project_tasks.json"
 GRAPHS = ROOT / "benchmarks" / "context_graph" / "out" / "local_projects"

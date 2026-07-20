@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from graphgraph import Edge, Graph, Node
+from graphgraph.acceptance.live_validation import compare_active_graph, run_tests
 from graphgraph.io import save_graph
-from graphgraph.live_validation import compare_active_graph, run_tests
 
 
 class LiveValidationTest(unittest.TestCase):
@@ -18,7 +18,7 @@ class LiveValidationTest(unittest.TestCase):
             "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out\n"
         )
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "graphgraph.live_validation.subprocess.run",
+            "graphgraph.acceptance.live_validation.subprocess.run",
             return_value=subprocess.CompletedProcess(["cargo", "test"], 0, output),
         ):
             receipt = run_tests(
@@ -43,7 +43,7 @@ class LiveValidationTest(unittest.TestCase):
             "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out\n"
         )
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "graphgraph.live_validation.subprocess.run",
+            "graphgraph.acceptance.live_validation.subprocess.run",
             return_value=subprocess.CompletedProcess(["cargo", "test"], 0, output),
         ):
             receipt = run_tests(

@@ -31,13 +31,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from graphgraph.io import load_any
 from graphgraph.packets import (
     render_gg_max,
-    render_packet,
     render_semantic_arrow,
     render_sql,
     render_tensor_array,
 )
 from graphgraph.retrieval import retrieve_context
-
 
 # ── token counter ─────────────────────────────────────────────────────────────
 

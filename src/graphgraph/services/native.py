@@ -17,9 +17,9 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
 from ..concepts import concept_link_health
 from ..graph.core import Graph
 from ..io import find_graph_path, load_any, save_validated_graph, validate_graph_file
-from ..manifest import Manifest, compute_file_hash
 from ..packets.validation import ValidationResult, validate_any
 from ..retrieval.git_utils import get_git_ignored_paths, get_git_worktree_paths
+from ..runtime.manifest import Manifest, compute_file_hash
 from ..scanner import DEFAULT_SCAN_MAX_NODES, remove_paths, scan_directory, update_paths
 from ..scanner.core import _normalize_rels
 from ..scanner.files import SKIP_DIRS, SKIP_FILE_NAMES, SKIP_SUFFIXES, path_ignored_by_rules
@@ -696,10 +696,14 @@ def build_project_status(
         "eligible_nodes": concept_eligible,
         "linked_nodes": concept_linked,
         "links": int(graph.metadata.get("source_concepts_links", "0")),
+        "typed_fact_links": int(graph.metadata.get("source_concepts_typed_fact_links", "0")),
+        "exact_alias_links": int(graph.metadata.get("source_concepts_exact_alias_links", "0")),
+        "linked_concepts": int(graph.metadata.get("source_concepts_linked_concepts", "0")),
         "coverage_ratio": float(graph.metadata.get("source_concepts_coverage_ratio", "0")),
         "rejections": {
             "excluded_kind": int(graph.metadata.get("source_concepts_rejected_excluded_kind", "0")),
             "no_registry_alias": int(graph.metadata.get("source_concepts_rejected_no_registry_alias", "0")),
+            "no_evidence": int(graph.metadata.get("source_concepts_rejected_no_evidence", "0")),
         },
         "last_update": {
             "scope": graph.metadata.get(
@@ -714,6 +718,15 @@ def build_project_status(
             ),
             "coverage_ratio": float(
                 graph.metadata.get("source_concepts_last_update_coverage_ratio", "0")
+            ),
+            "typed_fact_links": int(
+                graph.metadata.get("source_concepts_last_update_typed_fact_links", "0")
+            ),
+            "exact_alias_links": int(
+                graph.metadata.get("source_concepts_last_update_exact_alias_links", "0")
+            ),
+            "linked_concepts": int(
+                graph.metadata.get("source_concepts_last_update_linked_concepts", "0")
             ),
         },
     }

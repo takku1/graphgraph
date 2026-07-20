@@ -601,26 +601,67 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     return owned
 
 
+def _syntax_text_without_literals(node: Any, text: bytes) -> str:
+    """Return a node's source with non-executable literal regions blanked."""
+    start = int(node.start_byte)
+    segment = bytearray(text[start:int(node.end_byte)])
+    stack = list(getattr(node, "children", ()))
+    while stack:
+        child = stack.pop()
+        child_type = str(getattr(child, "type", "")).casefold()
+        is_non_code = (
+            "comment" in child_type
+            or "string" in child_type
+            or "regex" in child_type
+            or child_type in {"char_literal", "character_literal", "heredoc_body"}
+        )
+        if is_non_code:
+            left = max(0, int(child.start_byte) - start)
+            right = min(len(segment), int(child.end_byte) - start)
+            segment[left:right] = b" " * max(0, right - left)
+            continue
+        stack.extend(getattr(child, "children", ()))
+    return bytes(segment).decode("utf-8", errors="replace")
+
+
 def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, ...]:
     """Project language attributes into small, queryable normalized-IR facts."""
-    if source.path.suffix.lower() != ".rs" or node.type not in {"function_item", "function_signature_item"}:
+    if _DEF_TYPES.get(node.type) not in {"function", "method"}:
         return ()
-    snippet = _node_text(node, text)
+    snippet = _syntax_text_without_literals(node, text)
+    suffix = source.path.suffix.lower()
+    facts: list[str] = []
+
+    # This is an operator-level IR fact, not an inferred business claim.
+    # Besides the language operators, accept only assertion APIs whose names
+    # explicitly encode equality/inequality. This keeps the projection
+    # portable without treating nearby words such as "same" as proof.
+    equality_primitive = re.compile(
+        r"(?:"
+        r"==|!="
+        r"|\bassert_(?:eq|ne)!\s*\("
+        r"|\bassert(?:Equal|NotEqual|Equals|NotEquals)\s*\("
+        r"|\bassert_(?:equal|not_equal)\s*\("
+        r"|\bXCTAssert(?:Equal|NotEqual)\s*\("
+        r"|\bassert\.(?:equal|notEqual|strictEqual|notStrictEqual)\s*\("
+        r")"
+    )
+    if equality_primitive.search(snippet):
+        facts.append("semantic_operator:equality")
+
+    if suffix != ".rs":
+        return tuple(facts)
+
     prefix = _node_text_range(
         text,
         max(0, int(node.start_byte) - 256),
         int(node.start_byte),
     )
-    facts: list[str] = []
     test_attribute = r"#\s*\[\s*(?:tokio::)?test(?:\s*\([^]]*\))?\s*\]"
     if re.search(test_attribute, snippet) or re.search(test_attribute + r"\s*$", prefix):
         facts.extend(("role:test", "rust_attribute:test"))
-    # These are deliberately operator-level IR facts, not inferred business
-    # claims. They translate stable source primitives into tokens an LLM can
-    # retrieve without guessing that "each target once" means deduplication or
-    # that a pinned-count contract is implemented with `!=`.
-    if re.search(r"(?:==|!=|\bassert_(?:eq|ne)!\s*\()", snippet):
-        facts.append("semantic_operator:equality")
+    # Keep this implementation-level contract Rust-specific until another
+    # frontend has an equally narrow collection primitive.
     if (
         re.search(r"\b(?:BTreeSet|HashSet)\s*::\s*(?:new|default)\s*\(", snippet)
         and re.search(r"\.insert\s*\(", snippet)

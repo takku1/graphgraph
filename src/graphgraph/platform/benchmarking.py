@@ -7,9 +7,9 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from ..eval import estimate_tokens
 from ..graph.core import Graph
 from ..io import load_any
+from ..packets import estimate_tokens
 from .compiler import GraphProgram, GraphRuntime
 from .source_planner import QuerySourcePlanner
 

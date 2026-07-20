@@ -42,7 +42,7 @@ benchmark = [
 ]
 [project.scripts]
 graphgraph = "graphgraph.cli:main"
-graphgraph-mcp = "graphgraph.mcp_server:main"
+graphgraph-mcp = "graphgraph.mcp:main"
 
 [dependency-groups]
 dev = [

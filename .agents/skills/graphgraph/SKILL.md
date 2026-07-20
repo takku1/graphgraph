@@ -101,6 +101,7 @@ uses versioned per-source CPG IR and exact merge/truncation receipts.
 | Natural-language packet, optionally fresh | `query_context` | `context "<query>" [--sync git] [--json]` |
 | Build after exclusion audit | `build_graph` | `scan --depth symbols --docs --exclude <dirs...>` |
 | Exact edited/deleted splice | `query_context` with changed/deleted paths | `update --files ...` / `remove --files ...` |
+| Low-level splice tools | `update_graph_files` / `remove_graph_files` — both **require** a `paths` array (repo-relative or absolute) | `update --files ...` / `remove --files ...` |
 | Resolve labels/paths | `search_nodes` | `query "<text>" --show-anchors` |
 | Packet from known IDs | `final_packet` | `final --query-class <class> --starts <ids...>` |
 | Bounded exact source | `source_snippets` | `snippets --starts <ids...>` |

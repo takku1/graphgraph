@@ -19,10 +19,11 @@ from graphgraph.io import (
     load_any,
     save_graph,
 )
-from graphgraph.mcp_server import dispatch
+from graphgraph.mcp import dispatch
 from graphgraph.packets import (
     render_gg_max,
 )
+from graphgraph.packets.validation import validate_graph_json
 from graphgraph.scanner import scan_directory
 from graphgraph.services.native import (
     GraphBuildStatus,
@@ -31,7 +32,6 @@ from graphgraph.services.native import (
     render_native_context,
     scope_freshness,
 )
-from graphgraph.validate import validate_graph_json
 
 
 class CliMcpTest(unittest.TestCase):
@@ -478,7 +478,7 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(result.node_count, 3)
 
     def test_custom_scan_output_and_manifest_never_enter_their_own_graph(self) -> None:
-        from graphgraph.manifest import Manifest
+        from graphgraph.runtime.manifest import Manifest
         from graphgraph.services.native import (
             manifest_path_for_graph,
             scan_validated_graph,
@@ -1763,7 +1763,7 @@ class CliMcpTest(unittest.TestCase):
                 skill_harness = Path(".agents") / "skills" / "graphgraph" / "scripts" / "validate_live.py"
                 self.assertTrue(skill_harness.exists())
                 harness_content = skill_harness.read_text(encoding="utf-8")
-                self.assertIn("graphgraph.live_validation", harness_content)
+                self.assertIn("graphgraph.acceptance.live_validation", harness_content)
                 self.assertIn('shutil.which("graphgraph")', harness_content)
                 self.assertIn("owning_python", harness_content)
 
@@ -1840,8 +1840,30 @@ class CliMcpTest(unittest.TestCase):
                 (assets / "validate_live.py").read_text(encoding="utf-8"),
             )
 
+    def test_tracked_skill_bundles_match_canonical_asset(self) -> None:
+        canonical = (
+            Path("src") / "graphgraph" / "assets" / "graphgraph_skill.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(
+            (Path(".agents") / "skills" / "graphgraph" / "SKILL.md").read_text(
+                encoding="utf-8"
+            ),
+            canonical,
+        )
+        self.assertEqual(
+            (
+                Path("plugins")
+                / "graphgraph"
+                / "skills"
+                / "graphgraph"
+                / "SKILL.md"
+            ).read_text(encoding="utf-8"),
+            canonical,
+        )
+
     def test_live_validation_detects_repo_ecosystem_and_supports_override(self) -> None:
-        from graphgraph.live_validation import detect_test_command, split_command
+        from graphgraph.acceptance.live_validation import detect_test_command, split_command
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -1853,7 +1875,7 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(split_command('cargo test --package "locus engine"'), ["cargo", "test", "--package", "locus engine"])
 
     def test_live_validation_saved_reports_are_explicitly_optional(self) -> None:
-        from graphgraph.live_validation import load_saved_reports
+        from graphgraph.acceptance.live_validation import load_saved_reports
 
         with tempfile.TemporaryDirectory() as tmpdir:
             status = load_saved_reports(Path(tmpdir), enabled=False)
@@ -1862,7 +1884,7 @@ class CliMcpTest(unittest.TestCase):
         self.assertIn("--saved-reports", status["reason"])
 
     def test_live_validation_reports_exclusion_and_truncation_evidence(self) -> None:
-        from graphgraph.live_validation import scan_policy_receipt
+        from graphgraph.acceptance.live_validation import scan_policy_receipt
 
         graph = Graph(
             nodes={"APP": Node("APP", "app", "python", "src/app.py")},
@@ -1884,7 +1906,7 @@ class CliMcpTest(unittest.TestCase):
     def test_live_validation_custom_queries_auto_route_and_check_actionability(self) -> None:
         from types import SimpleNamespace
 
-        from graphgraph.live_validation import validate_queries
+        from graphgraph.acceptance.live_validation import validate_queries
 
         query = "Which direct tests cover TransformPlanner and what Cargo command should run?"
         response = json.dumps({
@@ -1904,7 +1926,7 @@ class CliMcpTest(unittest.TestCase):
         with (
             patch("graphgraph.services.render_query_context", return_value=response) as render,
             patch(
-                "graphgraph.validate.validate_packet",
+                "graphgraph.packets.validation.validate_packet",
                 return_value=SimpleNamespace(
                     ok=True,
                     format="gg",
@@ -1925,7 +1947,7 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(len(rows[0]["commands"]), 1)
 
     def test_live_validation_rejects_structurally_valid_but_inactionable_test_answer(self) -> None:
-        from graphgraph.live_validation import validate_query_actionability
+        from graphgraph.acceptance.live_validation import validate_query_actionability
 
         errors = validate_query_actionability(
             "Return direct behavioral tests and minimal runnable Cargo commands.",
@@ -1946,7 +1968,7 @@ class CliMcpTest(unittest.TestCase):
     def test_live_validation_gate_failures_explain_expectation_mismatches(self) -> None:
         from types import SimpleNamespace
 
-        from graphgraph.live_validation import validate_gate_packets
+        from graphgraph.acceptance.live_validation import validate_gate_packets
 
         graph = Graph(
             nodes={
@@ -1958,7 +1980,7 @@ class CliMcpTest(unittest.TestCase):
         with (
             patch("graphgraph.services.render_final_packet", return_value="GRAPH:\n#gg/v1"),
             patch(
-                "graphgraph.validate.validate_packet",
+                "graphgraph.packets.validation.validate_packet",
                 return_value=SimpleNamespace(
                     ok=True,
                     format="gg",
@@ -1997,6 +2019,7 @@ class CliMcpTest(unittest.TestCase):
                 mcp_data = json.loads(mcp_json.read_text(encoding="utf-8"))
                 server = mcp_data["mcpServers"]["graphgraph"]
                 self.assertEqual(server["command"], "uv")
+                self.assertIn("--no-sync", server["args"])
                 self.assertIn("--project", server["args"])
                 self.assertEqual(server["args"][-1], "graphgraph-mcp")
 
@@ -2043,7 +2066,7 @@ class CliMcpTest(unittest.TestCase):
                 os.chdir(orig_cwd)
 
     def test_render_final_packet_injects_lessons(self) -> None:
-        from graphgraph.core import Graph, Node
+        from graphgraph.graph.core import Graph, Node
         from graphgraph.services import render_final_packet
 
         g = Graph(nodes={"A": Node("A", "AuthService", "service", "auth.py")}, edges=[])

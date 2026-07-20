@@ -6,7 +6,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -14,15 +13,14 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from graphgraph.core import Edge, Graph, Node  # noqa: E402
-from graphgraph.eval import estimate_tokens  # noqa: E402
+from benchmarks.context_graph.local_corpus import RESOURCES_ROOT, own_project_paths, small_medium_paths  # noqa: E402
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.core import Graph, Node  # noqa: E402
 from graphgraph.io import load_any, save_graph  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph  # noqa: E402
 from graphgraph.retrieval import retrieve_context  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
-from benchmarks.context_graph.local_corpus import RESOURCES_ROOT, own_project_paths, small_medium_paths  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "cross_repo_anchor"
 GRAPHS = OUT / "graphs"

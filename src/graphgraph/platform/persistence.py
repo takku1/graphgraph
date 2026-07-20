@@ -4,7 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from ..state import (
+from ..runtime.state import (
     STATE_VERSION,
     append_jsonl,
     append_jsonl_many,

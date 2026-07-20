@@ -21,7 +21,7 @@ from graphgraph import (
     operation_to_json,
     read_operations,
 )
-from graphgraph.metrics import compare_graphs, summarize_graph
+from graphgraph.analysis.metrics import compare_graphs, summarize_graph
 
 
 class GraphCoreTest(unittest.TestCase):
@@ -473,7 +473,7 @@ class GraphCoreTest(unittest.TestCase):
         self.assertTrue(ret_nodes <= reachable)
 
     def test_personalized_pagerank(self) -> None:
-        from graphgraph.core import Edge, Graph, Node
+        from graphgraph.graph.core import Edge, Graph, Node
         from graphgraph.retrieval import search_nodes
 
         g = Graph(
@@ -615,7 +615,7 @@ class GraphCoreTest(unittest.TestCase):
         self.assertEqual(matches[0].node.id, "N0")
 
     def test_personalization_lexical_score_constants(self) -> None:
-        from graphgraph.core import Graph, Node
+        from graphgraph.graph.core import Graph, Node
         from graphgraph.retrieval import search_nodes
 
         def capture_personalization(query: str, nodes: dict) -> dict:
@@ -645,7 +645,7 @@ class GraphCoreTest(unittest.TestCase):
         self.assertEqual(p.get("n2"), 2.0)
 
     def test_personalization_git_session_weight_formula(self) -> None:
-        from graphgraph.core import Graph, Node
+        from graphgraph.graph.core import Graph, Node
         from graphgraph.retrieval import search_nodes
 
         def capture_personalization(query: str, nodes: dict, git_files: dict) -> dict:
@@ -677,7 +677,7 @@ class GraphCoreTest(unittest.TestCase):
         # A dirty file can own many symbol nodes. Session personalization must
         # cover the path once rather than multiplying the same change weight by
         # every symbol in that file and diluting the query-specific seeds.
-        from graphgraph.core import Graph, Node
+        from graphgraph.graph.core import Graph, Node
         from graphgraph.retrieval import search_nodes
 
         def capture_personalization(nodes: dict, git_files: dict) -> dict:

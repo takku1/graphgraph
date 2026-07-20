@@ -7,18 +7,16 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from graphgraph.graph.ontology import is_weak_relation  # noqa: E402
 from graphgraph.io import save_graph  # noqa: E402
-from graphgraph.ontology import is_weak_relation  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
+from graphgraph.packets.validation import validate_packet  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
-from graphgraph.validate import validate_packet  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "live"
 REPORT_JSON = OUT / "cross_project_live_shape.json"

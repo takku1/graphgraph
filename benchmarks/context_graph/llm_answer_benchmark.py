@@ -7,7 +7,6 @@ import re
 import time
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent
 PROTOCOL_OUT = ROOT / "out" / "protocol"
 PROMPTS_JSONL = PROTOCOL_OUT / "saved_prompts.jsonl"

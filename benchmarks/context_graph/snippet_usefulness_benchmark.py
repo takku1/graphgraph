@@ -34,17 +34,17 @@ for p in (SRC, BENCH_DIR):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from graphgraph.core import Graph  # noqa: E402
-from graphgraph.eval import estimate_tokens  # noqa: E402
+import cross_repo_anchor_stress as cras  # noqa: E402 - reuse task generation
+import local_corpus  # noqa: E402
+
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.core import Graph  # noqa: E402
 from graphgraph.io import load_any, save_graph  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph  # noqa: E402
 from graphgraph.retrieval import retrieve_context  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
 from graphgraph.services.snippets import render_source_snippets  # noqa: E402
-
-import cross_repo_anchor_stress as cras  # noqa: E402 - reuse task generation
-import local_corpus  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "snippet_usefulness"
 GRAPHS = OUT / "graphs"

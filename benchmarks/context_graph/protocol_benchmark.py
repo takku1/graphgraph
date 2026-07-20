@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-
 ROOT = Path(__file__).resolve().parent
 MANIFEST = ROOT / "benchmark_manifest.json"
 OUT = ROOT / "out" / "protocol"

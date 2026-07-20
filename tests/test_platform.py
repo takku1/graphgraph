@@ -12,7 +12,7 @@ from unittest.mock import patch
 from graphgraph import Edge, Graph, Node
 from graphgraph.cli.parser import build_parser
 from graphgraph.io import save_graph
-from graphgraph.mcp_server import dispatch
+from graphgraph.mcp import dispatch
 from graphgraph.platform import (
     PLATFORM_STATE_VERSION,
     BenchmarkCase,

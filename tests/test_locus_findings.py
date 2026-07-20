@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from graphgraph.core import Edge, Graph, Node
-from graphgraph.doccode import summarize_doc_code_coverage
+from graphgraph.concepts.doccode import summarize_doc_code_coverage
+from graphgraph.graph.core import Edge, Graph, Node
 from graphgraph.planning.shape import GraphShape, adjusted_edge_density, recommend_node_budget
 from graphgraph.retrieval import retrieve_context
 from graphgraph.scanner.ast import _call_pattern, _callsite_pattern, extract_symbols

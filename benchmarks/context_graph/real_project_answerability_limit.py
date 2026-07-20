@@ -10,8 +10,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.core import Edge, Graph  # noqa: E402
-from graphgraph.eval import estimate_tokens  # noqa: E402
+from graphgraph.analysis.eval import estimate_tokens  # noqa: E402
+from graphgraph.graph.core import Edge, Graph  # noqa: E402
 from graphgraph.graph.traversal import traversal_policy  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402

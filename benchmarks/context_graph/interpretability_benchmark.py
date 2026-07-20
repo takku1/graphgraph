@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import json
 from collections import defaultdict
-from pathlib import Path
 
 from protocol_benchmark import (
     MANIFEST,
@@ -19,7 +18,6 @@ from protocol_benchmark import (
     score_nodes_bm25,
     score_packet,
 )
-
 
 RESULTS_CSV = OUT / "interpretability_results.csv"
 RESULTS_MD = OUT / "interpretability_summary.md"

@@ -8,7 +8,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Callable
 
-from ..concepts import link_source_interpretation_concepts
+from ..concepts import (
+    INTERPRETATION_CONCEPT_IDS,
+    SOURCE_CONCEPT_RELATIONS,
+    link_source_interpretation_concepts,
+)
 from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph, Node
 from .doc import DocumentInput, extract_document_context
@@ -89,7 +93,7 @@ def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
 
 def _load_manifest_and_graph(manifest_path: Path | None, previous_graph_path: Path | None):
     from ..io import load_any
-    from ..manifest import Manifest
+    from ..runtime.manifest import Manifest
 
     manifest = Manifest.load(manifest_path) if manifest_path else None
     previous_graph = None
@@ -168,10 +172,10 @@ def scan_directory(
         # shapes (for example, one node for an entire Markdown table) after an
         # extractor upgrade. A normal full scan therefore starts a compatible
         # empty manifest and rebuilds every file.
-        from ..manifest import Manifest
+        from ..runtime.manifest import Manifest
         manifest = Manifest()
         previous_graph = None
-    from ..manifest import compute_file_hash
+    from ..runtime.manifest import compute_file_hash
 
     skipped_files: list[tuple[Path, str, str]] = []
     dirty_files: list[tuple[Path, str, str]] = []
@@ -297,7 +301,7 @@ def update_paths(
     known_rels = (set(manifest.files.keys()) | existing_target_rels) - removed_target_rels
     active_rels = known_rels
 
-    from ..manifest import compute_file_hash
+    from ..runtime.manifest import compute_file_hash
 
     dirty_files: list[tuple[Path, str, str]] = []
     for rel in existing_target_rels:
@@ -770,7 +774,10 @@ def _build_graph_from_split(
         "concept", "section", "paragraph", "markdown", "rst", "html", "text", "unknown", "commit",
     }
     eligible_concept_nodes = tuple(
-        node for node in concept_source_nodes if node.kind not in excluded_concept_kinds
+        node
+        for node in concept_source_nodes
+        if node.kind not in excluded_concept_kinds
+        and node.id not in INTERPRETATION_CONCEPT_IDS
     )
     interpretation_nodes: dict[str, Node] = {}
     interpretation_edges: list[Edge] = []
@@ -798,21 +805,38 @@ def _build_graph_from_split(
     metadata["source_concepts_coverage_ratio"] = (
         f"{len(linked_source_nodes) / max(1, len(eligible_concept_nodes)):.6f}"
     )
-    metadata["source_concepts_mode"] = "closed_registry_exact_alias"
+    typed_fact_links = sum(
+        edge.provenance == "interpretation_registry_fact"
+        for edge in interpretation_edges
+    )
+    exact_alias_links = len(interpretation_edges) - typed_fact_links
+    metadata["source_concepts_typed_fact_links"] = str(typed_fact_links)
+    metadata["source_concepts_exact_alias_links"] = str(exact_alias_links)
+    metadata["source_concepts_linked_concepts"] = str(len({
+        edge.target for edge in interpretation_edges
+    }))
+    metadata["source_concepts_mode"] = "closed_registry_typed_fact_or_exact_alias_v2"
     metadata["source_concepts_rejected_excluded_kind"] = str(
         len(concept_source_nodes) - len(eligible_concept_nodes)
     )
     metadata["source_concepts_rejected_no_registry_alias"] = str(
         len(eligible_concept_nodes) - len(linked_source_nodes)
     )
+    metadata["source_concepts_rejected_no_evidence"] = metadata[
+        "source_concepts_rejected_no_registry_alias"
+    ]
     for field in (
         "candidates",
         "eligible",
         "links",
         "linked_nodes",
         "coverage_ratio",
+        "typed_fact_links",
+        "exact_alias_links",
+        "linked_concepts",
         "rejected_excluded_kind",
         "rejected_no_registry_alias",
+        "rejected_no_evidence",
     ):
         metadata[f"source_concepts_last_update_{field}"] = metadata[
             f"source_concepts_{field}"
@@ -839,6 +863,19 @@ def _build_graph_from_split(
             edges.append(matching_edge)
         else:
             edges.append(Edge(source=src, target=tgt, type=etype))
+
+    # Older snapshots could treat generated registry nodes as source symbols,
+    # producing self-links such as Bellman -> Bellman. Remove those stale
+    # instructions even when they arrive through incremental manifest restore.
+    edges = [
+        edge
+        for edge in edges
+        if not (
+            edge.active
+            and edge.type in SOURCE_CONCEPT_RELATIONS
+            and edge.source in INTERPRETATION_CONCEPT_IDS
+        )
+    ]
 
     # Update manifest for the scanned (dirty) files
     if manifest:
@@ -893,13 +930,15 @@ def _build_graph_from_split(
     global_eligible_concept_nodes = {
         node_id
         for node_id, node in nodes.items()
-        if node.active and node.kind not in excluded_concept_kinds
+        if node.active
+        and node.kind not in excluded_concept_kinds
+        and node_id not in INTERPRETATION_CONCEPT_IDS
     }
     global_interpretation_edges = [
         edge
         for edge in edges
         if edge.active
-        and edge.type == "implements_algorithm"
+        and edge.type in SOURCE_CONCEPT_RELATIONS
         and edge.source in global_eligible_concept_nodes
     ]
     global_linked_source_nodes = {
@@ -913,10 +952,24 @@ def _build_graph_from_split(
         "source_concepts_coverage_ratio": (
             f"{len(global_linked_source_nodes) / max(1, len(global_eligible_concept_nodes)):.6f}"
         ),
+        "source_concepts_typed_fact_links": str(sum(
+            edge.provenance == "interpretation_registry_fact"
+            for edge in global_interpretation_edges
+        )),
+        "source_concepts_exact_alias_links": str(sum(
+            edge.provenance == "interpretation_registry"
+            for edge in global_interpretation_edges
+        )),
+        "source_concepts_linked_concepts": str(len({
+            edge.target for edge in global_interpretation_edges
+        })),
         "source_concepts_rejected_excluded_kind": str(
             len(nodes) - len(global_eligible_concept_nodes)
         ),
         "source_concepts_rejected_no_registry_alias": str(
+            len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
+        ),
+        "source_concepts_rejected_no_evidence": str(
             len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
         ),
         "source_concepts_scope": "full_graph_snapshot",

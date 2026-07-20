@@ -4,8 +4,7 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
-from protocol_benchmark import OUT, ROOT
-
+from protocol_benchmark import OUT
 
 SOURCE_RESULTS = OUT / "source_routes" / "source_route_results.csv"
 CONSTRAINT_RESULTS = OUT / "constraints" / "constraint_context_results.csv"

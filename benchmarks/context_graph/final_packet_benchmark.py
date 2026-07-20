@@ -7,7 +7,6 @@ from pathlib import Path
 from constraint_context_benchmark import POLICIES, render_policy, select_policies
 from protocol_benchmark import OUT, ROOT, get_token_counter
 
-
 SOURCE_RESULTS = OUT / "source_routes" / "source_route_results.csv"
 RESULTS_CSV = OUT / "final_packets" / "final_packet_results.csv"
 SUMMARY_MD = OUT / "final_packets" / "final_packet_summary.md"

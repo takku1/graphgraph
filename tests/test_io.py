@@ -13,7 +13,7 @@ from graphgraph import (
     Graph,
     Node,
 )
-from graphgraph.eval import EvalTask, estimate_tokens, evaluate_graph
+from graphgraph.analysis.eval import EvalTask, estimate_tokens, evaluate_graph
 from graphgraph.io import (
     graph_to_json,
     load_any,
@@ -26,10 +26,10 @@ from graphgraph.io import (
     save_graph,
     save_validated_graph,
 )
-from graphgraph.validate import validate_any, validate_graph_json
+from graphgraph.packets.validation import validate_any, validate_graph_json
 
 if TYPE_CHECKING:
-    from graphgraph.cache import TopologicalKVCache
+    from graphgraph.runtime.cache import TopologicalKVCache
 
 
 class IOTest(unittest.TestCase):
@@ -410,7 +410,7 @@ class IOTest(unittest.TestCase):
             self.assertEqual(len(g.nodes), len(g2.nodes))
 
     def test_reciprocal_rank_and_ndcg(self) -> None:
-        from graphgraph.eval import ndcg_at_k, reciprocal_rank
+        from graphgraph.analysis.eval import ndcg_at_k, reciprocal_rank
 
         ranked = ["A", "B", "C", "D", "E"]
         expected = {"C", "E"}
@@ -427,7 +427,7 @@ class IOTest(unittest.TestCase):
         self.assertEqual(ndcg_at_k(ranked, set(), 5), 0.0)
 
     def test_rank_nodes_by_subgraph_pagerank(self) -> None:
-        from graphgraph.eval import rank_nodes_by_subgraph_pagerank
+        from graphgraph.analysis.eval import rank_nodes_by_subgraph_pagerank
 
         g = sample_graph()
         # g has N1 -> N2 -> N3
@@ -537,7 +537,7 @@ class IOTest(unittest.TestCase):
     def test_kv_cache(self) -> None:
         import time
 
-        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+        from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -559,7 +559,7 @@ class IOTest(unittest.TestCase):
             self.assertIsNone(cache.get(graph_path, key))
 
     def test_kv_cache_records_packet_dependencies(self) -> None:
-        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+        from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -575,7 +575,7 @@ class IOTest(unittest.TestCase):
             self.assertEqual(loaded.cache_data[key]["paths"], ["src/a.py"])
 
     def _dependency_cache_fixture(self, tmp: Path) -> tuple[Path, "TopologicalKVCache"]:
-        from graphgraph.cache import TopologicalKVCache
+        from graphgraph.runtime.cache import TopologicalKVCache
 
         (tmp / "src").mkdir()
         (tmp / "src" / "a.py").write_text("A = 1\n", encoding="utf-8")
@@ -589,7 +589,7 @@ class IOTest(unittest.TestCase):
     def test_kv_cache_invalidates_when_graph_changes_even_if_known_dependency_is_unchanged(self) -> None:
         import time
 
-        from graphgraph.cache import compute_cache_key
+        from graphgraph.runtime.cache import compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -609,7 +609,7 @@ class IOTest(unittest.TestCase):
     def test_kv_cache_survives_timestamp_only_graph_rewrite(self) -> None:
         import time
 
-        from graphgraph.cache import compute_cache_key
+        from graphgraph.runtime.cache import compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -626,7 +626,7 @@ class IOTest(unittest.TestCase):
     def test_kv_cache_evicts_when_dependency_changes(self) -> None:
         import time
 
-        from graphgraph.cache import compute_cache_key
+        from graphgraph.runtime.cache import compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -641,7 +641,7 @@ class IOTest(unittest.TestCase):
             self.assertIsNone(cache.get(graph_path, key))
 
     def test_kv_cache_stats(self) -> None:
-        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+        from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -661,7 +661,7 @@ class IOTest(unittest.TestCase):
             self.assertEqual(s["hit_rate_pct"], 50)
 
     def test_kv_cache_lru_eviction(self) -> None:
-        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+        from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -676,7 +676,7 @@ class IOTest(unittest.TestCase):
             self.assertLessEqual(len(cache.cache_data), 3)
 
     def test_kv_cache_clear(self) -> None:
-        from graphgraph.cache import TopologicalKVCache, compute_cache_key
+        from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

@@ -8,7 +8,6 @@ import time
 from pathlib import Path
 from typing import Callable
 
-
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "out"
 RESULTS_CSV = OUT / "format_results.csv"

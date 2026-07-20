@@ -5,12 +5,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from graphgraph.eval import estimate_tokens
+from graphgraph.analysis.eval import estimate_tokens
 from graphgraph.io import find_graph_path, load_any
 from graphgraph.packets import render_packet
 from graphgraph.planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
 from graphgraph.retrieval import retrieve_context
-
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "live_query_noise"

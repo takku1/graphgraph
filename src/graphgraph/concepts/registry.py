@@ -14,6 +14,8 @@ class InterpretationConcept:
     layer: str
     aliases: tuple[str, ...]
     facts: tuple[str, ...] = ()
+    source_facts: tuple[str, ...] = ()
+    source_relation: str = "implements_algorithm"
 
 
 INTERPRETATION_CONCEPTS: tuple[InterpretationConcept, ...] = (
@@ -80,6 +82,24 @@ INTERPRETATION_CONCEPTS: tuple[InterpretationConcept, ...] = (
         aliases=("KV Cache", "Key-Value Cache", "prompt prefix caching"),
         facts=("layer:hardware", "role:attention_state_reuse", "runtime:transformer_cache"),
     ),
+    InterpretationConcept(
+        label="Equality Comparison",
+        kind="semantic_operator",
+        layer="normalized_ir",
+        aliases=(),
+        facts=("layer:normalized_ir", "role:comparison", "operator:equality"),
+        source_facts=("semantic_operator:equality",),
+        source_relation="uses_semantic_operator",
+    ),
+    InterpretationConcept(
+        label="Deduplication",
+        kind="semantic_operation",
+        layer="normalized_ir",
+        aliases=(),
+        facts=("layer:normalized_ir", "role:uniqueness", "operation:deduplication"),
+        source_facts=("semantic_operation:deduplication",),
+        source_relation="performs_semantic_operation",
+    ),
 )
 
 _ALIAS_INDEX: dict[str, InterpretationConcept] = {}
@@ -101,14 +121,33 @@ _ALIAS_MATCHERS = tuple(
         key=lambda item: (-len(item[0]), item[0]),
     )
 )
+_SOURCE_FACT_INDEX = {
+    fact: concept
+    for concept in INTERPRETATION_CONCEPTS
+    for fact in concept.source_facts
+}
 
 _INTERPRETATION_PROVENANCE = "interpretation_registry"
+_TYPED_FACT_PROVENANCE = "interpretation_registry_fact"
 _FORMALIZES_CONFIDENCE = 0.85
 _IMPLEMENTS_CONFIDENCE = 0.8
+_TYPED_FACT_CONFIDENCE = 0.98
+
+SOURCE_CONCEPT_RELATIONS = frozenset({
+    "implements_algorithm",
+    "uses_semantic_operator",
+    "performs_semantic_operation",
+})
 
 
 def interpretation_concept_id(concept: InterpretationConcept) -> str:
     return concept_id(concept.label, prefix=concept.kind)
+
+
+INTERPRETATION_CONCEPT_IDS = frozenset(
+    interpretation_concept_id(concept)
+    for concept in INTERPRETATION_CONCEPTS
+)
 
 
 def detect_interpretation_concepts(text: str) -> tuple[InterpretationConcept, ...]:
@@ -167,7 +206,7 @@ def link_source_interpretation_concepts(
     source_location: str = "",
 ) -> tuple[dict[str, Node], list[Edge]]:
     text = " ".join((node.label, node.path, node.summary, " ".join(node.facts)))
-    return _link_detected_concepts(
+    nodes, edges = _link_detected_concepts(
         node.id,
         text,
         relation="implements_algorithm",
@@ -175,6 +214,38 @@ def link_source_interpretation_concepts(
         source=node.source,
         source_location=source_location or node.path,
     )
+    typed_concepts = tuple(dict.fromkeys(
+        _SOURCE_FACT_INDEX[fact]
+        for fact in node.facts
+        if fact in _SOURCE_FACT_INDEX
+    ))
+    if not typed_concepts:
+        return nodes, edges
+    typed_ids = {
+        interpretation_concept_id(concept)
+        for concept in typed_concepts
+    }
+    # Typed normalized-IR facts are stronger than a same-target lexical match.
+    # Keep exactly one source->concept instruction and retain its proof token.
+    edges = [edge for edge in edges if edge.target not in typed_ids]
+    for concept in typed_concepts:
+        target = concept_node(concept, source=node.source)
+        nodes[target.id] = target
+        evidence = next(
+            fact for fact in node.facts
+            if fact in concept.source_facts
+        )
+        edges.append(Edge(
+            node.id,
+            target.id,
+            concept.source_relation,
+            weight=1.0,
+            confidence=_TYPED_FACT_CONFIDENCE,
+            provenance=_TYPED_FACT_PROVENANCE,
+            evidence=f"normalized_ir_fact:{evidence}",
+            source_location=source_location or node.path,
+        ))
+    return nodes, edges
 
 
 def _link_detected_concepts(

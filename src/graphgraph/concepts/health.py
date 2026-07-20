@@ -12,7 +12,7 @@ def concept_link_health(eligible_nodes: int, linked_nodes: int) -> dict[str, obj
         reason = "no source nodes were eligible for concept linking"
     elif linked_nodes <= 0:
         status = "unavailable"
-        reason = "concept linking produced no exact registry-alias links"
+        reason = "concept linking produced no verified registry-evidence links"
     elif coverage < MIN_SUPPORTED_CONCEPT_COVERAGE:
         status = "sparse"
         reason = (

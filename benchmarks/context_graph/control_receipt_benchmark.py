@@ -6,14 +6,14 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
-from graphgraph.control import (
+from graphgraph.packets import estimate_tokens
+from graphgraph.services.control import (
     CONTROL_VERSION,
     GATE_ORDER,
     ControlReceipt,
     parse_control_ir,
     render_control_ir,
 )
-from graphgraph.packets import estimate_tokens
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "control_receipt"

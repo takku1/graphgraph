@@ -15,7 +15,8 @@ from graphgraph import (
     select_policies,
     validate_packet,
 )
-from graphgraph.ontology import provenance_confidence, relation_spec, traversal_strength
+from graphgraph.graph.ontology import provenance_confidence, relation_spec, traversal_strength
+from graphgraph.graph.traversal import TraversalPolicy, relation_rank, traversal_policy
 from graphgraph.packets import (
     render_doc_summary,
     render_gg_lex,
@@ -26,11 +27,10 @@ from graphgraph.packets import (
     render_sql,
     render_svo,
 )
-from graphgraph.policies import render_policy_packet
+from graphgraph.planning.policies import render_policy_packet
 from graphgraph.retrieval import (
     budget_edges,
 )
-from graphgraph.traversal import TraversalPolicy, relation_rank, traversal_policy
 
 
 class PacketsTest(unittest.TestCase):
@@ -445,10 +445,13 @@ N1,N2,1,0.9
     def test_relation_ontology_drives_traversal_and_weak_budgeting(self) -> None:
         self.assertEqual(relation_spec("calls").family, "execution")
         self.assertEqual(relation_spec("explains").family, "document")
+        self.assertEqual(relation_spec("uses_semantic_operator").family, "interpretation")
+        self.assertEqual(relation_spec("performs_semantic_operation").family, "interpretation")
         self.assertGreater(traversal_strength("calls"), traversal_strength("references"))
         self.assertGreater(traversal_strength("references"), traversal_strength("section_of"))
         self.assertGreater(traversal_strength("explains"), traversal_strength("section_of"))
         self.assertGreater(provenance_confidence("tree_sitter"), provenance_confidence("regex_reference"))
+        self.assertEqual(provenance_confidence("interpretation_registry_fact"), 1.0)
         edges = [Edge("N1", f"N{i}", "unknown_relation", 0.5) for i in range(30)]
         kept = budget_edges(edges)
         self.assertEqual(len(kept), 12)
@@ -460,6 +463,8 @@ N1,N2,1,0.9
         reverse = traversal_policy("reverse_lookup")
         self.assertIn("tests", blast.preferred_relations)
         self.assertIn("contains", summary.preferred_relations)
+        self.assertIn("uses_semantic_operator", blast.preferred_relations)
+        self.assertIn("performs_semantic_operation", summary.preferred_relations)
         self.assertLess(relation_rank("calls", blast), relation_rank("references", blast))
         self.assertEqual(direct.direction, "out")
         self.assertEqual(reverse.direction, "in")

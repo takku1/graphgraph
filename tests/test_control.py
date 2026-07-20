@@ -6,13 +6,13 @@ import unittest
 from pathlib import Path
 
 from benchmarks.context_graph.control_receipt_benchmark import evaluate_candidates
-from graphgraph.control import (
+from graphgraph.packets import estimate_tokens
+from graphgraph.services.control import (
     ControlReceipt,
     choose_next_action,
     parse_control_ir,
     render_control_ir,
 )
-from graphgraph.packets import estimate_tokens
 from graphgraph.services.native import render_native_context
 
 

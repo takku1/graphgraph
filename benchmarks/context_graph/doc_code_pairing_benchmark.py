@@ -9,9 +9,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from graphgraph.doccode import summarize_doc_code_components, summarize_doc_code_coverage  # noqa: E402
+from graphgraph.concepts.doccode import summarize_doc_code_components, summarize_doc_code_coverage  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
-
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 GRAPHS = OUT / "graphs"

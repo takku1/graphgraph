@@ -6,12 +6,11 @@ import sys
 import time
 from pathlib import Path
 
-from ..eval import evaluate_graph, load_eval_tasks, results_to_json
-from ..frontends import available_frontends
+from ..analysis.eval import evaluate_graph, load_eval_tasks, results_to_json
+from ..analysis.metrics import compare_graphs
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..graph.traversal import POLICIES, traversal_policy
 from ..io import find_graph_path, find_policies_path, load_any, save_gg, save_validated_graph, validate_graph_file
-from ..metrics import compare_graphs
 from ..packets import render_packet
 from ..packets.validation import validate_any
 from ..planning import (
@@ -24,6 +23,7 @@ from ..planning import (
 from ..retrieval import apply_shape_budget
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..scanner.frontends import available_frontends
 from ..services import (
     FullGraphTooLargeError,
     render_final_packet,
@@ -612,6 +612,9 @@ def cmd_status(args: argparse.Namespace) -> None:
             "Concept linking: "
             f"linked={concept_linking.get('linked_nodes', 0)}/{concept_linking.get('eligible_nodes', 0)} "
             f"coverage={concept_linking.get('coverage_ratio', 0):.2%} "
+            f"facts={concept_linking.get('typed_fact_links', 0)} "
+            f"aliases={concept_linking.get('exact_alias_links', 0)} "
+            f"concepts={concept_linking.get('linked_concepts', 0)} "
             f"mode={concept_linking.get('mode', 'unavailable')} "
             f"scope={concept_linking.get('scope', 'unavailable')} "
             f"health={concept_linking.get('status', 'unavailable')}"
@@ -857,7 +860,9 @@ def cmd_scan(args: argparse.Namespace) -> None:
         print(
             f"  Source concepts: {float(graph.metadata['source_concepts_profile_ms']):.1f} ms; "
             f"candidates={graph.metadata.get('source_concepts_candidates', '0')} "
-            f"links={graph.metadata.get('source_concepts_links', '0')}"
+            f"links={graph.metadata.get('source_concepts_links', '0')} "
+            f"facts={graph.metadata.get('source_concepts_typed_fact_links', '0')} "
+            f"aliases={graph.metadata.get('source_concepts_exact_alias_links', '0')}"
         )
     # Reuse collection telemetry instead of walking the repository a second
     # time after the scan merely to discover which default rules fired.

@@ -14,9 +14,17 @@ from graphgraph import (
     scan_directory,
     update_paths,
 )
-from graphgraph.ast_scanner import extract_symbols
-from graphgraph.doc_scanner import DocumentInput, extract_document_context
-from graphgraph.frontends import (
+from graphgraph.concepts.terms import canonical_concept_label, concept_id, term_key
+from graphgraph.graph.ontology import relation_spec
+from graphgraph.io import (
+    graph_to_json,
+    save_graph,
+)
+from graphgraph.packets.validation import validate_graph_json
+from graphgraph.runtime.manifest import MANIFEST_VERSION
+from graphgraph.scanner.ast import extract_symbols
+from graphgraph.scanner.doc import DocumentInput, extract_document_context
+from graphgraph.scanner.frontends import (
     ExtractionResult,
     RegexExtractor,
     SourceFile,
@@ -26,14 +34,6 @@ from graphgraph.frontends import (
     select_extractor,
     tree_sitter_available,
 )
-from graphgraph.io import (
-    graph_to_json,
-    save_graph,
-)
-from graphgraph.manifest import MANIFEST_VERSION
-from graphgraph.ontology import relation_spec
-from graphgraph.terms import canonical_concept_label, concept_id, term_key
-from graphgraph.validate import validate_graph_json
 
 
 class ScannerTest(unittest.TestCase):
@@ -1412,7 +1412,10 @@ class ScannerTest(unittest.TestCase):
                 (e.source, e.target, e.type) for e in graph.edges if e.type == "implements_algorithm"
             }
             self.assertTrue(concept_edges_before, "fixture should produce at least one concept edge")
-            self.assertEqual(graph.metadata["source_concepts_mode"], "closed_registry_exact_alias")
+            self.assertEqual(
+                graph.metadata["source_concepts_mode"],
+                "closed_registry_typed_fact_or_exact_alias_v2",
+            )
             self.assertGreater(int(graph.metadata["source_concepts_eligible"]), 0)
             self.assertGreater(int(graph.metadata["source_concepts_linked_nodes"]), 0)
             self.assertIn("source_concepts_rejected_no_registry_alias", graph.metadata)

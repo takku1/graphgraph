@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 from ..graph.core import Graph, Query
 from ..io import (
     find_graph_path,
@@ -22,6 +21,7 @@ from ..platform.compiler import GraphProgram, GraphRuntime
 from ..platform.source_planner import QuerySourcePlanner, source_state_signature
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # noqa: F401
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
+from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
 QUERY_RESPONSE_CACHE_VERSION = "request_v6_hybrid_test_receipts"
 
@@ -77,7 +77,7 @@ def render_full_graph(
     all_edges = [edge for edge in graph.edges if edge.active]
     rendered = render_packet(graph, all_nodes, all_edges, packet)
     if max_tokens is not None:
-        from ..eval import estimate_tokens
+        from ..packets import estimate_tokens
 
         estimated = estimate_tokens(rendered)
         if estimated > max_tokens:
@@ -125,7 +125,7 @@ def render_final_packet(
     resolved_starts = resolve_start_nodes(graph, starts)
     if not resolved_starts:
         # Build a helpful diagnostic: search the graph for candidates
-        from ..findnodes import suggest_node_ids
+        from ..retrieval.findnodes import suggest_node_ids
 
         suggestions = suggest_node_ids(graph, starts, limit=6)
         hint = ""
