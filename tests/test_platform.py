@@ -15,7 +15,6 @@ from graphgraph import Edge, Graph, Node
 from graphgraph.cli.parser import build_parser
 from graphgraph.io import save_graph
 from graphgraph.mcp import dispatch
-from graphgraph.runtime.state import atomic_write_text, file_lock
 from graphgraph.platform import (
     PLATFORM_STATE_VERSION,
     BenchmarkCase,
@@ -50,6 +49,7 @@ from graphgraph.platform import (
 )
 from graphgraph.platform.interop import export_graph
 from graphgraph.platform.service import create_server, install_git_hooks
+from graphgraph.runtime.state import atomic_write_text, file_lock
 from graphgraph.services import render_query_context
 
 

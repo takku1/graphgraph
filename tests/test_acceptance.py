@@ -21,11 +21,11 @@ from graphgraph.acceptance.model import (
     Task,
 )
 from graphgraph.acceptance.runner import _parse_packet, run_case
-from graphgraph.services.control import GATE_ORDER
 from graphgraph.acceptance.scoreboard import summarize, to_markdown
 from graphgraph.acceptance.service import select_tasks
 from graphgraph.acceptance.tokens import count_tokens
 from graphgraph.cli.parser import build_parser
+from graphgraph.services.control import GATE_ORDER
 
 _PACKET = """#gg
 [r]
