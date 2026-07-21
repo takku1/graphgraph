@@ -1025,6 +1025,23 @@ def cmd_update(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
     output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
 
+    # A splice must not silently rewrite settings it was not asked to change.
+    # `update` used to persist docs=false whenever the flag was omitted, so a
+    # later `scan` -- which correctly honors the stored setting -- would drop
+    # every document node in the graph. The destruction happened one command
+    # after the command that caused it, which is what made it so hard to see.
+    existing_metadata: dict = {}
+    if output_path.exists():
+        try:
+            existing_metadata = load_any(output_path).metadata or {}
+        except Exception:  # noqa: BLE001 - a corrupt graph is handled downstream
+            existing_metadata = {}
+    docs = (
+        str(existing_metadata.get("docs", "false")).casefold() == "true"
+        if getattr(args, "docs", None) is None
+        else args.docs
+    )
+
     status = update_paths_validated_graph(
         directory=root,
         output_path=output_path,
@@ -1032,7 +1049,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         max_nodes=args.max_nodes,
         depth=args.depth,
         frontend=args.frontend,
-        docs=args.docs,
+        docs=docs,
         history=args.history,
     )
     graph = status.graph

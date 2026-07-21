@@ -210,7 +210,10 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Max symbols per file batch (default: {DEFAULT_SCAN_MAX_NODES}).")
     update.add_argument("--depth", choices=["files", "symbols"], default="symbols")
     update.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto")
-    update.add_argument("--docs", action="store_true", help="Extract document sections and concept nodes for doc files among --files.")
+    update.add_argument("--docs", action="store_true", default=None,
+                        help="Extract document sections and concept nodes for doc files among --files. Reuses the existing graph setting when omitted.")
+    update.add_argument("--no-docs", action="store_false", dest="docs",
+                        help="Disable document extraction for this splice.")
     update.add_argument("--history", action="store_true", default=False)
     update.set_defaults(func=cmd_update)
 

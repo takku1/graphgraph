@@ -2581,3 +2581,54 @@ class CliMcpTest(unittest.TestCase):
             self.assertIn("control", payload)
             self.assertIn("anchor=", payload["control"])
             self.assertIn("#gg", payload["packet"])
+
+    def test_update_does_not_clobber_the_persisted_docs_setting(self) -> None:
+        # `scan --help` promises the docs setting is reused when omitted, and
+        # `scan` honors it correctly. `update` was persisting docs=false
+        # whenever its own flag was omitted, so a later plain `scan` faithfully
+        # dropped every document node -- 72% of a real graph, reported as a
+        # successful scan with PASS validation. The destruction happened one
+        # command after the command that caused it.
+        import subprocess
+
+        from graphgraph.io import load_any
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+            (root / "README.md").write_text(
+                "# Title\n\nA documentation paragraph.\n\n## Section\n\nMore text.\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.gg"
+
+            def run(*args: str) -> None:
+                subprocess.run(
+                    [sys.executable, "-m", "graphgraph", *args],
+                    cwd=root, capture_output=True, check=False,
+                )
+
+            def doc_nodes() -> int:
+                graph = load_any(graph_path)
+                return sum(
+                    1 for node in graph.nodes.values()
+                    if node.kind in {"paragraph", "section", "markdown", "concept"}
+                )
+
+            run("scan", "--depth", "symbols", "--docs")
+            baseline = doc_nodes()
+            self.assertGreater(baseline, 1)
+
+            run("update", "--files", "a.py")
+            self.assertEqual(
+                load_any(graph_path).metadata.get("docs"), "true",
+                "update must not rewrite a setting it was not asked to change",
+            )
+
+            run("scan", "--depth", "symbols")
+            self.assertEqual(doc_nodes(), baseline, "plain scan destroyed doc nodes")
+
+            # An explicit opt-out must still be honored.
+            run("update", "--files", "a.py", "--no-docs")
+            self.assertEqual(load_any(graph_path).metadata.get("docs"), "false")
