@@ -689,3 +689,51 @@ class WeakLexicalTest(unittest.TestCase):
         from graphgraph.platform.source_planner import _weak_lexical
 
         self.assertTrue(_weak_lexical([], "anything at all"))
+
+
+class SemanticSeedBalanceTest(unittest.TestCase):
+    """Prose must not crowd implementation out of the semantic seed set."""
+
+    def _graph(self):
+        nodes = {
+            "p1": Node("p1", "A long paragraph about JSON encoding and decoding", "paragraph", "docs/a.rst"),
+            "p2": Node("p2", "Another paragraph discussing serialization", "paragraph", "docs/b.rst"),
+            "p3": Node("p3", "More prose about configuration", "paragraph", "docs/c.rst"),
+            "p4": Node("p4", "Yet more prose", "paragraph", "docs/d.rst"),
+            "c1": Node("c1", "JSONProvider", "class", "src/provider.py", "L19"),
+            "c2": Node("c2", "to_json", "method", "src/json.py", "L4"),
+        }
+        return Graph(nodes=nodes, edges=[])
+
+    def test_code_keeps_half_the_budget_when_prose_scores_higher(self) -> None:
+        # Cosine similarity favours prose: a paragraph carries far more
+        # embeddable text than a class whose body is a name and a signature.
+        # Taking the top-k overall returned six documentation paragraphs and
+        # never surfaced the implementation.
+        from graphgraph.platform.source_planner import _balanced_semantic_seeds
+
+        graph = self._graph()
+        # Prose outranks code on raw similarity.
+        scored = [("p1", 0.9), ("p2", 0.8), ("p3", 0.7), ("p4", 0.6), ("c1", 0.5), ("c2", 0.4)]
+        seeds = _balanced_semantic_seeds(scored, graph, 4)
+
+        kinds = [graph.nodes[s].kind for s in seeds]
+        self.assertEqual(len(seeds), 4)
+        self.assertGreaterEqual(sum(1 for k in kinds if k in {"class", "method"}), 2)
+        self.assertIn("c1", seeds)
+
+    def test_all_prose_still_fills_the_budget(self) -> None:
+        # Whichever side runs short yields its slots; a docs-only result must
+        # not come back half empty.
+        from graphgraph.platform.source_planner import _balanced_semantic_seeds
+
+        graph = self._graph()
+        seeds = _balanced_semantic_seeds([("p1", 0.9), ("p2", 0.8), ("p3", 0.7)], graph, 3)
+        self.assertEqual(len(seeds), 3)
+
+    def test_inactive_and_unknown_nodes_are_dropped(self) -> None:
+        from graphgraph.platform.source_planner import _balanced_semantic_seeds
+
+        graph = self._graph()
+        seeds = _balanced_semantic_seeds([("missing", 0.9), ("c1", 0.5)], graph, 4)
+        self.assertEqual(seeds, ["c1"])

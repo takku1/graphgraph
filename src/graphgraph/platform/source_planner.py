@@ -145,11 +145,11 @@ class QuerySourcePlanner:
                 if not semantic.is_current(graph):
                     semantic.build(graph)
                     semantic_rebuilt = True
-                semantic_ids = [
-                    node_id
-                    for node_id, _score in semantic.query(query, limit=max_semantic)
-                    if node_id in current.nodes and current.nodes[node_id].active
-                ]
+                semantic_ids = _balanced_semantic_seeds(
+                    semantic.query(query, limit=max_semantic * 4),
+                    current,
+                    max_semantic,
+                )
                 seeds.extend(semantic_ids)
                 semantic_count = len(semantic_ids)
                 if semantic_ids:
@@ -276,6 +276,44 @@ def source_state_signature(directory: Path) -> str:
 
 def receipt_data(plan: SourcePlan) -> dict[str, object]:
     return asdict(plan.receipt)
+
+
+
+# Kinds that name an implementation rather than describe one.
+_CODE_KINDS = frozenset({
+    "function", "method", "class", "struct", "trait", "enum", "interface", "type",
+})
+
+
+def _balanced_semantic_seeds(scored, graph, limit: int) -> list[str]:
+    """Pick semantic seeds without letting prose crowd out code.
+
+    Cosine similarity over embedded text systematically favours prose: a
+    paragraph explaining JSON encoding carries far more embeddable material
+    than a class whose body is a name and a signature. Taking the top-k
+    overall therefore returned six documentation paragraphs for
+    "how is JSON serialized and configured" and never surfaced the class
+    that implements it.
+
+    Reserving half the seed budget for code keeps the descriptive query
+    answerable with an implementation, while leaving the prose that explains
+    it in the set. Ordering within each half is still pure similarity, and
+    whichever side runs short yields its slots to the other.
+    """
+    code: list[str] = []
+    prose: list[str] = []
+    for node_id, _score in scored:
+        node = graph.nodes.get(node_id)
+        if node is None or not node.active:
+            continue
+        (code if node.kind in _CODE_KINDS else prose).append(node_id)
+
+    reserved = limit // 2
+    chosen = code[:reserved] + prose[: limit - min(reserved, len(code))]
+    if len(chosen) < limit:
+        remainder = [n for n in code + prose if n not in set(chosen)]
+        chosen.extend(remainder[: limit - len(chosen)])
+    return chosen[:limit]
 
 
 def _weak_lexical(matches, query: str = "") -> bool:

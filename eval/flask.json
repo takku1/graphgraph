@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "Retrieval regression suite for an external repository, runnable with:",
+    "  graphgraph scan --depth symbols --docs --no-incremental   # in a flask checkout",
+    "  graphgraph eval --graph .graphgraph/graph.gg --tasks eval/flask.json",
+    "",
+    "This suite complements eval/graphgraph-self.json in one specific way: every",
+    "expectation here was resolved from flask's SOURCE -- grep for the call site,",
+    "then AST-resolve its enclosing function -- not from the graph being measured.",
+    "Expectations derived from the graph cannot detect an extraction bug, because",
+    "the bug is baked into the answer key. These can.",
+    "",
+    "Verified call sites (flask 3.x layout):",
+    "  app.py:1625 self.wsgi_app(...)            inside __call__",
+    "  app.py:1597 self.full_dispatch_request()  inside wsgi_app",
+    "  app.py:1016 self.dispatch_request(ctx)    inside full_dispatch_request",
+    "  ctx.py:490  self.app.do_teardown_request  inside pop",
+    "  ctx.py:388  si.open_session(...)          inside _get_session",
+    "",
+    "The final task is a RED TEST: it names symbols that do not exist in flask and",
+    "must score node_recall 0.0. A suite that cannot fail is not a measurement."
+  ],
+  "tasks": [
+    {
+      "query": "what calls wsgi_app",
+      "expected": ["__call__"]
+    },
+    {
+      "query": "what calls full_dispatch_request",
+      "expected": ["wsgi_app"]
+    },
+    {
+      "query": "what calls dispatch_request",
+      "expected": ["full_dispatch_request"]
+    },
+    {
+      "query": "what calls do_teardown_request",
+      "expected": ["pop"]
+    },
+    {
+      "query": "what calls open_session",
+      "expected": ["_get_session"]
+    },
+    {
+      "query": "how is JSON serialized and configured",
+      "expected": ["JSONProvider"],
+      "_note": [
+        "Descriptive, not lexical: no query token matches the symbol name. This is",
+        "the task that exposed semantic retrieval being skipped entirely, and it is",
+        "kept here as a live target rather than trimmed to something already passing."
+      ]
+    },
+    {
+      "query": "where does the session get loaded and saved",
+      "expected": ["open_session", "save_session"]
+    },
+    {
+      "query": "what calls frobnicate_the_widget_registry",
+      "expected": ["nonexistent_caller_do_not_add_this_symbol"],
+      "_note": "RED TEST -- must score node_recall 0.0."
+    }
+  ]
+}
