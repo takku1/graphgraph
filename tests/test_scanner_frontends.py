@@ -1539,3 +1539,45 @@ class FrontendsScannerTest(unittest.TestCase):
             and result.nodes[edge.target].label == "run"
         }
         self.assertEqual(run_targets, set(), "ambiguous return type must not produce a calls edge")
+
+    def test_declared_type_wins_over_inferred_return_type(self) -> None:
+        # Return-type inference must not overwrite a declared annotation or
+        # parameter type. It did, and the damage was invisible in the
+        # resolved/unknown ratio -- displaced sites leave that denominator
+        # entirely -- while costing real calls edges.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/types.rs": (
+                "pub struct Declared; impl Declared { pub fn act(&self) {} }\n"
+                "pub struct Returned; impl Returned { pub fn act(&self) {} }\n"
+            ),
+            "src/make.rs": "use crate::types::Returned;\nfn build(v: bool) -> Returned { Returned }\n",
+            "src/use.rs": (
+                "use crate::types::Declared;\n"
+                "pub fn go(v: bool) {\n"
+                "    let build: Declared = Declared;\n"
+                "    build.act();\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        go_id = next(node.id for node in result.nodes.values() if node.label == "go")
+        owners = {
+            result.nodes[edge.target].id.split("__")[-2]
+            for edge in result.edges
+            if edge.type == "calls"
+            and edge.source == go_id
+            and result.nodes.get(edge.target)
+            and result.nodes[edge.target].label == "act"
+        }
+        self.assertEqual(owners, {"Declared"}, f"declared type must win, got {owners}")

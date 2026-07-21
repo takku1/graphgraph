@@ -19,6 +19,7 @@ from .python import (
 )
 from .rust import (
     _rust_fields_in_range,
+    _rust_local_call_return_types,
     _rust_local_types,
     _rust_macro_bare_call_names_in_range,
 )
@@ -186,11 +187,12 @@ def _add_tree_sitter_calls(
             )
             if return_type:
                 return_types_by_name.setdefault(definition.name, set()).add(return_type)
-    call_receiver_types = {
-        f"{name}()": next(iter(types))
+    unique_return_types = {
+        name: next(iter(types))
         for name, types in return_types_by_name.items()
         if len(types) == 1
     }
+    call_receiver_types = {f"{name}()": value for name, value in unique_return_types.items()}
 
     stats = _MemberCallStats()
     for source, defs, root in defs_by_file:
@@ -239,7 +241,19 @@ def _add_tree_sitter_calls(
             body = _node_text_range(text_bytes, d.start, d.end)
             if suffix == ".rs":
                 local_types = _rust_local_types(body)
-                local_types.update(call_receiver_types)
+                # `let ir = parse_ir(src);` -- bind the local to the callee's
+                # return type, but only where nothing stronger is known.
+                # A declared annotation or parameter type is direct evidence;
+                # a return type is inferred, and letting it overwrite the
+                # former loses real resolutions (measured: -83 calls edges,
+                # while the resolved/unknown *ratio* rose, because displaced
+                # sites fall out of that ratio's denominator entirely).
+                for binding, inferred in _rust_local_call_return_types(
+                    body, unique_return_types
+                ).items():
+                    local_types.setdefault(binding, inferred)
+                for binding, inferred in call_receiver_types.items():
+                    local_types.setdefault(binding, inferred)
             elif suffix == ".py":
                 local_types = _python_local_types(body)
             else:
