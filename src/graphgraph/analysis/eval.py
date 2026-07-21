@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..graph.core import Edge, Graph
 from ..io import load_any
 from ..packets import estimate_tokens, render_packet
 from ..planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
+from ..planning.routing import route_query
 from ..retrieval import retrieve_context
 
 
@@ -24,14 +25,16 @@ class EvalTask:
 class EvalResult:
     query: str
     query_class: str
-    node_recall: float
-    edge_recall: float
+    node_recall: float | None
+    edge_recall: float | None
     returned_nodes: int
     returned_edges: int
     token_estimate: int
     mrr: float = 0.0
     ndcg_at_5: float = 0.0
     ndcg_at_10: float = 0.0
+    scored: bool = True
+    note: str = ""
 
 
 def load_eval_tasks(path: Path) -> list[EvalTask]:
@@ -42,11 +45,19 @@ def load_eval_tasks(path: Path) -> list[EvalTask]:
         query = task.get("query", task.get("question"))
         if not query:
             continue
+        # `expected` is the obvious key to reach for, and reading only
+        # `expected_nodes` silently produced an empty expectation set -- which
+        # then scored as vacuously perfect. A harness that mis-reads its own
+        # task file must not report a green number for it.
+        expected_nodes = task.get("expected_nodes", task.get("expected", []))
+        expected_edges = task.get("expected_edges", task.get("edges", []))
         out.append(EvalTask(
             query=str(query),
-            query_class=str(task.get("query_class", "blast_radius")),
-            expected_nodes=tuple(str(item) for item in task.get("expected_nodes", [])),
-            expected_edges=tuple(tuple(str(part) for part in edge) for edge in task.get("expected_edges", [])),
+            # Default to routing, as `query` does. A hardcoded class made every
+            # task in a suite classify identically regardless of its wording.
+            query_class=str(task.get("query_class", "auto")),
+            expected_nodes=tuple(str(item) for item in expected_nodes),
+            expected_edges=tuple(tuple(str(part) for part in edge) for edge in expected_edges),
         ))
     return out
 
@@ -73,6 +84,12 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
     graph = load_any(graph_path)
     results: list[EvalResult] = []
     for task in tasks:
+        # Resolve `auto` to the class actually routed, so a suite reports what
+        # ran rather than the literal placeholder it was given.
+        resolved_class = task.query_class
+        if resolved_class == "auto":
+            resolved_class = route_query(task.query).query_class
+        task = replace(task, query_class=resolved_class)
         choice = choose_packet(task.query_class, task.query)
         retrieved = retrieve_context(graph, task.query, task.query_class, hops=choice.hops, max_nodes=max_nodes)
         choice = choose_packet_for_subgraph(
@@ -108,11 +125,21 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
         ndcg_5 = ndcg_at_k(ranked_nodes, expected_ids, 5)
         ndcg_10 = ndcg_at_k(ranked_nodes, expected_ids, 10)
 
+        node_recall = _node_recall(task.expected_nodes, returned_node_keys)
+        edge_recall = _edge_recall(task.expected_edges, returned_edges)
+        scored = node_recall is not None or edge_recall is not None
         results.append(EvalResult(
             query=task.query,
             query_class=task.query_class,
-            node_recall=_node_recall(task.expected_nodes, returned_node_keys),
-            edge_recall=_edge_recall(task.expected_edges, returned_edges),
+            node_recall=node_recall,
+            edge_recall=edge_recall,
+            scored=scored,
+            note=(
+                ""
+                if scored
+                else "no expectations parsed: give each task an `expected` "
+                     "(node labels/paths) and/or `expected_edges` list"
+            ),
             returned_nodes=len(retrieved.nodes),
             returned_edges=len(retrieved.edges),
             token_estimate=estimate_tokens(packet),
@@ -163,9 +190,9 @@ def results_to_json(results: list[EvalResult]) -> str:
     return json.dumps([result.__dict__ for result in results], indent=2, ensure_ascii=False)
 
 
-def _edge_recall(expected: tuple[tuple[str, ...], ...], returned: set[tuple[str, str, str]]) -> float:
+def _edge_recall(expected: tuple[tuple[str, ...], ...], returned: set[tuple[str, str, str]]) -> float | None:
     if not expected:
-        return 1.0
+        return None
     returned_pairs = {(source, target) for source, target, _type in returned}
     hits = 0
     for edge in expected:
@@ -177,9 +204,17 @@ def _edge_recall(expected: tuple[tuple[str, ...], ...], returned: set[tuple[str,
     return hits / len(expected)
 
 
-def _node_recall(expected: tuple[str, ...], returned: set[str]) -> float:
+def _node_recall(expected: tuple[str, ...], returned: set[str]) -> float | None:
+    """Recall over expected nodes, or None when nothing was expected.
+
+    Returning 1.0 for an empty expectation set is vacuously true and
+    operationally a lie: a task whose `expected` key was misspelled, or whose
+    ground truth was never written, reported perfect recall. In CI that is a
+    green light on a suite that measured nothing. None forces the caller to
+    say "not scored" instead.
+    """
     if not expected:
-        return 1.0
+        return None
     returned_norm = {_norm_node_key(item) for item in returned if item}
     hits = 0
     for item in expected:
