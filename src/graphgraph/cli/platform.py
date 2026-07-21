@@ -29,9 +29,6 @@ from ..platform import (
     migrate_platform_state,
     run_benchmark,
 )
-from ..platform.evaluation import load_cases
-from ..platform.interop import export_graph
-from ..platform.service import install_git_hooks, serve_graph, watch_paths
 from ..platform.temporal import new_episode
 from ..services.native import update_paths_validated_graph
 
@@ -329,9 +326,13 @@ def cmd_platform(args: argparse.Namespace) -> None:
         print(json.dumps(build_repair_context(_graph(args), args.issue, max_nodes=args.max_nodes, hops=args.hops), indent=2, ensure_ascii=False))
         return
     if action == "export":
+        from ..platform.interop import export_graph
+
         print(json.dumps(export_graph(_graph(args), Path(args.output), args.format), indent=2))
         return
     if action == "eval":
+        from ..platform.evaluation import load_cases
+
         cases = load_cases(Path(args.cases))
         if args.registry:
             registry = ProjectRegistry(Path(args.registry))
@@ -395,6 +396,8 @@ def cmd_platform(args: argparse.Namespace) -> None:
     if action == "serve":
         graph_path = Path(args.graph) if args.graph else find_graph_path()
         print(f"GraphGraph console: http://{args.host}:{args.port}")
+        from ..platform.service import serve_graph
+
         serve_graph(
             graph_path,
             host=args.host,
@@ -418,9 +421,13 @@ def cmd_platform(args: argparse.Namespace) -> None:
             status = update_paths_validated_graph(directory=root, output_path=graph_path, paths=changed, deleted_paths=deleted)
             print(json.dumps({"changed": changed, "deleted": deleted, "nodes": len(status.graph.nodes), "edges": len(status.graph.edges)}))
 
+        from ..platform.service import watch_paths
+
         watch_paths(root, refresh, interval=args.interval)
         return
     if action == "hooks":
+        from ..platform.service import install_git_hooks
+
         paths = install_git_hooks(Path(args.directory), executable=args.executable)
         print(json.dumps({"installed": [str(path) for path in paths]}, indent=2))
         return
