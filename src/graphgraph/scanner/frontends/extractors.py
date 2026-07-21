@@ -160,7 +160,7 @@ class TreeSitterExtractor:
                     name_to_symbols.setdefault(d.name, []).append(node_id)
                 total += 1
 
-        _add_tree_sitter_implements(defs_by_file, name_to_symbols, edges)
+        _add_tree_sitter_implements(defs_by_file, name_to_symbols, edges, nodes)
         _add_rust_method_owners(defs_by_file, nodes, name_to_symbols, edges)
         _add_nested_contains(defs_by_file, nodes, edges)
         _add_rust_fields(defs_by_file, nodes, edges)

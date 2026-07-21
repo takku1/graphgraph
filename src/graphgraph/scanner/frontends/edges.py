@@ -43,18 +43,45 @@ def _add_tree_sitter_implements(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
+    nodes: dict[str, Node] | None = None,
 ) -> None:
-    for _source, defs, _root in defs_by_file:
+    nodes = nodes if nodes is not None else {}
+    for source, defs, _root in defs_by_file:
         for d in defs:
-            if d.kind != "impl_block" or len(d.extra) != 2:
+            # Rust `impl Trait for Type` encodes (trait, type) in extra.
+            if d.kind == "impl_block" and len(d.extra) == 2:
+                trait_name, type_name = d.extra
+                if not trait_name:
+                    continue
+                for type_id in name_to_symbols.get(type_name, []):
+                    for trait_id in name_to_symbols.get(trait_name, []):
+                        if type_id != trait_id:
+                            edges.append(Edge(type_id, trait_id, "implements", confidence=0.95, provenance="tree_sitter"))
                 continue
-            trait_name, type_name = d.extra
-            if not trait_name:
+            # Class inheritance: `class Flask(App)` stores its base names in
+            # extra. Without these edges a call on a typed receiver can only
+            # match a method owned by that exact class, so every inherited
+            # call is unresolvable even though both ends are in the graph.
+            if d.kind != "class" or not d.extra:
                 continue
-            for type_id in name_to_symbols.get(type_name, []):
-                for trait_id in name_to_symbols.get(trait_name, []):
-                    if type_id != trait_id:
-                        edges.append(Edge(type_id, trait_id, "implements", confidence=0.95, provenance="tree_sitter"))
+            child_id = _definition_node_id(source, d)
+            if child_id not in nodes:
+                continue
+            for base_name in d.extra:
+                base_ids = name_to_symbols.get(base_name, [])
+                # Ambiguous base names would attach the wrong hierarchy; a
+                # single definition is the only safe attribution.
+                if len(base_ids) != 1 or base_ids[0] == child_id:
+                    continue
+                if nodes.get(base_ids[0]) is not None and nodes[base_ids[0]].kind == "class":
+                    edges.append(Edge(
+                        child_id,
+                        base_ids[0],
+                        "implements",
+                        confidence=0.95,
+                        provenance="tree_sitter_base_class",
+                        source_location=f"{source.rel}:{d.line}",
+                    ))
 
 def _add_nested_contains(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
@@ -171,6 +198,16 @@ def _add_tree_sitter_calls(
         if len(ids) == 1 and nodes[ids[0]].kind in {"function", "method"}
     }
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
+
+    # Class name -> declared base names, so a call on a typed receiver can find
+    # a method defined on an ancestor. Without it, resolution requires the
+    # method to be owned by the receiver's exact class, and every inherited
+    # call fails with both ends already present in the graph.
+    base_classes: dict[str, tuple[str, ...]] = {}
+    for _source, defs, _root in defs_by_file:
+        for definition in defs:
+            if definition.kind == "class" and definition.extra:
+                base_classes.setdefault(definition.name, tuple(definition.extra))
 
     # Repo-wide map of function name -> its single concrete return type, used
     # to type inline call receivers (`parse_ir(src).lower()`, normalized to
@@ -295,6 +332,7 @@ def _add_tree_sitter_calls(
                         nodes=nodes,
                         name_to_symbols=name_to_symbols,
                         edges=edges,
+                        base_classes=base_classes,
                     )
                     stats = stats.add(outcome, call.receiver)
                     continue

@@ -124,6 +124,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             end=int(node.end_byte),
             line=int(node.start_point[0]) + 1,
             facts=_definition_facts(source, node, text),
+            extra=_base_class_names(node, text),
         ))
     if source.path.suffix.lower() != ".rs":
         return _attach_lexical_method_owners(defs)
@@ -142,6 +143,35 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
         parent = min(parents, key=lambda item: item.end - item.start)
         owned.append(replace(definition, kind="method", owner=parent.extra[1], extra=parent.extra))
     return owned
+
+
+def _base_class_names(node: Any, text: bytes) -> tuple[str, ...]:
+    """Base classes named in a class declaration, when the grammar exposes them.
+
+    A method called on a typed receiver resolves only if the method is owned by
+    that exact type, so every inherited call fails without this: `app.route()`
+    on a `Flask` misses because `route` lives on an ancestor. The base names sit
+    in the CST the parser already built, so recovering them is a read, not an
+    inference.
+    """
+    if _DEF_TYPES.get(node.type) != "class":
+        return ()
+    names: list[str] = []
+    for field in ("superclasses", "superclass", "bases"):
+        try:
+            container = node.child_by_field_name(field)
+        except Exception:
+            container = None
+        if container is None:
+            continue
+        for child in getattr(container, "named_children", ()):
+            base = _node_text(child, text).strip()
+            # Keep plain names; generics and keyword args (metaclass=...) are
+            # not a nameable owner here.
+            if base and _identifier(base) and base not in names:
+                names.append(base)
+        break
+    return tuple(names)
 
 def _syntax_text_without_literals(node: Any, text: bytes) -> str:
     """Return a node's source with non-executable literal regions blanked."""
@@ -403,6 +433,30 @@ def _method_owner(node_id: str, nodes: dict[str, Node]) -> str:
     parent = nodes.get(node.parent)
     return parent.label if parent else ""
 
+
+def _ancestor_chain(type_name: str, base_classes: dict[str, tuple[str, ...]]) -> list[str]:
+    """Base classes of *type_name*, nearest first, breadth-first.
+
+    Bounded and cycle-safe: a malformed or self-referential hierarchy must not
+    hang extraction, and depth beyond a few links is not evidence worth
+    claiming.
+    """
+    seen = {type_name}
+    order: list[str] = []
+    frontier = list(base_classes.get(type_name, ()))
+    depth = 0
+    while frontier and depth < 8:
+        nxt: list[str] = []
+        for name in frontier:
+            if name in seen:
+                continue
+            seen.add(name)
+            order.append(name)
+            nxt.extend(base_classes.get(name, ()))
+        frontier = nxt
+        depth += 1
+    return order
+
 def _resolve_member_call(
     *,
     source: SourceFile,
@@ -412,7 +466,9 @@ def _resolve_member_call(
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
+    base_classes: dict[str, tuple[str, ...]] | None = None,
 ) -> str:
+    base_classes = base_classes or {}
     receiver_type = receiver_types.get(call.receiver, "")
     if not receiver_type and source.path.suffix.lower() == ".rs" and _rust_qualified_type_receiver(call.receiver):
         receiver_type = call.receiver.split("::")[-1]
@@ -437,6 +493,20 @@ def _resolve_member_call(
         # turning list.append()/dict.get() collisions into graph topology.
         return "unknown_receiver" if all_candidates else "unresolved"
     candidates = [node_id for node_id in all_candidates if _method_owner(node_id, nodes) == receiver_type]
+    if not candidates and base_classes:
+        # Inherited call: the receiver's type is known and the method exists,
+        # just on an ancestor. Requiring an exact owner match made every such
+        # call unresolvable -- `app.route()` on a Flask misses because `route`
+        # is defined on a base class. Walk the chain nearest-first so an
+        # override still wins over the definition it overrides.
+        for ancestor in _ancestor_chain(receiver_type, base_classes):
+            candidates = [
+                node_id for node_id in all_candidates
+                if _method_owner(node_id, nodes) == ancestor
+            ]
+            if candidates:
+                receiver_type = ancestor
+                break
     if len(candidates) == 1:
         edges.append(Edge(
             source_id,

@@ -1626,3 +1626,87 @@ class FrontendsScannerTest(unittest.TestCase):
             result.unknown_receiver_member_calls,
             f"histogram {histogram} must partition the total",
         )
+
+    def test_inherited_method_resolves_through_the_base_chain(self) -> None:
+        # Resolution required the method to be owned by the receiver's exact
+        # class, so every inherited call failed with both ends already in the
+        # graph: `app.route()` on a Flask missed because `route` is defined on
+        # a base. On flask this bucket was 69 sites -- and it was invisible to
+        # the unknown_receiver histogram, because a known type with no owner
+        # match falls through to `unresolved` instead.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "class Scaffold:\n"
+            "    def route(self):\n"
+            "        return 1\n\n"
+            "class App(Scaffold):\n"
+            "    pass\n\n"
+            "class Flask(App):\n"
+            "    pass\n\n"
+            "def go(app: Flask):\n"
+            "    return app.route()\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.py"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "a.py", "a_py", text)], max_total_symbols=50
+            )
+
+        go_id = next(node.id for node in result.nodes.values() if node.label == "go")
+        targets = {
+            result.nodes[edge.target].label
+            for edge in result.edges
+            if edge.type == "calls" and edge.source == go_id and edge.target in result.nodes
+        }
+        self.assertIn("route", targets)
+        self.assertTrue(
+            any(edge.type == "implements" for edge in result.edges),
+            "class inheritance must be recorded as edges, not only used internally",
+        )
+
+    def test_override_wins_over_the_base_definition(self) -> None:
+        # The chain is walked nearest-first; a subclass that overrides must
+        # attribute the call to its own definition, not the inherited one.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "class Base:\n"
+            "    def run(self):\n"
+            "        return 1\n\n"
+            "class Child(Base):\n"
+            "    def run(self):\n"
+            "        return 2\n\n"
+            "def go(c: Child):\n"
+            "    return c.run()\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "b.py"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "b.py", "b_py", text)], max_total_symbols=50
+            )
+
+        go_id = next(node.id for node in result.nodes.values() if node.label == "go")
+        owners = {
+            result.nodes[edge.target].id.split("__")[-2]
+            for edge in result.edges
+            if edge.type == "calls"
+            and edge.source == go_id
+            and result.nodes.get(edge.target)
+            and result.nodes[edge.target].label == "run"
+        }
+        self.assertEqual(owners, {"Child"}, f"override must win, got {owners}")
+
+    def test_cyclic_base_classes_do_not_hang_extraction(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = "class A(B):\n    pass\n\nclass B(A):\n    def go(self):\n        return 1\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.py"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "c.py", "c_py", text)], max_total_symbols=50
+            )
+        self.assertTrue(result.nodes)
