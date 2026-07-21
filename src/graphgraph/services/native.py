@@ -685,9 +685,29 @@ def build_project_status(
         graph_report["symbols_cap"] = graph.metadata.get("symbols_cap")
     global_calls = _member_call_snapshot(graph.metadata, "global")
     last_update_calls = _member_call_snapshot(graph.metadata, "last_update")
+    # These global counts are carried forward verbatim by incremental scans,
+    # so state when they were actually measured. Without it the headline
+    # numbers read as current and a resolver change -- which affects every
+    # file, not just the changed ones -- looks like it did nothing.
+    snapshot_at = graph.metadata.get("member_calls_global_scanned_at", "")
+    snapshot_files = graph.metadata.get("member_calls_global_scanned_files", "")
+    current_files = sum(1 for node in graph.nodes.values() if node.active and node.path)
+    snapshot_stale = bool(
+        snapshot_files and current_files and abs(int(snapshot_files) - current_files) > 0
+    )
     graph_report["member_calls"] = {
         **global_calls,
         "scope": graph.metadata.get("member_calls_global_scope", graph.metadata.get("member_call_telemetry_scope", "unavailable")),
+        "measured_at": snapshot_at or "unknown",
+        "measured_over_files": int(snapshot_files) if snapshot_files else None,
+        "snapshot_may_be_stale": snapshot_stale,
+        "staleness_note": (
+            f"counts were measured by a full scan over {snapshot_files} file(s)"
+            f"{' at ' + snapshot_at if snapshot_at else ''}; incremental scans carry them"
+            " forward unchanged, so re-run with --no-incremental to measure a resolver change"
+            if snapshot_stale
+            else ""
+        ),
         "candidate_edges": sum(1 for edge in graph.edges if edge.active and edge.type == "calls_candidate"),
         "last_update": {
             **last_update_calls,

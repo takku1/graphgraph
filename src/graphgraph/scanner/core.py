@@ -5,6 +5,7 @@ import logging
 import subprocess
 import time
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -650,6 +651,12 @@ def _build_graph_from_split(
         )
         if prior_scope:
             metadata["member_calls_global_scope"] = prior_scope
+        # Provenance travels with the carried-forward counts, or the age of
+        # the snapshot becomes unknowable after the first incremental scan.
+        for provenance in ("scanned_at", "scanned_files"):
+            prior_value = previous_graph.metadata.get(f"member_calls_global_{provenance}", "")
+            if prior_value:
+                metadata[f"member_calls_global_{provenance}"] = prior_value
     if files_truncated:
         # collect_files() hit max_nodes before covering every matched file --
         # some real files were never even read, let alone symbol-extracted.
@@ -712,6 +719,16 @@ def _build_graph_from_split(
             if telemetry_scope == "full_scan":
                 metadata["member_calls_global_scope"] = "full_scan_snapshot"
                 metadata["member_calls_global_version"] = _MEMBER_CALL_TELEMETRY_VERSION
+                # Stamp what this snapshot actually covered. An incremental
+                # scan carries these global counts forward verbatim, so
+                # without provenance `status` reports a months-old resolver's
+                # numbers as if they were current -- which silently hides the
+                # effect of any resolver change, since that affects every
+                # file rather than only the changed ones.
+                metadata["member_calls_global_scanned_at"] = datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                )
+                metadata["member_calls_global_scanned_files"] = str(len(active_rels))
             metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
             metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
             metadata["frontend_unsupported_count"] = str(len(extraction.unsupported_files))

@@ -422,16 +422,26 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
     top = matches[0]
 
     # An exact-name collision must not be presented as a single answer to a
-    # *lookup*: "where is count_ops" has two correct answers when two types
-    # define it, and returning one is indistinguishable from a decisive
-    # result. Scoped to direct_lookup on purpose -- for blast_radius and the
-    # structural classes the question is "what does changing this reach",
-    # where anchoring the production definition and ignoring a same-named
-    # benchmark or vendored copy is the correct narrowing.
+    # *lookup*. "Where is count_ops" and "what calls count_ops" both have two
+    # correct answers when two types define it, and picking one is
+    # indistinguishable from a decisive result -- worse for reverse_lookup,
+    # where anchoring the wrong owner yields a confident zero callers for a
+    # method with a hundred call sites.
+    #
+    # Deliberately excludes blast_radius and the structural classes: there the
+    # question is "what does changing this reach", and anchoring the
+    # production definition while ignoring a same-named benchmark or vendored
+    # copy is the correct narrowing
+    # (test_explicit_identifier_blast_radius_uses_one_anchor).
+    #
     # The ceiling matches the single-token plateau branch below, so this rule
     # can only ever widen the anchor set, never narrow one the plateau logic
     # would have opened wider.
-    if plan.query_class == "direct_lookup" and "::" not in query and "." not in query.strip():
+    if (
+        plan.query_class in {"direct_lookup", "reverse_lookup"}
+        and "::" not in query
+        and "." not in query.strip()
+    ):
         collisions = exact_label_collisions(matches, query)
         if collisions >= 2:
             return min(max(plan.anchor_limit, collisions), 16)

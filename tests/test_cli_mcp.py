@@ -2377,3 +2377,54 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("GraphGraph query:", proc.stderr)
         self.assertIn("nodes=3", proc.stderr)
+
+    def test_response_envelope_does_not_duplicate_path_arrays(self) -> None:
+        # A reverse_lookup response once emitted the same 20-path list across
+        # eight arrays in two duplicated `freshness` blocks -- ~160 path
+        # strings to say "20 files are stale", on a response whose packet was
+        # empty. It scaled with the number of changed files, so it got worse
+        # as a session went on. This asserts the shape, not the byte count:
+        # no two keys may carry an identical non-trivial path array, and
+        # `freshness` may appear once.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text(
+                "def target():\n    return 1\n\n\ndef caller():\n    return target()\n",
+                encoding="utf-8",
+            )
+            rendered, _status = render_native_context(
+                query="What calls target?",
+                query_class="reverse_lookup",
+                directory=root,
+                graph_path=root / ".graphgraph" / "graph.gg",
+                json_output=True,
+                json_details=True,
+            )
+            payload = json.loads(rendered)
+
+        arrays: dict[str, tuple[str, ...]] = {}
+        freshness_blocks: list[str] = []
+
+        def walk(node: object, path: str = "") -> None:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key == "freshness":
+                        freshness_blocks.append(f"{path}.{key}")
+                    walk(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                if node and all(isinstance(item, str) for item in node):
+                    arrays[path] = tuple(node)
+
+        walk(payload)
+        self.assertLessEqual(
+            len(freshness_blocks), 1, f"freshness emitted more than once: {freshness_blocks}"
+        )
+        seen: dict[tuple[str, ...], str] = {}
+        for location, value in arrays.items():
+            if len(value) < 2:
+                continue
+            previous = seen.get(value)
+            self.assertIsNone(
+                previous, f"identical path array duplicated at {previous} and {location}"
+            )
+            seen[value] = location

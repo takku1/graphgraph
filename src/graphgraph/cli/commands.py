@@ -660,6 +660,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     )
     if member_calls.get("warning"):
         print(f"  !  WARNING: {member_calls['warning']}")
+    if member_calls.get("staleness_note"):
+        # The headline counts above are a carried-forward snapshot. Say so
+        # here, or a resolver change reads as having done nothing.
+        print(f"  !  STALE: {member_calls['staleness_note']}")
     last_update = member_calls.get("last_update") or {}
     if last_update and last_update.get("scope") != member_calls.get("scope"):
         print(
