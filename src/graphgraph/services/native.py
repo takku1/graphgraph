@@ -24,7 +24,11 @@ from ..io import (
     validate_graph_file,
 )
 from ..packets.validation import ValidationResult, validate_any
-from ..retrieval.git_utils import get_git_ignored_paths, get_git_worktree_paths
+from ..retrieval.git_utils import (
+    get_git_ignored_paths,
+    get_git_tracked_changed_paths,
+    get_git_worktree_paths,
+)
 from ..runtime.manifest import Manifest, compute_file_hash
 from ..scanner import DEFAULT_SCAN_MAX_NODES, remove_paths, scan_directory, update_paths
 from ..scanner.core import _normalize_rels
@@ -306,8 +310,17 @@ def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict
     directory = directory.resolve()
     changed, deleted = get_git_worktree_paths(directory)
     manifest = Manifest.load(manifest_path_for_graph(output_path))
-    ignored = set(get_git_ignored_paths(changed, directory))
-    ignored.update(path for path in changed if path_ignored_by_rules(directory, path))
+    # Ignore rules apply to untracked candidates only. A tracked file that is
+    # also listed in .gitignore still reports its edits to Git, so filtering
+    # it out here left the graph stale while freshness reported clean. The
+    # untracked half arrives from `ls-files --exclude-standard`, which Git has
+    # already filtered, so only non-Git `.ignore` rules remain to apply.
+    tracked = set(get_git_tracked_changed_paths(directory))
+    ignored = {
+        path
+        for path in changed
+        if path not in tracked and path_ignored_by_rules(directory, path)
+    }
     stale_changed: list[str] = []
     for rel_path in changed:
         if rel_path in ignored or not _worktree_sync_candidate(rel_path):

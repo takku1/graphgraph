@@ -16,6 +16,7 @@ _GIT_DIFF_CACHE_TTL_SECONDS = 1.0
 _git_diff_cache: dict[Path, tuple[float, dict[str, int]]] = {}
 _git_path_cache: dict[Path, tuple[float, tuple[tuple[str, ...], tuple[str, ...]]]] = {}
 _git_ignore_cache: dict[tuple[Path, tuple[str, ...]], tuple[float, tuple[str, ...]]] = {}
+_git_tracked_cache: dict[Path, tuple[float, tuple[str, ...]]] = {}
 
 
 def get_git_modified_files(start: Path | None = None) -> dict[str, int]:
@@ -89,6 +90,7 @@ def get_git_worktree_paths(start: Path | None = None) -> tuple[tuple[str, ...], 
 
     changed: set[str] = set()
     deleted: set[str] = set()
+    tracked: set[str] = set()
     try:
         result = subprocess.run(
             ["git", "diff", "HEAD", "--name-status", "-z", "--find-renames"],
@@ -109,6 +111,7 @@ def get_git_worktree_paths(start: Path | None = None) -> tuple[tuple[str, ...], 
                     new_path = fields[index + 1].replace("\\", "/")
                     index += 2
                     changed.add(new_path)
+                    tracked.add(new_path)
                     if code == "R":
                         deleted.add(old_path)
                     continue
@@ -120,6 +123,7 @@ def get_git_worktree_paths(start: Path | None = None) -> tuple[tuple[str, ...], 
                     deleted.add(path)
                 else:
                     changed.add(path)
+                    tracked.add(path)
 
         untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -139,7 +143,29 @@ def get_git_worktree_paths(start: Path | None = None) -> tuple[tuple[str, ...], 
 
     value = (tuple(sorted(changed - deleted)), tuple(sorted(deleted)))
     _git_path_cache[git_root] = (now, value)
+    _git_tracked_cache[git_root] = (now, tuple(sorted(tracked - deleted)))
     return value
+
+
+def get_git_tracked_changed_paths(start: Path | None = None) -> tuple[str, ...]:
+    """Changed paths Git already tracks, as opposed to new untracked files.
+
+    The distinction decides whether ignore rules may be applied. Git's rule
+    is that `.gitignore` governs untracked files only -- a tracked file
+    listed there still reports its changes -- so filtering the tracked set
+    through ignore rules drops real edits and leaves the graph stale while
+    reporting fresh. The untracked set needs no such filtering either: it
+    comes from `ls-files --exclude-standard`, which git has already applied
+    those rules to.
+    """
+    git_root = _find_git_root(start or Path.cwd())
+    if git_root is None:
+        return ()
+    cached = _git_tracked_cache.get(git_root)
+    if cached is None or time.monotonic() - cached[0] >= _GIT_DIFF_CACHE_TTL_SECONDS:
+        get_git_worktree_paths(start)
+        cached = _git_tracked_cache.get(git_root)
+    return cached[1] if cached else ()
 
 
 def get_git_ignored_paths(paths: tuple[str, ...], start: Path | None = None) -> tuple[str, ...]:
@@ -161,7 +187,13 @@ def get_git_ignored_paths(paths: tuple[str, ...], start: Path | None = None) -> 
     payload = ("\0".join(paths) + "\0").encode("utf-8")
     try:
         result = subprocess.run(
-            ["git", "check-ignore", "--no-index", "-z", "--stdin"],
+            # No --no-index: that flag makes check-ignore disregard the index,
+            # so a *tracked* file listed in .gitignore is reported as ignored
+            # and silently dropped from the freshness candidate list -- edit
+            # it and the graph stays stale while reporting fresh. Git's own
+            # rule is that .gitignore governs untracked files only, and
+            # matching that rule is what makes this agree with `git status`.
+            ["git", "check-ignore", "-z", "--stdin"],
             input=payload,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

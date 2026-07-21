@@ -2428,3 +2428,40 @@ class CliMcpTest(unittest.TestCase):
                 previous, f"identical path array duplicated at {previous} and {location}"
             )
             seen[value] = location
+
+    def test_tracked_file_listed_in_gitignore_still_reports_stale(self) -> None:
+        # Git's rule is that .gitignore governs untracked files only: a
+        # tracked file listed there still reports its edits. Filtering the
+        # tracked set through ignore rules dropped those edits, so the graph
+        # went stale while freshness reported clean -- silent, and worst for
+        # generated-then-committed files, which change often.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+
+            def git(*args: str) -> None:
+                subprocess.run(("git", *args), cwd=root, capture_output=True, check=False)
+
+            git("init", "-q", ".")
+            (root / ".gitignore").write_text("generated.py\nbuild/\n", encoding="utf-8")
+            (root / "generated.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+            (root / "app.py").write_text("def b():\n    return 2\n", encoding="utf-8")
+            git("add", "-f", "generated.py", "app.py", ".gitignore")
+            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
+
+            graph_path = root / ".graphgraph" / "graph.gg"
+            from graphgraph.services.native import scan_validated_graph
+
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+
+            (root / "generated.py").write_text("def a():\n    return 99\n", encoding="utf-8")
+            freshness = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
+            self.assertFalse(freshness["fresh"])
+            self.assertIn("generated.py", freshness["changed_paths"])
+
+            # ...while an untracked ignored file stays excluded, which is the
+            # property the secret-boundary case depends on.
+            (root / "build").mkdir(exist_ok=True)
+            (root / "build" / "junk.py").write_text("def junk():\n    pass\n", encoding="utf-8")
+            after = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
+            self.assertNotIn("build/junk.py", after["changed_paths"])
