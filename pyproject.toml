@@ -48,6 +48,11 @@ graphgraph-mcp = "graphgraph.mcp:main"
 dev = [
     "pytest>=9.0",
     "ruff>=0.15",
+    # The acceptance spec scores packet size with cl100k/o200k and lets the
+    # worse value control the gate. Without tiktoken the harness silently
+    # falls back to its proxy, which under-measures by up to ~30% -- so a
+    # release floor could read CLEAR on counts no real tokenizer produced.
+    "tiktoken>=0.5.0",
 ]
 
 [tool.uv]
