@@ -125,6 +125,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             line=int(node.start_point[0]) + 1,
             facts=_definition_facts(source, node, text),
             extra=_base_class_names(node, text),
+            return_type=_declared_return_type(node, text),
         ))
     if source.path.suffix.lower() != ".rs":
         return _attach_lexical_method_owners(defs)
@@ -172,6 +173,26 @@ def _base_class_names(node: Any, text: bytes) -> tuple[str, ...]:
                 names.append(base)
         break
     return tuple(names)
+
+
+def _declared_return_type(node: Any, text: bytes) -> str:
+    """The return annotation, read from the parser's own field.
+
+    Every grammar here exposes `return_type` directly, so scanning source
+    text for it re-derives what the parse already computed -- and the
+    heuristics that scanning needs (truncate at `{`, match after `->`) are
+    what let a Python docstring leak into the result. Reading the field is
+    exact, needs no per-language special-casing, and picks up TypeScript's
+    `: T` form which an arrow-based regex never matched at all.
+    """
+    try:
+        annotation = node.child_by_field_name("return_type")
+    except Exception:
+        return ""
+    if annotation is None:
+        return ""
+    # TypeScript's type_annotation node includes its leading colon.
+    return _node_text(annotation, text).strip().lstrip(":").strip()
 
 def _syntax_text_without_literals(node: Any, text: bytes) -> str:
     """Return a node's source with non-executable literal regions blanked."""
@@ -352,25 +373,46 @@ def _return_expression_head(text: str) -> str:
     return text
 
 
-def _return_type_names(signature_or_body: str) -> tuple[str, ...]:
+_IGNORED_RETURN_TYPES = frozenset({
+    "Arc", "Box", "Cow", "Option", "Pin", "Rc", "Ref", "Result", "RwLock",
+    "Vec", "Weak", "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64",
+    "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
+})
+
+
+def _named_types(expression: str) -> tuple[str, ...]:
+    """Concrete type names inside one type expression, order-preserving."""
+    names = [
+        token
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expression)
+        if token[:1].isupper() and token not in _IGNORED_RETURN_TYPES
+    ]
+    return tuple(dict.fromkeys(names))
+
+
+def _return_type_names(
+    signature_or_body: str,
+    *,
+    is_annotation: bool = False,
+) -> tuple[str, ...]:
+    """Type names named by a return annotation.
+
+    Pass ``is_annotation`` when the caller already holds the annotation from
+    the parser's own ``return_type`` field. The text path below exists only
+    for definitions that never had one -- the regex frontend, and defs
+    restored from graphs built before it was captured.
+    """
+    if is_annotation:
+        return _named_types(signature_or_body)
     head = signature_or_body.split("{", 1)[0].rstrip(";")
     match = re.search(r"->\s*(?P<types>.+)$", head, flags=re.S)
     if not match:
         return ()
-    ignored = {
-        "Arc", "Box", "Cow", "Option", "Pin", "Rc", "Ref", "Result", "RwLock",
-        "Vec", "Weak", "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64",
-        "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
-    }
-    return_expression = _return_expression_head(
-        re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]
+    return _named_types(
+        _return_expression_head(
+            re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]
+        )
     )
-    names = [
-        token
-        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", return_expression)
-        if token[:1].isupper() and token not in ignored
-    ]
-    return tuple(dict.fromkeys(names))
 
 def _select_owner_type(
     owner: str,

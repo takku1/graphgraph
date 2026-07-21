@@ -137,7 +137,10 @@ def _add_returns(
             src_id = _definition_node_id(source, d)
             if src_id not in nodes:
                 continue
-            for return_type in _return_type_names(_node_text_range(text, d.start, d.end)):
+            # Prefer the parser's own annotation; fall back to scanning source
+            # only for defs that predate it (regex frontend, restored graphs).
+            annotation = d.return_type or _node_text_range(text, d.start, d.end)
+            for return_type in _return_type_names(annotation, is_annotation=bool(d.return_type)):
                 targets = name_to_symbols.get(return_type, [])
                 if len(targets) != 1 or targets[0] == src_id:
                     continue

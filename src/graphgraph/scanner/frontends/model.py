@@ -65,6 +65,9 @@ class _TsDef:
     extra: tuple[str, ...] = ()
     owner: str = ""
     facts: tuple[str, ...] = ()
+    # Declared return annotation, taken from the parser's own `return_type`
+    # field rather than re-derived from source text.
+    return_type: str = ""
 
 # Syntactic classes of receiver expression, for the unknown_receiver
 # histogram. A single opaque total says a resolver pass is needed but not
