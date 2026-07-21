@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -68,6 +68,10 @@ class _TsDef:
     # Declared return annotation, taken from the parser's own `return_type`
     # field rather than re-derived from source text.
     return_type: str = ""
+    # The parse node, kept only for the duration of extraction so later
+    # stages can reuse the parser's structure instead of re-scanning text.
+    # Excluded from comparison: parse nodes are not value-comparable.
+    node: object | None = field(default=None, compare=False, repr=False)
 
 # Syntactic classes of receiver expression, for the unknown_receiver
 # histogram. A single opaque total says a resolver pass is needed but not

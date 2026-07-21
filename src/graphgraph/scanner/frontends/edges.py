@@ -36,6 +36,7 @@ from .syntax import (
     _return_type_name,
     _return_type_names,
     _select_import_target,
+    _syntax_text_without_literals,
 )
 from .typescript import (
     _ts_class_field_types,
@@ -287,7 +288,21 @@ def _add_tree_sitter_calls(
             if src_id not in nodes:
                 continue
             text_bytes = source.text.encode("utf-8", errors="replace")
-            body = _node_text_range(text_bytes, d.start, d.end)
+            # Blank comments and string literals before pattern-matching the
+            # body. Commented-out code and code inside strings otherwise read
+            # as real declarations: `// let fake: Wrong = x` typed a local
+            # named `fake`, which then attached calls to whatever class
+            # `Wrong` named. The parse tree already marks these regions.
+            # Only the pattern-matching extractors need this. Python's uses a
+            # real AST parse, which already ignores comments and string
+            # contents -- and blanking literals leaves whitespace that its
+            # parser then rejects outright.
+            raw_body = _node_text_range(text_bytes, d.start, d.end)
+            body = (
+                _syntax_text_without_literals(d.node, text_bytes)
+                if d.node is not None and suffix != ".py"
+                else raw_body
+            )
             if suffix in _TS_SUFFIXES:
                 local_types = _ts_local_types(body)
             elif suffix == ".rs":

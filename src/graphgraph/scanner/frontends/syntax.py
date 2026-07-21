@@ -126,6 +126,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             facts=_definition_facts(source, node, text),
             extra=_base_class_names(node, text),
             return_type=_declared_return_type(node, text),
+            node=node,
         ))
     if source.path.suffix.lower() != ".rs":
         return _attach_lexical_method_owners(defs)

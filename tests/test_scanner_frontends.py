@@ -1796,3 +1796,65 @@ class FrontendsScannerTest(unittest.TestCase):
             _return_type_names("fn parse(a: u32) -> Result<Expr> {\n    todo!()\n}"),
             ("Expr",),
         )
+
+    def test_commented_and_stringified_declarations_do_not_type_receivers(self) -> None:
+        # The pattern-matching extractors read raw source, so commented-out
+        # code and code inside string literals were parsed as real
+        # declarations: `// let fake: Wrong = x` typed a local named `fake`,
+        # which then attached its calls to whatever class `Wrong` named. The
+        # parse tree already marks these regions; blanking them first costs
+        # nothing and removes a whole class of false evidence.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "pub struct Wrong; impl Wrong { pub fn hit(&self) {} }\n"
+            "pub struct Report; impl Report { pub fn hit(&self) {} }\n"
+            "pub fn run(real: Report) {\n"
+            "    // let fake: Wrong = make();\n"
+            '    let s = "let other: Wrong = y";\n'
+            "    real.hit();\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.rs"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "a.rs", "a_rs", text)], max_total_symbols=40
+            )
+
+        owners = {
+            result.nodes[edge.target].id.split("__")[-2]
+            for edge in result.edges
+            if edge.type == "calls" and result.nodes.get(edge.target)
+            and result.nodes[edge.target].label == "hit"
+        }
+        self.assertEqual(owners, {"Report"}, f"comment/string leaked a type: {owners}")
+
+    def test_literal_blanking_is_not_applied_to_python(self) -> None:
+        # Python's extractor uses a real AST parse, which already ignores
+        # comments and string contents. Blanking literals leaves whitespace
+        # its parser then rejects, so the two must not be combined.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "class Engine:\n"
+            "    def start(self):\n"
+            "        return 1\n\n"
+            "def go(e: Engine):\n"
+            '    label = "some string with (unbalanced"\n'
+            "    return e.start()\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "p.py"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "p.py", "p_py", text)], max_total_symbols=40
+            )
+
+        go_id = next(node.id for node in result.nodes.values() if node.label == "go")
+        targets = {
+            result.nodes[edge.target].label
+            for edge in result.edges
+            if edge.type == "calls" and edge.source == go_id and edge.target in result.nodes
+        }
+        self.assertIn("start", targets)
