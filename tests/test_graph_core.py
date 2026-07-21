@@ -751,3 +751,32 @@ class GraphSchemaContractTest(unittest.TestCase):
             for item in raw[section]:
                 for field in required:
                     self.assertIn(field, item, f"{section} entry missing required {field!r}")
+
+
+class PageRankShapeTest(unittest.TestCase):
+    def test_ranks_are_stable_and_normalized(self) -> None:
+        # The iteration was rewritten from string-keyed dicts to flat indexed
+        # arrays. Same mathematics, different addressing -- so the contract to
+        # protect is the numbers, not the implementation.
+        nodes = {f"n{i}": Node(f"n{i}", f"sym{i}", "function", f"src/f{i}.py") for i in range(6)}
+        edges = [
+            Edge("n0", "n1", "calls"), Edge("n1", "n2", "calls"),
+            Edge("n2", "n0", "calls"), Edge("n3", "n1", "calls"),
+            Edge("n4", "n1", "calls"),  # n5 is dangling: no outgoing edges
+        ]
+        graph = Graph(nodes=nodes, edges=edges)
+        ranks = graph.pagerank(use_cache=False)
+
+        self.assertEqual(set(ranks), set(nodes))
+        self.assertAlmostEqual(sum(ranks.values()), 1.0, places=4)
+        self.assertTrue(all(value > 0.0 for value in ranks.values()))
+        # n1 has three in-edges; nothing points at n5.
+        self.assertGreater(ranks["n1"], ranks["n5"])
+
+    def test_repeated_computation_is_deterministic(self) -> None:
+        nodes = {f"n{i}": Node(f"n{i}", f"s{i}", "function", f"a{i}.py") for i in range(5)}
+        edges = [Edge("n0", "n1", "calls"), Edge("n1", "n2", "calls"), Edge("n2", "n3", "calls")]
+        graph = Graph(nodes=nodes, edges=edges)
+        first = graph.pagerank(use_cache=False)
+        second = graph.pagerank(use_cache=False)
+        self.assertEqual(first, second)
