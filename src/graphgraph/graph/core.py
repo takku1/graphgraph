@@ -654,7 +654,27 @@ class Graph:
         self._pagerank_cache = None
         return self.pagerank(damping=damping, max_iter=max_iter, tol=tol, use_cache=True)
 
-    def seed_pagerank_cache(self, payload: dict[str, object]) -> bool:
+    def seed_pagerank_cache(
+        self,
+        payload: dict[str, object],
+        *,
+        trust_signature: bool = False,
+    ) -> bool:
+        """Adopt persisted PageRank scores as this graph's warm cache.
+
+        ``trust_signature`` skips recomputing :meth:`structural_signature`,
+        which sorts every active node and edge and hashes the result -- ~34%
+        of total load time on a 48k-edge graph. Only the binary ``.gg``
+        loader passes it, because GraphGraph is that format's sole writer and
+        derived the stored signature from the very graph being deserialized.
+        The ``.json`` loader must not: it is the documented interchange
+        format, so an externally produced or hand-edited file can carry a
+        ranking block that genuinely disagrees with its topology.
+
+        This is not what protects against a *mutated* graph either way: the
+        cache key carries ``mutation_revision``, so any in-memory edit
+        invalidates the cache regardless of this flag.
+        """
         if payload.get("algorithm") != "pagerank" or payload.get("version") != 1:
             return False
         try:
@@ -665,7 +685,16 @@ class Graph:
             raw_scores = payload["scores"]
         except (KeyError, TypeError, ValueError):
             return False
-        if signature != self.structural_signature() or not isinstance(raw_scores, dict):
+        if not isinstance(raw_scores, dict):
+            return False
+        if trust_signature:
+            # Cheap structural sanity check in place of the full hash: a
+            # payload that does not even cover the active node set cannot be
+            # this graph's ranking, so fall back to recomputing.
+            active = sum(1 for node in self.nodes.values() if node.active)
+            if active and len(raw_scores) < active:
+                return False
+        elif signature != self.structural_signature():
             return False
         scores = {str(node_id): float(score) for node_id, score in raw_scores.items() if str(node_id) in self.nodes}
         self._pagerank_cache = (self._pagerank_cache_key(damping, max_iter, tol), scores)

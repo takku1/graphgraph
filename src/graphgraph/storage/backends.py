@@ -269,7 +269,7 @@ def load_graph_binary(path: Path) -> Graph:
             "tol": float(s(pagerank_tol) or 1e-4),
             "signature": s(pagerank_signature),
             "scores": pagerank_scores,
-        })
+        }, trust_signature=True)
     return graph
 
 
@@ -352,5 +352,5 @@ def _load_ggb2(data: bytes) -> Graph:
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
-            graph.seed_pagerank_cache(payload)
+            graph.seed_pagerank_cache(payload, trust_signature=True)
     return graph

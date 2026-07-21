@@ -113,6 +113,11 @@ def load_graph(path: Path, *, normalize_external_refs: bool = False) -> Graph:
                     for row in raw_scores
                     if isinstance(row, dict) and "id" in row and "score" in row
                 }
+            # Deliberately *not* trusted: .json is the documented
+            # interchange/import format, so it may have been produced or
+            # edited by something other than GraphGraph and its ranking block
+            # can legitimately disagree with its topology. The binary .gg
+            # path, which GraphGraph alone writes, skips this check.
             graph.seed_pagerank_cache(pagerank_payload)
     return graph
 

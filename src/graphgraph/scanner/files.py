@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from pathspec import GitIgnoreSpec
@@ -235,6 +236,38 @@ def _default_file_skip(filename: str) -> bool:
     return lower in SKIP_FILE_NAMES or lower == ".env" or lower.startswith(".env.")
 
 
+@lru_cache(maxsize=1024)
+def _compiled_ignore_spec(ignore_path: str, _mtime_ns: int, _size: int) -> GitIgnoreSpec | None:
+    """Compile one ignore file, memoized on its identity and mtime/size.
+
+    Compiling a `.gitignore` allocates one pattern object per line, and
+    ``path_ignored_by_rules`` is called once per candidate path -- so a
+    freshness sweep over a few dozen paths recompiled the same ancestor
+    files hundreds of times (measured: 6,474 pattern objects, ~204ms, the
+    single largest cost in a CLI query). Keying on mtime and size means an
+    edited ignore file still produces a fresh compile.
+    """
+    try:
+        text = Path(ignore_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return GitIgnoreSpec.from_lines(text.splitlines())
+
+
+def _ignore_specs_for(directory: Path) -> tuple[GitIgnoreSpec, ...]:
+    loaded: list[GitIgnoreSpec] = []
+    for ignore_name in (".gitignore", ".ignore"):
+        ignore_path = directory / ignore_name
+        try:
+            stat = ignore_path.stat()
+        except OSError:
+            continue
+        spec = _compiled_ignore_spec(str(ignore_path), stat.st_mtime_ns, stat.st_size)
+        if spec is not None:
+            loaded.append(spec)
+    return tuple(loaded)
+
+
 def path_ignored_by_rules(root: Path, rel_path: str) -> bool:
     """Check one path against ancestor `.gitignore` and `.ignore` files."""
     path = root / rel_path
@@ -244,18 +277,9 @@ def path_ignored_by_rules(root: Path, rel_path: str) -> bool:
         parts = path.parent.relative_to(root).parts
         directories.extend(root.joinpath(*parts[:i]) for i in range(1, len(parts) + 1))
     for directory in directories:
-        loaded: list[GitIgnoreSpec] = []
-        for ignore_name in (".gitignore", ".ignore"):
-            ignore_path = directory / ignore_name
-            if ignore_path.is_file():
-                try:
-                    loaded.append(GitIgnoreSpec.from_lines(
-                        ignore_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                    ))
-                except OSError:
-                    pass
+        loaded = _ignore_specs_for(directory)
         if loaded:
-            specs[directory] = tuple(loaded)
+            specs[directory] = loaded
     return _ignored_by_specs(path, root, specs)
 
 
