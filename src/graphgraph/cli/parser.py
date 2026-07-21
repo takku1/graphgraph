@@ -20,6 +20,7 @@ from .commands import (
     cmd_remove,
     cmd_render,
     cmd_scan,
+    cmd_select,
     cmd_snippets,
     cmd_status,
     cmd_traversal,
@@ -273,6 +274,30 @@ def build_parser() -> argparse.ArgumentParser:
     profile.add_argument("--graph", help="Graph path. Auto-detected from native .graphgraph if omitted.")
     profile.add_argument("--query", default="", help="Optional query text for doc/query budget heuristics.")
     profile.set_defaults(func=cmd_profile)
+
+    select = sub.add_parser(
+        "select",
+        help="Answer a whole-graph set predicate (e.g. symbols with no production caller).",
+    )
+    select.add_argument(
+        "predicate",
+        help=(
+            "Filter clauses joined by 'and', e.g. "
+            "\"production_callers = 0 and crate contains locus-engine and include_tests = false\". "
+            "Supported: production_callers=N, callers=N, kind=K, path/crate contains S, "
+            "label contains S, include_tests=BOOL."
+        ),
+    )
+    select.add_argument("--graph", help="Graph path. Auto-detected from native .graphgraph if omitted.")
+    select.add_argument(
+        "--mode",
+        choices=["select", "count", "exists"],
+        default="select",
+        help="select lists symbols; count returns an integer; exists returns a boolean. Default: select.",
+    )
+    select.add_argument("--limit", type=int, default=200, help="Max symbols listed in select mode. Default: 200.")
+    select.add_argument("--json", action="store_true", help="Emit JSON instead of text.")
+    select.set_defaults(func=cmd_select)
 
     doctor = sub.add_parser("doctor", help="Run local diagnostics for graph files, CLI runtime, dependencies, optional benchmark credentials, and MCP configs.")
     doctor.set_defaults(func=cmd_doctor)

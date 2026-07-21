@@ -306,6 +306,44 @@ TOOLS = [
         },
     },
     {
+        "name": "select_symbols",
+        "description": (
+            "Answer a whole-graph set predicate in ONE call instead of N anchored lookups -- "
+            "e.g. 'which symbols in this crate have no production caller?'. "
+            "Use this for dead-code sweeps, island detection, and any question whose answer is a "
+            "set, a count, or a yes/no rather than a subgraph. "
+            "`mode=count` returns just an integer and `mode=exists` just a boolean, neither of "
+            "which materializes node payloads, so prefer them when you do not need the list. "
+            "Distinguishes production callers from test-only callers, which is the split that "
+            "makes 'unused' meaningful. "
+            "IMPORTANT: the response carries `caller_evidence_complete`; when it is false, "
+            "zero-caller counts are an UPPER BOUND on dead code (unresolved member calls emit no "
+            "calls edge), so do not publish them as proof that a symbol is unused."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "predicate": {
+                    "type": "string",
+                    "description": (
+                        "Filter clauses joined by 'and'. Supported: production_callers=N, "
+                        "callers=N, kind=K, path contains S, crate contains S, label contains S, "
+                        "include_tests=BOOL. Example: "
+                        "'production_callers = 0 and crate contains locus-engine and include_tests = false'."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["select", "count", "exists"],
+                    "description": "select lists symbols; count returns an integer; exists returns a boolean. Default: select.",
+                },
+                "graph_path": {"type": "string", "description": "Path to graph; auto-detected if omitted."},
+                "limit": {"type": "integer", "description": "Max symbols listed in select mode. Default: 200."},
+            },
+            "required": ["predicate"],
+        },
+    },
+    {
         "name": "export_graph",
         "description": (
             "Export the current graph to the native binary .gg format — "
@@ -535,6 +573,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(handle_remove_graph_files(args))
     if name == "search_nodes":
         return content(handle_search_nodes(args))
+    if name == "select_symbols":
+        return content(handle_select_symbols(args))
     if name == "export_graph":
         return content(handle_export_graph(args))
     if name == "describe_formats":
@@ -982,6 +1022,36 @@ def handle_export_graph(args: dict[str, Any]) -> str:
         "edges": len(graph.edges),
         "format": "gg",
     })
+
+
+def handle_select_symbols(args: dict[str, Any]) -> str:
+    from ..retrieval.predicates import parse_criteria, select_symbols
+
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    graph = load_any(graph_path)
+
+    mode = str(args.get("mode") or "select")
+    limit = int(args["limit"]) if args.get("limit") is not None else 200
+    try:
+        criteria = parse_criteria(str(args["predicate"]), limit=limit)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
+    result = select_symbols(graph, criteria, mode=mode)  # type: ignore[arg-type]
+    payload: dict[str, Any] = {
+        "mode": result.mode,
+        "total": result.total,
+        "criteria": result.criteria_detail,
+        "caller_evidence_complete": result.caller_evidence_complete,
+        "caller_evidence": result.caller_evidence,
+    }
+    if mode == "exists":
+        payload["exists"] = result.exists
+    if mode == "select":
+        payload["truncated"] = result.truncated
+        payload["symbols"] = result.symbols
+    return json.dumps(payload, indent=2)
 
 
 def handle_search_nodes(args: dict[str, Any]) -> str:
