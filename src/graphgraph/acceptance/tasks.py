@@ -17,6 +17,7 @@ from .docs_case import run_doc_enumeration
 from .incremental import run_incremental_edit
 from .model import CaseResult, GroundTruth, Task
 from .parity import run_transport_parity
+from .qualification import run_member_qualification
 from .scope_case import run_scope_inference
 
 
@@ -62,6 +63,14 @@ def _incremental_edit_case(
     _graph_path: Path | None = None,
 ) -> CaseResult:
     return run_incremental_edit(task)
+
+
+def _member_qualification_case(
+    task: Task,
+    repo: Path,
+    graph_path: Path | None = None,
+) -> CaseResult:
+    return run_member_qualification(task, repo, graph_path)
 
 
 def _delete_rename_case(
@@ -205,6 +214,15 @@ CANONICAL_TASKS: tuple[Task, ...] = (
         query="What directly calls normalize_value?",
         case_fn=_delete_rename_case,
         reference="spec GG10-LC-008",
+    ),
+    Task(
+        id="GG10-LC-009",
+        title="Same-named member qualification",
+        dimension="D5",
+        severity="P1",
+        query="Expr::count_ops",
+        case_fn=_member_qualification_case,
+        reference="spec GG10-LC-009",
     ),
     Task(
         id="GG10-LC-010",

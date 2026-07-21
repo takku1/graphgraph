@@ -119,7 +119,13 @@ def render_final_packet(
 
     plan = plan_context(query_class, query_text, max_nodes=max_nodes, packet=packet)
     lessons_path = find_lessons_path(project_root)
-    cache = TopologicalKVCache()
+    # Co-locate the packet cache with the graph it caches. Defaulting to
+    # `.graphgraph/kv_cache.json` resolved it against the process CWD, so
+    # querying another project's graph wrote entries into whichever
+    # directory the command happened to run from -- polluting and evicting
+    # that project's warm cache, and leaving `graphgraph cache --clear
+    # --graph X` clearing a file that was never the one in use.
+    cache = TopologicalKVCache(resolved_graph_path.parent / "kv_cache.json")
     cache_key = compute_cache_key(
         starts,
         query_class,
@@ -326,7 +332,13 @@ def render_query_context(
         hops=hops,
         packet=packet,
     )
-    cache = TopologicalKVCache()
+    # Co-locate the packet cache with the graph it caches. Defaulting to
+    # `.graphgraph/kv_cache.json` resolved it against the process CWD, so
+    # querying another project's graph wrote entries into whichever
+    # directory the command happened to run from -- polluting and evicting
+    # that project's warm cache, and leaving `graphgraph cache --clear
+    # --graph X` clearing a file that was never the one in use.
+    cache = TopologicalKVCache(resolved_graph_path.parent / "kv_cache.json")
     cache_key = compute_cache_key(
         [query],
         query_class,

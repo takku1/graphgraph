@@ -385,12 +385,56 @@ def apply_shape_budget(graph: Graph, plan: ContextPlan, query: str) -> ContextPl
         planner_version=f"{plan.planner_version}_shape_budget",
     )
 
+_QUALIFIABLE_KINDS = {"function", "method", "class", "struct", "trait", "enum"}
+
+
+def exact_label_collisions(matches: tuple[Match, ...], query: str) -> int:
+    """Distinct symbols whose label *exactly* equals a queried identifier.
+
+    A score plateau means several loosely-related hits scored similarly. An
+    exact-name collision is a different thing: the repo genuinely defines the
+    queried name more than once (``Expr::count_ops`` and
+    ``Condition::count_ops``), and returning one of them as the answer is
+    indistinguishable, to the caller, from a decisive result. Counting these
+    separately lets the anchor set surface every owner instead.
+    """
+    identifiers = {item.casefold() for item in explicit_query_identifiers(query)}
+    if not identifiers:
+        identifiers = {query.strip().casefold()}
+    distinct: set[tuple[str, str]] = set()
+    for match in matches:
+        node = match.node
+        if node.kind not in _QUALIFIABLE_KINDS:
+            continue
+        label = str(node.label).casefold()
+        # A qualified query names one owner, so it is not ambiguous even
+        # though the bare label collides.
+        if label in identifiers:
+            distinct.add((label, str(node.path or "")))
+    return len(distinct)
+
+
 def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query: str) -> int:
     """Pick anchor fanout from the continuous score shape, not threshold ladders."""
     if not matches:
         return plan.anchor_limit
 
     top = matches[0]
+
+    # An exact-name collision must not be presented as a single answer to a
+    # *lookup*: "where is count_ops" has two correct answers when two types
+    # define it, and returning one is indistinguishable from a decisive
+    # result. Scoped to direct_lookup on purpose -- for blast_radius and the
+    # structural classes the question is "what does changing this reach",
+    # where anchoring the production definition and ignoring a same-named
+    # benchmark or vendored copy is the correct narrowing.
+    # The ceiling matches the single-token plateau branch below, so this rule
+    # can only ever widen the anchor set, never narrow one the plateau logic
+    # would have opened wider.
+    if plan.query_class == "direct_lookup" and "::" not in query and "." not in query.strip():
+        collisions = exact_label_collisions(matches, query)
+        if collisions >= 2:
+            return min(max(plan.anchor_limit, collisions), 16)
     query_terms = plan_terms(query)
     term_count = len(query_terms)
     limit = plan.anchor_limit
