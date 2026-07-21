@@ -199,6 +199,7 @@ class TreeSitterExtractor:
             ambiguous_member_calls=member_call_stats.ambiguous,
             unknown_receiver_member_calls=member_call_stats.unknown_receiver,
             unresolved_member_calls=member_call_stats.unresolved,
+            unknown_receiver_classes=member_call_stats.unknown_receiver_classes,
         )
 
 def select_extractor(prefer: str = "auto") -> Extractor:

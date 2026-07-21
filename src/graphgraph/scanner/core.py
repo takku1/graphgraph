@@ -653,7 +653,7 @@ def _build_graph_from_split(
             metadata["member_calls_global_scope"] = prior_scope
         # Provenance travels with the carried-forward counts, or the age of
         # the snapshot becomes unknowable after the first incremental scan.
-        for provenance in ("scanned_at", "scanned_files"):
+        for provenance in ("scanned_at", "scanned_files", "unknown_receiver_classes"):
             prior_value = previous_graph.metadata.get(f"member_calls_global_{provenance}", "")
             if prior_value:
                 metadata[f"member_calls_global_{provenance}"] = prior_value
@@ -714,6 +714,19 @@ def _build_graph_from_split(
                 metadata[f"member_calls_last_update_{name}"] = str(value)
                 if telemetry_scope == "full_scan":
                     metadata[f"member_calls_global_{name}"] = str(value)
+            # Histogram of *why* receivers went untyped, not just how
+            # many. A single opaque total says a resolver pass is
+            # needed without saying which one, and inferring the shapes
+            # from source patterns has produced wrong priorities more
+            # than once.
+            if extraction.unknown_receiver_classes:
+                metadata["member_calls_unknown_receiver_classes"] = ",".join(
+                    f"{name}:{count}" for name, count in extraction.unknown_receiver_classes
+                )
+                if telemetry_scope == "full_scan":
+                    metadata["member_calls_global_unknown_receiver_classes"] = metadata[
+                        "member_calls_unknown_receiver_classes"
+                    ]
             metadata["member_calls_last_update_scope"] = telemetry_scope
             metadata["member_calls_last_update_version"] = _MEMBER_CALL_TELEMETRY_VERSION
             if telemetry_scope == "full_scan":

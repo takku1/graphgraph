@@ -1581,3 +1581,48 @@ class FrontendsScannerTest(unittest.TestCase):
             and result.nodes[edge.target].label == "act"
         }
         self.assertEqual(owners, {"Declared"}, f"declared type must win, got {owners}")
+
+    def test_unknown_receiver_histogram_partitions_the_total(self) -> None:
+        # A single opaque unknown_receiver total says a resolver pass is
+        # needed without saying which one. Inferring the shapes from source
+        # patterns produced wrong priorities repeatedly -- `self.method()` was
+        # ranked the top gap while already resolving 183 of 218 sites.
+        from graphgraph.scanner.frontends.model import classify_unknown_receiver
+
+        self.assertEqual(classify_unknown_receiver(""), "complex_expression")
+        self.assertEqual(classify_unknown_receiver("cfg.limits()"), "method_chain")
+        self.assertEqual(classify_unknown_receiver("build()"), "call_result")
+        self.assertEqual(classify_unknown_receiver("cfg.inner"), "field_chain")
+        self.assertEqual(classify_unknown_receiver("a"), "short_local")
+        self.assertEqual(classify_unknown_receiver("configuration"), "named_local")
+
+    def test_histogram_counts_sum_to_the_unknown_receiver_total(self) -> None:
+        # The breakdown is only trustworthy if it partitions the total; a
+        # bucket that double-counts or drops sites would misdirect exactly
+        # the decision it exists to inform.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/lib.rs": (
+                "pub struct T; impl T { pub fn go(&self) {} }\n"
+                "pub fn a(items: Vec<u8>) { for x in items.iter() { x.go(); } }\n"
+                "pub fn b(v: bool) { make(v).go(); helper.go(); }\n"
+                "pub fn c() { let q = 1; q.go(); }\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        histogram = dict(result.unknown_receiver_classes)
+        self.assertEqual(
+            sum(histogram.values()),
+            result.unknown_receiver_member_calls,
+            f"histogram {histogram} must partition the total",
+        )

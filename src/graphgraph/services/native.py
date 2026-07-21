@@ -558,6 +558,23 @@ def _absent_graph_status(directory: Path, status: str, message: str) -> dict[str
     }
 
 
+def _parse_receiver_classes(raw: str) -> dict[str, int]:
+    """Decode the `name:count` histogram of why receivers went untyped.
+
+    Reported alongside the unknown_receiver total because the total alone
+    says a resolver pass is needed without saying which one. Inferring those
+    shapes from source patterns has produced wrong priorities repeatedly --
+    including ranking `self.method()` as the top gap when it already
+    resolved 183 of 218 sites.
+    """
+    classes: dict[str, int] = {}
+    for item in raw.split(","):
+        name, _, count = item.partition(":")
+        if name and count.isdigit():
+            classes[name] = int(count)
+    return dict(sorted(classes.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 def _member_call_snapshot(metadata: dict[str, str], scope: str) -> dict[str, object]:
     prefix = f"member_calls_{scope}_"
     counts = {
@@ -725,6 +742,10 @@ def build_project_status(
             if snapshot_stale
             else ""
         ),
+        "unknown_receiver_classes": _parse_receiver_classes(
+            graph.metadata.get("member_calls_global_unknown_receiver_classes", "")
+            or graph.metadata.get("member_calls_unknown_receiver_classes", "")
+        ),
         "candidate_edges": sum(1 for edge in graph.edges if edge.active and edge.type == "calls_candidate"),
         "last_update": {
             **last_update_calls,
@@ -733,6 +754,16 @@ def build_project_status(
     }
     concept_eligible = int(graph.metadata.get("source_concepts_eligible", "0"))
     concept_linked = int(graph.metadata.get("source_concepts_linked_nodes", "0"))
+    # `query` warns when the graph is stale; `status` did not, so the two
+    # disagreed about how loudly to report the same condition. Freshness
+    # belongs in the status a caller runs *to check on the graph*.
+    try:
+        graph_report["freshness"] = inspect_saved_graph_freshness(
+            directory=project_root_for_graph(resolved_graph_path),
+            output_path=resolved_graph_path,
+        )
+    except Exception:  # noqa: BLE001 - status must never fail on a git hiccup
+        graph_report["freshness"] = {"fresh": None}
     graph_report["concept_linking"] = {
         **concept_link_health(concept_eligible, concept_linked),
         "mode": graph.metadata.get("source_concepts_mode", "unavailable"),

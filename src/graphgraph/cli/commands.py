@@ -660,6 +660,20 @@ def cmd_status(args: argparse.Namespace) -> None:
     )
     if member_calls.get("warning"):
         print(f"  !  WARNING: {member_calls['warning']}")
+    fresh = graph.get("freshness") or {}
+    if fresh.get("fresh") is False:
+        print(
+            f"  !  STALE GRAPH: {fresh.get('changed_count', 0)} changed and "
+            f"{fresh.get('deleted_count', 0)} deleted path(s) since the last scan; "
+            "run `graphgraph context --sync git` or re-scan"
+        )
+    receiver_classes = member_calls.get("unknown_receiver_classes") or {}
+    if receiver_classes:
+        # Which shapes are unresolved, not just how many.
+        print(
+            "  Unresolved receivers by shape: "
+            + "  ".join(f"{name}={count}" for name, count in receiver_classes.items())
+        )
     if member_calls.get("staleness_note"):
         # The headline counts above are a carried-forward snapshot. Say so
         # here, or a resolver change reads as having done nothing.

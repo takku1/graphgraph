@@ -40,6 +40,7 @@ class ExtractionResult:
     resolved_member_calls: int = 0
     ambiguous_member_calls: int = 0
     unknown_receiver_member_calls: int = 0
+    unknown_receiver_classes: tuple[tuple[str, int], ...] = ()
     unresolved_member_calls: int = 0
 
 class Extractor(Protocol):
@@ -65,19 +66,50 @@ class _TsDef:
     owner: str = ""
     facts: tuple[str, ...] = ()
 
+# Syntactic classes of receiver expression, for the unknown_receiver
+# histogram. A single opaque total says a resolver pass is needed but not
+# which one; the breakdown is what lets the next pass target the largest
+# bucket instead of guessing at it from source patterns.
+UNKNOWN_RECEIVER_CLASSES = (
+    "complex_expression",  # receiver text discarded: indexing, deep chains, macros
+    "method_chain",        # a.b() -- needs the return type of b on a's type
+    "call_result",         # f() -- needs f's return type
+    "field_chain",         # a.b -- needs the type of field b on a's type
+    "short_local",         # 1-2 char binding, typically a closure or loop variable
+    "named_local",         # longer local whose binding could not be typed
+)
+
+
+def classify_unknown_receiver(receiver: str) -> str:
+    """Bucket one unresolved receiver expression by syntactic shape."""
+    if not receiver:
+        return "complex_expression"
+    if "(" in receiver:
+        return "method_chain" if "." in receiver.split("(", 1)[0] else "call_result"
+    if "." in receiver:
+        return "field_chain"
+    return "short_local" if len(receiver) <= 2 else "named_local"
+
+
 @dataclass(frozen=True)
 class _MemberCallStats:
     resolved: int = 0
     ambiguous: int = 0
     unknown_receiver: int = 0
     unresolved: int = 0
+    unknown_receiver_classes: tuple[tuple[str, int], ...] = ()
 
-    def add(self, outcome: str) -> _MemberCallStats:
+    def add(self, outcome: str, receiver: str = "") -> _MemberCallStats:
+        classes = dict(self.unknown_receiver_classes)
+        if outcome == "unknown_receiver":
+            bucket = classify_unknown_receiver(receiver)
+            classes[bucket] = classes.get(bucket, 0) + 1
         return _MemberCallStats(
             resolved=self.resolved + (outcome == "resolved"),
             ambiguous=self.ambiguous + (outcome == "ambiguous"),
             unknown_receiver=self.unknown_receiver + (outcome == "unknown_receiver"),
             unresolved=self.unresolved + (outcome == "unresolved"),
+            unknown_receiver_classes=tuple(sorted(classes.items())),
         )
 
 @dataclass(frozen=True)

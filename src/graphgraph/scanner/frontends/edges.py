@@ -296,7 +296,7 @@ def _add_tree_sitter_calls(
                         name_to_symbols=name_to_symbols,
                         edges=edges,
                     )
-                    stats = stats.add(outcome)
+                    stats = stats.add(outcome, call.receiver)
                     continue
                 tgt_id = (
                     _resolve_path_qualified_target(call, name_to_symbols, nodes)
