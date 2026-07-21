@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .affected_tests_case import run_affected_tests
 from .boundary import run_secret_boundary
+from .cache_latency import run_cache_latency
 from .delete_rename import run_delete_rename
 from .docs_case import run_doc_enumeration
 from .incremental import run_incremental_edit
@@ -63,6 +64,14 @@ def _incremental_edit_case(
     _graph_path: Path | None = None,
 ) -> CaseResult:
     return run_incremental_edit(task)
+
+
+def _cache_latency_case(
+    task: Task,
+    repo: Path,
+    graph_path: Path | None = None,
+) -> CaseResult:
+    return run_cache_latency(task, repo, graph_path)
 
 
 def _member_qualification_case(
@@ -232,6 +241,15 @@ CANONICAL_TASKS: tuple[Task, ...] = (
         query="secret canary API_KEY",
         case_fn=_secret_boundary_case,
         reference="spec GG10-LC-010",
+    ),
+    Task(
+        id="GG10-LC-012",
+        title="Cache and latency receipt",
+        dimension="D12",
+        severity="P1",
+        query="normalize_rust",
+        case_fn=_cache_latency_case,
+        reference="spec GG10-LC-012",
     ),
     Task(
         id="GG10-LC-011",

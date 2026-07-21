@@ -826,19 +826,31 @@ def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
     )
 
 
-def _session_signature(start: Path | None = None) -> tuple[tuple[str, int, int, int], ...]:
-    from ..retrieval.git_utils import get_git_modified_files
+def _session_signature(start: Path | None = None) -> tuple[tuple[str, int, int], ...]:
+    """Fingerprint the working tree for the packet cache key.
+
+    Uses ``get_git_worktree_paths`` rather than ``get_git_modified_files``:
+    both shell out to ``git diff HEAD``, but the freshness check already
+    called the former earlier in this same request, so its short-lived cache
+    is warm and this costs no additional process spawn. The per-file change
+    *count* the other helper returns added nothing here -- mtime and size
+    already move whenever a file's content does, which is all a cache key
+    needs.
+    """
+    from ..retrieval.git_utils import get_git_worktree_paths
 
     signature = []
     root = start.resolve() if start is not None else Path.cwd().resolve()
-    for path, change_count in get_git_modified_files(root).items():
+    changed, deleted = get_git_worktree_paths(root)
+    for path in (*changed, *deleted):
         source_path = root / path
         try:
             stat = source_path.stat()
-            signature.append((path, change_count, stat.st_mtime_ns, stat.st_size))
+            signature.append((path, stat.st_mtime_ns, stat.st_size))
         except OSError:
-            signature.append((path, change_count, 0, 0))
-    return tuple(sorted(signature))
+            # Deleted paths have no stat; their absence is itself the signal.
+            signature.append((path, 0, 0))
+    return tuple(sorted(set(signature)))
 
 
 def _file_signature(path: Path | None) -> tuple[str, int, int] | None:

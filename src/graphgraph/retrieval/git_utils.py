@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 _GIT_DIFF_CACHE_TTL_SECONDS = 1.0
 _git_diff_cache: dict[Path, tuple[float, dict[str, int]]] = {}
 _git_path_cache: dict[Path, tuple[float, tuple[tuple[str, ...], tuple[str, ...]]]] = {}
+_git_ignore_cache: dict[tuple[Path, tuple[str, ...]], tuple[float, tuple[str, ...]]] = {}
 
 
 def get_git_modified_files(start: Path | None = None) -> dict[str, int]:
@@ -148,6 +149,15 @@ def get_git_ignored_paths(paths: tuple[str, ...], start: Path | None = None) -> 
     git_root = _find_git_root(start or Path.cwd())
     if git_root is None:
         return ()
+    # Same short TTL as the worktree diff above, and for the same reason: a
+    # single request inspects freshness more than once, and each miss was
+    # paying a `git check-ignore` process spawn. Keyed on the exact path set
+    # so a different candidate list is never answered from another's result.
+    now = time.monotonic()
+    cache_key = (git_root, paths)
+    cached = _git_ignore_cache.get(cache_key)
+    if cached is not None and now - cached[0] < _GIT_DIFF_CACHE_TTL_SECONDS:
+        return cached[1]
     payload = ("\0".join(paths) + "\0").encode("utf-8")
     try:
         result = subprocess.run(
@@ -163,13 +173,15 @@ def get_git_ignored_paths(paths: tuple[str, ...], start: Path | None = None) -> 
         return ()
     if result.returncode not in {0, 1}:
         return ()
-    return tuple(
+    ignored = tuple(
         sorted(
             path.replace("\\", "/")
             for path in result.stdout.decode("utf-8", errors="replace").split("\0")
             if path
         )
     )
+    _git_ignore_cache[cache_key] = (now, ignored)
+    return ignored
 
 
 def _find_git_root(start: Path) -> Path | None:
