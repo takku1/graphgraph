@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Regression suite for graphgraph's own retrieval, runnable with:",
+    "  graphgraph scan --depth symbols --docs --no-incremental",
+    "  graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-self.json",
+    "",
+    "Expectations are hand-verified against this repository's source. The final",
+    "task is a RED TEST: it names symbols that do not exist, and must score",
+    "node_recall 0.0. A suite that cannot fail is not a measurement -- eval",
+    "previously reported 1.0 unconditionally, and this task is what proves it",
+    "no longer does."
+  ],
+  "tasks": [
+    {
+      "query": "what calls select_symbols",
+      "expected": ["cmd_select", "handle_select_symbols"]
+    },
+    {
+      "query": "what calls caller_evidence_quality",
+      "expected": ["select_symbols"]
+    },
+    {
+      "query": "what calls _node_recall",
+      "expected": ["evaluate_graph"]
+    },
+    {
+      "query": "what calls render_query_context",
+      "expected": ["cmd_query"]
+    },
+    {
+      "query": "RED TEST: these symbols do not exist and must score zero",
+      "expected": ["zzz_nonexistent_symbol_alpha", "zzz_nonexistent_symbol_beta"]
+    }
+  ]
+}

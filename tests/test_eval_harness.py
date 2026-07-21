@@ -99,3 +99,49 @@ class EvalHarnessTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SelfEvalSuiteTest(unittest.TestCase):
+    """The committed suite must keep proving the instrument can fail.
+
+    Gate 0 of the gray-box evaluation asked for a task suite with
+    hand-verified ground truth *and* a red case, because a harness that
+    always reports success is worse than no harness -- it produces confident
+    green numbers over a system that has silently regressed.
+    """
+
+    SUITE = Path("eval/graphgraph-self.json")
+
+    def test_suite_is_parsed_and_every_task_is_scorable(self) -> None:
+        tasks = load_eval_tasks(self.SUITE)
+        self.assertGreaterEqual(len(tasks), 5)
+        for task in tasks:
+            self.assertTrue(
+                task.expected_nodes,
+                f"task {task.query!r} has no expectations and would score nothing",
+            )
+
+    def test_suite_contains_a_red_task_that_cannot_pass(self) -> None:
+        tasks = load_eval_tasks(self.SUITE)
+        red = [t for t in tasks if any("zzz_nonexistent" in item for item in t.expected_nodes)]
+        self.assertTrue(red, "the suite must retain a task that is designed to fail")
+
+    def test_red_task_scores_zero_against_the_real_graph(self) -> None:
+        # Skips rather than fails when the graph has not been built, so the
+        # suite never blocks a fresh checkout -- but runs for real in any
+        # environment that has scanned this repository.
+        graph_path = Path(".graphgraph/graph.gg")
+        if not graph_path.exists():
+            self.skipTest("no graph built for this repository")
+
+        results = evaluate_graph(graph_path, load_eval_tasks(self.SUITE))
+        red = [r for r in results if "RED TEST" in r.query]
+        self.assertEqual(len(red), 1)
+        self.assertEqual(red[0].node_recall, 0.0)
+
+        scored = [r for r in results if "RED TEST" not in r.query]
+        self.assertTrue(
+            all((r.node_recall or 0.0) > 0.0 for r in scored),
+            f"hand-verified expectations regressed: "
+            f"{[(r.query, r.node_recall) for r in scored if not r.node_recall]}",
+        )

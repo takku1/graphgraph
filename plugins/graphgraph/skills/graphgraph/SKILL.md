@@ -92,7 +92,7 @@ Grammar: clauses joined by `and`. `production_callers`/`callers` with
 Modes: `select` (rows), `count` (integer), `exists` (boolean). `count`/`exists`
 never materialize node payloads — prefer them when the answer is a number.
 
-`--json` on `query` and `select` emits the full envelope compactly. It is
+`query --json` and `select --json` emit the full envelope compactly. It is
 already the token-efficient form; `--pretty` adds indentation for reading by
 eye and costs ~26% more tokens. Do not pass `--pretty` for machine
 consumption. MCP responses are always compact.
@@ -209,6 +209,39 @@ conclusion.
   lexical index build, `anchor=ranked` pays it.
 - Warm and cold query latencies differ ~6x. Compare like with like; a
   first-run number is not a steady-state number.
+
+## Measuring a change
+
+`graphgraph eval --graph <g> --tasks <tasks.json>` scores retrieval against
+hand-verified expectations. Task shape: `{"query": ..., "expected": [labels or
+paths]}`; `expected_nodes`/`expected_edges` are also accepted.
+
+- A task with no parsable expectations reports `scored: false` and a null
+  recall, never a passing score. Treat `scored: false` as "this task measured
+  nothing", not as success.
+- `eval/graphgraph-self.json` is the committed regression suite for this
+  repository, and deliberately ends with a **red task** naming symbols that do
+  not exist. It must score `node_recall: 0.0`. If it ever scores above zero,
+  the harness is broken, not the retrieval.
+- Rebuild with `--no-incremental` before comparing resolver numbers, or the
+  carried-forward telemetry will show no delta.
+
+## Language coverage for `calls` edges
+
+Receiver typing decides whether a member call becomes a `calls` edge, and it
+is not uniform:
+
+| Language | Receiver evidence used |
+| --- | --- |
+| Python | parameter/variable annotations, `x = Type()`, class fields, base classes |
+| Rust | parameter and `let` types, container element types, callee return types, `impl` blocks |
+| TypeScript/JavaScript | parameter/variable annotations, `new T()`, `as T`, `this.field` |
+| Others | none -- symbols are extracted, but member calls do not resolve |
+
+Inherited methods resolve through the base-class chain. A symbol reported with
+zero callers may simply be called through a receiver that could not be typed;
+`status` reports the current resolution rate and the shape breakdown of what
+went untyped.
 
 ## Noise and receipt rules
 
