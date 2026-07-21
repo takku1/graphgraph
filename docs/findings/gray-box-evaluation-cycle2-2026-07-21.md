@@ -12,13 +12,17 @@ established by reading the *target* repos.
 
 ## 0. Headline
 
-**The most important finding this cycle is not a performance or extraction gap.
-It is that `graphgraph eval` — the project's own accuracy instrument — reports
+**DATA LOSS — see §11.** Running `scan` without `--docs` on a graph that has docs
+silently destroys 72% of it (4,236 of 5,869 nodes), contradicting the documented
+behavior that the setting is "reused when omitted." Reproduced. This outranks
+everything else in this report.
+
+**Second: `graphgraph eval` — the project's own accuracy instrument — reports
 perfect recall unconditionally.** Proof in §3. Until that is fixed, no claim in
 any of these reports (including my own) can be regression-tested, and every
 tuning decision is unguided.
 
-Second finding: **TypeScript call resolution is exactly 0%.** Not low — zero.
+**Third: TypeScript call resolution is exactly 0%.** Not low — zero.
 
 ---
 
@@ -334,3 +338,90 @@ ripgrep, graphiti, langgraph, sympy, mem0}`. No target-repo source was modified.
 
 **Standing confounder:** all measurements used `tree_sitter`, because `cpg`
 remains unreachable from `scan`.
+
+---
+
+## 11. ADDENDUM — Silent destruction of 72% of the graph (critical)
+
+Found by applying metamorphic relations from the new `graybox` skill
+(`~/.claude/skills/graybox/`) — specifically **no-op safety** and **incremental
+equivalence**, which none of the earlier cycles had tested.
+
+### Observed (fact)
+
+```
+state:  nodes=5869  doc_nodes=4331
+$ graphgraph scan -d . --depth symbols --no-incremental      # note: no --docs
+state:  nodes=1633  doc_nodes=95
+```
+
+**4,236 doc nodes destroyed — 72% of the graph — in one command.** The scan
+reported `Scanned 1633 nodes` with `Structural validation: PASS` and issued **no
+warning** that it had just deleted most of the graph. Reproduced twice.
+
+This contradicts the documented contract in `scan --help`:
+
+> `--docs  Extract document sections and concept nodes; **reuses the existing
+> graph setting when omitted.**`
+
+The setting was not reused. Recovery requires knowing to pass `--docs`
+explicitly, which fully restores the graph (5,869 nodes).
+
+### Also observed: behavior is state-dependent
+
+Earlier in this same session, the **identical command** on the **identical repo**
+preserved docs (5,868 nodes). Between the two observations, the only commands run
+were `graphgraph update --files src/flask/ctx.py` (five times, no `--docs` flag).
+
+### Also observed: incremental equivalence violation (+1 edge)
+
+Full rebuild and a subsequent no-op update on an unmodified file disagree,
+reproducibly, across both cycles:
+
+| | Cycle 1 | Cycle 2 |
+|---|---|---|
+| Full rebuild | 15,321 edges | 15,430 edges |
+| After no-op `update` of an unchanged file | 15,322 | 15,431 |
+
+Stable at +1 across five repeated updates — it converges rather than growing, so
+this is not unbounded corruption. But the full and incremental paths must agree,
+and they do not.
+
+### Inferred (explicitly marked as inference)
+
+The most parsimonious explanation consistent with all observations: `update`
+without `--docs` clears the persisted docs setting on the graph; the *next*
+`scan` then faithfully honors `docs=false` and drops the doc nodes. If so, the
+destructive effect surfaces **one command after** the command that caused it,
+which would make it extremely hard to attribute in normal use.
+
+**This is inference and should be verified from the inside.** The observable
+facts above stand independently of whether this mechanism is the right one.
+
+### Why this is severity-1
+
+- **Silent.** Reports success, PASS validation, no warning.
+- **Large.** 72% of the graph in this case; proportional to doc volume generally.
+- **Delayed and action-at-a-distance** (if the inference holds) — the trigger and
+  the damage are different commands.
+- **Contradicts documented behavior**, so a careful user reading `--help` would
+  conclude they were safe.
+- **Plausibly routine.** `scan` without `--docs` is the obvious thing to type.
+
+### Suggested guards
+
+1. Never silently reduce a graph. If a scan would drop >N% of existing nodes,
+   refuse and require `--force` or `--no-docs` to be explicit.
+2. Make `--docs` tri-state (`unset` / `on` / `off`) so "omitted" is genuinely
+   distinguishable from "off," and honor the documented reuse.
+3. Ensure `update` cannot mutate persisted scan settings it was not asked to change.
+4. Add **no-op safety** and **incremental equivalence** to the eval suite (Gate 0)
+   — both are cheap, mechanical, oracle-free checks that would have caught this.
+
+### Metamorphic relations that PASSED (worth protecting)
+
+| Relation | Result |
+|---|---|
+| Idempotence — identical query twice | **PASS** byte-identical |
+| Budget monotonicity — raise `--max-nodes` 15 → 45 | **PASS** 0 members dropped |
+| No-op convergence — 5× repeated update | **PASS** stable, no growth |

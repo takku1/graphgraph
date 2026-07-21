@@ -37,6 +37,12 @@ from .syntax import (
     _return_type_names,
     _select_import_target,
 )
+from .typescript import (
+    _ts_class_field_types,
+    _ts_local_types,
+)
+
+_TS_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"})
 
 
 def _add_tree_sitter_implements(
@@ -257,6 +263,7 @@ def _add_tree_sitter_calls(
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
         rust_field_types: dict[tuple[str, str], str] = {}
         python_field_types: dict[tuple[str, str], str] = {}
+        ts_field_types: dict[tuple[str, str], str] = {}
         if suffix == ".rs":
             text_bytes = source.text.encode("utf-8", errors="replace")
             for struct in (item for item in defs if item.kind == "struct"):
@@ -270,13 +277,17 @@ def _add_tree_sitter_calls(
                         rust_field_types[(struct.name, field_name)] = field_type
         elif suffix == ".py":
             python_field_types = _python_class_field_types(source.text)
+        elif suffix in _TS_SUFFIXES:
+            ts_field_types = _ts_class_field_types(source.text)
         for d in callable_defs:
             src_id = _definition_node_id(source, d)
             if src_id not in nodes:
                 continue
             text_bytes = source.text.encode("utf-8", errors="replace")
             body = _node_text_range(text_bytes, d.start, d.end)
-            if suffix == ".rs":
+            if suffix in _TS_SUFFIXES:
+                local_types = _ts_local_types(body)
+            elif suffix == ".rs":
                 local_types = _rust_local_types(body)
                 # `let ir = parse_ir(src);` -- bind the local to the callee's
                 # return type, but only where nothing stronger is known.
@@ -299,10 +310,17 @@ def _add_tree_sitter_calls(
                 local_types["self"] = d.owner
                 if suffix == ".py":
                     local_types["cls"] = d.owner
-                field_types = rust_field_types if suffix == ".rs" else python_field_types
+                if suffix in _TS_SUFFIXES:
+                    local_types["this"] = d.owner
+                field_types = (
+                    ts_field_types if suffix in _TS_SUFFIXES
+                    else rust_field_types if suffix == ".rs"
+                    else python_field_types
+                )
+                receiver_word = "this" if suffix in _TS_SUFFIXES else "self"
                 local_types.update(
                     {
-                        f"self.{field_name}": field_type
+                        f"{receiver_word}.{field_name}": field_type
                         for (owner, field_name), field_type in field_types.items()
                         if owner == d.owner
                     }

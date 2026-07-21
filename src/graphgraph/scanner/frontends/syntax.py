@@ -708,7 +708,11 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                     children = list(getattr(fn, "named_children", ()))
                     if len(children) >= 2:
                         receiver = _node_text(children[0], text).strip()
-                rust_field_receiver = bool(re.fullmatch(r"self\.[A-Za-z_][A-Za-z0-9_]*", receiver))
+                # `self.x` (Rust/Python) and `this.x` (TS/JS) are the one field form
+                # the resolver can type, via the owner's field table.
+                rust_field_receiver = bool(
+                    re.fullmatch(r"(?:self|this)\.[A-Za-z_$][\w$]*", receiver)
+                )
                 # `build_report(x).render()` -- the receiver is whatever the
                 # inner call returns. Normalize it to a bare `name()` key so
                 # the frontend can bind it to that function's return type

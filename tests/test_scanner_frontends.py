@@ -1710,3 +1710,54 @@ class FrontendsScannerTest(unittest.TestCase):
                 [SourceFile(path, "c.py", "c_py", text)], max_total_symbols=50
             )
         self.assertTrue(result.nodes)
+
+    def test_typescript_member_calls_resolve_from_annotations(self) -> None:
+        # Receiver typing existed only for Rust and Python, so TypeScript fell
+        # through with no types at all: on a mixed repo, not one TS method had
+        # a known caller while the Python half resolved normally. Extraction
+        # was never the problem -- classes, methods and interfaces were all
+        # recovered; nothing read the annotations sitting next to them.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        text = (
+            "export class Store {\n"
+            "  save(x: string): void {}\n"
+            "}\n"
+            "export function run(s: Store): void { s.save('a'); }\n"
+            "export class Wrapper {\n"
+            "  private store: Store;\n"
+            "  go(): void { this.store.save('b'); }\n"
+            "}\n"
+            "export function viaNew(): void { const st = new Store(); st.save('c'); }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.ts"
+            path.write_text(text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "a.ts", "a_ts", text)], max_total_symbols=60
+            )
+
+        target = next(
+            node.id for node in result.nodes.values()
+            if node.label == "save" and node.kind == "method"
+        )
+        callers = {
+            result.nodes[edge.source].label
+            for edge in result.edges
+            if edge.type == "calls" and edge.target == target and edge.source in result.nodes
+        }
+        # Parameter annotation, `this.field`, and `new` binding respectively.
+        self.assertEqual(callers, {"run", "go", "viaNew"}, f"got {callers}")
+
+    def test_typescript_builtin_types_are_not_claimed_as_receivers(self) -> None:
+        # `s: string` names nothing in the graph. Binding it would attach calls
+        # to whatever repo class happened to share a method name.
+        from graphgraph.scanner.frontends.typescript import _ts_local_types
+
+        types = _ts_local_types("function f(s: string, n: number, o: MyThing) {")
+        self.assertEqual(types, {"o": "MyThing"})
+
+    def test_typescript_generic_parameter_is_not_a_type(self) -> None:
+        from graphgraph.scanner.frontends.typescript import _ts_local_types
+
+        self.assertEqual(_ts_local_types("function f<T>(item: T) {"), {})
