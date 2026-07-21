@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -13,6 +15,7 @@ from graphgraph import Edge, Graph, Node
 from graphgraph.cli.parser import build_parser
 from graphgraph.io import save_graph
 from graphgraph.mcp import dispatch
+from graphgraph.runtime.state import atomic_write_text, file_lock
 from graphgraph.platform import (
     PLATFORM_STATE_VERSION,
     BenchmarkCase,
@@ -803,6 +806,101 @@ class PlatformTest(unittest.TestCase):
             self.assertIn("echo existing", content)
             self.assertEqual(content.count("# >>> graphgraph managed >>>"), 1)
             self.assertIn("graphgraph context", content)
+
+
+class FileLockTest(unittest.TestCase):
+    """Windows delete-pending contention, found as a flaky concurrent write.
+
+    ``test_platform_state_migrations_and_concurrent_writes`` failed
+    intermittently under full-suite load with a PermissionError escaping a
+    worker thread. These reproduce that deterministically rather than by
+    hammering the real lock.
+    """
+
+    def test_transient_permission_error_is_retried_as_contention(self) -> None:
+        # Windows leaves an unlinked-but-still-open lock file in "delete
+        # pending", where os.open raises PermissionError rather than
+        # FileExistsError. That is contention and must be waited out.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            real_open = os.open
+            calls: list[int] = []
+
+            def flaky_open(path, flags, *args, **kwargs):
+                if str(path).endswith(".lock") and not calls:
+                    calls.append(1)
+                    raise PermissionError(13, "Access is denied")
+                return real_open(path, flags, *args, **kwargs)
+
+            with patch("graphgraph.runtime.state.os.open", flaky_open):
+                with file_lock(target, timeout=5.0):
+                    acquired = True
+
+            self.assertTrue(acquired)
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(target.with_name("state.json.lock").exists())
+
+    def test_persistent_permission_error_surfaces_the_real_cause(self) -> None:
+        # A read-only directory also raises PermissionError forever. Retrying
+        # until timeout must not bury it under a misleading TimeoutError.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+
+            def always_denied(path, flags, *args, **kwargs):
+                raise PermissionError(13, "Access is denied")
+
+            with patch("graphgraph.runtime.state.os.open", always_denied):
+                with self.assertRaises(PermissionError):
+                    with file_lock(target, timeout=0.1):
+                        pass
+
+    def test_write_survives_a_reader_holding_the_destination(self) -> None:
+        # file_lock serializes writers, but readers take no lock. On Windows
+        # os.replace fails while any handle is open on the destination, so a
+        # reader landing mid-write silently lost the write entirely.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            atomic_write_text(target, "first")
+
+            def hold_briefly() -> None:
+                with open(target, "r", encoding="utf-8") as reader:
+                    reader.read()
+                    time.sleep(0.3)
+
+            holder = threading.Thread(target=hold_briefly)
+            holder.start()
+            time.sleep(0.05)
+            atomic_write_text(target, "second")
+            holder.join()
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "second")
+
+    def test_failed_write_does_not_strand_a_temp_file(self) -> None:
+        # A permanently blocked replace must surface the real error and clean
+        # up, rather than littering .tmp files beside the target.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            atomic_write_text(target, "first")
+
+            def always_denied(self, _target):  # noqa: ANN001
+                raise PermissionError(5, "Access is denied")
+
+            with patch.object(Path, "replace", always_denied):
+                with self.assertRaises(PermissionError):
+                    atomic_write_text(target, "second")
+
+            stranded = [p.name for p in Path(tmp).iterdir() if ".tmp" in p.name]
+            self.assertEqual(stranded, [])
+            self.assertEqual(target.read_text(encoding="utf-8"), "first")
+
+    def test_held_lock_still_times_out(self) -> None:
+        # The FileExistsError path keeps its original TimeoutError contract.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            with file_lock(target, timeout=5.0):
+                with self.assertRaises(TimeoutError):
+                    with file_lock(target, timeout=0.1):
+                        pass
 
 
 if __name__ == "__main__":
