@@ -507,6 +507,7 @@ def cmd_query(args: argparse.Namespace) -> None:
             f"{freshness['deleted_count']} deleted path(s); use `context --sync git`.",
             file=sys.stderr,
         )
+    show_stats = getattr(args, "show_stats", False)
     output = render_query_context(
         query=args.query,
         query_class=args.query_class,
@@ -517,12 +518,15 @@ def cmd_query(args: argparse.Namespace) -> None:
         max_nodes=args.max_nodes,
         scopes=tuple(args.scope),
         scope_mode=args.scope_mode,
-        show_anchors=args.show_anchors,
+        show_anchors=args.show_anchors or show_stats,
+        json_anchors=show_stats,
         cache_namespace="cli_query",
         source_mode=args.source_mode,
         memory_scopes=tuple(args.memory_scope) or ("project", "session"),
     )
-    if getattr(args, "show_stats", False):
+    if show_stats:
+        payload = json.loads(output)
+        output = str(payload.get("packet", ""))
         shape = graph_shape(load_any(graph_path))
         print(
             (
@@ -532,6 +536,15 @@ def cmd_query(args: argparse.Namespace) -> None:
             ),
             file=sys.stderr,
         )
+        # The execution receipt, including which anchor route ran. `anchor=`
+        # is the field that explains latency: `exact_fast_path` skips the
+        # lexical index build, `ranked` pays for it. Without this on the CLI
+        # the choice was only visible over MCP/JSON, so a caller measuring
+        # from the shell could see two latency clusters and no reason for
+        # them.
+        control = str(payload.get("control", ""))
+        if control:
+            print(f"GraphGraph control: {control}", file=sys.stderr)
     print(output)
 
 

@@ -2502,3 +2502,44 @@ class CliMcpTest(unittest.TestCase):
             after = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
             self.assertTrue(after["snapshot_may_be_stale"])
             self.assertIn("--no-incremental", after["staleness_note"])
+
+    def test_query_show_stats_reports_the_anchor_route(self) -> None:
+        # The anchor route is what explains query latency: exact_fast_path
+        # skips the lexical index build, ranked pays for it. It existed only
+        # in the JSON/MCP surface, so a caller measuring from the shell saw
+        # two latency clusters and had no way to see why -- the question went
+        # unanswered across three retest cycles.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / "app.py").write_text(
+                "def unique_target():\n    return 1\n\n\ndef caller():\n    return unique_target()\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.gg"
+            from graphgraph.services.native import scan_validated_graph
+
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+
+            import contextlib
+            import io
+
+            from graphgraph.cli.parser import build_parser
+
+            parser = build_parser()
+            args = parser.parse_args([
+                "query", "what calls unique_target",
+                "--graph", str(graph_path),
+                "--query-class", "reverse_lookup",
+                "--show-stats",
+            ])
+            stderr = io.StringIO()
+            stdout = io.StringIO()
+            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+                args.func(args)
+
+            receipt = stderr.getvalue()
+            self.assertIn("GraphGraph control:", receipt)
+            self.assertIn("anchor=", receipt)
+            # The packet still goes to stdout unchanged.
+            self.assertIn("#gg", stdout.getvalue())
