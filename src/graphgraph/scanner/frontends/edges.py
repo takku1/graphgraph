@@ -32,6 +32,7 @@ from .syntax import (
     _reexported_symbols,
     _resolve_member_call,
     _resolve_path_qualified_target,
+    _return_type_name,
     _return_type_names,
     _select_import_target,
 )
@@ -170,6 +171,27 @@ def _add_tree_sitter_calls(
     }
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
 
+    # Repo-wide map of function name -> its single concrete return type, used
+    # to type inline call receivers (`parse_ir(src).lower()`, normalized to
+    # the key `parse_ir()`). Names returning more than one concrete type are
+    # dropped: an ambiguous return is not receiver evidence.
+    return_types_by_name: dict[str, set[str]] = {}
+    for source, defs, _root in defs_by_file:
+        if source.path.suffix.lower() != ".rs":
+            continue
+        text_bytes = source.text.encode("utf-8", errors="replace")
+        for definition in (item for item in defs if item.kind in {"function", "method"}):
+            return_type = _return_type_name(
+                _node_text_range(text_bytes, definition.start, definition.end)
+            )
+            if return_type:
+                return_types_by_name.setdefault(definition.name, set()).add(return_type)
+    call_receiver_types = {
+        f"{name}()": next(iter(types))
+        for name, types in return_types_by_name.items()
+        if len(types) == 1
+    }
+
     stats = _MemberCallStats()
     for source, defs, root in defs_by_file:
         suffix = source.path.suffix.lower()
@@ -217,6 +239,7 @@ def _add_tree_sitter_calls(
             body = _node_text_range(text_bytes, d.start, d.end)
             if suffix == ".rs":
                 local_types = _rust_local_types(body)
+                local_types.update(call_receiver_types)
             elif suffix == ".py":
                 local_types = _python_local_types(body)
             else:

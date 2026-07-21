@@ -1467,3 +1467,75 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertEqual(_rust_element_type("Vec<Arc<Expr>>"), "Expr")
         for rejected in ("T", "Vec<T>", "HashMap<K, V>", "(A, B)", "u32", "Vec<(A, B)>"):
             self.assertEqual(_rust_element_type(rejected), "", rejected)
+
+    def test_tree_sitter_types_inline_call_receivers_from_return_types(self) -> None:
+        # `expr_or_empty(ir).count_ops()` -- the receiver is whatever the inner
+        # call returns. Receivers that were not bare identifiers were blanked
+        # outright, so a method reached only through a call result had no
+        # caller edge and read as dead.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/expr.rs": "pub struct Expr; impl Expr { pub fn count_ops(&self) -> usize { 0 } }\n",
+            "src/build.rs": (
+                "use crate::expr::Expr;\n"
+                "fn expr_or_empty(flag: bool) -> Expr { Expr }\n"
+                "pub fn op_count(flag: bool) -> usize {\n"
+                "    expr_or_empty(flag).count_ops()\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        target = next(
+            node.id for node in result.nodes.values()
+            if node.label == "count_ops" and node.kind == "method"
+        )
+        callers = {
+            result.nodes[edge.source].label
+            for edge in result.edges
+            if edge.type == "calls" and edge.target == target and edge.source in result.nodes
+        }
+        self.assertIn("op_count", callers)
+
+    def test_ambiguous_return_type_is_not_receiver_evidence(self) -> None:
+        # Two functions of the same name returning different types cannot type
+        # a receiver; guessing one would attach the call to the wrong owner.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/types.rs": (
+                "pub struct Alpha; impl Alpha { pub fn run(&self) {} }\n"
+                "pub struct Beta; impl Beta { pub fn run(&self) {} }\n"
+            ),
+            "src/a.rs": "use crate::types::Alpha;\nfn make(v: bool) -> Alpha { Alpha }\n",
+            "src/b.rs": "use crate::types::Beta;\nfn make(v: bool) -> Beta { Beta }\n",
+            "src/use.rs": "pub fn go(v: bool) { make(v).run(); }\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        go_id = next(node.id for node in result.nodes.values() if node.label == "go")
+        run_targets = {
+            edge.target for edge in result.edges
+            if edge.type == "calls"
+            and edge.source == go_id
+            and result.nodes.get(edge.target)
+            and result.nodes[edge.target].label == "run"
+        }
+        self.assertEqual(run_targets, set(), "ambiguous return type must not produce a calls edge")

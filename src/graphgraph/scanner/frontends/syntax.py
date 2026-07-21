@@ -639,7 +639,18 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                     if len(children) >= 2:
                         receiver = _node_text(children[0], text).strip()
                 rust_field_receiver = bool(re.fullmatch(r"self\.[A-Za-z_][A-Za-z0-9_]*", receiver))
-                if (
+                # `build_report(x).render()` -- the receiver is whatever the
+                # inner call returns. Normalize it to a bare `name()` key so
+                # the frontend can bind it to that function's return type
+                # without this layer having to model arguments.
+                call_receiver = re.fullmatch(
+                    r"(?:[A-Za-z_][A-Za-z0-9_]*::)*([A-Za-z_][A-Za-z0-9_]*)\s*\(.*\)",
+                    receiver,
+                    re.DOTALL,
+                )
+                if call_receiver is not None:
+                    receiver = f"{call_receiver.group(1)}()"
+                elif (
                     not _identifier(receiver)
                     and receiver != "self"
                     and not rust_field_receiver
