@@ -8,6 +8,7 @@ from pathlib import Path
 from ..graph.core import Edge, Graph, Node
 from ..io import load_any_cached
 from ..retrieval import search_nodes
+from ..retrieval.anchors import explicit_query_identifiers
 from .federation import ProjectRegistry
 from .memory import MemoryRecord, MemoryStore
 from .semantic import SemanticIndex
@@ -68,13 +69,33 @@ class QuerySourcePlanner:
     ) -> SourcePlan:
         if mode not in {"auto", "off", "all"}:
             raise ValueError(f"unknown source planner mode: {mode}")
-        base_matches = search_nodes(
-            graph,
-            query,
-            limit=12,
-            personalize=False,
-            exact_fast_path=mode == "auto",
-        )
+        # An agent asks "what calls normalize_rust", not "normalize_rust", so
+        # matching the fast path against the whole phrase always misses and
+        # falls through to a full lexical scan -- which builds the search
+        # index (~930ms on a 14.5k-node graph) purely to rediscover the one
+        # symbol the query already named. The anchor layer resolves this by
+        # extracting explicit identifiers; do the same here before paying for
+        # the index.
+        base_matches: tuple = ()
+        if mode == "auto":
+            identifiers = explicit_query_identifiers(query)
+            if len(identifiers) == 1:
+                base_matches = search_nodes(
+                    graph,
+                    identifiers[0],
+                    limit=1,
+                    personalize=False,
+                    exact_fast_path=True,
+                    exact_only=True,
+                )
+        if not base_matches:
+            base_matches = search_nodes(
+                graph,
+                query,
+                limit=12,
+                personalize=False,
+                exact_fast_path=mode == "auto",
+            )
         preferred_paths = tuple(dict.fromkeys(
             match.node.path.replace("\\", "/")
             for match in base_matches

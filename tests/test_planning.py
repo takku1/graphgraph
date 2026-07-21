@@ -600,3 +600,44 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(retrieval_node_budget("README installation usage", "subsystem_summary", 40), 12)
         self.assertEqual(retrieval_node_budget("README installation usage", "doc_summary", 40), 12)
         self.assertEqual(retrieval_node_budget("auth service", "blast_radius", 40), 40)
+
+
+class SourcePlannerFastPathTest(unittest.TestCase):
+    """A named symbol should not cost a full lexical index build."""
+
+    def _plan(self, query: str):
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        graph = Graph(
+            nodes={
+                "t": Node("t", "normalize_rust", "function", "src/normalize.rs", "L4"),
+                "c": Node("c", "caller", "function", "src/caller.rs", "L9"),
+                "n": Node("n", "unrelated_helper", "function", "src/other.rs", "L2"),
+            },
+            edges=[Edge("c", "t", "calls")],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            return QuerySourcePlanner(Path(tmp)).plan(graph, query)
+
+    def test_natural_language_query_naming_one_symbol_takes_the_fast_path(self) -> None:
+        # Agents ask "what calls normalize_rust", not "normalize_rust".
+        # Matching the fast path against the whole phrase always missed, so
+        # the planner built the full search index to rediscover a symbol the
+        # query had already named -- the dominant cost of a cold query.
+        plan = self._plan("what calls normalize_rust")
+        self.assertTrue(plan.receipt.exact_fast_path, plan.receipt)
+        self.assertEqual(plan.preferred_paths, ("src/normalize.rs",))
+
+    def test_bare_symbol_still_takes_the_fast_path(self) -> None:
+        plan = self._plan("normalize_rust")
+        self.assertTrue(plan.receipt.exact_fast_path, plan.receipt)
+
+    def test_multi_symbol_query_does_not_take_the_fast_path(self) -> None:
+        # Two named symbols is a genuine conjunction; collapsing it to one
+        # exact match would drop half the question.
+        plan = self._plan("how does normalize_rust reach unrelated_helper")
+        self.assertFalse(plan.receipt.exact_fast_path, plan.receipt)
+
+    def test_unknown_symbol_falls_back_to_lexical_search(self) -> None:
+        plan = self._plan("what calls nonexistent_symbol_xyz")
+        self.assertFalse(plan.receipt.exact_fast_path, plan.receipt)
