@@ -1858,3 +1858,48 @@ class FrontendsScannerTest(unittest.TestCase):
             if edge.type == "calls" and edge.source == go_id and edge.target in result.nodes
         }
         self.assertIn("start", targets)
+
+
+class PythonConstructorParameterTypesTest(unittest.TestCase):
+    """`self.x = x` takes its type from the parameter annotation."""
+
+    def test_bare_name_assignment_adopts_the_parameter_annotation(self) -> None:
+        # The type is declared, just in the signature rather than at the
+        # assignment. Reading only the right-hand side saw a bare Name and
+        # gave up, which left flask's `self.app.do_teardown_request(...)`
+        # with an untyped receiver and so no calls edge at all.
+        from graphgraph.scanner.frontends.python import _python_class_field_types
+
+        types = _python_class_field_types(
+            "class AppContext:\n"
+            "    def __init__(self, app: Flask, name) -> None:\n"
+            "        self.app = app\n"
+            "        self.name = name\n"
+        )
+        self.assertEqual(types.get(("AppContext", "app")), "Flask")
+        # No annotation, no guess.
+        self.assertNotIn(("AppContext", "name"), types)
+
+    def test_explicit_annotation_still_wins_over_the_parameter(self) -> None:
+        from graphgraph.scanner.frontends.python import _python_class_field_types
+
+        types = _python_class_field_types(
+            "class C:\n"
+            "    def __init__(self, dep: Base) -> None:\n"
+            "        self.dep: Derived = dep\n"
+        )
+        self.assertEqual(types.get(("C", "dep")), "Derived")
+
+    def test_conflicting_writes_are_still_refused(self) -> None:
+        # Two constructors assigning different parameter types is not evidence
+        # of either; the existing stability rule must keep applying.
+        from graphgraph.scanner.frontends.python import _python_class_field_types
+
+        types = _python_class_field_types(
+            "class C:\n"
+            "    def __init__(self, dep: Alpha) -> None:\n"
+            "        self.dep = dep\n"
+            "    def reset(self, dep: Beta) -> None:\n"
+            "        self.dep = dep\n"
+        )
+        self.assertNotIn(("C", "dep"), types)

@@ -157,6 +157,25 @@ def _python_local_types(body: str) -> dict[str, str]:
             result[name] = assigned_types[0]
     return result
 
+def _python_parameter_types(
+    function: py_ast.FunctionDef | py_ast.AsyncFunctionDef,
+) -> dict[str, str]:
+    """Map parameter names to their declared annotation, where one is given."""
+    args = function.args
+    every = [
+        *args.posonlyargs,
+        *args.args,
+        *args.kwonlyargs,
+        *([args.vararg] if args.vararg else []),
+        *([args.kwarg] if args.kwarg else []),
+    ]
+    return {
+        arg.arg: type_name
+        for arg in every
+        if arg.annotation is not None and (type_name := _python_type_name(arg.annotation))
+    }
+
+
 def _python_class_field_types(source: str) -> dict[tuple[str, str], str]:
     """Infer stable ``self.field`` types from annotations or constructor writes."""
     try:
@@ -172,6 +191,7 @@ def _python_class_field_types(source: str) -> dict[tuple[str, str], str]:
                     result[(class_node.name, item.target.id)] = type_name
             if not isinstance(item, (py_ast.FunctionDef, py_ast.AsyncFunctionDef)):
                 continue
+            parameter_types = _python_parameter_types(item)
             for node in _python_body_nodes(item):
                 if isinstance(node, py_ast.AnnAssign):
                     targets = [node.target]
@@ -181,6 +201,14 @@ def _python_class_field_types(source: str) -> dict[tuple[str, str], str]:
                     targets = list(node.targets)
                     annotated_type = ""
                     value_type = _python_value_type(node.value)
+                    # `self.app = app` where the signature says `app: Flask`.
+                    # The type is declared, not guessed -- it is just declared
+                    # in the parameter list rather than at the assignment, and
+                    # reading only the right-hand side misses it. This is what
+                    # left flask's `self.app.do_teardown_request(...)` with an
+                    # untyped receiver and so no calls edge at all.
+                    if not value_type and isinstance(node.value, py_ast.Name):
+                        value_type = parameter_types.get(node.value.id, "")
                 else:
                     continue
                 for target in targets:
