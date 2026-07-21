@@ -30,6 +30,11 @@ from graphgraph.io import find_graph_path, load_any
 # are real but would swamp a dependency picture.
 STRUCTURAL_RELATIONS = ("calls", "imports", "imports_from", "implements", "returns", "references")
 
+# Prose-to-code relations. Most code graphs do not have these at all -- the
+# documentation is simply not in the graph -- so they are the clearest visual
+# difference between this system and a dependency grapher.
+NARRATIVE_RELATIONS = ("explains", "discusses", "mentions", "formalizes", "section_of")
+
 WIDTH, HEIGHT = 1200, 820
 FOCAL = 1500.0
 CAMERA_DISTANCE = 1500.0
@@ -43,6 +48,23 @@ def module_of(path: str, depth: int = 3) -> str:
     if len(parts) > 1 and "." in parts[-1]:
         parts = parts[:-1]
     return "/".join(parts[:depth]) or parts[0]
+
+
+def build_layer_graph(graph, relations, depth: int = 3):
+    """Module-to-module traffic restricted to one family of relations."""
+    owner = {
+        nid: module_of(n.path, depth)
+        for nid, n in graph.nodes.items()
+        if n.active and n.path and module_of(n.path, depth)
+    }
+    weights: Counter = Counter()
+    for edge in graph.edges:
+        if not edge.active or edge.type not in relations:
+            continue
+        a, b = owner.get(edge.source), owner.get(edge.target)
+        if a and b and a != b:
+            weights[(a, b)] += 1
+    return dict(weights)
 
 
 def build_module_graph(graph, depth: int = 3):
@@ -283,13 +305,25 @@ def main() -> None:
     parser.add_argument("--output", default="visualization/graph.svg", help="Output SVG path.")
     parser.add_argument("--rotate", type=float, default=28.0, help="Camera rotation in degrees.")
     parser.add_argument("--depth", type=int, default=3, help="Path segments defining a module.")
+    parser.add_argument(
+        "--mode",
+        choices=["structure", "contrast"],
+        default="structure",
+        help="structure: module topology. contrast: what a dependency grapher would miss.",
+    )
     args = parser.parse_args()
 
     graph_path = Path(args.graph) if args.graph else find_graph_path()
     graph = load_any(graph_path)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_svg(graph, graph_path, args.rotate, args.depth), encoding="utf-8")
+    if args.mode == "contrast":
+        from contrast import render as render_contrast
+
+        svg = render_contrast(graph, graph_path, args.rotate, args.depth)
+    else:
+        svg = render_svg(graph, graph_path, args.rotate, args.depth)
+    out.write_text(svg, encoding="utf-8")
     print(f"wrote {out}  ({out.stat().st_size:,} bytes)")
 
 
