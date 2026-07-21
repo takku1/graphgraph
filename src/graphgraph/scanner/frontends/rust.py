@@ -319,10 +319,95 @@ def _add_rust_type_references(
                 ))
                 existing.add(key)
 
+# Single-element containers: the receiver type of `for x in items` or
+# `items.iter().map(|x| ...)` is the parameter these wrap, not the container.
+_RUST_ELEMENT_WRAPPERS = (
+    "Vec", "VecDeque", "HashSet", "BTreeSet", "Option", "Box", "Rc", "Arc",
+    "RefCell", "Cell", "Mutex", "RwLock", "Cow",
+)
+# Iterating a map yields its *value* type for `.values()`, so only that form
+# is claimed -- bare `for (k, v) in map` binds a tuple this does not model.
+_RUST_MAP_TYPES = ("HashMap", "BTreeMap")
+# Adapters that preserve the element type of the sequence they consume.
+_RUST_ELEMENT_ADAPTERS = (
+    "iter", "iter_mut", "into_iter", "values", "values_mut", "drain",
+    "as_slice", "as_mut_slice", "to_vec",
+)
+# Methods that return the same type as their receiver, so an alias binding
+# through them carries the receiver's type unchanged.
+_RUST_IDENTITY_METHODS = ("clone", "to_owned", "as_ref", "as_mut", "borrow", "borrow_mut")
+
+
+def _rust_element_type(type_expr: str) -> str:
+    """Peel container wrappers to the concrete element type they hold.
+
+    ``Vec<Arc<Expr>>`` -> ``Expr``; ``&[Finding]`` -> ``Finding``;
+    ``HashMap<String, Advisor>`` -> ``Advisor``. Returns "" when the innermost
+    parameter is not a concrete named type (a generic ``T``, a primitive, or a
+    tuple), because those give no receiver evidence.
+    """
+    expr = type_expr.strip().lstrip("&").strip()
+    for _ in range(6):  # bounded: nesting deeper than this is not worth claiming
+        expr = expr.strip().lstrip("&").strip()
+        slice_match = re.match(r"^\[\s*(.+?)\s*\]$", expr)
+        if slice_match:
+            expr = slice_match.group(1)
+            continue
+        generic = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*<\s*(.+)\s*>$", expr)
+        if not generic:
+            break
+        outer, inner = generic.group(1).split("::")[-1], generic.group(2)
+        if outer in _RUST_MAP_TYPES:
+            parts = _split_type_args(inner)
+            if len(parts) != 2:
+                return ""
+            expr = parts[1]
+            continue
+        if outer in _RUST_ELEMENT_WRAPPERS:
+            parts = _split_type_args(inner)
+            if len(parts) != 1:
+                return ""
+            expr = parts[0]
+            continue
+        break
+    expr = expr.strip().lstrip("&").strip().split("::")[-1]
+    name = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)$", expr)
+    if not name:
+        return ""
+    candidate = name.group(1)
+    # A bare single uppercase letter is a generic parameter, not a type.
+    if not candidate[:1].isupper() or len(candidate) == 1:
+        return ""
+    return candidate
+
+
+def _split_type_args(inner: str) -> list[str]:
+    """Split generic arguments on top-level commas only."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in inner:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+    return [p.strip() for p in parts if p.strip()]
+
+
 def _rust_local_types(body: str) -> dict[str, str]:
     """Extract conservative local receiver types from Rust parameters/lets."""
     result: dict[str, str] = {}
+    # Full declared type text (generics intact) per binding, so element types
+    # can be recovered for iteration; `result` keeps only concrete receivers.
+    declared: dict[str, str] = {}
     type_pattern = r"(?:&\s*)?(?:'\w+\s+)?(?:mut\s+)?([A-Za-z_][A-Za-z0-9_:]*)"
+    full_type_pattern = r"((?:&\s*)?(?:'\w+\s+)?(?:mut\s+)?[^,)=;]+)"
     for match in re.finditer(
         rf"(?:^|[,(])\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{type_pattern}",
         body.split("{", 1)[0],
@@ -331,6 +416,11 @@ def _rust_local_types(body: str) -> dict[str, str]:
         if type_name[:1].isupper():
             result[match.group(1)] = type_name
     for match in re.finditer(
+        rf"(?:^|[,(])\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{full_type_pattern}",
+        body.split("{", 1)[0],
+    ):
+        declared.setdefault(match.group(1), match.group(2))
+    for match in re.finditer(
         rf"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{type_pattern}",
         body,
     ):
@@ -338,10 +428,60 @@ def _rust_local_types(body: str) -> dict[str, str]:
         if type_name[:1].isupper():
             result[match.group(1)] = type_name
     for match in re.finditer(
+        rf"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*{full_type_pattern}",
+        body,
+    ):
+        declared.setdefault(match.group(1), match.group(2))
+    for match in re.finditer(
         r"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*&?\s*([A-Z][A-Za-z0-9_:]*)\s*(?:::\w+\s*\(|\{)",
         body,
     ):
         result.setdefault(match.group(1), match.group(2).split("::")[-1])
+
+    # `let a = b` and `let a = b.clone()` carry b's type unchanged.
+    identity = "|".join(_RUST_IDENTITY_METHODS)
+    for match in re.finditer(
+        rf"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*&?\s*"
+        rf"([a-z_][A-Za-z0-9_]*)\s*(?:\.(?:{identity})\s*\(\s*\))?\s*;",
+        body,
+    ):
+        source_type = result.get(match.group(2), "")
+        if source_type:
+            result.setdefault(match.group(1), source_type)
+        source_declared = declared.get(match.group(2), "")
+        if source_declared:
+            declared.setdefault(match.group(1), source_declared)
+
+    element_of = {
+        name: element
+        for name, type_text in declared.items()
+        if (element := _rust_element_type(type_text))
+    }
+
+    # `for x in items`, `for x in items.iter()`, `for x in &items`
+    adapters = "|".join(_RUST_ELEMENT_ADAPTERS)
+    for match in re.finditer(
+        rf"\bfor\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+in\s+&?\s*"
+        rf"([a-z_][A-Za-z0-9_]*)\s*(?:\.(?:{adapters})\s*\(\s*\))?",
+        body,
+    ):
+        element = element_of.get(match.group(2), "")
+        if element:
+            result.setdefault(match.group(1), element)
+
+    # `items.iter().map(|x| ...)` and friends: the closure parameter binds the
+    # sequence's element. Only adapters that preserve the element type are
+    # matched, so `.map(|x| ...).map(|y| ...)` does not mistype `y`.
+    for match in re.finditer(
+        rf"\b([a-z_][A-Za-z0-9_]*)\s*\.(?:{adapters})\s*\(\s*\)\s*"
+        rf"(?:\.\s*(?:map|filter|filter_map|for_each|find|any|all|position|flat_map|inspect|take_while|skip_while|partition|min_by_key|max_by_key|sort_by_key)\s*\(\s*)"
+        rf"\|\s*&?\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\|",
+        body,
+    ):
+        element = element_of.get(match.group(1), "")
+        if element:
+            result.setdefault(match.group(2), element)
+
     return result
 
 def _rust_macro_bare_call_names_in_range(

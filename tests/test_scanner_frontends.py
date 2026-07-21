@@ -1410,3 +1410,60 @@ class FrontendsScannerTest(unittest.TestCase):
                 for edge in result.edges
             )
         )
+
+    def test_tree_sitter_types_closure_and_loop_receivers_from_element_types(self) -> None:
+        # Receiver typing previously stopped at the container: `Vec<Expr>`
+        # yielded "Vec", so a closure or loop variable bound to one of its
+        # elements had no type and its method calls fell out of topology --
+        # the dominant unresolved shape in an idiomatic Rust workspace.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/expr.rs": "pub struct Expr; impl Expr { pub fn count_ops(&self) -> usize { 0 } }\n",
+            "src/run.rs": (
+                "use crate::expr::Expr;\n"
+                "pub fn total(items: Vec<Expr>) -> usize {\n"
+                "    let mut n = 0;\n"
+                "    for item in items.iter() { n += item.count_ops(); }\n"
+                "    n\n"
+                "}\n"
+                "pub fn mapped(rows: &[Expr]) -> Vec<usize> {\n"
+                "    rows.iter().map(|r| r.count_ops()).collect()\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        target = next(
+            node.id for node in result.nodes.values()
+            if node.label == "count_ops" and node.kind == "method"
+        )
+        callers = {
+            result.nodes[edge.source].label
+            for edge in result.edges
+            if edge.type == "calls" and edge.target == target and edge.source in result.nodes
+        }
+        # Both the for-loop binding and the closure parameter must resolve.
+        self.assertIn("total", callers)
+        self.assertIn("mapped", callers)
+
+    def test_rust_element_type_refuses_generic_and_non_type_parameters(self) -> None:
+        # The inference must stay conservative: a generic parameter is not a
+        # concrete receiver, and claiming one would attach calls to a type
+        # that does not exist.
+        from graphgraph.scanner.frontends.rust import _rust_element_type
+
+        self.assertEqual(_rust_element_type("Vec<Expr>"), "Expr")
+        self.assertEqual(_rust_element_type("&[Finding]"), "Finding")
+        self.assertEqual(_rust_element_type("HashMap<String, Advisor>"), "Advisor")
+        self.assertEqual(_rust_element_type("Vec<Arc<Expr>>"), "Expr")
+        for rejected in ("T", "Vec<T>", "HashMap<K, V>", "(A, B)", "u32", "Vec<(A, B)>"):
+            self.assertEqual(_rust_element_type(rejected), "", rejected)
