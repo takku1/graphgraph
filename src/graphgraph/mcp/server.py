@@ -44,6 +44,18 @@ from ..services.native import (
     update_paths_validated_graph,
 )
 
+
+def _json(payload: object) -> str:
+    """Serialize an MCP response compactly.
+
+    Every byte here is read by a model, never a person, and indentation is
+    a quarter of the envelope: pretty-printing one `select_symbols` response
+    cost 1221 of 4261 tokens (29%). Compact separators change nothing a
+    parser can observe.
+    """
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
 SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
 
 
@@ -580,7 +592,7 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
     if name == "export_graph":
         return content(handle_export_graph(args))
     if name == "describe_formats":
-        return content(json.dumps(FORMAT_TABLE, indent=2))
+        return content(_json(FORMAT_TABLE))
     if name == "describe_ontology":
         family = args.get("family")
         rows = [
@@ -596,13 +608,13 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
             for name, spec in DEFAULT_RELATIONS.items()
             if not family or spec.family == family
         ]
-        return content(json.dumps(rows, indent=2))
+        return content(_json(rows))
     if name == "describe_frontends":
-        return content(json.dumps([cap.__dict__ for cap in available_frontends()], indent=2))
+        return content(_json([cap.__dict__ for cap in available_frontends()]))
     if name == "describe_traversal":
         if args.get("query_class"):
-            return content(json.dumps(traversal_policy(str(args["query_class"])).__dict__, indent=2))
-        return content(json.dumps({name: policy.__dict__ for name, policy in POLICIES.items()}, indent=2))
+            return content(_json(traversal_policy(str(args["query_class"])).__dict__))
+        return content(_json({name: policy.__dict__ for name, policy in POLICIES.items()}))
     if name == "compile_context":
         graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else find_graph_path()
         runtime = GraphRuntime(
@@ -1038,7 +1050,7 @@ def handle_select_symbols(args: dict[str, Any]) -> str:
     try:
         criteria = parse_criteria(str(args["predicate"]), limit=limit)
     except ValueError as exc:
-        return json.dumps({"error": str(exc)}, indent=2)
+        return _json({"error": str(exc)})
 
     result = select_symbols(graph, criteria, mode=mode)  # type: ignore[arg-type]
     payload: dict[str, Any] = {
@@ -1053,7 +1065,7 @@ def handle_select_symbols(args: dict[str, Any]) -> str:
     if mode == "select":
         payload["truncated"] = result.truncated
         payload["symbols"] = result.symbols
-    return json.dumps(payload, indent=2)
+    return _json(payload)
 
 
 def handle_search_nodes(args: dict[str, Any]) -> str:

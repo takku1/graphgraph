@@ -2543,3 +2543,41 @@ class CliMcpTest(unittest.TestCase):
             self.assertIn("anchor=", receipt)
             # The packet still goes to stdout unchanged.
             self.assertIn("#gg", stdout.getvalue())
+
+    def test_query_json_emits_the_full_envelope(self) -> None:
+        # `query` is the primary retrieval command and was the only major one
+        # without --json: context, status and select all had it. An agent
+        # asking for machine-readable output got a bare packet and a JSON
+        # decode error.
+        import contextlib
+        import io as _io
+
+        from graphgraph.cli.parser import build_parser
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / "app.py").write_text(
+                "def target():\n    return 1\n\n\ndef caller():\n    return target()\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.gg"
+            from graphgraph.services.native import scan_validated_graph
+
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+
+            args = build_parser().parse_args([
+                "query", "what calls target",
+                "--graph", str(graph_path),
+                "--query-class", "reverse_lookup",
+                "--json",
+            ])
+            stdout = _io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(_io.StringIO()):
+                args.func(args)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertIn("packet", payload)
+            self.assertIn("control", payload)
+            self.assertIn("anchor=", payload["control"])
+            self.assertIn("#gg", payload["packet"])

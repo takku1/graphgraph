@@ -77,7 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--show-anchors", action="store_true")
     query.add_argument("--source-mode", choices=["auto", "off", "all"], default="auto")
     query.add_argument("--memory-scope", action="append", default=[])
-    query.add_argument("--show-stats", action="store_true", help="Print graph load shape metrics to stderr.")
+    query.add_argument("--show-stats", action="store_true", help="Print graph load shape metrics and the execution receipt (anchor route, gates) to stderr.")
+    query.add_argument("--json", action="store_true", help="Emit the full envelope (packet, anchors, control receipt, retrieval metrics) as compact JSON instead of the bare packet.")
+    query.add_argument("--pretty", action="store_true", help="Indent --json output for reading by eye. Costs ~26%% more tokens; omit for machine consumption.")
     query.set_defaults(func=cmd_query)
 
     context = sub.add_parser("context", help="One-step native workflow: ensure a graph exists, then render query context.")
@@ -295,7 +297,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="select lists symbols; count returns an integer; exists returns a boolean. Default: select.",
     )
     select.add_argument("--limit", type=int, default=200, help="Max symbols listed in select mode. Default: 200.")
-    select.add_argument("--json", action="store_true", help="Emit JSON instead of text.")
+    select.add_argument("--json", action="store_true", help="Emit compact JSON instead of text.")
+    select.add_argument("--pretty", action="store_true", help="Indent --json output for reading by eye. Costs ~26%% more tokens; omit for machine consumption.")
     select.set_defaults(func=cmd_select)
 
     doctor = sub.add_parser("doctor", help="Run local diagnostics for graph files, CLI runtime, dependencies, optional benchmark credentials, and MCP configs.")

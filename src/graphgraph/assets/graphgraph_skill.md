@@ -91,6 +91,11 @@ Grammar: clauses joined by `and`. `production_callers`/`callers` with
 `label contains S`; `label in [a, b, c]`; `include_tests=BOOL`.
 Modes: `select` (rows), `count` (integer), `exists` (boolean). `count`/`exists`
 never materialize node payloads — prefer them when the answer is a number.
+
+`--json` on `query` and `select` emits the full envelope compactly. It is
+already the token-efficient form; `--pretty` adds indentation for reading by
+eye and costs ~26% more tokens. Do not pass `--pretty` for machine
+consumption. MCP responses are always compact.
 An unsupported clause raises rather than being silently dropped; a returned
 answer is always the whole predicate.
 

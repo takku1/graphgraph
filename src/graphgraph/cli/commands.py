@@ -86,6 +86,22 @@ def _installed_skill_artifact_status(home: Path) -> tuple[dict[str, object], ...
     return tuple(status)
 
 
+
+def _emit_json(payload: object, pretty: bool = False) -> None:
+    """Print a CLI JSON payload, compact unless a human asked otherwise.
+
+    `--json` exists to be parsed, and the parser is usually a model. On a
+    reverse-lookup envelope, indentation was 654 of 2522 tokens (26%) --
+    a quarter of the response spent on whitespace by a tool whose whole
+    premise is token efficiency. `--pretty` restores indentation for reading
+    by eye.
+    """
+    if pretty:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+    else:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
 def cmd_plan(args: argparse.Namespace) -> None:
     plan = plan_context(args.query_class, getattr(args, "query", ""))
     print(
@@ -106,7 +122,7 @@ def cmd_select(args: argparse.Namespace) -> None:
     result = select_symbols(graph, criteria, mode=args.mode)
 
     if args.json:
-        print(json.dumps({
+        _emit_json({
             "mode": result.mode,
             "total": result.total,
             "exists": result.exists,
@@ -115,7 +131,7 @@ def cmd_select(args: argparse.Namespace) -> None:
             "caller_evidence": result.caller_evidence,
             "caller_evidence_complete": result.caller_evidence_complete,
             "symbols": result.symbols,
-        }, indent=2))
+        }, getattr(args, "pretty", False))
         return
 
     if args.mode == "exists":
@@ -508,6 +524,7 @@ def cmd_query(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
     show_stats = getattr(args, "show_stats", False)
+    as_json = getattr(args, "json", False)
     output = render_query_context(
         query=args.query,
         query_class=args.query_class,
@@ -518,15 +535,16 @@ def cmd_query(args: argparse.Namespace) -> None:
         max_nodes=args.max_nodes,
         scopes=tuple(args.scope),
         scope_mode=args.scope_mode,
-        show_anchors=args.show_anchors or show_stats,
-        json_anchors=show_stats,
+        show_anchors=args.show_anchors or show_stats or as_json,
+        json_anchors=show_stats or as_json,
         cache_namespace="cli_query",
         source_mode=args.source_mode,
         memory_scopes=tuple(args.memory_scope) or ("project", "session"),
     )
-    if show_stats:
+    if show_stats or as_json:
         payload = json.loads(output)
-        output = str(payload.get("packet", ""))
+        if not as_json:
+            output = str(payload.get("packet", ""))
         shape = graph_shape(load_any(graph_path))
         print(
             (
@@ -545,6 +563,9 @@ def cmd_query(args: argparse.Namespace) -> None:
         control = str(payload.get("control", ""))
         if control:
             print(f"GraphGraph control: {control}", file=sys.stderr)
+    if as_json:
+        _emit_json(payload, getattr(args, "pretty", False))
+        return
     print(output)
 
 
