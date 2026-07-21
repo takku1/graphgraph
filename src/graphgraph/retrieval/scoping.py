@@ -137,15 +137,29 @@ def _is_test_node(node: object) -> bool:
         and _source_declares_rust_test(source, line)
     )
 
+@lru_cache(maxsize=512)
+def _rust_source_lines(source: str) -> tuple[str, ...]:
+    """Read one Rust source once, memoized by path.
+
+    ``_source_declares_rust_test`` is keyed on (source, line) because each
+    symbol asks about its own line, so a file containing 40 test functions
+    produced 40 distinct cache keys and 40 re-reads of the same file. Caching
+    the read separately collapses those to one.
+    """
+    path = Path(source)
+    if path.suffix.casefold() != ".rs" or not path.is_file():
+        return ()
+    try:
+        return tuple(path.read_text(encoding="utf-8", errors="replace").splitlines())
+    except OSError:
+        return ()
+
+
 @lru_cache(maxsize=8192)
 def _source_declares_rust_test(source: str, line: int) -> bool:
     """Recover inline-test identity for graphs built before test-role IR facts."""
-    path = Path(source)
-    if path.suffix.casefold() != ".rs" or not path.is_file():
-        return False
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    lines = _rust_source_lines(source)
+    if not lines:
         return False
     start = max(0, line - 5)
     end = min(len(lines), line + 1)

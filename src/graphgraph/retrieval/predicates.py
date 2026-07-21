@@ -144,6 +144,12 @@ def caller_counts(graph: Graph) -> tuple[dict[str, int], dict[str, int]]:
     """
     all_callers: dict[str, set[str]] = {}
     production: dict[str, set[str]] = {}
+    # `_is_test_node` can fall through to reading the node's source file to
+    # look for a `#[test]` attribute, and a call graph has far more edges than
+    # distinct calling symbols -- 8122 edges over ~1300 sources here, so the
+    # uncached form re-derived the same answer six times over and dominated
+    # this function.
+    is_test: dict[str, bool] = {}
     for edge in graph.edges:
         if not edge.active or edge.type != "calls" or edge.source == edge.target:
             continue
@@ -151,7 +157,11 @@ def caller_counts(graph: Graph) -> tuple[dict[str, int], dict[str, int]]:
         if source is None:
             continue
         all_callers.setdefault(edge.target, set()).add(edge.source)
-        if not _is_test_node(source):
+        cached = is_test.get(edge.source)
+        if cached is None:
+            cached = _is_test_node(source)
+            is_test[edge.source] = cached
+        if not cached:
             production.setdefault(edge.target, set()).add(edge.source)
     return (
         {nid: len(v) for nid, v in all_callers.items()},
