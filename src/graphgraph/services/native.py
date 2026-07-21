@@ -704,10 +704,14 @@ def build_project_status(
     # file, not just the changed ones -- looks like it did nothing.
     snapshot_at = graph.metadata.get("member_calls_global_scanned_at", "")
     snapshot_files = graph.metadata.get("member_calls_global_scanned_files", "")
-    current_files = sum(1 for node in graph.nodes.values() if node.active and node.path)
-    snapshot_stale = bool(
-        snapshot_files and current_files and abs(int(snapshot_files) - current_files) > 0
-    )
+    # Staleness is exactly "the most recent scan was incremental", which the
+    # metadata already states -- an incremental pass records its own scope and
+    # copies the global counts across untouched. Comparing file counts instead
+    # does not work: the scanned-file total never matches the graph's distinct
+    # paths, because referenced-but-unscanned files contribute paths too, so
+    # every graph looked stale including one full-scanned seconds earlier.
+    last_scope = graph.metadata.get("member_calls_last_update_scope", "")
+    snapshot_stale = bool(snapshot_at) and last_scope == "changed_files"
     graph_report["member_calls"] = {
         **global_calls,
         "scope": graph.metadata.get("member_calls_global_scope", graph.metadata.get("member_call_telemetry_scope", "unavailable")),

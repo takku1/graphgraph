@@ -2465,3 +2465,40 @@ class CliMcpTest(unittest.TestCase):
             (root / "build" / "junk.py").write_text("def junk():\n    pass\n", encoding="utf-8")
             after = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
             self.assertNotIn("build/junk.py", after["changed_paths"])
+
+    def test_member_call_staleness_fires_only_after_an_incremental_scan(self) -> None:
+        # The STALE note exists because incremental scans copy the global
+        # member-call counts across untouched, so a resolver change reads as
+        # having done nothing. Its first implementation compared scanned-file
+        # count against nodes-carrying-a-path (302 vs 6239) and fired on every
+        # graph, including one full-scanned seconds earlier -- a warning that
+        # is always on teaches readers to ignore it.
+        from graphgraph.services.native import build_project_status, scan_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            (root / "app.py").write_text(
+                "class Runner:\n"
+                "    def go(self):\n"
+                "        return self.step()\n\n"
+                "    def step(self):\n"
+                "        return 1\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+
+            status = build_project_status(directory=root, graph_path=graph_path)
+            member_calls = status["graph"]["member_calls"]
+            self.assertFalse(
+                member_calls["snapshot_may_be_stale"],
+                "a freshly full-scanned graph must not be reported stale",
+            )
+
+            # An incremental pass carries the counts forward; say so.
+            (root / "other.py").write_text("def added():\n    return 2\n", encoding="utf-8")
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+            after = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
+            self.assertTrue(after["snapshot_may_be_stale"])
+            self.assertIn("--no-incremental", after["staleness_note"])
