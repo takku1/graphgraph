@@ -200,9 +200,23 @@ def scan_directory(
             current_hash = compute_file_hash(f)
             dirty_files.append((f, rel, current_hash))
 
+    active_rels = {f.relative_to(root).as_posix() for f in files}
+
+    # Files that vanished since the last scan take their nodes with them, so
+    # anything still referencing them must be re-extracted rather than
+    # restored verbatim -- otherwise a rename drops callers that a clean
+    # rebuild keeps (GG10-LC-008).
+    if manifest and previous_graph:
+        removed_rels = set(manifest.files.keys()) - active_rels
+        rebind_rels = _referrer_rels(root, previous_graph, removed_rels)
+        if rebind_rels:
+            promoted = [entry for entry in skipped_files if entry[1] in rebind_rels]
+            if promoted:
+                skipped_files = [entry for entry in skipped_files if entry[1] not in rebind_rels]
+                dirty_files.extend(promoted)
+
     _emit_progress(progress, "hash", f"dirty={len(dirty_files)} restored={len(skipped_files)}")
 
-    active_rels = {f.relative_to(root).as_posix() for f in files}
     # Git status is gathered before collection for priority ordering, but only
     # paths admitted by the same scan/ignore policy may enter graph metadata.
     # Otherwise an ignored dirty packet dump leaks into the serialized graph
@@ -252,6 +266,52 @@ def _normalize_rels(root: Path, paths: list[str] | list[Path]) -> set[str]:
     return rels
 
 
+def _node_rel(node) -> str:
+    """Repo-relative posix path a node belongs to, or "" when it has none.
+
+    Matches the form produced by :func:`_normalize_rels` so node ownership
+    and caller-supplied paths compare directly.
+    """
+    path = getattr(node, "path", "") or ""
+    return Path(path).as_posix() if path else ""
+
+
+def _referrer_rels(root: Path, previous_graph, removed_rels: set[str]) -> set[str]:
+    """Files that must be re-extracted because *removed_rels* disappeared.
+
+    A file whose edges point into a removed file cannot be restored verbatim
+    from the manifest: its edges reference nodes that no longer exist, so the
+    reference dies with them instead of rebinding to wherever the definition
+    moved. Renaming a file would then silently drop callers that a clean
+    rebuild keeps (GG10-LC-008).
+
+    Returns only rels that still exist on disk and are not themselves removed.
+    """
+    if not removed_rels or previous_graph is None:
+        return set()
+    removed_node_ids = {
+        nid
+        for nid, node in previous_graph.nodes.items()
+        if _node_rel(node) in removed_rels
+    }
+    if not removed_node_ids:
+        return set()
+    referrer_ids: set[str] = set()
+    for edge in previous_graph.edges:
+        if edge.target in removed_node_ids:
+            referrer_ids.add(edge.source)
+        elif edge.source in removed_node_ids:
+            referrer_ids.add(edge.target)
+    return {
+        rel
+        for nid in referrer_ids
+        if (node := previous_graph.nodes.get(nid)) is not None
+        and (rel := _node_rel(node))
+        and rel not in removed_rels
+        and (root / rel).exists()
+    }
+
+
 def update_paths(
     root: Path,
     paths: list[str],
@@ -298,6 +358,8 @@ def update_paths(
         if (root / rel).exists()
     }
     removed_target_rels = explicit_removed_rels | (changed_target_rels - existing_target_rels)
+
+    existing_target_rels |= _referrer_rels(root, previous_graph, removed_target_rels)
 
     known_rels = (set(manifest.files.keys()) | existing_target_rels) - removed_target_rels
     active_rels = known_rels

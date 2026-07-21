@@ -224,6 +224,65 @@ class IncrementalScannerTest(unittest.TestCase):
         # The cross-file call must actually be present, not just equal-and-empty.
         self.assertIn(("a_py__foo", "b_py__baz", "calls"), targeted_edges)
 
+    def test_update_paths_rebinds_referrers_when_a_definition_file_is_renamed(self) -> None:
+        # Renaming core.py -> engine.py used to silently drop stable.py's call
+        # edge: stable.py was restored verbatim from the manifest, so its edge
+        # still pointed at core.py's now-deleted node instead of rebinding to
+        # the definition's new home. A clean rescan kept the caller, so the
+        # splice diverged from a rebuild (GG10-LC-008).
+        core = "def normalize_value(x):\n    return x + 1\n\ndef core_entry():\n    return normalize_value(1)\n"
+        stable = "from core import normalize_value\n\n\ndef stable_entry():\n    return normalize_value(3)\n"
+
+        def build_baseline(root: Path, graph_path: Path, manifest_path: Path) -> None:
+            (root / "core.py").write_text(core, encoding="utf-8")
+            (root / "stable.py").write_text(stable, encoding="utf-8")
+            graph = scan_directory(
+                root, depth="symbols", previous_graph_path=None, manifest_path=manifest_path
+            )
+            save_graph(graph, graph_path)
+
+        def apply_rename(root: Path) -> None:
+            (root / "engine.py").write_text(core, encoding="utf-8")
+            (root / "core.py").unlink()
+
+        with tempfile.TemporaryDirectory() as tmp_full:
+            root = Path(tmp_full)
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            build_baseline(root, graph_path, manifest_path)
+            apply_rename(root)
+            full = scan_directory(
+                root, depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path
+            )
+            full_nodes = sorted((n.label, n.path) for n in full.nodes.values())
+            full_edges = sorted((e.source, e.target, e.type) for e in full.edges)
+
+        with tempfile.TemporaryDirectory() as tmp_targeted:
+            root = Path(tmp_targeted)
+            graph_path = root / ".graphgraph" / "graph.json"
+            manifest_path = root / ".graphgraph" / "manifest.json"
+            build_baseline(root, graph_path, manifest_path)
+            apply_rename(root)
+            targeted = update_paths(
+                root,
+                ["engine.py"],
+                deleted_paths=["core.py"],
+                depth="symbols",
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+            targeted_nodes = sorted((n.label, n.path) for n in targeted.nodes.values())
+            targeted_edges = sorted((e.source, e.target, e.type) for e in targeted.edges)
+
+        self.assertEqual(full_nodes, targeted_nodes)
+        self.assertEqual(full_edges, targeted_edges)
+        # The untouched referrer must survive, not just match an empty rebuild.
+        self.assertIn("stable_entry", [label for label, _path in targeted_nodes])
+        self.assertTrue(
+            any(src.endswith("stable_entry") and typ == "calls" for src, _dst, typ in targeted_edges),
+            targeted_edges,
+        )
+
     def test_update_paths_preserves_concept_edges_for_untouched_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

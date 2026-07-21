@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .affected_tests_case import run_affected_tests
 from .boundary import run_secret_boundary
+from .delete_rename import run_delete_rename
 from .docs_case import run_doc_enumeration
 from .incremental import run_incremental_edit
 from .model import CaseResult, GroundTruth, Task
@@ -61,6 +62,14 @@ def _incremental_edit_case(
     _graph_path: Path | None = None,
 ) -> CaseResult:
     return run_incremental_edit(task)
+
+
+def _delete_rename_case(
+    task: Task,
+    _repo: Path,
+    _graph_path: Path | None = None,
+) -> CaseResult:
+    return run_delete_rename(task)
 
 
 # Eight source-verified direct callers of `normalize_rust` (usage report GG-LC-004).
@@ -187,6 +196,15 @@ CANONICAL_TASKS: tuple[Task, ...] = (
         query="What directly calls normalize_value?",
         case_fn=_incremental_edit_case,
         reference="spec GG10-LC-007",
+    ),
+    Task(
+        id="GG10-LC-008",
+        title="Delete and rename leave no ghost nodes",
+        dimension="D13",
+        severity="P1",
+        query="What directly calls normalize_value?",
+        case_fn=_delete_rename_case,
+        reference="spec GG10-LC-008",
     ),
     Task(
         id="GG10-LC-010",
