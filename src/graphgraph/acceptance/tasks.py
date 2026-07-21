@@ -209,5 +209,3 @@ CANONICAL_TASKS: tuple[Task, ...] = (
 )
 
 
-def active_tasks() -> tuple[Task, ...]:
-    return tuple(t for t in CANONICAL_TASKS if t.status == "active")

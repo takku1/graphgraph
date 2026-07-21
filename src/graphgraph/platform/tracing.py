@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 from ..graph.core import Edge, Graph, Node
@@ -59,14 +58,6 @@ def ingest_runtime_trace(graph: Graph, path: Path, *, trace_id: str = "runtime")
     return Graph(nodes=nodes, edges=edges, metadata=metadata), {
         "events": len(events), "edges_emitted": emitted, "unresolved_handles": sorted(unresolved)
     }
-
-
-def apply_coverage(graph: Graph, covered: set[str]) -> Graph:
-    nodes = {
-        node_id: replace(node, facts=node.facts + (("runtime:covered",) if node_id in covered and "runtime:covered" not in node.facts else ()))
-        for node_id, node in graph.nodes.items()
-    }
-    return Graph(nodes=nodes, edges=list(graph.edges), metadata=dict(graph.metadata))
 
 
 def _resolve(handles: dict[str, list[str]], raw: str, nodes: dict[str, Node]) -> str:

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
 import re
+import struct
 from collections import OrderedDict
 from pathlib import Path
 from threading import RLock
@@ -15,6 +17,8 @@ _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,}")
 _INDEX_CACHE_LIMIT = 4
 _INDEX_CACHE: OrderedDict[Path, tuple[int, int, "SemanticIndex"]] = OrderedDict()
 _INDEX_CACHE_LOCK = RLock()
+_VECTOR_RECORD = struct.Struct("<If")
+_VECTOR_ENCODING = "base85-u32-f32-le"
 
 
 class SemanticIndex:
@@ -52,10 +56,14 @@ class SemanticIndex:
             raise ValueError("SemanticIndex.save requires a path")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "version": 2,
+            "version": 3,
             "dimensions": self.dimensions,
             "signature": self.signature,
-            "vectors": {node_id: {str(key): value for key, value in vector.items()} for node_id, vector in self.vectors.items()},
+            "vector_encoding": _VECTOR_ENCODING,
+            "vectors": {
+                node_id: _encode_vector(vector)
+                for node_id, vector in self.vectors.items()
+            },
         }
         atomic_write_json(self.path, data, indent=None)
         _remember_index(self.path, self)
@@ -73,10 +81,21 @@ class SemanticIndex:
         data = json.loads(resolved.read_text(encoding="utf-8"))
         index = cls(path, dimensions=int(data.get("dimensions", 2048)))
         index.signature = str(data.get("signature", ""))
-        index.vectors = {
-            str(node_id): {int(key): float(value) for key, value in vector.items()}
-            for node_id, vector in data.get("vectors", {}).items()
-        }
+        vectors = data.get("vectors", {})
+        if int(data.get("version", 0)) >= 3:
+            if data.get("vector_encoding") != _VECTOR_ENCODING:
+                raise ValueError(
+                    f"unsupported semantic vector encoding: {data.get('vector_encoding')!r}"
+                )
+            index.vectors = {
+                str(node_id): _decode_vector(str(vector))
+                for node_id, vector in vectors.items()
+            }
+        else:
+            index.vectors = {
+                str(node_id): {int(key): float(value) for key, value in vector.items()}
+                for node_id, vector in vectors.items()
+            }
         _remember_index(resolved, index)
         return index
 
@@ -119,6 +138,24 @@ def _cosine(left: dict[int, float], right: dict[int, float]) -> float:
     if len(left) > len(right):
         left, right = right, left
     return sum(value * right.get(key, 0.0) for key, value in left.items())
+
+
+def _encode_vector(vector: dict[int, float]) -> str:
+    packed = b"".join(
+        _VECTOR_RECORD.pack(index, value)
+        for index, value in sorted(vector.items())
+    )
+    return base64.b85encode(packed).decode("ascii")
+
+
+def _decode_vector(encoded: str) -> dict[int, float]:
+    packed = base64.b85decode(encoded.encode("ascii"))
+    if len(packed) % _VECTOR_RECORD.size:
+        raise ValueError("invalid semantic vector payload length")
+    return {
+        index: float(value)
+        for index, value in _VECTOR_RECORD.iter_unpack(packed)
+    }
 
 
 def _remember_index(path: Path, index: SemanticIndex) -> None:

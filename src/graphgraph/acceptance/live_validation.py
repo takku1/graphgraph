@@ -685,6 +685,13 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _prepare_validation_graph(out_dir: Path) -> Path:
+    """Use the compact native graph and remove the legacy JSON snapshot."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "live.graph.json").unlink(missing_ok=True)
+    return out_dir / "live.graph.gg"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     repo = args.repo.resolve()
@@ -695,8 +702,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from graphgraph.scanner import scan_directory
 
     out_dir = repo / ".graphgraph" / "skill-validation"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    graph_path = out_dir / "live.graph.json"
+    graph_path = _prepare_validation_graph(out_dir)
     graph = scan_directory(
         repo,
         max_nodes=args.max_nodes,

@@ -25,7 +25,7 @@ from .inference import InferenceRule, infer_edges
 from .intelligence import build_hierarchy, detect_communities
 from .memory import MemoryRecord, MemoryStore
 from .persistence import PLATFORM_STATE_VERSION, migrate_platform_state
-from .repair import build_repair_context
+from .repair import build_repair_context, repair_context_json
 from .semantic import SemanticIndex
 from .source_planner import QuerySourcePlanner, SourcePlan, SourcePlannerReceipt
 from .temporal import Episode, TemporalStore, graph_as_of
@@ -66,6 +66,7 @@ __all__ = [
     "build_continuation_receipt",
     "build_hierarchy",
     "build_repair_context",
+    "repair_context_json",
     "detect_communities",
     "evaluate_cases",
     "federate_graphs",

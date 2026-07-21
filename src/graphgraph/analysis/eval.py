@@ -163,12 +163,6 @@ def results_to_json(results: list[EvalResult]) -> str:
     return json.dumps([result.__dict__ for result in results], indent=2, ensure_ascii=False)
 
 
-def _recall(expected: set[object], returned: set[object]) -> float:
-    if not expected:
-        return 1.0
-    return len(expected & returned) / len(expected)
-
-
 def _edge_recall(expected: tuple[tuple[str, ...], ...], returned: set[tuple[str, str, str]]) -> float:
     if not expected:
         return 1.0

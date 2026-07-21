@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..graph.core import Graph, Query
+from ..graph.core import Graph, Node, Query
 from ..io import (
     find_graph_path,
     find_lessons_path,
@@ -24,7 +24,7 @@ from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # 
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
-QUERY_RESPONSE_CACHE_VERSION = "request_v7_non_authorizing_evidence"
+QUERY_RESPONSE_CACHE_VERSION = "request_v9_reverse_structural_evidence"
 
 _DOCUMENT_EVIDENCE_KINDS = frozenset({
     "concept",
@@ -406,6 +406,7 @@ def render_query_context(
                     result,
                     response_metadata,
                     query_class=query_class,
+                    graph=graph,
                 ),
                 "anchors": [],
                 "packet": "",
@@ -442,6 +443,7 @@ def render_query_context(
                 result,
                 response_metadata,
                 query_class=query_class,
+                graph=graph,
             ),
             "anchors": [
                 {
@@ -649,18 +651,20 @@ def _actionable_receipt(
     response_metadata: dict[str, object] | None,
     *,
     query_class: str,
+    graph: Graph | None = None,
 ) -> dict[str, object]:
     metadata = getattr(result, "metadata", {})
     answerability = metadata.get("answerability", {})
     affected = metadata.get("affected_tests", {})
     facet_coverage = metadata.get("facet_coverage", {})
-    freshness: object = {}
+    structural_facet_coverage = metadata.get("structural_facet_coverage", {})
+    freshness_ref: str | None = None
     if response_metadata:
         workflow = response_metadata.get("workflow", {})
-        if isinstance(workflow, dict):
-            freshness = workflow.get("freshness", {})
-        if not freshness:
-            freshness = response_metadata.get("freshness", {})
+        if isinstance(workflow, dict) and "freshness" in workflow:
+            freshness_ref = "$.workflow.freshness"
+        elif "freshness" in response_metadata:
+            freshness_ref = "$.freshness"
 
     def compact_tests(role: str) -> list[dict[str, object]]:
         if not isinstance(affected, dict):
@@ -680,9 +684,31 @@ def _actionable_receipt(
             if isinstance(item, dict)
         ]
 
+    start_ids = set(getattr(result, "starts", ()))
     priority_ids: list[str] = []
-    if isinstance(facet_coverage, dict):
-        for facet in facet_coverage.get("fulfilled", ()):
+    if query_class == "reverse_lookup":
+        priority_ids.extend(
+            edge.source
+            for edge in getattr(result, "edges", ())
+            if edge.target in start_ids
+            and edge.source not in start_ids
+            and edge.type in {
+                "calls",
+                "references",
+                "imports_from",
+                "tests",
+                "implements",
+            }
+        )
+    coverage_receipts = (
+        (structural_facet_coverage, facet_coverage)
+        if query_class not in {"doc_summary", "negative_query"}
+        else (facet_coverage,)
+    )
+    for coverage in coverage_receipts:
+        if not isinstance(coverage, dict):
+            continue
+        for facet in coverage.get("fulfilled", ()):
             if not isinstance(facet, dict):
                 continue
             priority_ids.extend(
@@ -697,9 +723,12 @@ def _actionable_receipt(
             for node_id in document_status.get("evidence", ())
             if node_id
         ]
+    priority_ids = list(dict.fromkeys(priority_ids))
+    if query_class not in {"doc_summary", "negative_query"}:
+        priority_ids.sort(key=lambda node_id: node_id in start_ids)
     priority_rank = {
         node_id: rank
-        for rank, node_id in enumerate(dict.fromkeys(priority_ids))
+        for rank, node_id in enumerate(priority_ids)
     }
     ranked_matches = sorted(
         enumerate(getattr(result, "matches", ())),
@@ -709,15 +738,27 @@ def _actionable_receipt(
             item[0],
         ),
     )
+    evidence_nodes: list[Node] = []
+    seen_evidence: set[str] = set()
+    if graph is not None:
+        for node_id in priority_ids:
+            node = graph.nodes.get(node_id)
+            if node is not None and node.id not in seen_evidence:
+                seen_evidence.add(node.id)
+                evidence_nodes.append(node)
+    for _index, match in ranked_matches:
+        if match.node.id not in seen_evidence:
+            seen_evidence.add(match.node.id)
+            evidence_nodes.append(match.node)
     evidence_points = [
         {
-            "id": match.node.id,
-            "label": match.node.label,
-            "path": match.node.path,
-            "line": match.node.line,
-            "kind": match.node.kind,
+            "id": node.id,
+            "label": node.label,
+            "path": node.path,
+            "line": node.line,
+            "kind": node.kind,
         }
-        for _index, match in ranked_matches[:5]
+        for node in evidence_nodes[:5]
     ]
     change_points = (
         []
@@ -756,7 +797,7 @@ def _actionable_receipt(
             "commands_by_role": affected.get("commands_by_role", {}) if isinstance(affected, dict) else {},
             "commands": list(affected.get("commands", ())) if isinstance(affected, dict) else [],
         },
-        "freshness": freshness,
+        "freshness_ref": freshness_ref,
         "semantic_validation": metadata.get("semantic_validation", {}),
     }
 

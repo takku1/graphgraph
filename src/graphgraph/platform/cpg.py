@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from ..graph.core import Edge, Graph, Node
+from ..graph.operations import dedupe_edges
 from ..scanner.frontends import (
     DEFINITION_NODE_TYPES,
     NAME_NODE_TYPES,
@@ -185,7 +186,7 @@ class CpgEvidenceProvider:
                     nodes,
                     edges,
                 )
-        edges = _dedupe_edges(edges)
+        edges = dedupe_edges(edges)
         emitted_nodes = len(nodes)
         emitted_edges = len(edges)
         selected_nodes = dict(list(nodes.items())[: self.max_nodes])
@@ -540,8 +541,3 @@ def _is_data_name(name: str) -> bool:
     return bool(name) and len(name) <= 160 and not name[0].isdigit()
 
 
-def _dedupe_edges(edges: list[Edge]) -> list[Edge]:
-    unique: dict[tuple[str, str, str], Edge] = {}
-    for edge in edges:
-        unique.setdefault((edge.source, edge.target, edge.type), edge)
-    return list(unique.values())

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from ..graph.core import Edge, Graph, Node
+from ..graph.operations import dedupe_edges
 
 
 @dataclass(frozen=True)
@@ -262,7 +263,7 @@ class PythonAstEvidenceProvider:
                     self._class_evidence(owner, definition, rel_path, nodes, edges)
                 else:
                     self._function_evidence(owner, definition, rel_path, nodes, edges)
-        edges = _dedupe_edges(edges)
+        edges = dedupe_edges(edges)
         emitted_nodes = len(nodes)
         emitted_edges = len(edges)
         selected_nodes = dict(list(nodes.items())[:self.max_nodes])
@@ -379,13 +380,6 @@ def _walk_owned_scope(root: ast.AST):
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             continue
         stack.extend(reversed(list(ast.iter_child_nodes(item))))
-
-
-def _dedupe_edges(edges: list[Edge]) -> list[Edge]:
-    unique: dict[tuple[str, str, str], Edge] = {}
-    for edge in edges:
-        unique.setdefault((edge.source, edge.target, edge.type), edge)
-    return list(unique.values())
 
 
 def _is_test_path(path: str) -> bool:

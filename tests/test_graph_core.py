@@ -702,3 +702,52 @@ class GraphCoreTest(unittest.TestCase):
         weighted = {node_id: weight for node_id, weight in p.items() if weight == 6.0}
         self.assertEqual(weighted, {"fn2": 6.0})
 
+
+
+class GraphSchemaContractTest(unittest.TestCase):
+    """`schema/graph.schema.json` is a published contract; keep it honest.
+
+    Nothing in the runtime loads this file, so without a check it can silently
+    drift from the dataclasses it claims to describe. README links it as the
+    graph format, so drift would be actively misleading.
+    """
+
+    def _schema(self) -> dict:
+        import json
+
+        path = Path(__file__).parents[1] / "src" / "graphgraph" / "schema" / "graph.schema.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def test_schema_fields_match_node_and_edge_dataclasses(self) -> None:
+        import dataclasses
+
+        from graphgraph.graph.core import Edge, Node
+
+        schema = self._schema()
+        for section, cls in (("nodes", Node), ("edges", Edge)):
+            with self.subTest(section=section):
+                declared = set(schema["properties"][section]["items"]["properties"])
+                actual = {f.name for f in dataclasses.fields(cls)}
+                self.assertEqual(
+                    declared,
+                    actual,
+                    f"{section} schema drifted from {cls.__name__}: "
+                    f"missing={sorted(actual - declared)} extra={sorted(declared - actual)}",
+                )
+
+    def test_a_saved_graph_validates_against_the_published_schema(self) -> None:
+        import json
+
+        from graphgraph.io import graph_to_json
+
+        schema = self._schema()
+        raw = json.loads(graph_to_json(sample_graph()))
+
+        for key in schema["required"]:
+            self.assertIn(key, raw)
+        for section in ("nodes", "edges"):
+            required = schema["properties"][section]["items"]["required"]
+            self.assertTrue(raw[section], f"sample graph has no {section}")
+            for item in raw[section]:
+                for field in required:
+                    self.assertIn(field, item, f"{section} entry missing required {field!r}")

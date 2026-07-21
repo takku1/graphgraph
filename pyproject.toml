@@ -57,7 +57,7 @@ package = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-graphgraph = ["assets/*.md", "assets/*.py"]
+graphgraph = ["assets/*.md", "assets/*.py", "schema/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

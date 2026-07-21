@@ -27,6 +27,7 @@ from .files import (
 from .frontends import SourceFile, select_extractor
 from .history import extract_commit_history
 from .imports import add_file_edges
+from .rust_references import filter_rust_reference_edges
 
 logger = logging.getLogger(__name__)
 ScanProgress = Callable[[str, str], None]
@@ -876,6 +877,19 @@ def _build_graph_from_split(
             and edge.source in INTERPRETATION_CONCEPT_IDS
         )
     ]
+    edges, rust_reference_receipt = filter_rust_reference_edges(
+        root,
+        active_rels,
+        nodes,
+        edges,
+    )
+    metadata["rust_reference_candidates"] = str(rust_reference_receipt.candidates)
+    metadata["rust_reference_rejected_qualified_suffix"] = str(
+        rust_reference_receipt.rejected_qualified_suffix
+    )
+    metadata["rust_reference_rejected_unreachable_crate"] = str(
+        rust_reference_receipt.rejected_unreachable_crate
+    )
 
     # Update manifest for the scanned (dirty) files
     if manifest:

@@ -9,7 +9,7 @@ from typing import Callable
 from ..concepts import link_interpretation_concepts
 from ..concepts.terms import canonical_concept_label, concept_id, normalize_label, term_key
 from ..graph.core import Edge, Node
-from ..graph.operations import _dedupe_edges
+from ..graph.operations import dedupe_edges
 
 _MD_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 _RST_HEADING = re.compile(r"^(.+)\n([=\-~^\"#*+])\2{2,}\s*$", re.MULTILINE)
@@ -273,7 +273,7 @@ def extract_document_context(
                 truncated,
             )
 
-    deduped_edges = _dedupe_edges(edges)
+    deduped_edges = dedupe_edges(edges)
     incident_nodes = {edge.source for edge in deduped_edges} | {edge.target for edge in deduped_edges}
     nodes = {
         node_id: node

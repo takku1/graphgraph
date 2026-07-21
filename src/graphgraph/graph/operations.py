@@ -185,7 +185,7 @@ def add_policy_node(graph: Graph, policy: Policy) -> tuple[Graph, GraphOperation
     return add_node(graph, policy_to_node(policy))
 
 
-def _dedupe_edges(edges: list[Edge]) -> list[Edge]:
+def dedupe_edges(edges: list[Edge]) -> list[Edge]:
     seen: set[tuple[str, str, str]] = set()
     out: list[Edge] = []
     for edge in edges:

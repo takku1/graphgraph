@@ -353,11 +353,8 @@ def scope_freshness(
         "repository_fresh": repository_fresh,
         "requested_paths": sorted(requested),
         "remaining_stale_count": len(stale),
-        "remaining_stale_paths": sorted(stale),
-        "remaining_stale_changed_paths": sorted(stale_changed),
-        "remaining_stale_deleted_paths": sorted(stale_deleted),
-        "unrelated_changed_paths": sorted(path for path in stale_changed if path not in requested),
-        "unrelated_deleted_paths": sorted(path for path in stale_deleted if path not in requested),
+        "unrelated_changed_count": sum(path not in requested for path in stale_changed),
+        "unrelated_deleted_count": sum(path not in requested for path in stale_deleted),
     })
     return enriched
 

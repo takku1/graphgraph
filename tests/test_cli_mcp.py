@@ -69,8 +69,8 @@ class CliMcpTest(unittest.TestCase):
         self.assertTrue(freshness["requested_scope_fresh"])
         self.assertFalse(freshness["repository_fresh"])
         self.assertEqual(freshness["remaining_stale_count"], 1)
-        self.assertEqual(freshness["remaining_stale_paths"], ["src/unrelated.py"])
-        self.assertEqual(freshness["unrelated_changed_paths"], ["src/unrelated.py"])
+        self.assertEqual(freshness["changed_paths"], ["src/unrelated.py"])
+        self.assertEqual(freshness["unrelated_changed_count"], 1)
 
     def test_refresh_receipt_separates_request_work_and_graph_mutations(self) -> None:
         status = GraphBuildStatus(
@@ -908,12 +908,13 @@ class CliMcpTest(unittest.TestCase):
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["anchors"][0]["label"], "fused_fresh_handler")
             self.assertIn("fused_fresh_handler", data["packet"])
-            self.assertTrue(data["actionable"]["freshness"]["requested_scope_fresh"])
+            self.assertEqual(data["actionable"]["freshness_ref"], "$.freshness")
+            self.assertTrue(data["freshness"]["requested_scope_fresh"])
             self.assertEqual(data["refresh"]["requested_paths"], ["main.py", "removed.py"])
             self.assertEqual(data["refresh"]["refreshed_paths"], ["main.py"])
             self.assertEqual(data["refresh"]["removed_paths"], ["removed.py"])
             self.assertTrue(data["refresh"]["graph_mutations"]["write_performed"])
-            self.assertEqual(data["actionable"]["freshness"]["remaining_stale_paths"], [])
+            self.assertEqual(data["freshness"]["remaining_stale_count"], 0)
 
             refreshed = load_any(graph_path)
             labels = {node.label for node in refreshed.nodes.values()}

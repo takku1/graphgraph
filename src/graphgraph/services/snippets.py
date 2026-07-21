@@ -68,7 +68,7 @@ def render_source_snippets(
             "\n".join(
                 [
                     f"## {node.label} ({node_id})",
-                    f"`{rel}:{source[0]}`",
+                    f"`{rel}:{node.line or source[0]}`",
                     "",
                     "```text",
                     source[2],
@@ -191,7 +191,10 @@ def _read_excerpt(
         )
         end = min(len(lines), max(line + max(0, context_lines), symbol_end))
         if end - start + 1 > max_lines:
-            end = start + max_lines - 1
+            # The anchor is the one non-negotiable line. When leading context
+            # alone would consume the budget, trim it until the anchor fits.
+            end = min(end, max(line, start + max_lines - 1))
+            start = max(1, end - max_lines + 1)
     width = len(str(end))
     body = "\n".join(f"{idx:>{width}} | {lines[idx - 1]}" for idx in range(start, end + 1))
     return start, end, body

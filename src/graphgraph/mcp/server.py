@@ -7,7 +7,13 @@ from typing import Any
 
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..graph.traversal import POLICIES, traversal_policy
-from ..io import find_graph_path, load_any, save_gg, save_validated_graph, validate_graph_file
+from ..io import (
+    find_graph_path,
+    load_any,
+    save_gg,
+    save_validated_graph,
+    validate_graph_file,
+)
 from ..packets.validation import validate_any
 from ..planning import plan_context
 from ..platform import (
@@ -19,8 +25,8 @@ from ..platform import (
     QuerySourcePlanner,
     StructuralEvidenceProvider,
     build_change_packet,
-    build_repair_context,
     graph_as_of,
+    repair_context_json,
 )
 from ..retrieval import search_nodes
 from ..scanner import DEFAULT_SCAN_MAX_NODES
@@ -574,13 +580,12 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(result.envelope())
     if name == "repair_context":
         graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else find_graph_path()
-        data = build_repair_context(
+        return content(repair_context_json(
             load_any(graph_path),
             str(args["issue"]),
             max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else 30,
             hops=int(args["hops"]) if args.get("hops") is not None else 2,
-        )
-        return content(json.dumps(data, indent=2, ensure_ascii=False))
+        ))
     if name == "graph_change":
         packet = build_change_packet(
             load_any(Path(str(args["before_path"]))),
