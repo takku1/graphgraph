@@ -1761,3 +1761,38 @@ class FrontendsScannerTest(unittest.TestCase):
         from graphgraph.scanner.frontends.typescript import _ts_local_types
 
         self.assertEqual(_ts_local_types("function f<T>(item: T) {"), {})
+
+    def test_return_types_come_from_the_annotation_not_the_docstring(self) -> None:
+        # The caller truncates a definition at its opening brace, which bounds
+        # the return annotation for brace languages and does nothing for
+        # Python -- so a DOTALL match after `->` swallowed the whole function
+        # and every capitalized docstring word became a candidate return type.
+        # On flask that produced a `returns` edge from library code to a test
+        # fixture class named X, and made incremental and full scans disagree.
+        from graphgraph.scanner.frontends.syntax import _return_type_names
+
+        python_with_docstring = (
+            "def after_this_request(\n"
+            "    f: ft.AfterRequestCallable[t.Any],\n"
+            ") -> ft.AfterRequestCallable[t.Any]:\n"
+            '    """Decorate a function. Therefore X, Foo, Hello World."""\n'
+            "    return f\n"
+        )
+        self.assertEqual(
+            _return_type_names(python_with_docstring),
+            ("AfterRequestCallable", "Any"),
+        )
+
+    def test_subscripted_and_rust_return_types_still_resolve(self) -> None:
+        # The trim must stop at the signature's own terminator, not at the
+        # first colon inside a subscript.
+        from graphgraph.scanner.frontends.syntax import _return_type_names
+
+        self.assertEqual(
+            _return_type_names("def f(a) -> Dict[str, MyType]:\n    pass\n"),
+            ("Dict", "MyType"),
+        )
+        self.assertEqual(
+            _return_type_names("fn parse(a: u32) -> Result<Expr> {\n    todo!()\n}"),
+            ("Expr",),
+        )

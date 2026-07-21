@@ -318,6 +318,40 @@ def _return_type_name(signature_or_body: str) -> str:
     names = _return_type_names(signature_or_body)
     return names[0] if names else ""
 
+def _return_expression_head(text: str) -> str:
+    """Trim a return annotation to the annotation itself.
+
+    The caller truncates a definition at its opening brace, which bounds the
+    expression for brace languages but does nothing for Python -- so a
+    DOTALL match after `->` swallowed the whole function, and every
+    capitalized word in the docstring became a candidate return type. On
+    flask that turned `-> ft.AfterRequestCallable[t.Any]` into thirteen
+    names including `Decorate`, `Therefore`, `Hello`, and `X`, the last of
+    which collided with a real test class and produced a false `returns`
+    edge from library code to a test fixture.
+
+    Stops at the first `:` or `{` that closes the signature at bracket depth
+    zero, so subscripts like `Dict[str, int]` are unaffected.
+    """
+    depth = 0
+    for index, char in enumerate(text):
+        if char in "([{<":
+            depth += 1
+        elif char in ")]}>":
+            depth -= 1
+            # A closing bracket below zero ends the parameter list we are in.
+            if depth < 0:
+                return text[:index]
+        elif depth == 0:
+            if char == ":":
+                return text[:index]
+            if char == "\n":
+                # A bare newline at depth zero ends a single-line annotation;
+                # multi-line annotations stay inside brackets.
+                return text[:index]
+    return text
+
+
 def _return_type_names(signature_or_body: str) -> tuple[str, ...]:
     head = signature_or_body.split("{", 1)[0].rstrip(";")
     match = re.search(r"->\s*(?P<types>.+)$", head, flags=re.S)
@@ -328,7 +362,9 @@ def _return_type_names(signature_or_body: str) -> tuple[str, ...]:
         "Vec", "Weak", "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64",
         "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
     }
-    return_expression = re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]
+    return_expression = _return_expression_head(
+        re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]
+    )
     names = [
         token
         for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", return_expression)
