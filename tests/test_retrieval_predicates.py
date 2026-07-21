@@ -34,7 +34,8 @@ class PredicateParsingTest(unittest.TestCase):
         criteria = parse_criteria(
             "production_callers = 0 and crate contains locus-engine and kind = method"
         )
-        self.assertEqual(criteria.production_callers, 0)
+        self.assertEqual(criteria.production_callers.operator, "=")
+        self.assertEqual(criteria.production_callers.value, 0)
         self.assertEqual(criteria.path_contains, "locus-engine")
         self.assertEqual(criteria.kinds, ("method",))
 
@@ -145,6 +146,70 @@ class CallerEvidenceTest(unittest.TestCase):
         self.assertTrue(complete)
         self.assertIn("no member-call telemetry", detail)
 
+
+
+class ExtendedPredicateTest(unittest.TestCase):
+    """Comparison, exclusion, and batch forms (retest G5)."""
+
+    def test_comparison_operators_find_hubs_not_just_islands(self) -> None:
+        graph = _graph()
+        # `used_in_production` has exactly one caller; `never_called` has none.
+        at_least_one = select_symbols(graph, parse_criteria("callers >= 1"), mode="select")
+        self.assertIn("used_in_production", {s["label"] for s in at_least_one.symbols})
+        self.assertNotIn("never_called", {s["label"] for s in at_least_one.symbols})
+
+        none_at_all = select_symbols(graph, parse_criteria("callers < 1"), mode="select")
+        self.assertIn("never_called", {s["label"] for s in none_at_all.symbols})
+
+    def test_not_equal_on_caller_count(self) -> None:
+        graph = _graph()
+        result = select_symbols(graph, parse_criteria("callers != 0"), mode="select")
+        labels = {s["label"] for s in result.symbols}
+        self.assertIn("used_in_production", labels)
+        self.assertNotIn("never_called", labels)
+
+    def test_path_exclusion_supports_cross_crate_consumer_checks(self) -> None:
+        graph = _graph()
+        # "does anything outside tests/ use this" -- the island-triage question.
+        excluded = select_symbols(
+            graph, parse_criteria("path excludes tests/"), mode="select"
+        )
+        self.assertNotIn("test_run", {s["label"] for s in excluded.symbols})
+        # `!=` is accepted as a synonym for the same intent.
+        via_ne = select_symbols(graph, parse_criteria("path != tests/"), mode="select")
+        self.assertEqual(
+            {s["label"] for s in excluded.symbols}, {s["label"] for s in via_ne.symbols}
+        )
+
+    def test_batch_label_lookup_returns_caller_columns_for_a_list(self) -> None:
+        # One call for many symbols, instead of one round trip per name.
+        graph = _graph()
+        result = select_symbols(
+            graph,
+            parse_criteria("label in [used_in_production, never_called]"),
+            mode="select",
+        )
+        by_label = {s["label"]: s for s in result.symbols}
+        self.assertEqual(set(by_label), {"used_in_production", "never_called"})
+        self.assertEqual(by_label["used_in_production"]["production_callers"], 1)
+        self.assertEqual(by_label["never_called"]["production_callers"], 0)
+
+    def test_select_rows_carry_a_short_reference_handle(self) -> None:
+        graph = _graph()
+        result = select_symbols(graph, parse_criteria("callers >= 0"), mode="select")
+        refs = [s["ref"] for s in result.symbols]
+        self.assertEqual(refs, list(range(1, len(refs) + 1)))
+
+    def test_receipt_restates_the_operator_not_just_the_number(self) -> None:
+        # "callers 0" would not distinguish `= 0` from `<= 0`; the receipt has
+        # to be readable back as the question that was asked.
+        graph = _graph()
+        result = select_symbols(graph, parse_criteria("callers > 3"), mode="count")
+        self.assertIn("callers > 3", result.criteria_detail)
+
+    def test_unsupported_operator_still_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_criteria("callers ~ 3")
 
 if __name__ == "__main__":
     unittest.main()

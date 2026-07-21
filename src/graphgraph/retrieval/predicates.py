@@ -34,14 +34,46 @@ ResultMode = Literal["select", "count", "exists"]
 
 
 @dataclass(frozen=True)
+class Bound:
+    """An inclusive comparison against a caller count.
+
+    Carries the operator so a receipt can restate the question exactly as
+    asked; a bare number could not distinguish `= 0` from `<= 0`.
+    """
+
+    operator: str
+    value: int
+
+    def matches(self, count: int) -> bool:
+        if self.operator == "=":
+            return count == self.value
+        if self.operator == "!=":
+            return count != self.value
+        if self.operator == ">":
+            return count > self.value
+        if self.operator == ">=":
+            return count >= self.value
+        if self.operator == "<":
+            return count < self.value
+        if self.operator == "<=":
+            return count <= self.value
+        raise ValueError(f"unsupported comparison operator: {self.operator!r}")
+
+    def __str__(self) -> str:
+        return f"{self.operator} {self.value}"
+
+
+@dataclass(frozen=True)
 class SelectionCriteria:
     """A whole-graph predicate. Unset fields do not constrain."""
 
     kinds: tuple[str, ...] = SELECTABLE_KINDS
     path_contains: str = ""
+    path_excludes: str = ""
     label_contains: str = ""
-    production_callers: int | None = None
-    callers: int | None = None
+    labels: tuple[str, ...] = ()
+    production_callers: Bound | None = None
+    callers: Bound | None = None
     include_tests: bool = True
     limit: int = 200
 
@@ -135,15 +167,20 @@ def _matches(
 ) -> bool:
     if not node.active or node.kind not in criteria.kinds:
         return False
-    if criteria.path_contains and criteria.path_contains not in (node.path or ""):
+    path = node.path or ""
+    if criteria.path_contains and criteria.path_contains not in path:
+        return False
+    if criteria.path_excludes and criteria.path_excludes in path:
+        return False
+    if criteria.labels and node.label.casefold() not in criteria.labels:
         return False
     if criteria.label_contains and criteria.label_contains.casefold() not in node.label.casefold():
         return False
     if not criteria.include_tests and _is_test_node(node):
         return False
-    if criteria.production_callers is not None and prod_count != criteria.production_callers:
+    if criteria.production_callers is not None and not criteria.production_callers.matches(prod_count):
         return False
-    if criteria.callers is not None and all_count != criteria.callers:
+    if criteria.callers is not None and not criteria.callers.matches(all_count):
         return False
     return True
 
@@ -184,6 +221,10 @@ def select_symbols(
         matched.sort(key=lambda node: (node.path or "", node.line or 0, node.label))
         result.symbols = [
             {
+                # Short, stable-within-response handle: the graph ids are long
+                # and repeat heavily across a result set, and a client joining
+                # rows does not need the full string on every one.
+                "ref": index,
                 "id": node.id,
                 "label": node.label,
                 "kind": node.kind,
@@ -193,7 +234,7 @@ def select_symbols(
                 "production_callers": prod_counts.get(node.id, 0),
                 "is_test": _is_test_node(node),
             }
-            for node in matched
+            for index, node in enumerate(matched, start=1)
         ]
     return result
 
@@ -204,10 +245,14 @@ def describe_criteria(criteria: SelectionCriteria) -> str:
         parts.append(f"path contains {criteria.path_contains!r}")
     if criteria.label_contains:
         parts.append(f"label contains {criteria.label_contains!r}")
+    if criteria.path_excludes:
+        parts.append(f"path excludes {criteria.path_excludes!r}")
+    if criteria.labels:
+        parts.append(f"label in {list(criteria.labels)}")
     if criteria.production_callers is not None:
-        parts.append(f"production_callers = {criteria.production_callers}")
+        parts.append(f"production_callers {criteria.production_callers}")
     if criteria.callers is not None:
-        parts.append(f"callers = {criteria.callers}")
+        parts.append(f"callers {criteria.callers}")
     if not criteria.include_tests:
         parts.append("excluding test symbols")
     return " and ".join(parts)
@@ -231,9 +276,11 @@ def parse_criteria(expression: str, *, limit: int = 200) -> SelectionCriteria:
 
     kinds: list[str] = []
     path_contains = ""
+    path_excludes = ""
     label_contains = ""
-    production_callers: int | None = None
-    callers: int | None = None
+    labels: tuple[str, ...] = ()
+    production_callers: Bound | None = None
+    callers: Bound | None = None
     include_tests = True
 
     for raw_clause in _split_clauses(text):
@@ -243,27 +290,34 @@ def parse_criteria(expression: str, *, limit: int = 200) -> SelectionCriteria:
         field_name, operator, value = _parse_clause(clause)
         if field_name in {"path", "crate"} and operator == "contains":
             path_contains = value
+        elif field_name in {"path", "crate"} and operator in {"!=", "excludes"}:
+            path_excludes = value
         elif field_name == "label" and operator == "contains":
             label_contains = value
+        elif field_name == "label" and operator == "in":
+            labels = tuple(dict.fromkeys(item.casefold() for item in _parse_list(value)))
         elif field_name == "kind" and operator == "=":
             kinds.append(value)
-        elif field_name == "production_callers" and operator == "=":
-            production_callers = _as_int(value, field_name)
-        elif field_name == "callers" and operator == "=":
-            callers = _as_int(value, field_name)
+        elif field_name == "production_callers" and operator in _COMPARISONS:
+            production_callers = Bound(operator, _as_int(value, field_name))
+        elif field_name == "callers" and operator in _COMPARISONS:
+            callers = Bound(operator, _as_int(value, field_name))
         elif field_name == "include_tests" and operator == "=":
             include_tests = value.casefold() not in {"false", "no", "0"}
         else:
             raise ValueError(
                 f"unsupported predicate clause: {clause!r} (supported: "
-                "production_callers=N, callers=N, kind=K, path contains S, "
-                "crate contains S, label contains S, include_tests=BOOL)"
+                "production_callers/callers with = != > >= < <=, kind=K, "
+                "path|crate contains S, path|crate != S, label contains S, "
+                "label in [a, b, c], include_tests=BOOL)"
             )
 
     return SelectionCriteria(
         kinds=tuple(kinds) if kinds else SELECTABLE_KINDS,
         path_contains=path_contains,
+        path_excludes=path_excludes,
         label_contains=label_contains,
+        labels=labels,
         production_callers=production_callers,
         callers=callers,
         include_tests=include_tests,
@@ -288,8 +342,29 @@ def _split_clauses(text: str) -> Iterable[str]:
     return parts
 
 
+_COMPARISONS = ("!=", ">=", "<=", "=", ">", "<")
+
+
+def _parse_list(value: str) -> list[str]:
+    """Parse `[a, b, c]` or a bare comma-separated list."""
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    return [item.strip().strip("'\"") for item in text.split(",") if item.strip()]
+
+
 def _parse_clause(clause: str) -> tuple[str, str, str]:
     lowered = clause.casefold()
+    if " in " in lowered and "[" in clause:
+        position = lowered.index(" in ")
+        return clause[:position].strip().casefold(), "in", clause[position + len(" in "):].strip()
+    if " excludes " in lowered:
+        position = lowered.index(" excludes ")
+        return (
+            clause[:position].strip().casefold(),
+            "excludes",
+            clause[position + len(" excludes "):].strip().strip("'\""),
+        )
     if " contains " in lowered:
         position = lowered.index(" contains ")
         return (
@@ -297,9 +372,10 @@ def _parse_clause(clause: str) -> tuple[str, str, str]:
             "contains",
             clause[position + len(" contains "):].strip().strip("'\""),
         )
-    if "=" in clause:
-        name, _, value = clause.partition("=")
-        return name.strip().casefold(), "=", value.strip().strip("'\"")
+    for operator in _COMPARISONS:
+        if operator in clause:
+            name, _, value = clause.partition(operator)
+            return name.strip().casefold(), operator, value.strip().strip("'\"")
     raise ValueError(f"unsupported predicate clause: {clause!r}")
 
 

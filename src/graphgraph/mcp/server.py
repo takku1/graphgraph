@@ -326,9 +326,11 @@ TOOLS = [
                 "predicate": {
                     "type": "string",
                     "description": (
-                        "Filter clauses joined by 'and'. Supported: production_callers=N, "
-                        "callers=N, kind=K, path contains S, crate contains S, label contains S, "
-                        "include_tests=BOOL. Example: "
+                        "Filter clauses joined by 'and'. Supported: production_callers/callers "
+                        "with = != > >= < <= ('callers > 5' finds hubs), kind=K, "
+                        "path|crate contains S, path|crate != S (cross-crate consumer checks), "
+                        "label contains S, label in [a, b, c] for batch lookup of many symbols "
+                        "in one call, include_tests=BOOL. Example: "
                         "'production_callers = 0 and crate contains locus-engine and include_tests = false'."
                     ),
                 },

@@ -284,8 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Filter clauses joined by 'and', e.g. "
             "\"production_callers = 0 and crate contains locus-engine and include_tests = false\". "
-            "Supported: production_callers=N, callers=N, kind=K, path/crate contains S, "
-            "label contains S, include_tests=BOOL."
+            "Supported: production_callers/callers with = != > >= < <= (e.g. 'callers > 5'), kind=K, path|crate contains S, path|crate != S, label contains S, label in [a, b, c] for batch lookup, include_tests=BOOL."
         ),
     )
     select.add_argument("--graph", help="Graph path. Auto-detected from native .graphgraph if omitted.")
