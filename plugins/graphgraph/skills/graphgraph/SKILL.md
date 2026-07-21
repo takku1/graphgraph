@@ -64,15 +64,47 @@ uses versioned per-source CPG IR and exact merge/truncation receipts.
 > **Benchmark discipline.** Do not use expected answer keys or fixture answers
 > as evidence. Use retrieved packets, source, docs, and requested command output.
 
+## Tool routing
+
+Route on the **shape of the question**, not on familiarity. Costs are measured
+medians on a 14.5k-node Rust workspace.
+
+| Question shape | Tool | Cost |
+| --- | --- | --- |
+| One named symbol: callers, callees, blast radius, "how does X work" | `query_context` / `query` | 0.4s fast path, 2.4s ranked |
+| A predicate over **many** symbols: "which functions have no production caller", counts, existence | `select` | ~0.5s |
+| Exact literal string, no relationship | `rg` / `git grep` | — |
+
+`query` **cannot answer set predicates at all** — it anchors on named nodes. Do
+not emulate one by looping `query` over a symbol list; that is the failure this
+tool exists to prevent (a hand-rolled sweep published two contradictory counts
+before `select` existed). Use `label in [...]` for batches.
+
+```
+graphgraph select "production_callers = 0 and crate contains locus-engine and include_tests = false" --mode count
+graphgraph select "callers > 20" --limit 50            # hubs, not islands
+graphgraph select "label in [parse, lower, emit]" --json
+```
+
+Grammar: clauses joined by `and`. `production_callers`/`callers` with
+`= != > >= < <=`; `kind=K`; `path|crate contains S`; `path|crate != S`;
+`label contains S`; `label in [a, b, c]`; `include_tests=BOOL`.
+Modes: `select` (rows), `count` (integer), `exists` (boolean). `count`/`exists`
+never materialize node payloads — prefer them when the answer is a number.
+An unsupported clause raises rather than being silently dropped; a returned
+answer is always the whole predicate.
+
 ## Decision rules
 
-1. Natural-language structural question: call `query_context` first; do not
-   preselect IDs unless the user supplied exact files/symbols.
+1. Natural-language structural question about a named symbol: call
+   `query_context` first; do not preselect IDs unless the user supplied exact
+   files/symbols.
 2. Missing graph: audit exclusions, `build_graph`/`scan`, validate, inspect the
    build receipt, then query. Do not let `context` auto-build before the audit.
 3. Exact known string with no relationship question: `rg`/`git grep` is valid.
    Prefer GraphGraph for callers, dependencies, paths, blast radius, and “how
-   does this work?” orientation.
+   does this work?” orientation, and `select` for anything quantified over the
+   whole repository.
 4. Focus with CLI `--scope src/path` or MCP `search_nodes` then `final_packet`.
    Explicit scope defaults to `--scope-mode strict`; choose `expand` only when
    structurally connected dependency boundary crossings are useful.
@@ -105,7 +137,8 @@ uses versioned per-source CPG IR and exact merge/truncation receipts.
 | Resolve labels/paths | `search_nodes` | `query "<text>" --show-anchors` |
 | Packet from known IDs | `final_packet` | `final --query-class <class> --starts <ids...>` |
 | Bounded exact source | `source_snippets` | `snippets --starts <ids...>` |
-| Project/install health | `project_status` | `status --probe` / `doctor` |
+| Whole-repo predicate / counts / batch symbol lookup | `select_symbols` | `select "<predicate>" [--mode count\|exists] [--json]` |
+| Project/install health, resolution + staleness receipts | `project_status` | `status --probe` / `doctor` |
 | Validate | `validate_packet` | `validate-graph` / `validate` |
 | Compile advanced graph passes | `compile_context` | `platform compile` |
 | Enforce multi-repo gates | - | `platform benchmark --config <json>` |
@@ -137,6 +170,40 @@ unittest tests.
 - Add repeatable `--query "<question>"` values to replace derived defaults.
 - Enable `--saved-reports` only for GraphGraph self-validation; foreign
   repositories do not fail because GraphGraph benchmark reports are absent.
+
+## Reading the output: what each receipt licenses
+
+Every line below is emitted by the tool. Treat them as preconditions on what
+you may assert, not as decoration.
+
+| Receipt | Meaning | What you may conclude |
+| --- | --- | --- |
+| `-- CAVEAT: member-call resolution N%` on `select` | Unresolved member calls emit no `calls` edge | `production_callers = 0` is an **upper bound on dead code, not a proof**. Output is a candidate list requiring per-symbol verification. Never delete on this alone |
+| `GraphGraph partial result: node budget omitted N known direct reverse neighbor(s)` | The list was truncated | The answer is **partial**. Re-run with a larger `--max-nodes` before reporting a count or an absence |
+| `anchor=exact_fast_path` vs `anchor=ranked` (`query --show-stats`) | Which anchor route ran | `ranked` means the name was ambiguous or absent, and costs ~4x. If you expected one definition, `ranked` says there are zero or several |
+| `!  STALE GRAPH: N changed ...` (`status`, `query`) | Files moved since the scan | Refresh before trusting an absence: `context --sync git` |
+| `!  STALE: counts were measured by a full scan ...` (`status`) | Member-call telemetry was carried forward | The resolution numbers describe an older scan, not this graph |
+| `Unresolved receivers by shape: ...` (`status`) | Why receivers went untyped | Diagnostic for resolver work. Bucket **size is not addressability** — most large buckets iterate generic/stdlib types that can never name a repo symbol |
+
+Current member-call resolution is ~23.8%. A symbol reported with zero callers
+may simply be called through an unresolved receiver. This is the single most
+important limitation to carry into any dead-code, island, or blast-radius
+conclusion.
+
+## Measurement discipline
+
+- `scan` defaults to **incremental**. A resolver- or extractor-level change
+  affects every file, not only changed ones, so an incremental scan shows
+  almost no delta and the change appears to have done nothing. Measure with
+  `graphgraph scan --depth symbols --docs --no-incremental`.
+- `status` reports member-call counts from the last **full** scan and prints a
+  `STALE` line when they were carried forward. Numbers without that line are
+  current; numbers with it are not.
+- `query --show-stats` prints the execution receipt to stderr (packet still on
+  stdout). Use it to attribute latency: `anchor=exact_fast_path` skips the
+  lexical index build, `anchor=ranked` pays it.
+- Warm and cold query latencies differ ~6x. Compare like with like; a
+  first-run number is not a steady-state number.
 
 ## Noise and receipt rules
 
