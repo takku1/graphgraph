@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from graphgraph.services.control import parse_control_ir
 from graphgraph.services.native import render_native_context
 
 from .gates import default_gates
@@ -112,11 +113,21 @@ def run_probe(task: Task, repo: Path, graph_path: Optional[Path] = None) -> Prob
     control_raw = str(payload.get("control", ""))
     query_class = payload.get("query_class", task.query_class)
     next_action = ""
-    for field_pair in control_raw.split():
-        if field_pair.startswith("next="):
-            next_action = field_pair.split("=", 1)[1]
-        elif field_pair.startswith("op="):
-            query_class = field_pair.split("=", 1)[1]
+    gates: dict[str, bool | None] = {}
+    try:
+        receipt = parse_control_ir(control_raw)
+    except ValueError:
+        # Malformed or absent control output is itself a finding; fall back to
+        # a field scan so the remaining gates still score rather than erroring.
+        for field_pair in control_raw.split():
+            if field_pair.startswith("next="):
+                next_action = field_pair.split("=", 1)[1]
+            elif field_pair.startswith("op="):
+                query_class = field_pair.split("=", 1)[1]
+    else:
+        next_action = receipt.next_action
+        query_class = receipt.operation
+        gates = dict(receipt.gates)
 
     return ProbeResult(
         task_id=task.id,
@@ -142,6 +153,7 @@ def run_probe(task: Task, repo: Path, graph_path: Optional[Path] = None) -> Prob
         query_ms=query_ms,
         cache_state=str(cache.get("state", "")),
         raw=payload,
+        gates=gates,
     )
 
 

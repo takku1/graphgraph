@@ -73,6 +73,7 @@ class ProbeResult:
     query_ms: float
     cache_state: str
     raw: dict
+    gates: dict[str, bool | None] = field(default_factory=dict)
 
     def node_ids(self, symbol: str) -> set[str]:
         """Return packet node IDs that structurally identify *symbol*.
@@ -103,8 +104,35 @@ class ProbeResult:
     def anchor_labels(self) -> set[str]:
         return {str(a.get("label", "")) for a in self.anchors}
 
+    def stale_only(self) -> bool:
+        """True when freshness is the sole failing gate.
+
+        A graph built before the most recent source edit fails the ``fresh``
+        gate. That is a statement about the graph's age, not about whether
+        retrieval answered the question from the graph it was given.
+        """
+        if self.gates.get("fresh") is not False:
+            return False
+        return not any(
+            value is False for name, value in self.gates.items() if name != "fresh"
+        )
+
     def is_complete(self) -> bool:
-        return self.next_action == "answer" and self.state in ("answerable", "complete")
+        """Whether the packet answered the question, independent of graph age.
+
+        ``next_action`` short-circuits to ``refresh`` on a failed ``fresh``
+        gate *before* any retrieval gate is consulted, so a stale graph would
+        otherwise pin this to False no matter how good retrieval was -- which
+        both fails correct behavior and silently disarms
+        :func:`gate_no_false_complete`, whose only failure path requires this
+        to be True. Freshness is therefore reported separately (see
+        :func:`gate_expected_completeness`) rather than folded in here.
+        """
+        if self.state not in ("answerable", "complete"):
+            return False
+        if self.next_action == "answer":
+            return True
+        return self.next_action == "refresh" and self.stale_only()
 
     def irrelevant_ratio(self, relevant_labels: set[str]) -> tuple[float, list[str]]:
         """Fraction of packet nodes that are neither anchors/required nor on a

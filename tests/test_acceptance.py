@@ -21,6 +21,7 @@ from graphgraph.acceptance.model import (
     Task,
 )
 from graphgraph.acceptance.runner import _parse_packet, run_case
+from graphgraph.services.control import GATE_ORDER
 from graphgraph.acceptance.scoreboard import summarize, to_markdown
 from graphgraph.acceptance.service import select_tasks
 from graphgraph.acceptance.tokens import count_tokens
@@ -42,8 +43,16 @@ _PACKET = """#gg
 """
 
 
-def _probe(*, packet: str = _PACKET, state: str = "answerable", next_action: str = "answer") -> ProbeResult:
+def _probe(
+    *,
+    packet: str = _PACKET,
+    state: str = "answerable",
+    next_action: str = "answer",
+    gates: dict[str, bool | None] | None = None,
+) -> ProbeResult:
     relations, nodes, edges = _parse_packet(packet)
+    if gates is None:
+        gates = {name: True for name in GATE_ORDER}
     return ProbeResult(
         task_id="T",
         query="q",
@@ -68,6 +77,7 @@ def _probe(*, packet: str = _PACKET, state: str = "answerable", next_action: str
         query_ms=1.0,
         cache_state="miss",
         raw={},
+        gates=gates,
     )
 
 
@@ -115,6 +125,43 @@ class GateTest(unittest.TestCase):
         probe = _probe(state="incomplete", next_action="retry_narrow")
         self.assertEqual(gate_expected_completeness(probe, False).status, PASS)
         self.assertEqual(gate_expected_completeness(probe, True).status, FAIL)
+
+    def test_stale_graph_alone_does_not_deny_completeness(self) -> None:
+        # A graph older than the newest source edit fails the `fresh` gate,
+        # and choose_next_action short-circuits to "refresh" before consulting
+        # any retrieval gate. That must not read as "retrieval was
+        # incomplete": found live against a stale sibling-repo graph, where a
+        # reverse lookup returned 8/8 verified callers yet scored as a
+        # completeness failure.
+        gates = {name: True for name in GATE_ORDER}
+        gates["fresh"] = False
+        probe = _probe(next_action="refresh", gates=gates)
+        self.assertTrue(probe.stale_only())
+        self.assertTrue(probe.is_complete())
+        gate = gate_expected_completeness(probe, True)
+        self.assertEqual(gate.status, PASS)
+        self.assertIn("graph=stale", gate.detail)
+
+    def test_stale_graph_does_not_mask_a_real_retrieval_failure(self) -> None:
+        # The converse, and the reason staleness cannot simply be ignored: a
+        # failing retrieval gate must still deny completeness even while the
+        # graph is also stale, or `fresh` becomes a blanket amnesty.
+        gates = {name: True for name in GATE_ORDER}
+        gates["fresh"] = False
+        gates["evidence"] = False
+        probe = _probe(next_action="refresh", gates=gates)
+        self.assertFalse(probe.stale_only())
+        self.assertFalse(probe.is_complete())
+
+    def test_false_complete_gate_stays_armed_on_a_stale_graph(self) -> None:
+        # gate_no_false_complete can only fail when is_complete() is True, so
+        # pinning completeness to False under staleness silently disarmed it.
+        gates = {name: True for name in GATE_ORDER}
+        gates["fresh"] = False
+        probe = _probe(next_action="refresh", gates=gates)
+        gate = gate_no_false_complete(probe, ("lift_expr", "formula.rs"))
+        self.assertEqual(gate.status, FAIL)
+        self.assertIn("formula.rs", gate.detail)
 
     def test_token_worse_value_controls_and_proxy_is_labelled(self) -> None:
         count = count_tokens("alpha beta gamma")

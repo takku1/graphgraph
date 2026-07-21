@@ -61,11 +61,12 @@ def gate_expected_completeness(probe: ProbeResult, expected: bool | None) -> Gat
         return GateResult("completeness", NA, "no expectation")
     actual = probe.is_complete()
     status = PASS if actual == expected else FAIL
+    stale = " graph=stale" if probe.gates.get("fresh") is False else ""
     return GateResult(
         "completeness",
         status,
         f"expected_complete={expected} actual_complete={actual} "
-        f"(state={probe.state} next={probe.next_action})",
+        f"(state={probe.state} next={probe.next_action}{stale})",
     )
 
 
