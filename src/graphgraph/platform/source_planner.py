@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..graph.core import Edge, Graph, Node
 from ..io import load_any_cached
+from ..planning.budgets import plan_terms
 from ..retrieval import search_nodes
 from ..retrieval.anchors import explicit_query_identifiers
 from .federation import ProjectRegistry
@@ -135,7 +136,7 @@ class QuerySourcePlanner:
         federated_projects = 0
         federated_nodes = 0
         trace_edges = 0
-        weak_lexical = _weak_lexical(base_matches)
+        weak_lexical = _weak_lexical(base_matches, query)
 
         semantic_path = self.directory / "semantic.json"
         if mode == "all" or weak_lexical:
@@ -277,7 +278,19 @@ def receipt_data(plan: SourcePlan) -> dict[str, object]:
     return asdict(plan.receipt)
 
 
-def _weak_lexical(matches) -> bool:
+def _weak_lexical(matches, query: str = "") -> bool:
+    """Whether lexical retrieval failed badly enough to want other evidence.
+
+    An absolute score threshold cannot answer this, because score grows with
+    query length: "how is JSON serialized and configured" scored 13.0 on a
+    match that accounted for exactly one of its terms -- above the bar, so
+    the semantic fallback never ran, and the query anchored on
+    `semantic.json` and `devcontainer.json` purely for having "json" in the
+    filename. The class that actually implements it was never considered.
+
+    Term coverage does answer it, and is scale-free: a match explaining one
+    term out of four is weak whether it scored 13 or 130.
+    """
     if not matches:
         return True
     top = matches[0]
@@ -285,7 +298,22 @@ def _weak_lexical(matches) -> bool:
         reason.startswith(("label_exact", "path_exact", "qualified", "id_exact"))
         for reason in top.reasons
     )
-    return top.score < 8.0 and not targeted
+    if targeted:
+        return False
+    if top.score < 8.0:
+        return True
+
+    terms = {term.casefold() for term in plan_terms(query)} if query else set()
+    if len(terms) < 2:
+        # A one-word query has nothing to be partial about.
+        return False
+    matched = {
+        reason.split(":", 1)[1].casefold()
+        for reason in top.reasons
+        if ":" in reason
+    }
+    covered = len(terms & matched)
+    return covered / len(terms) < 0.5
 
 
 def _project_memories(graph: Graph, records: list[MemoryRecord]) -> tuple[Graph, tuple[str, ...]]:

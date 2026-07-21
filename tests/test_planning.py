@@ -641,3 +641,51 @@ class SourcePlannerFastPathTest(unittest.TestCase):
     def test_unknown_symbol_falls_back_to_lexical_search(self) -> None:
         plan = self._plan("what calls nonexistent_symbol_xyz")
         self.assertFalse(plan.receipt.exact_fast_path, plan.receipt)
+
+
+class WeakLexicalTest(unittest.TestCase):
+    """Deciding when lexical retrieval failed badly enough to want help."""
+
+    def _matches(self, graph, query):
+        from graphgraph.retrieval import search_nodes
+
+        return search_nodes(graph, query, limit=12, personalize=False)
+
+    def _graph(self):
+        nodes = {
+            "p": Node("p", "JSONProvider", "class", "src/app/provider.py", "L19"),
+            "t": Node("t", "to_json", "function", "src/app/json_utils.py", "L4"),
+            "c": Node("c", "config.json", "json", "config.json", "L1"),
+        }
+        return Graph(nodes=nodes, edges=[])
+
+    def test_partial_term_coverage_counts_as_weak(self) -> None:
+        # "how is JSON serialized and configured" scored 13.0 on a match that
+        # explained exactly one of its terms -- over the old absolute
+        # threshold, so the semantic fallback never ran and the query
+        # anchored on files with "json" in the name.
+        from graphgraph.platform.source_planner import _weak_lexical
+
+        graph = self._graph()
+        query = "how is JSON serialized and configured"
+        self.assertTrue(_weak_lexical(self._matches(graph, query), query))
+
+    def test_exact_symbol_is_not_weak(self) -> None:
+        from graphgraph.platform.source_planner import _weak_lexical
+
+        graph = self._graph()
+        self.assertFalse(_weak_lexical(self._matches(graph, "JSONProvider"), "JSONProvider"))
+
+    def test_single_term_query_is_not_judged_on_coverage(self) -> None:
+        # A one-word query has nothing to be partial about; judging it by
+        # coverage would call every single-term lookup weak.
+        from graphgraph.platform.source_planner import _weak_lexical
+
+        graph = self._graph()
+        matches = self._matches(graph, "to_json")
+        self.assertFalse(_weak_lexical(matches, "to_json"))
+
+    def test_no_matches_is_weak(self) -> None:
+        from graphgraph.platform.source_planner import _weak_lexical
+
+        self.assertTrue(_weak_lexical([], "anything at all"))
