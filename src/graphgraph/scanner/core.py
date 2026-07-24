@@ -477,6 +477,22 @@ def remove_paths(
     )
 
 
+def _merge_new_edges(edges: list[Edge], new_edges: list[Edge]) -> None:
+    """Append edges whose (source, target, type) is not already present.
+
+    Several extraction stages (symbols, docs, history, concepts) each produce a
+    batch of edges that must be unioned into the running list without creating
+    duplicate relations. This is that de-duplicating merge, factored out of the
+    four identical inline copies so the dedup key lives in exactly one place.
+    """
+    existing = {(e.source, e.target, e.type) for e in edges}
+    for edge in new_edges:
+        key = (edge.source, edge.target, edge.type)
+        if key not in existing:
+            existing.add(key)
+            edges.append(edge)
+
+
 def _build_graph_from_split(
     *,
     root: Path,
@@ -802,12 +818,7 @@ def _build_graph_from_split(
                 metadata["frontend_failure_count"] = str(len(extraction.failed_files))
                 metadata["frontend_failures"] = ",".join(extraction.failed_files)
             nodes.update(extraction.nodes)
-            existing = {(e.source, e.target, e.type) for e in edges}
-            for e in extraction.edges:
-                key = (e.source, e.target, e.type)
-                if key not in existing:
-                    existing.add(key)
-                    edges.append(e)
+            _merge_new_edges(edges, extraction.edges)
             _emit_progress(
                 progress,
                 "symbols",
@@ -855,12 +866,7 @@ def _build_graph_from_split(
                 ),
             )
             nodes.update(doc_nodes)
-            existing = {(e.source, e.target, e.type) for e in edges}
-            for e in doc_edges:
-                key = (e.source, e.target, e.type)
-                if key not in existing:
-                    existing.add(key)
-                    edges.append(e)
+            _merge_new_edges(edges, doc_edges)
             docs_ms = (time.perf_counter() - docs_started) * 1000.0
             slowest = sorted(doc_profiles, key=lambda item: item[1], reverse=True)[:8]
             truncated_docs = [item[0] for item in doc_profiles if item[4]]
@@ -888,12 +894,7 @@ def _build_graph_from_split(
         history_nodes, history_edges = extract_commit_history(root, file_map, max_commits=max_history_commits)
         if history_nodes or history_edges:
             nodes.update(history_nodes)
-            existing = {(e.source, e.target, e.type) for e in edges}
-            for e in history_edges:
-                key = (e.source, e.target, e.type)
-                if key not in existing:
-                    existing.add(key)
-                    edges.append(e)
+            _merge_new_edges(edges, history_edges)
 
     # Interpretation-concept linking is a pure function of a node's own
     # fields (label/kind/path/facts) -- deterministic and independent of
@@ -928,12 +929,7 @@ def _build_graph_from_split(
         interpretation_edges.extend(found_edges)
     if interpretation_nodes or interpretation_edges:
         nodes.update(interpretation_nodes)
-        existing = {(e.source, e.target, e.type) for e in edges}
-        for e in interpretation_edges:
-            key = (e.source, e.target, e.type)
-            if key not in existing:
-                existing.add(key)
-                edges.append(e)
+        _merge_new_edges(edges, interpretation_edges)
     concepts_ms = (time.perf_counter() - concepts_started) * 1000.0
     metadata["source_concepts_profile_ms"] = f"{concepts_ms:.3f}"
     metadata["source_concepts_candidates"] = str(len(concept_source_nodes))
