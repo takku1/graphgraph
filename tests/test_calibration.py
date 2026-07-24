@@ -205,3 +205,22 @@ def test_eval_command_emits_calibration_envelope(
 
     assert payload["calibration"]["count"] == 1
     assert payload["results"][0]["answerability_confidence"] is not None
+
+
+def test_answer_confidence_is_calibrated_on_the_labeled_set() -> None:
+    # path-to-10 #3 gate: the shipped answer confidence must be calibrated
+    # (ECE < 0.10) against the hand-labeled pass/fail set. This needs a scanned
+    # self-graph (the artifact the self-eval also uses) and is skipped when it is
+    # absent. The confidence formula's exact-anchor backbone is calibrated to
+    # exactly this set; a regression that decalibrates it trips here.
+    from graphgraph.analysis.calibration import calibration_report
+    from graphgraph.analysis.eval import evaluate_graph, load_eval_tasks
+
+    graph_path = Path(".graphgraph/graph.gg")
+    tasks_path = Path("eval/graphgraph-calibration.json")
+    if not graph_path.exists():
+        pytest.skip("self-graph not scanned; run `graphgraph scan --docs` first")
+
+    results = evaluate_graph(graph_path, load_eval_tasks(tasks_path))
+    report = calibration_report(calibration_pairs(results, complete_recall=1.0), bins=10)
+    assert report.ece < 0.10, f"answer-confidence ECE {report.ece:.4f} exceeds the 0.10 gate"

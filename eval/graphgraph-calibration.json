@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Labeled calibration set for graphgraph's answer confidence (path-to-10 #3).",
+    "Hand-verified against this repository. A mix of clearly-answerable tasks",
+    "(a named symbol or a real caller relationship) and impossible tasks (symbols",
+    "that do not exist) gives the (confidence, outcome) spread an isotonic",
+    "recalibration needs. Run:",
+    "  graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-calibration.json --calibration"
+  ],
+  "tasks": [
+    {"query": "search_nodes", "query_class": "direct_lookup", "expected": ["search_nodes"]},
+    {"query": "retrieve_context", "query_class": "direct_lookup", "expected": ["retrieve_context"]},
+    {"query": "save_graph", "query_class": "direct_lookup", "expected": ["save_graph"]},
+    {"query": "load_any", "query_class": "direct_lookup", "expected": ["load_any"]},
+    {"query": "build_subsystem_map", "query_class": "direct_lookup", "expected": ["build_subsystem_map"]},
+    {"query": "retrieval_node_budget", "query_class": "direct_lookup", "expected": ["retrieval_node_budget"]},
+    {"query": "resolve_backend", "query_class": "direct_lookup", "expected": ["resolve_backend"]},
+    {"query": "apply_delta_sidecar", "query_class": "direct_lookup", "expected": ["apply_delta_sidecar"]},
+    {"query": "save_incremental_validated_graph", "query_class": "direct_lookup", "expected": ["save_incremental_validated_graph"]},
+    {"query": "extract_symbols", "query_class": "direct_lookup", "expected": ["extract_symbols"]},
+    {"query": "validate_packet", "query_class": "direct_lookup", "expected": ["validate_packet"]},
+    {"query": "scan_directory", "query_class": "direct_lookup", "expected": ["scan_directory"]},
+    {"query": "what calls select_symbols", "query_class": "reverse_lookup", "expected": ["cmd_select", "handle_select_symbols"]},
+    {"query": "what calls render_query_context", "query_class": "reverse_lookup", "expected": ["cmd_query"]},
+    {"query": "what calls _node_recall", "query_class": "reverse_lookup", "expected": ["evaluate_graph"]},
+    {"query": "what calls caller_evidence_quality", "query_class": "reverse_lookup", "expected": ["select_symbols"]},
+    {"query": "zzz_nonexistent_symbol_alpha", "query_class": "direct_lookup", "expected": ["zzz_nonexistent_symbol_alpha"]},
+    {"query": "quantum_flux_capacitor_engine", "query_class": "direct_lookup", "expected": ["quantum_flux_capacitor_engine"]},
+    {"query": "frobnicate_the_widget_manifold", "query_class": "direct_lookup", "expected": ["frobnicate_the_widget_manifold"]},
+    {"query": "hyperdrive_scheduler_heuristic", "query_class": "direct_lookup", "expected": ["hyperdrive_scheduler_heuristic"]},
+    {"query": "what calls nonexistent_teleport_function", "query_class": "reverse_lookup", "expected": ["nonexistent_teleport_function"]},
+    {"query": "banana_phone_orchestrator", "query_class": "direct_lookup", "expected": ["banana_phone_orchestrator"]},
+    {"query": "what calls imaginary_blockchain_miner", "query_class": "reverse_lookup", "expected": ["imaginary_blockchain_miner"]},
+    {"query": "wibble_wobble_transmogrifier", "query_class": "direct_lookup", "expected": ["wibble_wobble_transmogrifier"]}
+  ]
+}

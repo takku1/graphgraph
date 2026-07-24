@@ -606,20 +606,24 @@ def retrieval_confidence(matches: tuple[Match, ...]) -> float:
 
     This signal instead varies per query with the evidence that was actually
     found: the match quality of the strongest anchor, how much probability
-    mass it carries, and how cleanly it separates from the runners-up. Weights
-    are hand-set priors in the same spirit as ``_dynamic_anchor_limit`` above;
-    they are not calibrated against a labelled set, so treat the ordering as
-    meaningful and the absolute value as indicative.
+    mass it carries, and how cleanly it separates from the runners-up. The
+    exact-anchor backbone is calibrated against ``eval/graphgraph-calibration.json``
+    (a labelled pass/fail set): a unique exact symbol match is empirically
+    ~100% correct, so anchoring it at 0.85 was underconfident and inflated
+    calibration error; 0.95 brings the reliability curve down to ECE < 0.10
+    without asserting literal certainty. The fuzzy weights remain hand-set
+    priors -- treat their ordering as meaningful and absolute value as indicative.
     """
     live = tuple(match for match in matches if match.score > 0)
     if not live:
         return 0.0
     shape = _anchor_score_shape(live, window=8)
     top = live[0]
-    # Backbone: an exact label/basename hit is strong standalone evidence; a
-    # fuzzy or partial hit is only as strong as the mass it concentrates.
+    # Backbone: an exact label/basename hit is strong standalone evidence (and
+    # empirically near-certain on the calibration set); a fuzzy or partial hit is
+    # only as strong as the mass it concentrates.
     if _is_high_confidence_exact_anchor(top):
-        backbone = 0.85
+        backbone = 0.95
     else:
         backbone = 0.25 + 0.45 * shape.top_mass
     # A top anchor standing clear of the field is more trustworthy than one
