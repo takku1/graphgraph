@@ -327,6 +327,52 @@ def _anchor_paths_metadata(
     ]
 
 
+def _negative_query_abstain(
+    graph: Graph,
+    *,
+    query_class: str,
+    facets: tuple,
+    selected_matches: tuple[Match, ...],
+    plan,
+) -> RetrievalResult | None:
+    """Abstain when a negative query's entity facets have no code/structural cover.
+
+    Returns a terminal unanswerable receipt if this is a facet-bearing negative
+    query whose anchors carry no code or structural evidence for the requested
+    entities, else ``None`` to let the pipeline continue. Lifted out of the main
+    flow as another unhappy-path branch.
+    """
+    if query_class != "negative_query" or not facets:
+        return None
+    selected_ids = {match.node.id for match in selected_matches}
+    anchor_coverage = facet_stage.facet_coverage(
+        graph,
+        {node_id for node_id in selected_ids if is_code_like(graph.nodes[node_id])},
+        facets,
+    )
+    if anchor_coverage["fulfilled"]:
+        return None
+    mention_coverage = facet_stage.facet_coverage(graph, selected_ids, facets)
+    return RetrievalResult(
+        starts=(),
+        matches=selected_matches,
+        nodes=set(),
+        edges=[],
+        metadata={
+            "facet_coverage": anchor_coverage,
+            "mention_coverage": mention_coverage,
+            "answerability": {
+                "status": "unanswerable",
+                "abstained": True,
+                "reason": "no code or structural graph evidence covers the requested entity facets",
+                "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
+            },
+            "plan_reason": plan.reason,
+            "planner_version": plan.planner_version,
+        },
+    )
+
+
 def _empty_anchor_result(
     graph: Graph,
     *,
@@ -682,33 +728,15 @@ def retrieve_context(
         query=query,
         query_class=query_class,
     )
-    if query_class == "negative_query" and facets:
-        selected_ids = {match.node.id for match in selected_matches}
-        anchor_coverage = facet_stage.facet_coverage(
-            graph,
-            {node_id for node_id in selected_ids if is_code_like(graph.nodes[node_id])},
-            facets,
-        )
-        if not anchor_coverage["fulfilled"]:
-            mention_coverage = facet_stage.facet_coverage(graph, selected_ids, facets)
-            return RetrievalResult(
-                starts=(),
-                matches=selected_matches,
-                nodes=set(),
-                edges=[],
-                metadata={
-                    "facet_coverage": anchor_coverage,
-                    "mention_coverage": mention_coverage,
-                    "answerability": {
-                        "status": "unanswerable",
-                        "abstained": True,
-                        "reason": "no code or structural graph evidence covers the requested entity facets",
-                        "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
-                    },
-                    "plan_reason": plan.reason,
-                    "planner_version": plan.planner_version,
-                },
-            )
+    negative_abstain = _negative_query_abstain(
+        graph,
+        query_class=query_class,
+        facets=facets,
+        selected_matches=selected_matches,
+        plan=plan,
+    )
+    if negative_abstain is not None:
+        return negative_abstain
     starts_list = list(match.node.id for match in selected_matches)
     facet_roots = tuple(starts_list[:12])
     if query_class == "reverse_lookup":
