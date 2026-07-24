@@ -288,6 +288,150 @@ def _affected_tests_metadata(
         }
 
 
+def _anchor_paths_metadata(
+    anchor_paths: tuple[str, ...],
+    selected_matches: tuple[Match, ...],
+    query_class: str,
+) -> list[dict[str, object]]:
+    """Describe each explicitly-supplied anchor path for the receipt.
+
+    A pure projection of the chosen anchors over the requested paths: it records
+    each path's role (test evidence, primary document root, file fallback, or
+    plain root) and which selected anchor node ids resolved to it. Lifted out of
+    the success-metadata assembly, where the nested comprehension obscured the
+    happy-path flow.
+    """
+    return [
+        {
+            "path": path,
+            "role": (
+                "test_evidence_candidate"
+                if query_class == "affected_tests" and scoping._is_test_path(path)
+                else "primary_root"
+                if Path(path).suffix.casefold() in {".md", ".mdx", ".rst", ".txt", ".html", ".htm"}
+                else "file_fallback"
+                if any(
+                    match.node.path.replace("\\", "/").strip("/") == path.replace("\\", "/").strip("/")
+                    and "file_fallback" in match.reasons
+                    for match in selected_matches
+                )
+                else "primary_root"
+            ),
+            "anchors": [
+                match.node.id
+                for match in selected_matches
+                if match.node.path.replace("\\", "/").strip("/") == path.replace("\\", "/").strip("/")
+            ],
+        }
+        for path in dict.fromkeys(anchor_paths)
+    ]
+
+
+def _empty_anchor_result(
+    graph: Graph,
+    *,
+    query: str,
+    query_class: str,
+    scopes: tuple[str, ...],
+    scope_mode: str,
+    inferred_scope: str,
+    status_constrained: bool,
+    requested_statuses: set[str],
+    plan,
+    effective_anchor_limit: int,
+    matches: tuple[Match, ...],
+    selected_matches: tuple[Match, ...],
+) -> RetrievalResult:
+    """Build the abstention receipt for a query that anchored no traversal roots.
+
+    Terminal handler for the ``not starts`` case, lifted out of the main flow so
+    the happy path reads uninterrupted. Two outcomes: a status-constrained
+    document query reports that no literal capability rows were found; any other
+    empty query is unanswerable, except that a whole-graph architecture map can
+    still answer a broad "what are the subsystems" question without anchors.
+    """
+    if status_constrained:
+        status_labels = ["absent" if status == "" else "partial" for status in sorted(requested_statuses)]
+        status_warning = (
+            "no literal "
+            + "/".join(status_labels)
+            + " capability rows were found in the requested roadmap documents"
+        )
+        effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
+        metadata = quality.packet_quality_metadata(
+            graph,
+            set(),
+            [],
+            (),
+            effective_scope,
+            query_class=query_class,
+        )
+        metadata.update(
+            {
+                "scope": list(scopes),
+                "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
+                "inferred_scope": inferred_scope,
+                "anchor_strategy": "literal_document_status",
+                "plan_reason": plan.reason,
+                "planner_version": plan.planner_version,
+                "node_budget": plan.node_budget,
+                "anchor_limit": effective_anchor_limit,
+                "anchor_paths": [],
+                "document_status_evidence": {
+                    "requested": status_labels,
+                    "capability_rows": 0,
+                    "evidence": [],
+                    "packet_status_rows": [],
+                    "conflicting_status_rows": [],
+                    "packet_constrained": True,
+                    "warning": status_warning,
+                },
+                "answerability": {
+                    "status": "incomplete",
+                    "abstained": True,
+                    "reason": status_warning,
+                    "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
+                },
+            }
+        )
+        return RetrievalResult(
+            starts=(),
+            matches=(),
+            nodes=set(),
+            edges=[],
+            metadata=metadata,
+        )
+    no_anchor_metadata: dict[str, object] = {
+        "answerability": {
+            "status": "unanswerable",
+            "abstained": True,
+            "reason": "no matching graph anchors",
+            "confidence": round(anchors.retrieval_confidence(matches), 4),
+        },
+    }
+    # A whole-graph architecture map does not depend on query anchors, so a
+    # broad "what are the subsystems" query is answered by the map even when
+    # no single node anchored. Without this the map was reachable only when a
+    # node happened to match, making the answer depend on lexical luck.
+    if subsystems.wants_subsystem_map(query, query_class):
+        subsystem_map = subsystems.build_subsystem_map(graph)
+        if subsystem_map["subsystems"]:
+            no_anchor_metadata["subsystem_map"] = subsystem_map
+            no_anchor_metadata["answerability"] = {
+                "status": "answerable",
+                "abstained": False,
+                "reason": "architecture map derived from source layout",
+                "confidence": round(anchors.retrieval_confidence(matches), 4),
+            }
+    return RetrievalResult(
+        starts=(),
+        matches=matches,
+        nodes=set(),
+        edges=[],
+        metadata=no_anchor_metadata,
+    )
+
+
 def retrieve_context(
     graph: Graph,
     query: str,
@@ -594,85 +738,19 @@ def retrieve_context(
 
     starts = tuple(starts_list[:12])
     if not starts:
-        if status_constrained:
-            status_labels = ["absent" if status == "" else "partial" for status in sorted(requested_statuses)]
-            status_warning = (
-                "no literal "
-                + "/".join(status_labels)
-                + " capability rows were found in the requested roadmap documents"
-            )
-            effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
-            metadata = quality.packet_quality_metadata(
-                graph,
-                set(),
-                [],
-                (),
-                effective_scope,
-                query_class=query_class,
-            )
-            metadata.update(
-                {
-                    "scope": list(scopes),
-                    "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
-                    "inferred_scope": inferred_scope,
-                    "anchor_strategy": "literal_document_status",
-                    "plan_reason": plan.reason,
-                    "planner_version": plan.planner_version,
-                    "node_budget": plan.node_budget,
-                    "anchor_limit": effective_anchor_limit,
-                    "anchor_paths": [],
-                    "document_status_evidence": {
-                        "requested": status_labels,
-                        "capability_rows": 0,
-                        "evidence": [],
-                        "packet_status_rows": [],
-                        "conflicting_status_rows": [],
-                        "packet_constrained": True,
-                        "warning": status_warning,
-                    },
-                    "answerability": {
-                        "status": "incomplete",
-                        "abstained": True,
-                        "reason": status_warning,
-                        "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
-                    },
-                }
-            )
-            return RetrievalResult(
-                starts=(),
-                matches=(),
-                nodes=set(),
-                edges=[],
-                metadata=metadata,
-            )
-        no_anchor_metadata: dict[str, object] = {
-            "answerability": {
-                "status": "unanswerable",
-                "abstained": True,
-                "reason": "no matching graph anchors",
-                "confidence": round(anchors.retrieval_confidence(matches), 4),
-            },
-        }
-        # A whole-graph architecture map does not depend on query anchors, so a
-        # broad "what are the subsystems" query is answered by the map even when
-        # no single node anchored. Without this the map was reachable only when a
-        # node happened to match, making the answer depend on lexical luck.
-        if subsystems.wants_subsystem_map(query, query_class):
-            subsystem_map = subsystems.build_subsystem_map(graph)
-            if subsystem_map["subsystems"]:
-                no_anchor_metadata["subsystem_map"] = subsystem_map
-                no_anchor_metadata["answerability"] = {
-                    "status": "answerable",
-                    "abstained": False,
-                    "reason": "architecture map derived from source layout",
-                    "confidence": round(anchors.retrieval_confidence(matches), 4),
-                }
-        return RetrievalResult(
-            starts=(),
+        return _empty_anchor_result(
+            graph,
+            query=query,
+            query_class=query_class,
+            scopes=scopes,
+            scope_mode=scope_mode,
+            inferred_scope=inferred_scope,
+            status_constrained=status_constrained,
+            requested_statuses=requested_statuses,
+            plan=plan,
+            effective_anchor_limit=effective_anchor_limit,
             matches=matches,
-            nodes=set(),
-            edges=[],
-            metadata=no_anchor_metadata,
+            selected_matches=selected_matches,
         )
 
     if query_class == "spreading_activation":
@@ -772,30 +850,7 @@ def retrieve_context(
             "planner_version": plan.planner_version,
             "node_budget": plan.node_budget,
             "anchor_limit": effective_anchor_limit,
-            "anchor_paths": [
-                {
-                    "path": path,
-                    "role": (
-                        "test_evidence_candidate"
-                        if query_class == "affected_tests" and scoping._is_test_path(path)
-                        else "primary_root"
-                        if Path(path).suffix.casefold() in {".md", ".mdx", ".rst", ".txt", ".html", ".htm"}
-                        else "file_fallback"
-                        if any(
-                            match.node.path.replace("\\", "/").strip("/") == path.replace("\\", "/").strip("/")
-                            and "file_fallback" in match.reasons
-                            for match in selected_matches
-                        )
-                        else "primary_root"
-                    ),
-                    "anchors": [
-                        match.node.id
-                        for match in selected_matches
-                        if match.node.path.replace("\\", "/").strip("/") == path.replace("\\", "/").strip("/")
-                    ],
-                }
-                for path in dict.fromkeys(anchor_paths)
-            ],
+            "anchor_paths": _anchor_paths_metadata(anchor_paths, selected_matches, query_class),
         }
     )
     if facets:
