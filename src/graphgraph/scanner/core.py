@@ -724,6 +724,87 @@ def _global_source_concept_metadata(
     }
 
 
+def _persist_scan_manifest(
+    manifest,
+    *,
+    file_map: dict[str, str],
+    dirty_files: list[tuple[Path, str, str]],
+    active_rels: set[str],
+    nodes: dict[str, Node],
+    edges: list[Edge],
+    depth: str,
+    frontend: str,
+    docs: bool,
+    root: Path,
+    manifest_path: Path | None,
+    manifest_sink: list | None,
+    progress: ScanProgress | None,
+) -> None:
+    """Record per-file node/edge ownership into the manifest for dirty files.
+
+    Terminal side-effect stage: the pipeline never reads manifest state back, so
+    this consumes the finished graph and writes (or defers, via ``manifest_sink``)
+    the manifest. One linear pass indexes graph ownership by path so each dirty
+    file's manifest row is a direct lookup rather than a full O(N+E) rescan.
+    """
+    _emit_progress(progress, "manifest", f"dirty_files={len(dirty_files)} active_files={len(active_rels)}")
+    # Clean up deleted files from manifest
+    keys_to_delete = [k for k in manifest.files if k not in active_rels]
+    for k in keys_to_delete:
+        del manifest.files[k]
+
+    file_rel_by_node_id = {node_id: rel for rel, node_id in file_map.items()}
+
+    def owner_path_of(node_id: str) -> str | None:
+        if node_id in nodes:
+            return nodes[node_id].path
+        return file_rel_by_node_id.get(node_id)
+
+    # Decode graph ownership once, then reuse the indexed projections for every
+    # dirty file. The previous formulation rescanned all E edges and N nodes for
+    # each of F files: O(F * (N + E)). These maps are the manifest equivalent of
+    # register decoding -- one linear pass converts graph state into direct
+    # per-file operands.
+    owned_nodes_by_path: dict[str, set[str]] = defaultdict(set)
+    edges_by_path: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    endpoint_nodes_by_path: dict[str, set[str]] = defaultdict(set)
+    for nid, node in nodes.items():
+        if node.path:
+            owned_nodes_by_path[node.path].add(nid)
+    for edge in edges:
+        owner_path = owner_path_of(edge.source)
+        if not owner_path:
+            continue
+        edge_row = (edge.source, edge.target, edge.type)
+        edges_by_path[owner_path].append(edge_row)
+        if edge.source in nodes:
+            endpoint_nodes_by_path[owner_path].add(edge.source)
+        if edge.target in nodes:
+            endpoint_nodes_by_path[owner_path].add(edge.target)
+
+    for f, rel, fhash in dirty_files:
+        file_edges = edges_by_path.get(rel, [])
+        file_nodes = sorted(owned_nodes_by_path.get(rel, set()) | endpoint_nodes_by_path.get(rel, set()))
+        manifest.update_file(
+            rel_path=rel,
+            file_hash=fhash,
+            depth=depth,
+            frontend=frontend,
+            docs=docs,
+            nodes=file_nodes,
+            edges=file_edges,
+        )
+    if manifest_path is not None:
+        manifest.source_root = str(root)
+        if manifest_sink is not None:
+            # Defer the write so the lifecycle can commit the manifest only
+            # after the graph is durably persisted. Writing it here left the
+            # manifest describing nodes a failed graph write never committed.
+            manifest_sink.append((manifest, manifest_path))
+        else:
+            manifest.save(manifest_path)
+
+
 def _build_graph_from_split(
     *,
     root: Path,
@@ -760,15 +841,8 @@ def _build_graph_from_split(
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
     seen: set[tuple[str, str]] = set()
-    file_rel_by_node_id = {node_id: rel for rel, node_id in file_map.items()}
 
     dirty_rels = {rel for _f, rel, _fhash in dirty_files}
-
-    # Helper to determine owning file path of any node ID (for edge mapping)
-    def find_file_for_node(node_id: str) -> str | None:
-        if node_id in nodes:
-            return nodes[node_id].path
-        return file_rel_by_node_id.get(node_id)
 
     skipped_edges: list[tuple[str, str, str, Edge | None]] = []
     context_symbol_nodes: dict[str, Node] = {}
@@ -1136,55 +1210,21 @@ def _build_graph_from_split(
 
     # Update manifest for the scanned (dirty) files
     if manifest:
-        _emit_progress(progress, "manifest", f"dirty_files={len(dirty_files)} active_files={len(active_rels)}")
-        # Clean up deleted files from manifest
-        keys_to_delete = [k for k in manifest.files if k not in active_rels]
-        for k in keys_to_delete:
-            del manifest.files[k]
-
-        # Decode graph ownership once, then reuse the indexed projections for
-        # every dirty file. The previous formulation rescanned all E edges and
-        # N nodes for each of F files: O(F * (N + E)). These maps are the
-        # manifest equivalent of register decoding -- one linear pass converts
-        # graph state into direct per-file operands.
-        owned_nodes_by_path: dict[str, set[str]] = defaultdict(set)
-        edges_by_path: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
-        endpoint_nodes_by_path: dict[str, set[str]] = defaultdict(set)
-        for node_id, node in nodes.items():
-            if node.path:
-                owned_nodes_by_path[node.path].add(node_id)
-        for edge in edges:
-            owner_path = find_file_for_node(edge.source)
-            if not owner_path:
-                continue
-            edge_row = (edge.source, edge.target, edge.type)
-            edges_by_path[owner_path].append(edge_row)
-            if edge.source in nodes:
-                endpoint_nodes_by_path[owner_path].add(edge.source)
-            if edge.target in nodes:
-                endpoint_nodes_by_path[owner_path].add(edge.target)
-
-        for f, rel, fhash in dirty_files:
-            file_edges = edges_by_path.get(rel, [])
-            file_nodes = sorted(owned_nodes_by_path.get(rel, set()) | endpoint_nodes_by_path.get(rel, set()))
-            manifest.update_file(
-                rel_path=rel,
-                file_hash=fhash,
-                depth=depth,
-                frontend=frontend,
-                docs=docs,
-                nodes=file_nodes,
-                edges=file_edges,
-            )
-        if manifest_path is not None:
-            manifest.source_root = str(root)
-            if manifest_sink is not None:
-                # Defer the write so the lifecycle can commit the manifest only
-                # after the graph is durably persisted. Writing it here left the
-                # manifest describing nodes a failed graph write never committed.
-                manifest_sink.append((manifest, manifest_path))
-            else:
-                manifest.save(manifest_path)
+        _persist_scan_manifest(
+            manifest,
+            file_map=file_map,
+            dirty_files=dirty_files,
+            active_rels=active_rels,
+            nodes=nodes,
+            edges=edges,
+            depth=depth,
+            frontend=frontend,
+            docs=docs,
+            root=root,
+            manifest_path=manifest_path,
+            manifest_sink=manifest_sink,
+            progress=progress,
+        )
 
     # Edge confidence is epistemic: it records how trustworthy the extraction
     # is. Centrality and symbol visibility are relevance signals, not evidence
