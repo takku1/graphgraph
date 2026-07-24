@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from ..graph.core import Edge, Graph
@@ -11,6 +11,7 @@ from ..packets import estimate_tokens, render_packet
 from ..planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
 from ..planning.routing import route_query
 from ..retrieval import retrieve_context
+from .calibration import calibration_report
 
 
 @dataclass(frozen=True)
@@ -35,10 +36,19 @@ class EvalResult:
     ndcg_at_10: float = 0.0
     scored: bool = True
     note: str = ""
+    answerability_status: str = ""
+    answerability_confidence: float | None = None
+
+
+class EvalTasksError(ValueError):
+    """The eval tasks file is unreadable, malformed, or empty of runnable tasks."""
 
 
 def load_eval_tasks(path: Path) -> list[EvalTask]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EvalTasksError(f"could not read eval tasks from {path}: {exc}") from exc
     tasks = _iter_task_records(data)
     out: list[EvalTask] = []
     for task in tasks:
@@ -59,6 +69,17 @@ def load_eval_tasks(path: Path) -> list[EvalTask]:
             expected_nodes=tuple(str(item) for item in expected_nodes),
             expected_edges=tuple(tuple(str(part) for part in edge) for edge in expected_edges),
         ))
+    if not out:
+        # A benchmark over zero tasks would print an empty result and exit 0 --
+        # one day reporting a "perfect" score on nothing. Refuse loudly instead:
+        # the input was either an unrecognized schema or every task lacked a
+        # 'query'. Callers all pass real suites, so this cannot be a legitimate
+        # empty run.
+        raise EvalTasksError(
+            f"no runnable eval tasks in {path}: expected a JSON list of "
+            '{"query": ...} objects (or {"tasks": [...]}), each with a "query" '
+            "or \"question\" field"
+        )
     return out
 
 
@@ -92,6 +113,13 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
         task = replace(task, query_class=resolved_class)
         choice = choose_packet(task.query_class, task.query)
         retrieved = retrieve_context(graph, task.query, task.query_class, hops=choice.hops, max_nodes=max_nodes)
+        answerability = retrieved.metadata.get("answerability", {})
+        if not isinstance(answerability, dict):
+            answerability = {}
+        confidence = answerability.get("confidence")
+        answerability_confidence = (
+            float(confidence) if isinstance(confidence, (int, float)) else None
+        )
         choice = choose_packet_for_subgraph(
             choice,
             compute_subgraph_stats(graph, retrieved.nodes, retrieved.edges),
@@ -146,6 +174,8 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
             mrr=round(mrr_val, 4),
             ndcg_at_5=round(ndcg_5, 4),
             ndcg_at_10=round(ndcg_10, 4),
+            answerability_status=str(answerability.get("status", "")),
+            answerability_confidence=answerability_confidence,
         ))
     return results
 
@@ -183,11 +213,62 @@ def rank_nodes_by_subgraph_pagerank(graph: Graph, retrieved_nodes: set[str], ret
         edges=retrieved_edges,
     )
     pr = subgraph.pagerank(damping=0.85, max_iter=20, use_cache=False)
-    return sorted(retrieved_nodes, key=lambda nid: pr.get(nid, 0.0), reverse=True)
+    # Total order, not just descending score. `retrieved_nodes` is a set, so
+    # its iteration order varies with PYTHONHASHSEED across processes, and a
+    # sort keyed on PageRank alone left ties (and near-ties the eval treats as
+    # ties) to be broken by that non-deterministic order. The result: MRR/NDCG
+    # oscillated on byte-identical input while node_recall stayed stable, which
+    # made every rank-based gate unmeasurable below the noise band. The node_id
+    # tiebreak makes the ranking a pure function of the graph.
+    return sorted(retrieved_nodes, key=lambda nid: (-pr.get(nid, 0.0), nid))
 
 
 def results_to_json(results: list[EvalResult]) -> str:
     return json.dumps([result.__dict__ for result in results], indent=2, ensure_ascii=False)
+
+
+def calibration_pairs(
+    results: list[EvalResult], *, complete_recall: float = 1.0
+) -> list[tuple[float, bool]]:
+    """Pair answerability confidence with labeled retrieval completeness.
+
+    The outcome is true only when every recall dimension declared by the eval
+    task meets ``complete_recall``. Results without declared expectations or a
+    confidence value are excluded. Runtime non-observation is deliberately not
+    used as a negative label: a trace covers only paths that happened to run.
+    """
+    if not 0.0 <= complete_recall <= 1.0:
+        raise ValueError("complete_recall must be in [0, 1]")
+    pairs: list[tuple[float, bool]] = []
+    for result in results:
+        confidence = result.answerability_confidence
+        recalls = tuple(
+            recall
+            for recall in (result.node_recall, result.edge_recall)
+            if recall is not None
+        )
+        if confidence is None or not recalls:
+            continue
+        pairs.append((confidence, all(recall >= complete_recall for recall in recalls)))
+    return pairs
+
+
+def results_with_calibration_to_json(
+    results: list[EvalResult], *, bins: int = 10, complete_recall: float = 1.0
+) -> str:
+    """Render eval results plus a calibration receipt over labeled tasks."""
+    pairs = calibration_pairs(results, complete_recall=complete_recall)
+    report = asdict(calibration_report(pairs, bins=bins))
+    report["label_policy"] = {
+        "source": "declared eval expectations",
+        "complete_recall": complete_recall,
+        "rule": "all scored node/edge recall values meet the threshold",
+    }
+    return json.dumps(
+        {"results": [asdict(result) for result in results], "calibration": report},
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 def _edge_recall(expected: tuple[tuple[str, ...], ...], returned: set[tuple[str, str, str]]) -> float | None:

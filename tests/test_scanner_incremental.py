@@ -16,14 +16,261 @@ from graphgraph.io import (
     save_graph,
 )
 from graphgraph.packets.validation import validate_graph_json
-from graphgraph.runtime.manifest import MANIFEST_VERSION
+from graphgraph.runtime.manifest import MANIFEST_VERSION, extractor_fingerprint
 from graphgraph.scanner.frontends import (
     tree_sitter_available,
 )
 
 
+class ManifestDeferralTest(unittest.TestCase):
+    """The scanner must defer the manifest write so the lifecycle can order it
+    after the graph commit (a failed graph write must not leave the manifest
+    describing uncommitted nodes)."""
+
+    def test_manifest_sink_defers_the_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "mod.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+            manifest_path = root / "graph.gg.manifest.json"
+
+            sink: list = []
+            scan_directory(
+                root,
+                depth="symbols",
+                manifest_path=manifest_path,
+                manifest_sink=sink,
+            )
+            # Deferred: nothing on disk yet, but the built manifest is captured.
+            self.assertFalse(manifest_path.exists())
+            self.assertEqual(len(sink), 1)
+            manifest, captured_path = sink[0]
+            self.assertEqual(captured_path, manifest_path)
+
+            # The lifecycle would commit it only after the graph is saved.
+            manifest.save(captured_path)
+            self.assertTrue(manifest_path.exists())
+
+    def test_default_still_writes_inline_for_non_lifecycle_callers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "mod.py").write_text("def beta():\n    return 2\n", encoding="utf-8")
+            manifest_path = root / "graph.gg.manifest.json"
+            scan_directory(root, depth="symbols", manifest_path=manifest_path)
+            self.assertTrue(manifest_path.exists())
+
+
 class IncrementalScannerTest(unittest.TestCase):
     """scanner/core.py incremental paths and runtime/manifest.py."""
+
+    def test_update_refuses_to_destroy_an_out_of_tree_graph(self) -> None:
+        # SEV-1 regression: when the graph lives outside the scanned repo,
+        # `update` found no manifest beside it, fell back to a full rescan of
+        # the *directory argument* (which defaults to cwd, not the scanned
+        # repo), and wrote the resulting empty graph over a valid one --
+        # while reporting structural PASS, a successful "Repair", and exit 0.
+        # Structural validity cannot catch this: an empty graph is
+        # structurally perfect, so size-of-what-is-replaced is the only signal.
+        from graphgraph.io import GraphShrinkRefused, load_any
+        from graphgraph.services.native import (
+            scan_validated_graph,
+            update_paths_validated_graph,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            # Large enough to clear the guard's small-graph threshold, below
+            # which a shrink ratio carries no signal: a 3-node fixture halving
+            # is routine, a real repo emptying is not.
+            for index in range(12):
+                (repo / f"mod{index}.py").write_text(
+                    f"class Store{index}:\n"
+                    f"    def persist(self):\n        return {index}\n"
+                    f"    def load(self):\n        return {index}\n",
+                    encoding="utf-8",
+                )
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            graph_path = elsewhere / "graph.gg"
+
+            built = scan_validated_graph(
+                directory=repo, output_path=graph_path, depth="symbols", docs=False
+            )
+            self.assertGreater(len(built.graph.nodes), 0)
+            prior_nodes = len(built.graph.nodes)
+
+            # The destructive call: rebuild root is `elsewhere`, which holds no
+            # source at all, so the fallback rescan yields a near-empty graph.
+            with self.assertRaises(GraphShrinkRefused):
+                update_paths_validated_graph(
+                    directory=elsewhere,
+                    output_path=graph_path,
+                    paths=[str(repo / "mod0.py")],
+                    depth="symbols",
+                    docs=False,
+                )
+
+            # The refusal must be a refusal, not a report: the graph on disk is
+            # unchanged. Asserting node count rather than mere existence --
+            # the original bug left a valid, correctly-formatted, empty file.
+            self.assertEqual(len(load_any(graph_path).nodes), prior_nodes)
+
+    def test_update_force_allows_an_intentional_shrink(self) -> None:
+        # The guard must not become a wall: an operator who means it keeps a
+        # way through, otherwise legitimate rebuilds get stuck behind it.
+        from graphgraph.services.native import (
+            scan_validated_graph,
+            update_paths_validated_graph,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            # Large enough to clear the guard's small-graph threshold, below
+            # which a shrink ratio carries no signal: a 3-node fixture halving
+            # is routine, a real repo emptying is not.
+            for index in range(12):
+                (repo / f"mod{index}.py").write_text(
+                    f"class Store{index}:\n"
+                    f"    def persist(self):\n        return {index}\n"
+                    f"    def load(self):\n        return {index}\n",
+                    encoding="utf-8",
+                )
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            graph_path = elsewhere / "graph.gg"
+
+            scan_validated_graph(
+                directory=repo, output_path=graph_path, depth="symbols", docs=False
+            )
+            status = update_paths_validated_graph(
+                directory=elsewhere,
+                output_path=graph_path,
+                paths=[str(repo / "mod0.py")],
+                depth="symbols",
+                docs=False,
+                force=True,
+            )
+            self.assertTrue(status.repaired)
+
+    def test_validated_updates_compose_through_delta_sidecar(self) -> None:
+        from graphgraph.io import load_any
+        from graphgraph.services.native import (
+            scan_validated_graph,
+            update_paths_validated_graph,
+        )
+        from graphgraph.storage.delta import delta_sidecar_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(80):
+                (root / f"mod{index}.py").write_text(
+                    f"def value_{index}():\n    return {index}\n",
+                    encoding="utf-8",
+                )
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+            )
+
+            target = root / "mod0.py"
+            target.write_text(
+                "def value_0():\n    return 100\n\ndef added_once():\n    return value_0()\n",
+                encoding="utf-8",
+            )
+            first = update_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=["mod0.py"],
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+            )
+            self.assertTrue(delta_sidecar_path(graph_path).exists())
+            self.assertTrue(any(node.label == "added_once" for node in first.graph.nodes.values()))
+
+            target.write_text(
+                "def value_0():\n    return 200\n\ndef added_twice():\n    return value_0()\n",
+                encoding="utf-8",
+            )
+            second = update_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=["mod0.py"],
+                depth="symbols",
+                frontend="regex",
+                docs=False,
+            )
+            labels = {node.label for node in second.graph.nodes.values()}
+            persisted_labels = {node.label for node in load_any(graph_path).nodes.values()}
+            self.assertIn("added_twice", labels)
+            self.assertNotIn("added_once", labels)
+            self.assertEqual(labels, persisted_labels)
+
+    def test_remove_of_in_tree_untracked_path_is_idempotent(self) -> None:
+        # GATE 28: the wrong-root remove guard must not swallow legitimate
+        # no-ops. Removing an in-tree path that simply is not in the graph
+        # (excluded, a typo, or already deleted) was formerly idempotent
+        # success; erroring on it broke batch cleanups that included one such
+        # path. Only a path resolving OUTSIDE the scanned tree is the mistake.
+        from graphgraph.services.native import (
+            remove_paths_validated_graph,
+            scan_validated_graph,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.gg"
+            built = scan_validated_graph(
+                directory=root, output_path=graph_path, depth="symbols", docs=False
+            )
+            prior = len(built.graph.nodes)
+
+            # An in-tree path the graph never contained: no error, no change.
+            status = remove_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=["never_scanned.py"],
+                depth="symbols",
+                docs=False,
+            )
+            self.assertEqual(len(status.graph.nodes), prior)
+
+    def test_remove_from_wrong_root_still_errors(self) -> None:
+        # The other half: a path resolving entirely outside the scanned tree is
+        # the wrong-root mistake and must still surface, not silently no-op.
+        from graphgraph.io import RemovalMatchedNothing
+        from graphgraph.services.native import (
+            remove_paths_validated_graph,
+            scan_validated_graph,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            graph_path = repo / ".graphgraph" / "graph.gg"
+            scan_validated_graph(
+                directory=repo, output_path=graph_path, depth="symbols", docs=False
+            )
+            with self.assertRaises(RemovalMatchedNothing):
+                remove_paths_validated_graph(
+                    directory=elsewhere,  # wrong root
+                    output_path=graph_path,
+                    paths=[str(repo / "kept.py")],  # outside `elsewhere`
+                    depth="symbols",
+                    docs=False,
+                )
 
     def test_incremental_regex_scan_preserves_cross_file_rust_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,6 +378,12 @@ class IncrementalScannerTest(unittest.TestCase):
             )
             save_graph(graph, graph_path)
             self.assertEqual(graph.metadata["member_calls_global_resolved"], "1")
+            self.assertEqual(
+                json.loads(graph.metadata["member_calls_global_by_language"])[
+                    "rust"
+                ]["resolved"],
+                1,
+            )
 
             source.write_text(
                 "pub struct Store;\n"
@@ -152,6 +405,16 @@ class IncrementalScannerTest(unittest.TestCase):
         self.assertEqual(updated.metadata["member_calls_last_update_resolved"], "0")
         self.assertEqual(updated.metadata["member_calls_global_scope"], "full_scan_snapshot")
         self.assertEqual(updated.metadata["member_calls_last_update_scope"], "changed_files")
+        self.assertEqual(
+            json.loads(updated.metadata["member_calls_global_by_language"])[
+                "rust"
+            ]["resolved"],
+            1,
+        )
+        self.assertEqual(
+            json.loads(updated.metadata["member_calls_last_update_by_language"]),
+            {},
+        )
 
     def test_full_scan_manifest_keeps_doc_concept_edge_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -386,7 +649,7 @@ class IncrementalScannerTest(unittest.TestCase):
             )
             save_graph(graph, graph_path)
             raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-            raw["version"] = 0
+            raw["extractor_fingerprint"] = "obsolete-extractor"
             manifest_path.write_text(json.dumps(raw), encoding="utf-8")
             events: list[tuple[str, str]] = []
 
@@ -411,6 +674,14 @@ class IncrementalScannerTest(unittest.TestCase):
                 json.loads(manifest_path.read_text(encoding="utf-8"))["version"],
                 MANIFEST_VERSION,
             )
+            rebuilt_manifest = json.loads(
+                manifest_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                rebuilt_manifest["extractor_fingerprint"],
+                extractor_fingerprint(),
+            )
+            self.assertNotEqual(rebuilt_manifest["updated_at"], "")
 
     def test_update_paths_treats_missing_target_as_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

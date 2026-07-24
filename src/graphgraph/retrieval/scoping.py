@@ -170,7 +170,17 @@ def _source_declares_rust_test(source: str, line: int) -> bool:
     ))
 
 def _qualified_query_symbols(query: str) -> tuple[tuple[str, str], ...]:
-    return tuple(dict.fromkeys(
-        (owner, member)
-        for owner, member in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)\b", query)
-    ))
+    pairs = re.findall(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)\b",
+        query,
+    )
+    # JavaScript/TypeScript/Python use dot-qualified identities (`res.send`)
+    # where Rust/C++ use `Type::member`. A same-stem file such as
+    # `test/res.send.js` must not outrank the actual callable definition.
+    pairs.extend(
+        re.findall(
+            r"\b([A-Za-z_$][A-Za-z0-9_$]*)\.([A-Za-z_$][A-Za-z0-9_$]*)\b",
+            query,
+        )
+    )
+    return tuple(dict.fromkeys(pairs))

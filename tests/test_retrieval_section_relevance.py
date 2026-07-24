@@ -44,7 +44,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
 
         from graphgraph.planning import plan_context
         from graphgraph.planning.budgets import plan_terms
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         plan = replace(plan_context("doc_summary", query, max_nodes=budget), node_budget=budget)
         nodes, _ = expand_context(graph, ("doc",), plan, query_terms=plan_terms(query))
@@ -134,9 +134,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             }
         )
 
-        compiled = GraphRuntime(graph).compile(
-            GraphProgram(query="facet coverage answerability reconciliation")
-        )
+        compiled = GraphRuntime(graph).compile(GraphProgram(query="facet coverage answerability reconciliation"))
 
         self.assertLess(compiled.route.confidence, 0.25)
         self.assertEqual(compiled.retrieval.metadata["answerability"]["status"], "incomplete")
@@ -203,10 +201,12 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         affected["direct"] = []
         affected["transitive"] = []
         affected["commands"] = ["pytest -q tests/test_formula_cli.py"]
-        affected["command_provenance"] = [{
-            "command": "pytest -q tests/test_formula_cli.py",
-            "tests": [{"id": "CANDIDATE"}],
-        }]
+        affected["command_provenance"] = [
+            {
+                "command": "pytest -q tests/test_formula_cli.py",
+                "tests": [{"id": "CANDIDATE"}],
+            }
+        ]
 
         errors = reconcile_retrieval_receipt(
             graph,
@@ -216,8 +216,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         )
 
         self.assertIn(
-            "affected-test commands were emitted without attributed direct or "
-            "transitive test evidence",
+            "affected-test commands were emitted without attributed direct or transitive test evidence",
             errors,
         )
         self.assertEqual(affected["evidence_status"], "candidate_only")
@@ -324,7 +323,8 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual(result.metadata["answerability"]["status"], "answerable")
 
     def test_multihop_prefers_distributed_code_evidence_over_full_document_match(self) -> None:
-        from graphgraph.retrieval.context import Match, reserve_facet_matches
+        from graphgraph.retrieval.facets import reserve_facet_matches
+        from graphgraph.retrieval.models import Match
 
         graph = Graph(
             nodes={
@@ -397,7 +397,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertIn("no code or structural evidence", result.metadata["answerability"]["reason"])
 
     def test_affected_tests_reports_direct_graph_evidence_even_if_packet_prunes_test(self) -> None:
-        from graphgraph.retrieval.context import affected_test_recommendations
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
 
         graph = Graph(
             nodes={
@@ -453,11 +453,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual(truncation["omitted_direct_neighbors"], 1)
         self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
         self.assertTrue(result.metadata["answerability"]["abstained"])
-        returned_callers = {
-            edge.source
-            for edge in result.edges
-            if edge.type == "calls" and edge.target == "TARGET"
-        }
+        returned_callers = {edge.source for edge in result.edges if edge.type == "calls" and edge.target == "TARGET"}
         self.assertEqual(len(returned_callers), 7)
         self.assertNotIn("SIBLING", result.nodes)
 
@@ -512,7 +508,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
 
     def test_doc_stage_enumeration_reserves_all_numbered_stage_siblings(self) -> None:
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import reserve_ordered_doc_siblings
+        from graphgraph.retrieval.reservations import reserve_ordered_doc_siblings
 
         nodes = {
             "DOC": Node("DOC", "backbone-pipeline.md", "file", "docs/backbone-pipeline.md"),
@@ -566,13 +562,15 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                 "function",
                 f"tests/expr_case_{index:02d}.rs",
             )
-            edges.append(Edge(
-                node_id,
-                "EXPR",
-                "references",
-                confidence=0.88,
-                provenance="tree_sitter_type_reference",
-            ))
+            edges.append(
+                Edge(
+                    node_id,
+                    "EXPR",
+                    "references",
+                    confidence=0.88,
+                    provenance="tree_sitter_type_reference",
+                )
+            )
         result = retrieve_context(
             Graph(nodes=nodes, edges=edges),
             "If Expr changes, which tests are affected?",
@@ -582,7 +580,9 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             max_nodes=40,
         )
         from graphgraph.planning import QueryRoute
-        from graphgraph.retrieval.context import reconcile_semantic_retrieval_receipt
+        from graphgraph.retrieval.test_recommendations import (
+            reconcile_semantic_retrieval_receipt,
+        )
 
         reconcile_semantic_retrieval_receipt(
             Graph(nodes=nodes, edges=edges),
@@ -653,11 +653,52 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertNotIn("DOC", result.nodes)
         self.assertNotIn("SIBLING", result.nodes)
 
-    def test_flow_summary_roots_production_symbols_above_prose_and_tests(self) -> None:
-        query = (
-            "How does expression parsing flow from frontends "
-            "into the engine expression representation?"
+    def test_javascript_dot_qualified_symbol_beats_same_stem_test_file(self) -> None:
+        graph = Graph(
+            nodes={
+                "SEND_FILE": Node(
+                    "SEND_FILE",
+                    "res.send.js",
+                    "javascript",
+                    "test/res.send.js",
+                ),
+                "RES_SEND": Node(
+                    "RES_SEND",
+                    "send",
+                    "method",
+                    "lib/response.js",
+                    summary="L126 res.send = function send(body)",
+                    facts=(
+                        "javascript_definition:property_assignment",
+                        "javascript_owner:res",
+                    ),
+                ),
+                "SOCKET_SEND": Node(
+                    "SOCKET_SEND",
+                    "send",
+                    "method",
+                    "lib/socket.js",
+                    summary="L20 socket.send = function send(data)",
+                    facts=("javascript_owner:socket",),
+                ),
+            },
+            edges=[
+                Edge("SEND_FILE", "RES_SEND", "references"),
+            ],
         )
+
+        result = retrieve_context(
+            graph,
+            "res.send",
+            "direct_lookup",
+            hops=1,
+        )
+
+        self.assertEqual(result.starts, ("RES_SEND",))
+        self.assertEqual(result.metadata["anchor_strategy"], "exact_fast_path")
+
+    def test_flow_summary_roots_production_symbols_above_prose_and_tests(self) -> None:
+        query = "How does expression parsing flow from frontends into the engine expression representation?"
         graph = Graph(
             nodes={
                 "AUDIT": Node(
@@ -712,9 +753,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     "Finite Automata Learning",
                     "paragraph",
                     "docs/roadmap/gap-analysis.md",
-                    facts=(
-                        "*   `[ ]` **Finite Automata Learning:** No bounded learner is implemented.",
-                    ),
+                    facts=("*   `[ ]` **Finite Automata Learning:** No bounded learner is implemented.",),
                     summary="L61",
                 ),
                 "GENERAL": Node(
@@ -722,9 +761,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     "Implementation roadmap and likely tests",
                     "paragraph",
                     "docs/architecture/overview.md",
-                    facts=(
-                        "This capability roadmap describes bounded implementation areas and tests.",
-                    ),
+                    facts=("This capability roadmap describes bounded implementation areas and tests.",),
                     summary="L4",
                 ),
             },
@@ -760,9 +797,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     "Finite VC dimension",
                     "paragraph",
                     "docs/roadmap/gap-analysis.md",
-                    facts=(
-                        "* `[~]` **Finite VC dimension:** A bounded fragment is implemented.",
-                    ),
+                    facts=("* `[~]` **Finite VC dimension:** A bounded fragment is implemented.",),
                 ),
             },
         )
@@ -850,22 +885,21 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
 
     def test_absent_status_evidence_fulfills_redundant_marker_facet(self) -> None:
         path = "docs/roadmap/execution-backlog.md"
-        graph = Graph(nodes={
-            "ITEM": Node(
-                "ITEM",
-                "Reconcile the coverage survey",
-                "paragraph",
-                path,
-                facts=("- `[ ]` Reconcile the coverage survey.",),
-            ),
-        })
+        graph = Graph(
+            nodes={
+                "ITEM": Node(
+                    "ITEM",
+                    "Reconcile the coverage survey",
+                    "paragraph",
+                    path,
+                    facts=("- `[ ]` Reconcile the coverage survey.",),
+                ),
+            }
+        )
 
         result = retrieve_context(
             graph,
-            (
-                "From this roadmap, identify one item currently marked absent "
-                "and return only that status class."
-            ),
+            ("From this roadmap, identify one item currently marked absent and return only that status class."),
             "doc_summary",
             hops=1,
             scopes=(path,),
@@ -877,22 +911,17 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertNotIn("facet_coverage", result.metadata)
 
     def test_query_facets_compile_contract_and_covered_cases_canonically(self) -> None:
-        from graphgraph.retrieval.context import facet_coverage, query_facets
+        from graphgraph.retrieval.facets import facet_coverage, query_facets
 
-        contract_facets = query_facets(
-            "What bounded input contract does it have?"
-        )
+        contract_facets = query_facets("What bounded input contract does it have?")
         case_facets = query_facets(
-            "Which tests exercise finite_vc_dimension and shatters, "
-            "and what cases do they cover?"
+            "Which tests exercise finite_vc_dimension and shatters, and what cases do they cover?"
         )
         self.assertIn(
             ("bounded input contract", ("bounded", "input", "contract")),
             contract_facets,
         )
-        self.assertNotIn("bounded input contract have", {
-            label for label, _terms in contract_facets
-        })
+        self.assertNotIn("bounded input contract have", {label for label, _terms in contract_facets})
         self.assertIn(("covered cases", ("covered", "cases")), case_facets)
         self.assertNotIn("cases they", {label for label, _terms in case_facets})
 
@@ -916,26 +945,28 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
 
     def test_topic_local_roadmap_row_cannot_borrow_a_sibling_bound(self) -> None:
         path = "docs/roadmap/gap-analysis.md"
-        graph = Graph(nodes={
-            "GAME": Node(
-                "GAME",
-                "Game Theory",
-                "paragraph",
-                path,
-                facts=(
-                    "Game Theory computes an exact fully mixed Nash equilibrium "
-                    "for a nondegenerate two-player 2×2 general-sum game. "
-                    "General m×n equilibria and degenerate enumeration remain absent.",
+        graph = Graph(
+            nodes={
+                "GAME": Node(
+                    "GAME",
+                    "Game Theory",
+                    "paragraph",
+                    path,
+                    facts=(
+                        "Game Theory computes an exact fully mixed Nash equilibrium "
+                        "for a nondegenerate two-player 2×2 general-sum game. "
+                        "General m×n equilibria and degenerate enumeration remain absent.",
+                    ),
                 ),
-            ),
-            "LEARNING": Node(
-                "LEARNING",
-                "Statistical Learning Theory",
-                "paragraph",
-                path,
-                facts=("Exact finite classes are supported up to 20 domain points.",),
-            ),
-        })
+                "LEARNING": Node(
+                    "LEARNING",
+                    "Statistical Learning Theory",
+                    "paragraph",
+                    path,
+                    facts=("Exact finite classes are supported up to 20 domain points.",),
+                ),
+            }
+        )
 
         result = retrieve_context(
             graph,
@@ -980,8 +1011,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     "paragraph",
                     doc_path,
                     facts=(
-                        "Game Theory computes the exact mixed Nash equilibrium "
-                        "of a two-player 2×2 general-sum game.",
+                        "Game Theory computes the exact mixed Nash equilibrium of a two-player 2×2 general-sum game.",
                     ),
                 ),
                 "AUDIT_DOC": Node(
@@ -1223,15 +1253,13 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertIn("DOC", result.nodes)
         self.assertNotIn("UNRELATED", result.starts)
         doc_receipt = next(
-            item
-            for item in result.metadata["anchor_paths"]
-            if item["path"] == "docs/roadmap/gap-analysis.md"
+            item for item in result.metadata["anchor_paths"] if item["path"] == "docs/roadmap/gap-analysis.md"
         )
         self.assertEqual(doc_receipt["role"], "primary_root")
         self.assertEqual(doc_receipt["anchors"], ["DOC"])
 
     def test_affected_anchor_query_compiles_exact_symbols_without_runs_noise(self) -> None:
-        from graphgraph.retrieval.context import structural_anchor_query
+        from graphgraph.retrieval.scoping import structural_anchor_query
 
         compiled = structural_anchor_query(
             (

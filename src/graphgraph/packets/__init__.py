@@ -1,3 +1,11 @@
+from .formats import (
+    PACKET_FORMAT_NAMES,
+    PACKET_FORMAT_TABLE,
+    PACKET_FORMATS,
+    PacketFormatSpec,
+    packet_format_markdown_table,
+    packet_format_schema,
+)
 from .metrics import estimate_tokens
 from .renderers import (
     DEFAULT_RELATION_ORDER,
@@ -28,9 +36,15 @@ from .validation import (
 
 __all__ = [
     "DEFAULT_RELATION_ORDER",
+    "PACKET_FORMAT_NAMES",
+    "PACKET_FORMAT_TABLE",
+    "PACKET_FORMATS",
+    "PacketFormatSpec",
     "ValidationResult",
     "estimate_tokens",
     "looks_like_graph_json",
+    "packet_format_markdown_table",
+    "packet_format_schema",
     "render_doc_summary",
     "render_gg",
     "render_gg_lex",

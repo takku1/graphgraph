@@ -40,6 +40,12 @@ benchmark = [
     "google-generativeai>=0.3.0",
     "tiktoken>=0.5.0",
 ]
+# Real semantic recall (paraphrase) via a local ONNX model. Runs on
+# onnxruntime, not torch, so it stays comparatively light; installing it makes
+# `resolve_backend()` auto-register the model in place of the offline hash.
+semantic = [
+    "fastembed>=0.3.0",
+]
 [project.scripts]
 graphgraph = "graphgraph.cli:main"
 graphgraph-mcp = "graphgraph.mcp:main"
@@ -62,7 +68,7 @@ package = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-graphgraph = ["assets/*.md", "assets/*.py", "schema/*.json"]
+graphgraph = ["assets/*.md", "assets/*.py", "assets/*.json", "schema/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

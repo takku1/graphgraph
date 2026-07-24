@@ -30,6 +30,76 @@ def _tasks(tmp: Path, payload: list[dict]) -> Path:
     return path
 
 
+class RankDeterminismTest(unittest.TestCase):
+    """Rank metrics must be a pure function of the graph, not the hash seed."""
+
+    def test_ranking_is_stable_over_pagerank_ties(self) -> None:
+        # GATE 27: rank_nodes_by_subgraph_pagerank sorted a *set* by PageRank
+        # with no tiebreak, so ties (and near-ties) resolved by set iteration
+        # order, which varies with PYTHONHASHSEED. MRR/NDCG then oscillated on
+        # byte-identical input while node_recall stayed stable. A deliberately
+        # tie-heavy graph (no edges -> uniform PageRank) makes every position a
+        # tie, so a non-total order would be visibly seed-dependent.
+        from graphgraph.analysis.eval import rank_nodes_by_subgraph_pagerank
+
+        nodes = {
+            f"N{i}": Node(f"N{i}", f"sym_{i}", "function", f"m{i}.py")
+            for i in range(20)
+        }
+        graph = Graph(nodes=nodes, edges=[])
+        node_set = set(nodes)
+
+        first = rank_nodes_by_subgraph_pagerank(graph, node_set, [])
+        # Re-running with a different-insertion-order set must not change output.
+        shuffled = set(reversed(list(nodes)))
+        again = rank_nodes_by_subgraph_pagerank(graph, shuffled, [])
+        self.assertEqual(first, again)
+        # And it must be the total order we chose (node_id ascending on ties).
+        self.assertEqual(first, sorted(node_set))
+
+
+class EvalTasksLoadingTest(unittest.TestCase):
+    """A benchmark that runs on nothing must fail loudly, not report success."""
+
+    def test_malformed_tasks_file_raises(self) -> None:
+        # graybox F8: `{"bad":"schema"}` produced [] at exit 0. A harness that
+        # exits green on malformed input will one day report a perfect score on
+        # an empty task list.
+        from graphgraph.analysis.eval import EvalTasksError, load_eval_tasks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasks.json"
+            path.write_text('{"bad": "schema"}', encoding="utf-8")
+            with self.assertRaises(EvalTasksError):
+                load_eval_tasks(path)
+
+    def test_tasks_without_query_raise(self) -> None:
+        from graphgraph.analysis.eval import EvalTasksError, load_eval_tasks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasks.json"
+            path.write_text('[{"expected": ["x"]}]', encoding="utf-8")
+            with self.assertRaises(EvalTasksError):
+                load_eval_tasks(path)
+
+    def test_invalid_json_raises_cleanly(self) -> None:
+        from graphgraph.analysis.eval import EvalTasksError, load_eval_tasks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasks.json"
+            path.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(EvalTasksError):
+                load_eval_tasks(path)
+
+    def test_valid_tasks_still_load(self) -> None:
+        from graphgraph.analysis.eval import load_eval_tasks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tasks.json"
+            path.write_text('[{"query": "x"}]', encoding="utf-8")
+            self.assertEqual(len(load_eval_tasks(path)), 1)
+
+
 class EvalHarnessTest(unittest.TestCase):
     """The harness must be able to fail. A green number it cannot lose is a lie."""
 

@@ -1,0 +1,743 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from ..io import (
+    find_graph_path,
+    load_any,
+    validate_graph_file,
+)
+from ..packets import packet_format_schema
+from ..packets.validation import validate_any
+from ..planning import plan_context, query_class_schema
+from ..retrieval import search_nodes
+from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
+from ..services.freshness import (
+    inspect_saved_graph_freshness,
+    refresh_receipt,
+    scope_freshness,
+)
+from ..services.lifecycle import (
+    refresh_saved_graph,
+)
+from ..services.project_status import build_project_status
+from .descriptions import (
+    DESCRIPTION_TOOL_NAMES,
+    DESCRIPTION_TOOLS,
+    handle_description_tool,
+)
+from .descriptions import (
+    FORMAT_TABLE as FORMAT_TABLE,
+)
+from .dispatch import dispatch
+from .graph_management import (
+    GRAPH_MANAGEMENT_TOOLS,
+)
+from .graph_management import (
+    handle_build_graph as handle_build_graph,
+)
+from .graph_management import (
+    handle_export_graph as handle_export_graph,
+)
+from .graph_management import (
+    handle_remove_graph_files as handle_remove_graph_files,
+)
+from .graph_management import (
+    handle_update_graph_files as handle_update_graph_files,
+)
+from .machine_contract import compact_json, compact_tool_contracts
+from .platform_tools import (
+    PLATFORM_TOOL_NAMES,
+    PLATFORM_TOOLS,
+    handle_platform_tool,
+)
+
+
+def _json(payload: object) -> str:
+    """Serialize an MCP response compactly.
+
+    Every byte here is read by a model, never a person, and indentation is
+    a quarter of the envelope: pretty-printing one `select_symbols` response
+    cost 1221 of 4261 tokens (29%). Compact separators change nothing a
+    parser can observe.
+    """
+    return compact_json(payload)
+
+
+SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
+
+
+TOOLS = [
+    {
+        "name": "plan_context",
+        "description": (
+            "Choose the empirically-measured optimal graph packet strategy for a query class. "
+            "Returns hops, packet format, and rationale. Query classes: direct_lookup, "
+            "reverse_lookup, multi_hop_path, blast_radius, subsystem_summary, negative_query, "
+            "recent_changes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query_class": query_class_schema(),
+            },
+            "required": ["query_class"],
+        },
+    },
+    {
+        "name": "final_packet",
+        "description": (
+            "Render a final LLM-facing packet: optional scoped policies plus an ultra-compact "
+            "graph packet. Use starts to name anchor nodes (file paths or node IDs). "
+            "graphgraph packets use 40-60% fewer tokens than verbose JSON or graphify output."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {"type": "string", "description": "Path to graph JSON; auto-detected if omitted."},
+                "policies_path": {"type": "string", "description": "Path to policies JSON; auto-detected if omitted."},
+                "query": {"type": "string"},
+                "query_class": query_class_schema(),
+                "starts": {"type": "array", "items": {"type": "string"}, "description": "Anchor node IDs."},
+                "paths": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "max_nodes": {
+                    "type": "integer",
+                    "description": "Expanded node budget. Default: dynamic by query class and graph shape.",
+                },
+                "packet": packet_format_schema(),
+            },
+            "required": ["query_class", "starts"],
+        },
+    },
+    {
+        "name": "full_graph",
+        "description": (
+            "Render EVERY active node/edge in the graph as one packet -- no query, no budget. "
+            "Not the default path: query_context/final_packet exist precisely so a caller never "
+            "has to pay for the whole graph to answer one question. Use this only when you "
+            "genuinely need a complete snapshot (e.g. full-corpus offline analysis), not for "
+            "normal codebase questions. Refuses (raises an error) above max_tokens unless raised "
+            "or disabled -- a full graph can easily be 100,000+ tokens on a real repo."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {"type": "string", "description": "Path to graph JSON; auto-detected if omitted."},
+                "packet": {
+                    "type": "string",
+                    "description": "Packet format (default gg, the measured token floor for full topology).",
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Token guard (default 20000). Pass 0 to disable and render regardless of size.",
+                },
+            },
+        },
+    },
+    {
+        "name": "query_context",
+        "description": (
+            "Native graphgraph retrieval: find graph anchors from a natural-language query, "
+            "automatically route its structural intent, expand the graph, and render the chosen compact packet. "
+            "Optionally splice changed/deleted files into the persisted graph first, then query that exact "
+            "in-memory result in the same call. Use this when the caller does not already know node IDs."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {
+                    "type": "string",
+                    "description": "Path to native graphgraph graph; auto-detected if omitted.",
+                },
+                "query": {"type": "string"},
+                "query_class": query_class_schema(include_auto=True, default="auto"),
+                "packet": packet_format_schema(),
+                "hops": {
+                    "type": "integer",
+                    "description": "Override traversal radius. Default: measured by query class.",
+                },
+                "anchor_limit": {
+                    "type": "integer",
+                    "description": "Max anchor nodes before expansion. Default: adaptive by query class.",
+                },
+                "max_nodes": {
+                    "type": "integer",
+                    "description": "Expanded node budget. Default: dynamic by query class and graph shape.",
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional scope/path prefixes to constrain retrieval.",
+                },
+                "scope_mode": {
+                    "type": "string",
+                    "enum": ["strict", "expand"],
+                    "description": "strict keeps all results in scope; expand permits structurally connected boundary crossings. Default: strict.",
+                },
+                "show_anchors": {"type": "boolean", "description": "Include ranked anchors before packet."},
+                "include_snippets": {
+                    "type": "boolean",
+                    "description": "Fuse bounded exact source windows for selected anchors into this response, avoiding a second source_snippets call. Default: false.",
+                },
+                "snippet_limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Maximum selected anchors with fused source windows. Default: 3.",
+                },
+                "snippet_context_lines": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Lines before/after each fused symbol. Default: 2.",
+                },
+                "snippet_max_lines": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum lines per fused source excerpt. Default: 24.",
+                },
+                "source_mode": {
+                    "type": "string",
+                    "enum": ["auto", "off", "all"],
+                    "description": "Auxiliary source planner mode. Default: auto.",
+                },
+                "memory_scopes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Memory scopes eligible for query-time projection. Default: project and session.",
+                },
+                "changed_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional edited/created files to re-extract before querying. Cost scales with supplied paths, not repository size.",
+                },
+                "deleted_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional deleted/renamed-away files to remove in the same graph splice before querying.",
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "Project root for changed/deleted paths. Defaults to current working directory.",
+                },
+                "scan_max_nodes": {
+                    "type": "integer",
+                    "description": f"Max symbols for the changed-file batch. Default: {DEFAULT_SCAN_MAX_NODES}.",
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["files", "symbols"],
+                    "description": "Refresh extraction depth. Defaults to the saved graph's scan depth.",
+                },
+                "frontend": {
+                    "type": "string",
+                    "enum": ["auto", "regex", "tree_sitter"],
+                    "description": "Refresh frontend. Defaults to the saved graph's frontend.",
+                },
+                "docs": {
+                    "type": "boolean",
+                    "description": "Refresh document sections/concepts. Defaults to the saved graph setting.",
+                },
+                "history": {
+                    "type": "boolean",
+                    "description": "Refresh bug-fix history. Defaults to the saved graph setting.",
+                },
+                "sync": {
+                    "type": "string",
+                    "enum": ["none", "git"],
+                    "description": "Optional work-loop sync before querying. 'git' hashes only Git-changed candidates against the manifest and refreshes stale paths. Default: none.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "project_status",
+        "description": (
+            "Summarize graph validity, code/doc balance, package metadata, and optional "
+            "runtime probes. Use this before project-status answers that need more than a packet."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "directory": {
+                    "type": "string",
+                    "description": "Project root directory. Defaults to current working directory.",
+                },
+                "graph_path": {"type": "string", "description": "Graph JSON path. Auto-detected if omitted."},
+                "probe": {"type": "boolean", "description": "Run lightweight python -m/import probes. Default: false."},
+            },
+        },
+    },
+    {
+        "name": "validate_packet",
+        "description": (
+            "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, gg, or "
+            "raw graph JSON). Omit `packet` to instead validate the saved native graph file "
+            "(auto-detected, or `graph_path` if given) -- mirrors `graphgraph validate`'s "
+            "auto-detect behavior."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "packet": {
+                    "type": "string",
+                    "description": "Rendered packet or raw graph JSON text. Omit to validate the saved graph file instead.",
+                },
+                "graph_path": {
+                    "type": "string",
+                    "description": "Path to native graphgraph graph; auto-detected if omitted and packet is also omitted.",
+                },
+            },
+        },
+    },
+    {
+        "name": "source_snippets",
+        "description": (
+            "Render bounded source excerpts for selected graph node IDs, labels, or paths. "
+            "Use this after query_context when exact code lines are needed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_path": {
+                    "type": "string",
+                    "description": "Path to native graphgraph graph; auto-detected if omitted.",
+                },
+                "node_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Node ids (the `id` field search_nodes returns), labels, or paths. Preferred: chains directly from search_nodes.",
+                },
+                "starts": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Alias for node_ids (node ids, labels, or paths).",
+                },
+                "context_lines": {"type": "integer", "description": "Lines before/after symbol line. Default: 4."},
+                "max_lines": {"type": "integer", "description": "Maximum lines per excerpt. Default: 40."},
+            },
+            "required": [],
+        },
+    },
+    *GRAPH_MANAGEMENT_TOOLS,
+    {
+        "name": "search_nodes",
+        "description": (
+            "Search nodes in a graph by label, path, or kind. Returns the matching node's exact file "
+            "(`path`) and 1-based source `line` directly -- no follow-up call needed just to locate it; "
+            "use source_snippets afterward only when you need the surrounding code, not just where it is. "
+            "Use this to find the right anchor node IDs before calling final_packet. "
+            "The response also includes `top_score_gap_ratio` (top match's score / runner-up's score) "
+            "and a provisional `ambiguous` flag: a large gap means the top match is a confident single "
+            "answer (safe to use directly, comparable to grepping an exact known symbol); a small/no gap "
+            "means multiple candidates are genuinely close and the result list should be treated as "
+            "several plausible options, not one answer."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Substring to match against node label, path, or kind."},
+                "graph_path": {"type": "string", "description": "Path to graph JSON; auto-detected if omitted."},
+                "limit": {"type": "integer", "description": "Max results to return. Default: 20."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "select_symbols",
+        "description": (
+            "Answer a whole-graph set predicate in ONE call instead of N anchored lookups -- "
+            "e.g. 'which symbols in this crate have no production caller?'. "
+            "Use this for dead-code sweeps, island detection, and any question whose answer is a "
+            "set, a count, or a yes/no rather than a subgraph. "
+            "`mode=count` returns just an integer and `mode=exists` just a boolean, neither of "
+            "which materializes node payloads, so prefer them when you do not need the list. "
+            "Distinguishes production callers from test-only callers, which is the split that "
+            "makes 'unused' meaningful. "
+            "IMPORTANT: the response carries `caller_evidence_complete`; when it is false, "
+            "zero-caller counts are an UPPER BOUND on dead code (unresolved member calls emit no "
+            "calls edge), so do not publish them as proof that a symbol is unused."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "predicate": {
+                    "type": "string",
+                    "description": (
+                        "Filter clauses joined by 'and'. Supported: production_callers/callers "
+                        "with = != > >= < <= ('callers > 5' finds hubs), kind=K, "
+                        "path|crate contains S, path|crate != S (cross-crate consumer checks), "
+                        "label contains S, label in [a, b, c] for batch lookup of many symbols "
+                        "in one call, include_tests=BOOL. Example: "
+                        "'production_callers = 0 and crate contains locus-engine and include_tests = false'."
+                    ),
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["select", "count", "exists"],
+                    "description": "select lists symbols; count returns an integer; exists returns a boolean. Default: select.",
+                },
+                "graph_path": {"type": "string", "description": "Path to graph; auto-detected if omitted."},
+                "limit": {"type": "integer", "description": "Max symbols listed in select mode. Default: 200."},
+            },
+            "required": ["predicate"],
+        },
+    },
+    *DESCRIPTION_TOOLS,
+]
+
+TOOLS.extend(PLATFORM_TOOLS)
+TOOLS = compact_tool_contracts(TOOLS)
+
+RETRIEVAL_TOOL_NAMES = frozenset(
+    {
+        "plan_context",
+        "final_packet",
+        "full_graph",
+        "query_context",
+        "project_status",
+        "validate_packet",
+        "source_snippets",
+        "search_nodes",
+        "select_symbols",
+    }
+)
+
+
+def content(text: str) -> dict[str, Any]:
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def handle_initialize(_params: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {"tools": {}},
+        "serverInfo": SERVER_INFO,
+    }
+
+
+def handle_tools_list(_params: dict[str, Any]) -> dict[str, Any]:
+    return {"tools": TOOLS}
+
+
+_TOOLS_BY_NAME = {tool["name"]: tool for tool in TOOLS}
+
+
+def _validate_required_args(name: str, args: dict[str, Any]) -> None:
+    """Fail missing required args at the MCP boundary with an actionable message.
+
+    Several handlers did a bare ``args["x"]``, so omitting a required arg leaked
+    a cryptic ``-32000: 'x'`` (an unhandled KeyError) that told the caller
+    neither what was wrong nor what to pass. This validates every tool's
+    declared ``required`` list once, naming each missing arg and enumerating its
+    allowed values when the schema constrains them.
+    """
+    tool = _TOOLS_BY_NAME.get(name)
+    if not tool:
+        return
+    schema = tool.get("inputSchema", {})
+    props = schema.get("properties", {})
+    missing = []
+    for arg in schema.get("required", []):
+        value = args.get(arg)
+        if value is None or value == "" or value == [] or value == {}:
+            spec = props.get(arg, {})
+            enum = spec.get("enum")
+            if enum:
+                hint = f" (one of: {', '.join(map(str, enum))})"
+            elif spec.get("description"):
+                hint = f" -- {spec['description']}"
+            else:
+                hint = ""
+            missing.append(f"'{arg}'{hint}")
+    if missing:
+        raise ValueError(f"{name} requires {', '.join(missing)}.")
+
+
+def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
+    name = params.get("name")
+    args = params.get("arguments") or {}
+    _validate_required_args(str(name), args)
+    if name == "plan_context":
+        plan = plan_context(str(args["query_class"]), str(args.get("query", "")))
+        return content(_json(plan.__dict__))
+    if name == "final_packet":
+        return content(build_final_packet(args))
+    if name == "full_graph":
+        return content(build_full_graph(args))
+    if name == "query_context":
+        return content(build_query_context(args))
+    if name == "project_status":
+        return content(handle_project_status(args))
+    if name == "validate_packet":
+        packet = args.get("packet")
+        if packet:
+            result = validate_any(str(packet))
+        else:
+            graph_path = Path(args["graph_path"]) if args.get("graph_path") else find_graph_path()
+            result = validate_graph_file(graph_path)
+        return content(
+            _json(
+                {
+                    "ok": result.ok,
+                    "format": result.format,
+                    "node_count": result.node_count,
+                    "edge_count": result.edge_count,
+                    "errors": list(result.errors),
+                }
+            )
+        )
+    if name == "source_snippets":
+        return content(handle_source_snippets(args))
+    if name == "build_graph":
+        return content(handle_build_graph(args))
+    if name == "update_graph_files":
+        return content(handle_update_graph_files(args))
+    if name == "remove_graph_files":
+        return content(handle_remove_graph_files(args))
+    if name == "search_nodes":
+        return content(handle_search_nodes(args))
+    if name == "select_symbols":
+        return content(handle_select_symbols(args))
+    if name == "export_graph":
+        return content(handle_export_graph(args))
+    if name in DESCRIPTION_TOOL_NAMES:
+        return content(handle_description_tool(str(name), args))
+    if name in PLATFORM_TOOL_NAMES:
+        return content(handle_platform_tool(str(name), args))
+    raise ValueError(f"unknown tool: {name}")
+
+
+def build_final_packet(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    policies_path_str = args.get("policies_path")
+    policies_path = Path(policies_path_str) if policies_path_str else None
+    return render_final_packet(
+        starts=[str(item) for item in args["starts"]],
+        query_class=str(args["query_class"]),
+        query_text=str(args.get("query", "")),
+        graph_path=graph_path,
+        policies_path=policies_path,
+        paths=tuple(str(item) for item in args.get("paths", [])),
+        tags=tuple(str(item) for item in args.get("tags", [])),
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
+        cache_namespace="mcp_final",
+        packet=str(args["packet"]) if args.get("packet") else None,
+    )
+
+
+def build_full_graph(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    max_tokens = int(args["max_tokens"]) if args.get("max_tokens") is not None else 20_000
+    return render_full_graph(
+        graph_path,
+        packet=str(args["packet"]) if args.get("packet") else "gg",
+        max_tokens=max_tokens if max_tokens else None,
+    )
+
+
+def build_query_context(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    changed_paths = _unique_strings(args.get("changed_paths") or [])
+    deleted_paths = _unique_strings(args.get("deleted_paths") or [])
+    refreshed_graph = None
+    refresh_metadata = None
+    sync_git = str(args.get("sync") or "none") == "git"
+    if changed_paths or deleted_paths or sync_git:
+        status = refresh_saved_graph(
+            directory=Path(str(args.get("directory") or ".")),
+            output_path=graph_path,
+            changed_paths=changed_paths,
+            deleted_paths=deleted_paths,
+            sync_git=sync_git,
+            max_nodes=int(args["scan_max_nodes"]) if args.get("scan_max_nodes") is not None else DEFAULT_SCAN_MAX_NODES,
+            depth=str(args["depth"]) if args.get("depth") else None,
+            frontend=str(args["frontend"]) if args.get("frontend") else None,
+            docs=bool(args["docs"]) if "docs" in args else None,
+            history=bool(args["history"]) if "history" in args else None,
+        )
+        if status.built:
+            refreshed_graph = status.graph
+        refresh_metadata = refresh_receipt(
+            status,
+            mode="git" if sync_git else "explicit",
+            requested_changed_paths=tuple(changed_paths),
+            requested_deleted_paths=tuple(deleted_paths),
+        )
+        anchor_paths = tuple(dict.fromkeys((*changed_paths, *status.changed_paths)))
+    else:
+        anchor_paths = ()
+    freshness = (
+        {"fresh": True, "changed_count": 0, "deleted_count": 0, "changed_paths": [], "deleted_paths": []}
+        if sync_git
+        else inspect_saved_graph_freshness(
+            directory=Path(str(args.get("directory") or ".")),
+            output_path=graph_path,
+        )
+    )
+    metadata: dict[str, object] = {
+        "freshness": scope_freshness(
+            freshness,
+            tuple(dict.fromkeys((*changed_paths, *deleted_paths))),
+        )
+    }
+    if refresh_metadata is not None:
+        metadata["refresh"] = refresh_metadata
+    return render_query_context(
+        query=str(args["query"]),
+        query_class=str(args.get("query_class") or "auto"),
+        graph_path=graph_path,
+        packet=str(args["packet"]) if args.get("packet") else None,
+        hops=int(args["hops"]) if args.get("hops") is not None else None,
+        anchor_limit=int(args["anchor_limit"]) if args.get("anchor_limit") is not None else None,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
+        scopes=tuple(str(scope) for scope in args.get("scopes") or []),
+        scope_mode=str(args.get("scope_mode") or "strict"),
+        show_anchors=bool(args.get("show_anchors")),
+        cache_namespace="mcp_query",
+        json_anchors=True,
+        graph=refreshed_graph,
+        response_metadata=metadata,
+        source_mode=str(args.get("source_mode") or "auto"),
+        memory_scopes=tuple(str(scope) for scope in args.get("memory_scopes") or ("project", "session")),
+        anchor_paths=anchor_paths,
+        include_snippets=bool(args.get("include_snippets")),
+        snippet_limit=int(args["snippet_limit"]) if args.get("snippet_limit") is not None else 3,
+        snippet_context_lines=(
+            int(args["snippet_context_lines"]) if args.get("snippet_context_lines") is not None else 2
+        ),
+        snippet_max_lines=(int(args["snippet_max_lines"]) if args.get("snippet_max_lines") is not None else 24),
+    )
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    return list(dict.fromkeys(str(value) for value in values))
+
+
+def handle_source_snippets(args: dict[str, Any]) -> str:
+    # Compose with search_nodes, which returns `id`: accept `node_ids` as the
+    # primary name and keep `starts` as an alias, so the two tools chain without
+    # the caller having to rename the field. Validate this before resolving the
+    # graph path so a missing-id call returns the actionable message, not an
+    # unrelated "no graph found" error.
+    raw_starts = args.get("node_ids") or args.get("starts")
+    if not raw_starts:
+        raise ValueError(
+            "source_snippets requires 'node_ids' (the ids search_nodes returns) or "
+            "'starts' (node ids, labels, or paths)."
+        )
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    return render_source_snippets(
+        starts=[str(item) for item in raw_starts],
+        graph_path=graph_path,
+        context_lines=int(args["context_lines"]) if args.get("context_lines") is not None else 4,
+        max_lines=int(args["max_lines"]) if args.get("max_lines") is not None else 40,
+    )
+
+
+def handle_project_status(args: dict[str, Any]) -> str:
+    directory = Path(str(args.get("directory") or "."))
+    graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else None
+    report = build_project_status(
+        directory=directory,
+        graph_path=graph_path,
+        run_probes=bool(args.get("probe")),
+    )
+    return _json(report)
+
+
+def handle_select_symbols(args: dict[str, Any]) -> str:
+    from ..retrieval.predicates import parse_criteria, select_symbols
+
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    graph = load_any(graph_path)
+
+    mode = str(args.get("mode") or "select")
+    limit = int(args["limit"]) if args.get("limit") is not None else 200
+    try:
+        criteria = parse_criteria(str(args["predicate"]), limit=limit)
+    except ValueError as exc:
+        return _json({"error": str(exc)})
+
+    result = select_symbols(graph, criteria, mode=mode)  # type: ignore[arg-type]
+    payload: dict[str, Any] = {
+        "mode": result.mode,
+        "total": result.total,
+        "criteria": result.criteria_detail,
+        "caller_evidence_complete": result.caller_evidence_complete,
+        "caller_evidence": result.caller_evidence,
+    }
+    if mode == "exists":
+        payload["exists"] = result.exists
+    if mode == "select":
+        payload["truncated"] = result.truncated
+        payload["symbols"] = result.symbols
+    return _json(payload)
+
+
+def handle_search_nodes(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    graph = load_any(graph_path)
+
+    q = str(args["query"]).lower()
+    limit = int(args["limit"]) if args.get("limit") is not None else 20
+
+    matches = search_nodes(graph, q, limit=limit)
+
+    # Confidence signal: ratio of the top match's score to the runner-up's.
+    # A large gap means one dominant, high-confidence anchor (empirically,
+    # ratio >= ~1.8 on exact-symbol-style queries against this project);
+    # a ratio near 1.0 means multiple candidates are genuinely tied and the
+    # caller should treat the list as several options, not a single answer.
+    # The 1.3 cutoff below is a provisional heuristic from a small sample,
+    # not a calibrated threshold -- treat the raw ratio as the real signal.
+    top_score_gap_ratio = None
+    ambiguous = False
+    if len(matches) >= 2:
+        if matches[1].score > 0:
+            top_score_gap_ratio = matches[0].score / matches[1].score
+            ambiguous = top_score_gap_ratio < 1.3
+        else:
+            ambiguous = False  # runner-up scored zero -- top match isn't contested
+
+    return _json(
+        {
+            "matches": [
+                {
+                    "id": match.node.id,
+                    "label": match.node.label,
+                    "kind": match.node.kind,
+                    "path": match.node.path,
+                    "line": match.node.line,
+                    "score": match.score,
+                    "reasons": list(match.reasons),
+                    "summary": match.node.summary,
+                }
+                for match in matches
+            ],
+            "total": len(matches),
+            "top_score_gap_ratio": top_score_gap_ratio,
+            "ambiguous": ambiguous,
+        }
+    )
+
+
+def main() -> None:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        response = dispatch(json.loads(line))
+        if response is not None:
+            sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
+            sys.stdout.flush()

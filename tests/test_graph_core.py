@@ -404,7 +404,7 @@ class GraphCoreTest(unittest.TestCase):
 
     def test_cohesion_guided_budget_trimming(self) -> None:
         from graphgraph.planning.types import ContextPlan
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         nodes = {f"N{i}": Node(f"N{i}", f"N{i}") for i in range(12)}
         edges = []
@@ -430,7 +430,7 @@ class GraphCoreTest(unittest.TestCase):
 
     def test_expand_context_density_throttle_scales_effective_node_budget(self) -> None:
         from graphgraph.planning.types import ContextPlan
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         # Chain N0..N29 for connectivity ("calls"), plus skip-two cross edges
         # ("references") to raise local edge density and engage the Edge Density
@@ -600,10 +600,7 @@ class GraphCoreTest(unittest.TestCase):
         from graphgraph.retrieval import search_nodes
 
         graph = Graph(
-            nodes={
-                f"N{i}": Node(f"N{i}", "Retrieval" if i == 0 else f"Node {i}")
-                for i in range(600)
-            },
+            nodes={f"N{i}": Node(f"N{i}", "Retrieval" if i == 0 else f"Node {i}") for i in range(600)},
             edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(599)],
         )
         with patch.object(
@@ -703,7 +700,6 @@ class GraphCoreTest(unittest.TestCase):
         self.assertEqual(weighted, {"fn2": 6.0})
 
 
-
 class GraphSchemaContractTest(unittest.TestCase):
     """`schema/graph.schema.json` is a published contract; keep it honest.
 
@@ -760,8 +756,10 @@ class PageRankShapeTest(unittest.TestCase):
         # protect is the numbers, not the implementation.
         nodes = {f"n{i}": Node(f"n{i}", f"sym{i}", "function", f"src/f{i}.py") for i in range(6)}
         edges = [
-            Edge("n0", "n1", "calls"), Edge("n1", "n2", "calls"),
-            Edge("n2", "n0", "calls"), Edge("n3", "n1", "calls"),
+            Edge("n0", "n1", "calls"),
+            Edge("n1", "n2", "calls"),
+            Edge("n2", "n0", "calls"),
+            Edge("n3", "n1", "calls"),
             Edge("n4", "n1", "calls"),  # n5 is dangling: no outgoing edges
         ]
         graph = Graph(nodes=nodes, edges=edges)

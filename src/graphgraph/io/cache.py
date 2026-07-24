@@ -1,49 +1,33 @@
+"""Backwards-compatible thin wrappers over the single graph cache.
+
+Graph caching used to live in two layers -- an unbounded dict inside
+``load_any`` and a bounded LRU here -- with coupled invalidation. They are now
+one bounded, locked LRU in :mod:`graphgraph.io.core`; these functions remain as
+the public entry points callers already import.
+"""
+
 from __future__ import annotations
 
-from collections import OrderedDict
 from pathlib import Path
-from threading import RLock
 
 from ..graph.core import Graph
-from . import core as _core
-from .core import load_any
-
-_CACHE_LIMIT = 8
-_CACHE: OrderedDict[Path, tuple[int, int, Graph]] = OrderedDict()
-_LOCK = RLock()
+from .core import clear_graph_load_cache, load_any, remember_loaded_graph
 
 
 def clear_graph_cache() -> int:
-    """Clear both graph-load cache layers and return removed entries."""
-    with _LOCK:
-        removed = len(_CACHE)
-        _CACHE.clear()
-        removed += len(_core._graph_load_cache)
-        _core._graph_load_cache.clear()
-    return removed
+    """Clear the process graph cache and return the number of entries removed."""
+    return clear_graph_load_cache()
 
 
 def load_any_cached(path: Path) -> Graph:
-    """Load a graph once per process and invalidate it by mtime and size."""
-    resolved = path.resolve()
-    stat = resolved.stat()
-    fingerprint = (stat.st_mtime_ns, stat.st_size)
-    with _LOCK:
-        cached = _CACHE.get(resolved)
-        if cached is not None and cached[:2] == fingerprint:
-            _CACHE.move_to_end(resolved)
-            return cached[2]
-    graph = load_any(resolved)
-    remember_graph(resolved, graph)
-    return graph
+    """Load a graph once per process, invalidated by base + sidecar fingerprint.
+
+    ``load_any`` already memoizes against the same bounded LRU, so this is now a
+    thin, stable alias rather than a second cache layer.
+    """
+    return load_any(path)
 
 
 def remember_graph(path: Path, graph: Graph) -> None:
     """Seed the process cache with a graph persisted by the current process."""
-    resolved = path.resolve()
-    stat = resolved.stat()
-    with _LOCK:
-        _CACHE[resolved] = (stat.st_mtime_ns, stat.st_size, graph)
-        _CACHE.move_to_end(resolved)
-        while len(_CACHE) > _CACHE_LIMIT:
-            _CACHE.popitem(last=False)
+    remember_loaded_graph(path, graph)

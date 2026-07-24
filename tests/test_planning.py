@@ -27,7 +27,8 @@ from graphgraph.retrieval import (
     retrieve_context,
     search_nodes,
 )
-from graphgraph.retrieval.context import apply_shape_budget, prune_doc_concept_noise, shape_edge_budget
+from graphgraph.retrieval.anchors import apply_shape_budget
+from graphgraph.retrieval.expansion import prune_doc_concept_noise, shape_edge_budget
 from graphgraph.retrieval.models import Match
 
 
@@ -100,9 +101,7 @@ class PlanningTest(unittest.TestCase):
         self.assertIn("explicit document scope", route.reasons)
 
     def test_query_router_consumer_wording_stays_source_orientation(self) -> None:
-        route = route_query(
-            "Where is SourceCaseBaseline, what metrics does it enforce, and which test consumes it?"
-        )
+        route = route_query("Where is SourceCaseBaseline, what metrics does it enforce, and which test consumes it?")
 
         self.assertNotEqual(route.query_class, "affected_tests")
         self.assertIn(route.query_class, {"direct_lookup", "reverse_lookup", "subsystem_summary"})
@@ -123,7 +122,7 @@ class PlanningTest(unittest.TestCase):
         self.assertTrue(path_matches("**", "anything/at/all.py"))
 
     def test_adaptive_anchor_limit_handles_symbol_plateaus(self) -> None:
-        from graphgraph.retrieval.context import _adaptive_anchor_limit
+        from graphgraph.retrieval.anchors import _adaptive_anchor_limit
 
         plan = plan_context("blast_radius", "parse")
         plateau = (
@@ -213,9 +212,7 @@ class PlanningTest(unittest.TestCase):
         stats = compute_subgraph_stats(graph, {"N1"}, [])
         self.assertEqual(stats.nodes, 1)
         self.assertEqual(stats.edges, 0)
-        self.assertLessEqual(
-            stats.estimated_tokens_by_packet["semantic_arrow"], stats.estimated_tokens_by_packet["gg"]
-        )
+        self.assertLessEqual(stats.estimated_tokens_by_packet["semantic_arrow"], stats.estimated_tokens_by_packet["gg"])
 
         summary_graph = Graph(
             nodes={

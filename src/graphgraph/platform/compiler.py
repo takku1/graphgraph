@@ -29,6 +29,28 @@ from .source_planner import QuerySourcePlanner, receipt_data
 
 
 @dataclass(frozen=True)
+class CompilerPassSpec:
+    name: str
+    description: str
+
+
+COMPILER_PASSES: tuple[CompilerPassSpec, ...] = (
+    CompilerPassSpec("evidence", "Collect bounded structural and CPG evidence."),
+    CompilerPassSpec("inference", "Infer typed edges from the current graph IR."),
+    CompilerPassSpec("hierarchy", "Materialize the graph hierarchy."),
+)
+COMPILER_PASS_NAMES: tuple[str, ...] = tuple(spec.name for spec in COMPILER_PASSES)
+
+
+def compiler_pass_schema() -> dict[str, object]:
+    return {
+        "type": "array",
+        "items": {"type": "string", "enum": list(COMPILER_PASS_NAMES)},
+        "description": "Optional compiler passes: " + ", ".join(COMPILER_PASS_NAMES) + ".",
+    }
+
+
+@dataclass(frozen=True)
 class GraphProgram:
     """LLM-native compilation request over a typed evidence graph."""
 

@@ -11,6 +11,32 @@ from .models import Match
 from .scoping import _is_test_node
 from .text import node_search_text, tokenize
 
+# Cached (authority_rank, document_authority, neutral_rank). Loaded lazily: the
+# analysis package imports eval -> retrieval, so a module-load import here would
+# cycle. By the time search runs, retrieval is fully initialized.
+_authority_fns: tuple | None = None
+
+
+def _node_authority_rank(node: Node) -> int:
+    """Authority rank for a doc node, neutral for everything else.
+
+    Only documentation nodes under a ``docs/`` tree carry an authority tier, so
+    this differentiates current reference from dated findings while leaving
+    code-node ordering untouched (they all resolve to the same neutral rank).
+    Used strictly as a *tiebreaker* below score, so it can never demote a
+    lexically stronger match.
+    """
+    global _authority_fns
+    if _authority_fns is None:
+        from ..analysis.document_authority import authority_rank, document_authority
+        _authority_fns = (authority_rank, document_authority, authority_rank("current"))
+    authority_rank, document_authority, neutral = _authority_fns
+    path = node.path.replace("\\", "/")
+    index = path.find("docs/")
+    if index == -1:
+        return neutral
+    return authority_rank(document_authority(path[index + len("docs/"):]))
+
 DEPENDENCY_QUERY_TERMS = {"dependency", "dependencies", "external", "import", "imports", "module", "package", "vendor"}
 TEST_QUERY_TERMS = {"test", "tests", "testing", "pytest", "unittest", "spec", "fixture", "fixtures"}
 LOCAL_PPR_GRAPH_THRESHOLD = 512
@@ -507,7 +533,10 @@ def search_nodes(
 
             matches.append(Match(node=node, score=score, reasons=tuple(dict.fromkeys(reasons))))
 
-    matches.sort(key=lambda m: (-m.score, m.node.path, m.node.label))
+    # Authority breaks ties *below* score: when two docs are equally relevant,
+    # prefer current reference over dated findings (T10). Code nodes share the
+    # neutral rank, so their order is unchanged.
+    matches.sort(key=lambda m: (-m.score, -_node_authority_rank(m.node), m.node.path, m.node.label))
     return tuple(matches[:limit])
 
 

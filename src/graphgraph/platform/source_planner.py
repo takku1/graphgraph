@@ -55,6 +55,20 @@ class QuerySourcePlanner:
         self.directory = directory
         self.graph_path = graph_path.resolve() if graph_path else None
 
+    def _sidecar_dir(self) -> Path:
+        """Where auxiliary indexes live: next to the graph, never the repo root.
+
+        The query path constructs this planner with the project root as
+        `directory`, while every other caller passes `graph_path.parent`. That
+        split wrote an 18 MB `semantic.json` to the repo root on query -- one
+        `git add -A` from being committed, and never gitignored. Anchoring to
+        the graph's own directory (`.graphgraph/`, already ignored) makes the
+        location independent of which constructor path was taken.
+        """
+        if self.graph_path is not None:
+            return self.graph_path.parent
+        return self.directory
+
     def plan(
         self,
         graph: Graph,
@@ -138,7 +152,7 @@ class QuerySourcePlanner:
         trace_edges = 0
         weak_lexical = _weak_lexical(base_matches, query)
 
-        semantic_path = self.directory / "semantic.json"
+        semantic_path = self._sidecar_dir() / "semantic.json"
         if mode == "all" or weak_lexical:
             try:
                 semantic = SemanticIndex.load(semantic_path) if semantic_path.exists() else SemanticIndex(semantic_path)
@@ -244,15 +258,21 @@ class QuerySourcePlanner:
         )
 
 
-def source_state_signature(directory: Path) -> str:
+def source_state_signature(directory: Path, *, graph_dir: Path | None = None) -> str:
     digest = hashlib.sha256()
+    # semantic.json now lives next to the graph (see _sidecar_dir); fall back
+    # to the project root for repos whose index predates the move.
+    semantic_dir = graph_dir if graph_dir is not None else directory
     paths = [
+        semantic_dir / "semantic.json",
         directory / "semantic.json",
         directory / "memory.json",
         directory / "episodes.jsonl",
         directory / "projects.json",
         *[directory / name for name in ("runtime-trace.jsonl", "traces.jsonl", "trace.jsonl")],
     ]
+    seen: set[Path] = set()
+    paths = [p for p in paths if not (p in seen or seen.add(p))]
     for path in paths:
         if path.exists():
             stat = path.stat()

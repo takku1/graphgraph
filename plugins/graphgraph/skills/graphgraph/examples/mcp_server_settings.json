@@ -1,0 +1,19 @@
+{
+  "claude_desktop": {
+    "mcpServers": {
+      "graphgraph": {
+        "command": "uv",
+        "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"]
+      }
+    }
+  },
+  "cursor": {
+    "mcpServers": {
+      "graphgraph": {
+        "command": "uv",
+        "args": ["run", "--project", "<path-to-graphgraph>", "graphgraph-mcp"],
+        "type": "stdio"
+      }
+    }
+  }
+}

@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph
 from ..planning import ContextPlan
+from .anchors import retrieval_confidence
 from .facets import (
     _AFFECTED_OUTPUT_TERMS,
     reconcile_affected_output_facets,
@@ -594,23 +595,26 @@ def reconcile_semantic_retrieval_receipt(
 
     facet_coverage = metadata.get("facet_coverage", {})
     structural_coverage = metadata.get("structural_facet_coverage", {})
+    # Gate on *required* (content) facets only: pure query-shape facets
+    # ("definition", "class") going unmatched must not force an abstention over
+    # an answer the anchors carry (graybox F2). Falls back to the full
+    # unfulfilled list for coverage dicts predating the required/optional split.
+    def _required_unfulfilled(coverage: object) -> tuple[str, ...]:
+        if not isinstance(coverage, dict):
+            return ()
+        # Intersect with the CURRENT unfulfilled list, not a stored snapshot:
+        # affected-tests reconciliation repairs `unfulfilled` in place, and a
+        # facet it satisfied must not resurface here just because it is content.
+        current = [str(item) for item in coverage.get("unfulfilled", ())]
+        required = coverage.get("unfulfilled_required")
+        if required is None:
+            return tuple(current)  # coverage predates the required/optional split
+        required_set = {str(item) for item in required}
+        return tuple(label for label in current if label in required_set)
+
     unfulfilled = [
-        *(
-            str(item)
-            for item in (
-                facet_coverage.get("unfulfilled", ())
-                if isinstance(facet_coverage, dict)
-                else ()
-            )
-        ),
-        *(
-            str(item)
-            for item in (
-                structural_coverage.get("unfulfilled", ())
-                if isinstance(structural_coverage, dict)
-                else ()
-            )
-        ),
+        *_required_unfulfilled(facet_coverage),
+        *_required_unfulfilled(structural_coverage),
     ]
     if (
         repaired_facets
@@ -677,10 +681,23 @@ def reconcile_semantic_retrieval_receipt(
         abstained = True
         reasons.append(document_warning)
 
+    # Preserve the answer-confidence retrieve_context computed from the anchor
+    # evidence. This receipt calibration recomputes status/abstained/reason, so
+    # rebuilding the dict from those alone silently dropped `confidence` -- the
+    # field reached the direct API but never the compiled CLI/MCP surface,
+    # which is the only surface a black-box caller can see. Confidence is a
+    # property of the anchors, not the facet status, so it carries through a
+    # status change unchanged; recompute from result.matches only if it is
+    # somehow absent upstream.
+    prior_answerability = metadata.get("answerability", {})
+    confidence = prior_answerability.get("confidence")
+    if confidence is None:
+        confidence = round(retrieval_confidence(result.matches), 4)
     answerability = {
         "status": status,
         "abstained": abstained,
         "reason": "; ".join(dict.fromkeys(reason for reason in reasons if reason)),
+        "confidence": confidence,
     }
     metadata["answerability"] = answerability
 

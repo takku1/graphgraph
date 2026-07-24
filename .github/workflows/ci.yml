@@ -28,5 +28,47 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check src tests
 
+      - name: Check generated distribution artifacts
+        run: uv run graphgraph artifacts --check
+
       - name: Test (pytest)
         run: uv run pytest
+
+  # Distribution test: source tests passing does not prove the *packaged*
+  # wheel is usable. This builds the wheel + sdist and installs the wheel in a
+  # clean environment (no editable src on the path), then smoke-tests the
+  # entry point and the package data, catching missing assets or broken
+  # console scripts that the source suite cannot see.
+  distribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: uv build --out-dir dist
+
+      - name: Install the wheel in a clean environment
+        run: |
+          uv venv /tmp/wheelenv
+          uv pip install --python /tmp/wheelenv/bin/python dist/*.whl
+
+      - name: Smoke-test the installed distribution
+        run: |
+          /tmp/wheelenv/bin/python - <<'PY'
+          from pathlib import Path
+          import graphgraph
+          from graphgraph.mcp import main as mcp_main  # graphgraph-mcp entry point resolves
+          assert callable(mcp_main)
+          assets = Path(graphgraph.__file__).parent / "assets"
+          for name in ("graphgraph_skill.md", "validate_live.py"):
+              assert (assets / name).exists(), f"missing package data in wheel: {name}"
+          print("import, mcp entry point, skill + live-validator package data OK")
+          PY
+          /tmp/wheelenv/bin/graphgraph --help
+          /tmp/wheelenv/bin/graphgraph doctor
+          test -f /tmp/wheelenv/bin/graphgraph-mcp || (echo "graphgraph-mcp console script missing" && exit 1)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 from ..concepts import (
@@ -136,6 +137,42 @@ def query_topology_trust(
         "global_counts": global_counts,
         "scope": "selected_packet+global_extraction",
     })
+    encoded_languages = graph_metadata.get("member_calls_global_by_language", "")
+    if encoded_languages:
+        try:
+            raw_languages = json.loads(encoded_languages)
+        except (TypeError, json.JSONDecodeError):
+            raw_languages = {}
+        if isinstance(raw_languages, dict):
+            language_receipts: dict[str, dict[str, object]] = {}
+            for language, raw_counts in sorted(raw_languages.items()):
+                if not isinstance(raw_counts, dict):
+                    continue
+                counts = {
+                    name: int(raw_counts.get(name, 0) or 0)
+                    for name in (
+                        "resolved",
+                        "ambiguous",
+                        "unknown_receiver",
+                        "external_resolved",
+                        "unmatched",
+                    )
+                }
+                receiver_sites = (
+                    counts["resolved"]
+                    + counts["ambiguous"]
+                    + counts["unknown_receiver"]
+                )
+                language_receipts[str(language)] = {
+                    **counts,
+                    "receiver_sites": receiver_sites,
+                    "receiver_resolution_ratio": round(
+                        counts["resolved"] / max(1, receiver_sites),
+                        4,
+                    ),
+                }
+            if language_receipts:
+                result["call_coverage_by_language"] = language_receipts
     if global_status != "high":
         result["status"] = global_status
     return result

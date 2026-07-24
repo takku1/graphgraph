@@ -28,6 +28,265 @@ from graphgraph.services import render_final_packet, render_query_context, rende
 from graphgraph.services.context import resolve_start_nodes
 
 
+class ExactOverloadReceiptTest(unittest.TestCase):
+    """T12: a ranked fallback caused by an overloaded exact name must say so."""
+
+    def _graph(self) -> Graph:
+        # Three functions all literally named `avg`, in different files.
+        nodes = {
+            f"m{i}": Node(f"m{i}", "avg", "function", f"pkg/mod{i}.py", summary="mean")
+            for i in range(3)
+        }
+        nodes["unique"] = Node("unique", "compute_total", "function", "pkg/total.py")
+        return Graph(nodes=nodes, edges=[])
+
+    def test_overloaded_exact_name_reports_disambiguation(self) -> None:
+        graph = self._graph()
+        result = retrieve_context(graph, "avg", "direct_lookup", 1)
+        disambiguation = result.metadata.get("disambiguation")
+        self.assertIsNotNone(disambiguation)
+        self.assertEqual(disambiguation["identifier"], "avg")
+        self.assertEqual(disambiguation["definitions"], 3)
+        self.assertIn("ranked to disambiguate", disambiguation["reason"])
+
+    def test_unique_exact_name_has_no_disambiguation(self) -> None:
+        graph = self._graph()
+        result = retrieve_context(graph, "compute_total", "direct_lookup", 1)
+        self.assertIsNone(result.metadata.get("disambiguation"))
+        # And it still takes the fast path.
+        self.assertEqual(result.metadata.get("anchor_strategy"), "exact_fast_path")
+
+    def test_phrase_query_is_not_flagged_as_overload(self) -> None:
+        # A multi-word query ranks for other reasons; it must not be mislabeled.
+        graph = self._graph()
+        result = retrieve_context(graph, "the avg helper function", "direct_lookup", 1)
+        self.assertIsNone(result.metadata.get("disambiguation"))
+
+    def test_reverse_lookup_truncation_reports_omitted_neighbors(self) -> None:
+        # T12: a budget-truncated reverse lookup must name how many known
+        # callers were omitted, so a caller count is never read as complete.
+        nodes = {"target": Node("target", "hot", "function", "pkg/core.py")}
+        edges = []
+        for i in range(12):
+            nodes[f"c{i}"] = Node(f"c{i}", f"caller_{i}", "function", f"pkg/c{i}.py")
+            edges.append(Edge(f"c{i}", "target", "calls"))
+        graph = Graph(nodes=nodes, edges=edges)
+        result = retrieve_context(graph, "hot", "reverse_lookup", 2, max_nodes=4)
+        truncation = result.metadata.get("truncation", {})
+        self.assertTrue(truncation.get("truncated"))
+        self.assertEqual(truncation.get("known_direct_neighbors"), 12)
+        self.assertGreater(truncation.get("omitted_direct_neighbors", 0), 0)
+
+
+class DocumentTruncationPartialResultTest(unittest.TestCase):
+    """T10: a requested document the scanner truncated is a partial result."""
+
+    def _graph(self, *, truncated: str | None) -> Graph:
+        graph = Graph(
+            nodes={
+                "doc": Node(
+                    "doc",
+                    "widget_configuration",
+                    "paragraph",
+                    "docs/big.md",
+                    summary="how to configure the widget",
+                    facts=("The widget is configured by editing config.yaml.",),
+                ),
+            },
+            edges=[],
+        )
+        if truncated is not None:
+            graph.metadata["docs_truncated_files"] = truncated
+            graph.metadata["docs_truncated_count"] = "1"
+        return graph
+
+    def test_truncated_requested_document_downgrades_to_partial(self) -> None:
+        graph = self._graph(truncated="docs/big.md")
+        result = retrieve_context(
+            graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",)
+        )
+        truncation = result.metadata.get("document_truncation")
+        self.assertIsNotNone(truncation)
+        self.assertTrue(truncation["truncated"])
+        self.assertIn("docs/big.md", truncation["requested_documents"])
+        answerability = result.metadata["answerability"]
+        self.assertEqual(answerability["status"], "partial")
+        # A partial result still returns its (clipped) evidence -- it does not
+        # abstain, unlike an incomplete/unanswerable receipt.
+        self.assertFalse(answerability["abstained"])
+
+    def test_untruncated_document_is_not_flagged_partial(self) -> None:
+        graph = self._graph(truncated=None)
+        result = retrieve_context(
+            graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",)
+        )
+        self.assertIsNone(result.metadata.get("document_truncation"))
+        self.assertNotEqual(result.metadata["answerability"]["status"], "partial")
+
+    def test_a_different_truncated_document_does_not_fire(self) -> None:
+        # Only the *requested* document being truncated makes this result
+        # partial; an unrelated truncated doc must not taint the receipt.
+        graph = self._graph(truncated="docs/other.md")
+        result = retrieve_context(
+            graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",)
+        )
+        self.assertIsNone(result.metadata.get("document_truncation"))
+
+    def test_path_matching_is_segment_aware(self) -> None:
+        from graphgraph.retrieval.context import _truncated_requested_documents
+
+        graph = Graph(nodes={}, edges=[])
+        graph.metadata["docs_truncated_files"] = "docs/foo.md"
+        # Exact and repo-prefixed forms hit; a longer basename that merely ends
+        # in the same characters (barfoo.md) must not.
+        self.assertEqual(
+            _truncated_requested_documents(graph, ("docs/foo.md",)), ["docs/foo.md"]
+        )
+        self.assertEqual(
+            _truncated_requested_documents(graph, ("repo/docs/foo.md",)),
+            ["repo/docs/foo.md"],
+        )
+        self.assertEqual(
+            _truncated_requested_documents(graph, ("docs/barfoo.md",)), []
+        )
+        # No truncation metadata -> no hits, whatever was requested.
+        self.assertEqual(_truncated_requested_documents(Graph(nodes={}, edges=[]), ("docs/foo.md",)), [])
+
+
+class AnswerabilityFacetCalibrationTest(unittest.TestCase):
+    """F2: query-shape facets must not abstain over an answer the anchors carry."""
+
+    def _class_graph(self) -> Graph:
+        return Graph(
+            nodes={
+                "C": Node("C", "LoRAModule", "class", "networks/lora.py", summary="LoRA adapter module"),
+                "M": Node("M", "forward", "method", "networks/lora.py", summary="forward pass", parent="C"),
+            },
+            edges=[Edge("C", "M", "contains")],
+        )
+
+    def test_definition_of_class_query_does_not_abstain(self) -> None:
+        # The reviewer's case: "definition of LoRAModule class" found the class
+        # yet abstained because "definition"/"class" were unmatched lexical
+        # facets. Those are structural query-shape terms (a graph node kind /
+        # a definition synonym), not content, so they must not gate the answer.
+        graph = self._class_graph()
+        result = retrieve_context(graph, "definition of LoRAModule class", "direct_lookup", 2)
+        answerability = result.metadata["answerability"]
+        self.assertEqual(answerability["status"], "answerable")
+        self.assertFalse(answerability["abstained"])
+        self.assertIn("C", result.nodes)  # the class is actually in the packet
+
+    def test_genuine_missing_content_still_abstains(self) -> None:
+        # The gate must still fire on real content that is absent: this is the
+        # dangerous direction (a confident answer over nothing), so the fix must
+        # not blunt it.
+        graph = self._class_graph()
+        result = retrieve_context(graph, "quantum entanglement scheduler heuristic", "direct_lookup", 2)
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+
+    def test_requiredness_separates_structural_from_content(self) -> None:
+        from graphgraph.retrieval.facets import _facet_is_required, _graph_kind_terms
+        from graphgraph.retrieval.search import _search_token_index
+
+        graph = self._class_graph()
+        index = _search_token_index(graph)
+        count = sum(1 for n in graph.nodes.values() if n.active)
+        kinds = _graph_kind_terms(graph)
+        # "class"/"method" are node kinds; "definition" is a definition synonym.
+        self.assertFalse(_facet_is_required(("definition", "class"), kinds, index, count))
+        self.assertFalse(_facet_is_required(("method",), kinds, index, count))
+        # A specific content term the graph does not ubiquitously contain.
+        self.assertTrue(_facet_is_required(("entanglement", "scheduler"), kinds, index, count))
+
+
+class RetrievalConfidenceTest(unittest.TestCase):
+    """retrieval_confidence must reflect the evidence, not the query class."""
+
+    def _match(self, node_id, label, kind, path, score, reasons):
+        from graphgraph.graph.core import Node
+        from graphgraph.retrieval.models import Match
+
+        return Match(Node(node_id, label, kind, path), score, tuple(reasons))
+
+    def test_confidence_varies_with_evidence_not_class(self) -> None:
+        # The defect this replaces: QueryRoute.confidence is a function of the
+        # query text alone, so a strong exact hit and a nonexistent symbol in
+        # the same class scored identically to many significant figures. A real
+        # answer-confidence must separate these.
+        from graphgraph.retrieval.anchors import retrieval_confidence
+
+        strong = (
+            self._match("A", "AuthService", "class", "auth.py", 9.0, ["label_exact_terms"]),
+            self._match("B", "AuthHelper", "function", "helpers.py", 1.0, ["label_partial"]),
+        )
+        weak = (
+            self._match("C", "thing_one", "function", "a.py", 2.0, ["label_partial"]),
+            self._match("D", "thing_two", "function", "b.py", 1.9, ["label_partial"]),
+            self._match("E", "thing_three", "function", "c.py", 1.8, ["label_partial"]),
+        )
+        empty: tuple = ()
+
+        strong_conf = retrieval_confidence(strong)
+        weak_conf = retrieval_confidence(weak)
+        empty_conf = retrieval_confidence(empty)
+
+        # An exact hit that stands clear of the field must outrank a plateau of
+        # fuzzy near-ties, which in turn must outrank no evidence at all.
+        self.assertGreater(strong_conf, weak_conf)
+        self.assertGreater(weak_conf, empty_conf)
+        self.assertEqual(empty_conf, 0.0)
+        # And it must be a genuine spread, not two class-constants a hair apart.
+        self.assertGreater(strong_conf - weak_conf, 0.2)
+
+    def test_confidence_is_bounded(self) -> None:
+        from graphgraph.retrieval.anchors import retrieval_confidence
+
+        maxed = (self._match("A", "X", "class", "x.py", 1e9, ["label_exact_terms"]),)
+        self.assertLessEqual(retrieval_confidence(maxed), 1.0)
+        self.assertGreaterEqual(retrieval_confidence(maxed), 0.0)
+
+    def test_topology_trust_exposes_language_conditioned_call_coverage(self) -> None:
+        import json
+
+        from graphgraph.retrieval.quality import query_topology_trust
+
+        trust = query_topology_trust(
+            [],
+            metadata={
+                "member_calls_global_resolved": "5",
+                "member_calls_global_ambiguous": "1",
+                "member_calls_global_unknown_receiver": "14",
+                "member_calls_global_unresolved": "9",
+                "member_calls_global_by_language": json.dumps(
+                    {
+                        "javascript": {
+                            "resolved": 0,
+                            "ambiguous": 0,
+                            "unknown_receiver": 8,
+                            "external_resolved": 3,
+                            "unmatched": 2,
+                        },
+                        "rust": {
+                            "resolved": 5,
+                            "ambiguous": 1,
+                            "unknown_receiver": 6,
+                            "external_resolved": 4,
+                            "unmatched": 0,
+                        },
+                    },
+                    separators=(",", ":"),
+                ),
+            },
+            query_class="reverse_lookup",
+        )
+
+        languages = trust["call_coverage_by_language"]
+        self.assertEqual(languages["javascript"]["receiver_resolution_ratio"], 0.0)
+        self.assertEqual(languages["rust"]["receiver_resolution_ratio"], 0.4167)
+        self.assertEqual(languages["javascript"]["unmatched"], 2)
+
+
 class RetrievalTest(unittest.TestCase):
     def test_git_worktree_paths_classifies_changes_deletes_and_renames(self) -> None:
         from graphgraph.retrieval import git_utils
@@ -40,10 +299,13 @@ class RetrievalTest(unittest.TestCase):
         )
         untracked = subprocess.CompletedProcess([], 0, stdout=b"new_file.py\0", stderr=b"")
         git_utils._git_path_cache.clear()
-        with patch.object(git_utils, "_find_git_root", return_value=Path("C:/repo")), patch.object(
-            git_utils.subprocess,
-            "run",
-            side_effect=[diff, untracked],
+        with (
+            patch.object(git_utils, "_find_git_root", return_value=Path("C:/repo")),
+            patch.object(
+                git_utils.subprocess,
+                "run",
+                side_effect=[diff, untracked],
+            ),
         ):
             changed, deleted = git_utils.get_git_worktree_paths(Path("C:/repo"))
 
@@ -129,6 +391,7 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn("TYPE", result.nodes)
         self.assertIn("TEST", result.nodes)
         self.assertTrue(any(edge.type == "implements" for edge in result.edges))
+
     def test_spreading_activation_retrieval(self) -> None:
         graph = sample_graph()
         from graphgraph.retrieval.activation import ActivationStateCache
@@ -209,14 +472,21 @@ class RetrievalTest(unittest.TestCase):
         spreading_activation(graph, ["N1"], max_nodes=10)
         state = cache.load()
 
-        # alpha=0.6, decay=0.6, steps=2 defaults:
-        #   step0: N1=1.0 (injection) spreads 0.6*1.0/1 to N2 => N2=0.6
-        #   step1: N1 receives 0.6*0.6/2 back from N2 (N1,N3 neighbors of N2) => N1=1.18
-        #          N2 receives another 0.6*1.0/1 from N1 => N2=1.2
-        #          N3 receives 0.6*0.6/2 from N2 => N3=0.18
-        self.assertAlmostEqual(state["N1"], 1.18, places=6)
+        # alpha=0.6, decay=0.6, steps=2 defaults. Energy is split by relation
+        # strength * edge weight, not uniformly across neighbours:
+        #   edge N1-reads->N2: traversal_strength(reads)=0.9 * weight 0.9 = 0.81
+        #   edge N2-writes->N3: traversal_strength(writes)=0.9 * weight 0.8 = 0.72
+        #   step0: N1=1.0 (injection); sole neighbour N2 takes all 0.6*1.0 => N2=0.6
+        #   step1: N2 receives another 0.6*1.0 from N1 => N2=1.2
+        #          N2 emits 0.6*0.6=0.36 split 0.81:0.72 between N1 and N3
+        #          N1 += 0.36*(0.81/1.53)=0.190588 => N1=1.190588
+        #          N3 += 0.36*(0.72/1.53)=0.169412 => N3=0.169412
+        # Under the prior uniform split these were 1.18 / 1.2 / 0.18: the
+        # back-edge to N1 now outranks the forward edge to N3 because reads
+        # carries a higher weight than writes on this fixture.
+        self.assertAlmostEqual(state["N1"], 1.190588, places=6)
         self.assertAlmostEqual(state["N2"], 1.2, places=6)
-        self.assertAlmostEqual(state["N3"], 0.18, places=6)
+        self.assertAlmostEqual(state["N3"], 0.169412, places=6)
 
     def test_spreading_activation_numeric_decay_isolated(self) -> None:
         from graphgraph.retrieval.activation import ActivationStateCache, spreading_activation
@@ -400,16 +670,20 @@ class RetrievalTest(unittest.TestCase):
             edges=[Edge("CALLER", "TARGET", "calls")],
         )
 
-        with patch.object(
-            graph,
-            "personalized_pagerank",
-            side_effect=AssertionError("direct exact lookup executed PPR"),
-        ), patch(
-            "graphgraph.retrieval.context.doc_code_bias",
-            side_effect=AssertionError("direct exact lookup scanned document/code bias"),
-        ), patch(
-            "graphgraph.retrieval.context.apply_shape_budget",
-            side_effect=AssertionError("direct exact lookup profiled whole-graph shape"),
+        with (
+            patch.object(
+                graph,
+                "personalized_pagerank",
+                side_effect=AssertionError("direct exact lookup executed PPR"),
+            ),
+            patch(
+                "graphgraph.retrieval.context.doc_code_bias",
+                side_effect=AssertionError("direct exact lookup scanned document/code bias"),
+            ),
+            patch(
+                "graphgraph.retrieval.anchors.apply_shape_budget",
+                side_effect=AssertionError("direct exact lookup profiled whole-graph shape"),
+            ),
         ):
             result = retrieve_context(
                 graph,
@@ -466,7 +740,7 @@ class RetrievalTest(unittest.TestCase):
                     side_effect=AssertionError("production exact lookup profiled compiler graph shape"),
                 ),
                 patch(
-                    "graphgraph.retrieval.context.apply_shape_budget",
+                    "graphgraph.retrieval.anchors.apply_shape_budget",
                     side_effect=AssertionError("production exact lookup profiled retrieval graph shape"),
                 ),
                 patch(
@@ -474,14 +748,16 @@ class RetrievalTest(unittest.TestCase):
                     side_effect=AssertionError("production exact lookup scanned document/code bias"),
                 ),
             ):
-                payload = json.loads(render_query_context(
-                    query="resolve_packet_budget",
-                    query_class="auto",
-                    graph_path=graph_path,
-                    graph=graph,
-                    json_anchors=True,
-                    show_anchors=True,
-                ))
+                payload = json.loads(
+                    render_query_context(
+                        query="resolve_packet_budget",
+                        query_class="auto",
+                        graph_path=graph_path,
+                        graph=graph,
+                        json_anchors=True,
+                        show_anchors=True,
+                    )
+                )
 
         self.assertEqual(payload["anchors"][0]["id"], "TARGET")
         self.assertEqual(payload["retrieval"]["anchor_strategy"], "exact_fast_path")
@@ -612,9 +888,7 @@ class RetrievalTest(unittest.TestCase):
             edges.append(Edge(f"C{i}", "GEN", "imports_from"))
         graph = Graph(nodes=nodes, edges=edges)
         self.assertEqual(search_nodes(graph, "User", limit=3, personalize=True)[0].node.id, "SRC")
-        self.assertEqual(
-            search_nodes(graph, "User protobuf", limit=3, personalize=True)[0].node.id, "GEN"
-        )
+        self.assertEqual(search_nodes(graph, "User protobuf", limit=3, personalize=True)[0].node.id, "GEN")
 
     def test_search_prefers_source_over_benchmark_unless_query_mentions_benchmark(self) -> None:
         graph = Graph(
@@ -655,7 +929,9 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(identifier_quality_bonus("tmp"), 0.0)
         self.assertEqual(identifier_quality_bonus("data"), 0.0)
         self.assertEqual(identifier_quality_bonus(""), 0.0)
-        self.assertEqual(identifier_quality_bonus("helper"), 0.0)  # single segment, not generic-listed but still 1 segment
+        self.assertEqual(
+            identifier_quality_bonus("helper"), 0.0
+        )  # single segment, not generic-listed but still 1 segment
         self.assertGreater(identifier_quality_bonus("resolve_modified_node_ids"), 0.0)
         self.assertGreater(identifier_quality_bonus("resolveModifiedNodeIds"), 0.0)
         # More segments should score at least as high, and the bonus must
@@ -914,7 +1190,9 @@ class RetrievalTest(unittest.TestCase):
         graph.nodes["A"] = Node("A", "BetaSearch", "function", "src/a.py")
 
         self.assertEqual(search_nodes(graph, "beta search", limit=1)[0].node.label, "BetaSearch")
-        self.assertTrue(all(match.node.label != "AlphaSearch" for match in search_nodes(graph, "alpha search", limit=1)))
+        self.assertTrue(
+            all(match.node.label != "AlphaSearch" for match in search_nodes(graph, "alpha search", limit=1))
+        )
 
     def test_retrieval_anchors_code_identifier_queries(self) -> None:
         graph = Graph(
@@ -950,7 +1228,7 @@ class RetrievalTest(unittest.TestCase):
 
     def test_blast_radius_prioritizes_incoming_impact_over_outgoing_context(self) -> None:
         from graphgraph.planning.types import ContextPlan
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         nodes = {"T": Node("T", "Target")}
         nodes.update({f"I{i}": Node(f"I{i}", f"Incoming {i}") for i in range(30)})
@@ -981,7 +1259,7 @@ class RetrievalTest(unittest.TestCase):
 
     def test_subsystem_summary_expands_high_degree_anchor(self) -> None:
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         leaves = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(200)}
         graph = Graph(
@@ -997,7 +1275,7 @@ class RetrievalTest(unittest.TestCase):
 
     def test_multi_hop_path_reserves_connection_across_high_fanout(self) -> None:
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         leaves = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(100)}
         graph = Graph(
@@ -1028,7 +1306,7 @@ class RetrievalTest(unittest.TestCase):
         # references) and a strong one (high-confidence calls). Beam search must
         # reserve the strong route, not whichever the adjacency yields first.
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         graph = Graph(
             nodes={k: Node(k, k, "function", f"{k}.py") for k in ("START", "W", "S", "TARGET")},
@@ -1048,7 +1326,7 @@ class RetrievalTest(unittest.TestCase):
 
     def test_subsystem_summary_reserves_relation_family_evidence(self) -> None:
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         leaves = {f"N{i}": Node(f"N{i}", f"Node {i}") for i in range(100)}
         graph = Graph(
@@ -1067,7 +1345,7 @@ class RetrievalTest(unittest.TestCase):
 
     def test_doc_summary_file_anchor_retrieves_section_contents(self) -> None:
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import expand_context
+        from graphgraph.retrieval.expansion import expand_context
 
         graph = Graph(
             nodes={
@@ -1198,10 +1476,7 @@ class RetrievalTest(unittest.TestCase):
 
         result = retrieve_context(
             graph,
-            (
-                "Summarize incomplete items in docs/roadmap/gap-analysis.md "
-                "and their acceptance criteria."
-            ),
+            ("Summarize incomplete items in docs/roadmap/gap-analysis.md and their acceptance criteria."),
             "doc_summary",
             hops=1,
         )
@@ -1212,14 +1487,16 @@ class RetrievalTest(unittest.TestCase):
         self.assertNotIn("OTHER", result.nodes)
 
     def test_doc_summary_deduplicates_copied_content_and_excludes_source_anchors(self) -> None:
-        from graphgraph.retrieval.context import select_anchor_matches
+        from graphgraph.retrieval.anchors import select_anchor_matches
         from graphgraph.retrieval.models import Match
 
         copied_fact = "Accept a build only after checking exclusions, validation, and truncation."
         matches = (
             Match(Node("PLUGIN", "Acceptance", "paragraph", "plugins/skill.md", facts=(copied_fact,)), 20.0, ()),
             Match(Node("ASSET", "Acceptance", "paragraph", "src/assets/skill.md", facts=(copied_fact,)), 19.0, ()),
-            Match(Node("GUIDE", "Build guide", "section", "docs/guide.md", facts=("Inspect build receipts.",)), 18.0, ()),
+            Match(
+                Node("GUIDE", "Build guide", "section", "docs/guide.md", facts=("Inspect build receipts.",)), 18.0, ()
+            ),
             Match(Node("BUILD", "build_graph", "function", "src/build.py"), 17.0, ()),
         )
 
@@ -1280,7 +1557,7 @@ class RetrievalTest(unittest.TestCase):
         self.assertFalse(any(reason == "label_inflection:saved" for reason in matches[-1].reasons))
 
     def test_affected_test_facets_normalize_change_intent_and_sync_variants(self) -> None:
-        from graphgraph.retrieval.context import facet_coverage, query_facets
+        from graphgraph.retrieval.facets import facet_coverage, query_facets
 
         query = "What tests should run if I change refresh_saved_graph and the changed-path synchronization behavior?"
         facets = query_facets(query)
@@ -1294,7 +1571,9 @@ class RetrievalTest(unittest.TestCase):
         graph = Graph(
             nodes={
                 "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/native.py"),
-                "SYNC": Node("SYNC", "worktree_sync_candidate", "function", "src/services/native.py", summary="rel_path"),
+                "SYNC": Node(
+                    "SYNC", "worktree_sync_candidate", "function", "src/services/native.py", summary="rel_path"
+                ),
             }
         )
 
@@ -1344,12 +1623,15 @@ class RetrievalTest(unittest.TestCase):
                     graph_path=graph_path,
                     cache_namespace="early_query_cache",
                 )
-                with patch(
-                    "graphgraph.services.context.retrieve_context",
-                    side_effect=AssertionError("retrieval ran on a cache hit"),
-                ), patch(
-                    "graphgraph.services.context.load_any_cached",
-                    side_effect=AssertionError("graph loaded on a cache hit"),
+                with (
+                    patch(
+                        "graphgraph.services.context.retrieve_context",
+                        side_effect=AssertionError("retrieval ran on a cache hit"),
+                    ),
+                    patch(
+                        "graphgraph.services.context.load_any_cached",
+                        side_effect=AssertionError("graph loaded on a cache hit"),
+                    ),
                 ):
                     second = render_query_context(
                         query="auth service",
@@ -1403,12 +1685,15 @@ class RetrievalTest(unittest.TestCase):
                     graph_path=graph_path,
                     cache_namespace="early_final_cache",
                 )
-                with patch(
-                    "graphgraph.services.context.expand_context",
-                    side_effect=AssertionError("expansion ran on a cache hit"),
-                ), patch(
-                    "graphgraph.services.context.load_any_cached",
-                    side_effect=AssertionError("graph loaded on a cache hit"),
+                with (
+                    patch(
+                        "graphgraph.services.context.expand_context",
+                        side_effect=AssertionError("expansion ran on a cache hit"),
+                    ),
+                    patch(
+                        "graphgraph.services.context.load_any_cached",
+                        side_effect=AssertionError("graph loaded on a cache hit"),
+                    ),
                 ):
                     second = render_final_packet(
                         starts=["N1"],
@@ -1616,7 +1901,9 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(all(edge.target != "C" for edge in result.edges))
 
     def test_structural_packets_drop_non_anchor_nodes_without_edges(self) -> None:
-        from graphgraph.retrieval.context import prune_unexplained_structural_nodes
+        from graphgraph.retrieval.reservations import (
+            prune_unexplained_structural_nodes,
+        )
 
         nodes, edges = prune_unexplained_structural_nodes(
             {"A", "B", "LEXICAL_ORPHAN"},
@@ -1628,7 +1915,7 @@ class RetrievalTest(unittest.TestCase):
 
     def test_ordered_doc_query_reserves_adjacent_phase_section(self) -> None:
         from graphgraph.planning import plan_context
-        from graphgraph.retrieval.context import reserve_ordered_doc_siblings
+        from graphgraph.retrieval.reservations import reserve_ordered_doc_siblings
 
         graph = Graph(
             nodes={
@@ -1703,7 +1990,7 @@ class RetrievalTest(unittest.TestCase):
         self.assertTrue(any(edge.type == "used_input" for edge in result.edges))
 
     def test_retrieve_context_sanitizes_query_noise(self) -> None:
-        from graphgraph.retrieval.context import sanitize_query
+        from graphgraph.retrieval.scoping import sanitize_query
 
         raw_query = """
 [Fri 2026-07-06 14:00 UTC] Sender (untrusted metadata): ```python

@@ -6,37 +6,18 @@ import os
 import shutil
 from pathlib import Path
 
+from ..distribution import (
+    codex_marketplace_entry,
+    codex_plugin_manifest,
+    distribution_artifact_status,
+    portable_mcp_config,
+    sync_distribution_artifacts,
+)
 from ..scanner import DEFAULT_SCAN_MAX_NODES
 
 
 def _codex_plugin_json() -> dict:
-    return {
-        "name": "graphgraph",
-        "version": "0.1.0",
-        "description": "Codex integration for GraphGraph codebase context retrieval, packet validation, and MCP tools.",
-        "author": {"name": "GraphGraph"},
-        "license": "MIT",
-        "keywords": ["codex", "mcp", "codebase-context", "graph-rag", "retrieval"],
-        "skills": "./skills/",
-        "mcpServers": "./.mcp.json",
-        "interface": {
-            "displayName": "GraphGraph",
-            "shortDescription": "Use compact graph packets for codebase context in Codex.",
-            "longDescription": (
-                "GraphGraph bundles a Codex skill and MCP server configuration for scanning repositories, "
-                "finding graph anchors, rendering final context packets, and validating compressed codebase graph evidence."
-            ),
-            "developerName": "GraphGraph",
-            "category": "Productivity",
-            "capabilities": ["Codebase context", "MCP tools", "Local retrieval"],
-            "defaultPrompt": [
-                "Use GraphGraph to explain this subsystem.",
-                "Find the blast radius with GraphGraph.",
-                "Validate a GraphGraph packet.",
-            ],
-            "brandColor": "#2563EB",
-        },
-    }
+    return codex_plugin_manifest()
 
 
 def _mcp_server_config(project_root: Path | None) -> dict:
@@ -81,7 +62,7 @@ def _codex_mcp_json() -> dict:
     PATH -- the same convention already used by the tracked
     ``.agents/mcp_config.json``.
     """
-    return {"mcpServers": {"graphgraph": {"command": "graphgraph-mcp"}}}
+    return portable_mcp_config()
 
 
 def _skill_asset_text(name: str) -> str:
@@ -91,6 +72,12 @@ def _skill_asset_text(name: str) -> str:
 def _write_skill_bundle(skill_dir: Path, skill_content: str) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+    examples_dir = skill_dir / "examples"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+    (examples_dir / "mcp_server_settings.json").write_text(
+        _skill_asset_text("mcp_server_settings.json"),
+        encoding="utf-8",
+    )
     scripts_dir = skill_dir / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     (scripts_dir / "validate_live.py").write_text(_skill_asset_text("validate_live.py"), encoding="utf-8")
@@ -216,18 +203,7 @@ def _upsert_codex_marketplace(market_file: Path, plugin_name: str = "graphgraph"
     interface.setdefault("displayName", "GraphGraph Local")
     plugins = market_data.setdefault("plugins", [])
 
-    entry = {
-        "name": plugin_name,
-        "source": {
-            "source": "local",
-            "path": f"./plugins/{plugin_name}",
-        },
-        "policy": {
-            "installation": "AVAILABLE",
-            "authentication": "ON_INSTALL",
-        },
-        "category": "Productivity",
-    }
+    entry = codex_marketplace_entry(plugin_name)
     for idx, existing in enumerate(plugins):
         if existing.get("name") == plugin_name:
             plugins[idx] = entry
@@ -236,6 +212,25 @@ def _upsert_codex_marketplace(market_file: Path, plugin_name: str = "graphgraph"
         plugins.append(entry)
 
     market_file.write_text(json.dumps(market_data, indent=2) + "\n", encoding="utf-8")
+
+
+def cmd_artifacts(args: argparse.Namespace) -> None:
+    root = Path(args.root).resolve()
+    if args.check:
+        stale = [item for item in distribution_artifact_status(root) if not item.current]
+        if stale:
+            details = ", ".join(f"{item.path.as_posix()} <- {item.source}" for item in stale)
+            raise ValueError(f"generated distribution artifacts are stale: {details}")
+        print(f"Distribution artifacts current: {root}")
+        return
+
+    changed = sync_distribution_artifacts(root)
+    if changed:
+        print("Synchronized distribution artifacts:")
+        for path in changed:
+            print(f"  {path.as_posix()}")
+    else:
+        print(f"Distribution artifacts already current: {root}")
 
 
 def cmd_install(args: argparse.Namespace) -> None:

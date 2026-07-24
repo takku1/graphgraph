@@ -17,6 +17,11 @@ class FrontendCapability:
     description: str
     ready_languages: tuple[str, ...] = ()
     unavailable_languages: tuple[str, ...] = ()
+    # Whether `--frontend <name>` / select_extractor(name) actually yields this
+    # frontend. A capability can be described (planned work) without being
+    # selectable; advertising `available=True` for something that silently
+    # falls back to regex is the dishonesty this field exists to prevent.
+    selectable: bool = True
 
 @dataclass(frozen=True)
 class SourceFile:
@@ -41,7 +46,16 @@ class ExtractionResult:
     ambiguous_member_calls: int = 0
     unknown_receiver_member_calls: int = 0
     unknown_receiver_classes: tuple[tuple[str, int], ...] = ()
-    unresolved_member_calls: int = 0
+    external_resolved_member_calls: int = 0
+    unmatched_member_calls: int = 0
+    # Compact stable rows:
+    # (language, resolved, ambiguous, unknown_receiver, external_resolved, unmatched)
+    member_calls_by_language: tuple[tuple[str, int, int, int, int, int], ...] = ()
+
+    @property
+    def unresolved_member_calls(self) -> int:
+        """Back-compatible total of the external/unmatched split."""
+        return self.external_resolved_member_calls + self.unmatched_member_calls
 
 class Extractor(Protocol):
     name: str
@@ -103,20 +117,64 @@ class _MemberCallStats:
     resolved: int = 0
     ambiguous: int = 0
     unknown_receiver: int = 0
-    unresolved: int = 0
+    # `external_resolved` and `unmatched` are the two halves of what used to be
+    # a single `unresolved` bucket. They record opposite outcomes -- correctly
+    # declining to link a call the graph does not own, versus failing to link
+    # one it does -- so a combined count cannot tell success from failure.
+    # `unresolved` is retained below as their sum for telemetry continuity.
+    external_resolved: int = 0
+    unmatched: int = 0
     unknown_receiver_classes: tuple[tuple[str, int], ...] = ()
+    by_language: tuple[tuple[str, int, int, int, int, int], ...] = ()
 
-    def add(self, outcome: str, receiver: str = "") -> _MemberCallStats:
+    @property
+    def unresolved(self) -> int:
+        """Back-compatible total. Prefer the two components for diagnosis."""
+        return self.external_resolved + self.unmatched
+
+    def add(
+        self,
+        outcome: str,
+        receiver: str = "",
+        language: str = "",
+    ) -> _MemberCallStats:
         classes = dict(self.unknown_receiver_classes)
         if outcome == "unknown_receiver":
             bucket = classify_unknown_receiver(receiver)
             classes[bucket] = classes.get(bucket, 0) + 1
+        by_language = {
+            name: [resolved, ambiguous, unknown_receiver, external_resolved, unmatched]
+            for (
+                name,
+                resolved,
+                ambiguous,
+                unknown_receiver,
+                external_resolved,
+                unmatched,
+            ) in self.by_language
+        }
+        if language:
+            counts = by_language.setdefault(language, [0, 0, 0, 0, 0])
+            outcome_index = {
+                "resolved": 0,
+                "ambiguous": 1,
+                "unknown_receiver": 2,
+                "external_resolved": 3,
+                "unmatched": 4,
+            }.get(outcome)
+            if outcome_index is not None:
+                counts[outcome_index] += 1
         return _MemberCallStats(
             resolved=self.resolved + (outcome == "resolved"),
             ambiguous=self.ambiguous + (outcome == "ambiguous"),
             unknown_receiver=self.unknown_receiver + (outcome == "unknown_receiver"),
-            unresolved=self.unresolved + (outcome == "unresolved"),
+            external_resolved=self.external_resolved + (outcome == "external_resolved"),
+            unmatched=self.unmatched + (outcome == "unmatched"),
             unknown_receiver_classes=tuple(sorted(classes.items())),
+            by_language=tuple(
+                (name, *counts)
+                for name, counts in sorted(by_language.items())
+            ),
         )
 
 @dataclass(frozen=True)

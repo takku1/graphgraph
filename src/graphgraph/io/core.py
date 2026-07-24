@@ -4,7 +4,9 @@ import csv
 import json
 import re
 import tempfile
+from collections import OrderedDict
 from pathlib import Path
+from threading import RLock
 
 from ..graph.core import Edge, Graph, Node, Policy
 from ..packets.validation import ValidationResult, validate_graph_json, validate_graph_object
@@ -60,6 +62,26 @@ def load_graph(path: Path, *, normalize_external_refs: bool = False) -> Graph:
             f"{path} is not valid JSON, so it can't be GraphGraph's JSON graph schema. "
             "Use load_any() instead, which dispatches on the file's actual format."
         ) from exc
+    # Valid JSON that is not GraphGraph's schema used to escape below as raw
+    # KeyError('nodes') / TypeError / KeyError('id') tracebacks. Fail with a
+    # ValueError naming the actual schema problem instead.
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{path} is valid JSON but not GraphGraph's graph schema: expected "
+            f"a top-level object, got {type(data).__name__}."
+        )
+    raw_nodes = data.get("nodes")
+    if not isinstance(raw_nodes, list):
+        raise ValueError(
+            f"{path} is valid JSON but not GraphGraph's graph schema: missing "
+            "or non-list 'nodes' array."
+        )
+    for index, item in enumerate(raw_nodes):
+        if not isinstance(item, dict) or "id" not in item:
+            raise ValueError(
+                f"{path} is valid JSON but not GraphGraph's graph schema: "
+                f"nodes[{index}] must be an object with an 'id' field."
+            )
     nodes = {
         item["id"]: Node(
             id=item["id"],
@@ -76,9 +98,20 @@ def load_graph(path: Path, *, normalize_external_refs: bool = False) -> Graph:
             created_at=item.get("created_at") or "",
             updated_at=item.get("updated_at") or "",
         )
-        for item in data["nodes"]
+        for item in raw_nodes
     }
     edges_data = data.get("edges") or data.get("links") or []
+    if not isinstance(edges_data, list):
+        raise ValueError(
+            f"{path} is valid JSON but not GraphGraph's graph schema: "
+            "'edges'/'links' must be an array."
+        )
+    for index, item in enumerate(edges_data):
+        if not isinstance(item, dict) or "source" not in item or "target" not in item:
+            raise ValueError(
+                f"{path} is valid JSON but not GraphGraph's graph schema: "
+                f"edges[{index}] must be an object with 'source' and 'target' fields."
+            )
     edges = [
         Edge(
             source=item["source"],
@@ -233,6 +266,72 @@ def _portable_pagerank_payload(graph: Graph) -> dict[str, object]:
     return portable
 
 
+class GraphShrinkRefused(Exception):
+    """A write would have destroyed most of an existing graph.
+
+    Deliberately *not* a ValueError. update/remove catch ValueError to promote
+    a full-rescan repair, and a refusal that gets "repaired" is not a refusal --
+    it would rescan (often against the same wrong root) and mask the very
+    condition the guard exists to report.
+    """
+
+
+class RemovalMatchedNothing(Exception):
+    """A `remove` request matched no file the graph knows about.
+
+    Deliberately *not* a ValueError: the remove path catches ValueError to
+    trigger a full-rescan repair, and a wrong-root removal must surface to the
+    caller rather than be silently "repaired" into a rebuild.
+    """
+
+
+#: Below this many prior nodes a shrink ratio carries no signal -- scanning a
+#: slightly different subset of a handful of files routinely halves the count,
+#: and losing such a graph costs a sub-second rescan rather than real work. The
+#: failure this guard exists for (53k nodes -> 0) is orders of magnitude away.
+_SHRINK_GUARD_MIN_PRIOR_NODES = 25
+
+
+def assert_no_catastrophic_shrink(
+    graph: Graph,
+    path: Path,
+    *,
+    min_retained_ratio: float = 0.5,
+    min_prior_nodes: int = _SHRINK_GUARD_MIN_PRIOR_NODES,
+    force: bool = False,
+) -> None:
+    """Refuse a write that would discard most of the graph already at *path*.
+
+    `update`/`remove` fall back to a full rescan when the manifest is missing
+    or stale. That rescan uses the *directory argument*, which defaults to cwd
+    -- so running an update from outside the scanned repo rebuilt against an
+    unrelated (often empty) root and wrote 0 nodes over a valid graph, while
+    reporting validation PASS, a successful "Repair", and exit 0. Every
+    automated signal said success, so neither an agent nor CI could see it.
+
+    Structural validity cannot catch this: an empty graph is structurally
+    perfect. The only reliable signal is the size of what is being replaced.
+    """
+    if force or not path.exists():
+        return
+    try:
+        prior_nodes = len(load_any(path).nodes)
+    except Exception:  # noqa: BLE001 - an unreadable prior graph is not a shrink
+        return
+    if prior_nodes < min_prior_nodes:
+        return
+    new_nodes = len(graph.nodes)
+    if new_nodes >= prior_nodes * min_retained_ratio:
+        return
+    raise GraphShrinkRefused(
+        f"Refusing to overwrite {path} : {prior_nodes} nodes -> {new_nodes} nodes "
+        f"(retains {new_nodes / prior_nodes:.1%}, floor {min_retained_ratio:.0%}). "
+        "This usually means the rebuild ran against the wrong root -- check that "
+        "--directory points at the scanned repo, not the current directory. "
+        "Re-run with --force if the shrink is intended."
+    )
+
+
 def save_validated_graph(graph: Graph, path: Path) -> ValidationResult:
     suffix = path.suffix.lower()
     if suffix == _LEGACY_BINARY_GRAPH_SUFFIX:
@@ -300,7 +399,18 @@ def load_gg_text(path: Path) -> Graph:
           ...
     Lines starting with # are comments. Blank lines are ignored.
     """
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"{path} is neither a recognized .gg binary store nor UTF-8 text; "
+            "the file is likely corrupted. Re-run `graphgraph scan` to rebuild it."
+        ) from exc
+    # The format is self-describing: the first content line must be a gg/1 or
+    # gg/2 marker. Without this requirement ANY text file -- a stray JSON
+    # object, prose, a graph corrupted to text -- "parsed" into a nonsense
+    # graph and even passed structural validation.
+    marker_seen = False
     nodes: dict[str, Node] = {}
     pending_edges: list[tuple[str, str, str, float]] = []  # (src_label, tgt_label, type, weight)
     current_label: str | None = None
@@ -310,7 +420,14 @@ def load_gg_text(path: Path) -> Graph:
         if not stripped or stripped.startswith("#"):
             continue
         if stripped in _GG_TEXT_VERSIONS:
+            marker_seen = True
             continue
+        if not marker_seen:
+            raise ValueError(
+                f"{path} is not a recognized .gg graph: text content must start "
+                "with a gg/1 or gg/2 version marker (and it is not a binary "
+                "store). The file may be corrupted or not a graph at all."
+            )
 
         is_indented = raw_line[0] in (" ", "\t")
 
@@ -353,6 +470,15 @@ def load_gg_text(path: Path) -> Graph:
             nodes[nid] = Node(id=nid, label=label, kind=kind, path=node_path)
             current_label = label
 
+    if not marker_seen:
+        # Empty or comment-only files reach here without tripping the
+        # per-line check above; they are still not a declared .gg text graph.
+        raise ValueError(
+            f"{path} is not a recognized .gg graph: no gg/1 or gg/2 version "
+            "marker found (and it is not a binary store). The file may be "
+            "corrupted, empty, or not a graph at all."
+        )
+
     # Resolve edges by label — try path fallback for ambiguous labels
     label_map: dict[str, str] = {}
     path_map: dict[str, str] = {}
@@ -383,6 +509,10 @@ def save_gg(graph: Graph, path: Path) -> None:
             f"{path.suffix or '<none>'}"
         )
     save_graph_binary(graph, path)
+    # A full base rewrite already contains the latest state. Leaving an older
+    # sidecar beside it would replay those updates a second time on the next
+    # load (and could resurrect records deliberately removed by the rewrite).
+    path.with_name(path.name + ".delta").unlink(missing_ok=True)
 
 
 def load_csv_edges(path: Path) -> Graph:
@@ -433,10 +563,57 @@ def load_csv_edges(path: Path) -> Graph:
     return Graph(nodes=nodes, edges=edges)
 
 
-_graph_load_cache: dict[tuple[str, bool], tuple[int, int, Graph]] = {}
+# The single process-wide graph cache. It was previously an unbounded dict here
+# plus a second bounded LRU in io/cache; both are now this one bounded, locked
+# LRU, so a long-lived server that loads many distinct graphs cannot leak them.
+_GRAPH_CACHE_LIMIT = 16
+_graph_load_cache: OrderedDict[tuple[str, bool, bool], tuple[tuple[int, int, int, int], Graph]] = (
+    OrderedDict()
+)
+_graph_load_cache_lock = RLock()
 
 
-def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
+def remember_loaded_graph(path: Path, graph: Graph, *, normalize_external_refs: bool = False) -> None:
+    """Seed the process cache with a graph the current process just persisted."""
+    resolved = path.resolve()
+    try:
+        fingerprint = graph_store_fingerprint(resolved)
+    except OSError:
+        return
+    cache_key = (str(resolved), normalize_external_refs, True)
+    with _graph_load_cache_lock:
+        _graph_load_cache[cache_key] = (fingerprint, graph)
+        _graph_load_cache.move_to_end(cache_key)
+        while len(_graph_load_cache) > _GRAPH_CACHE_LIMIT:
+            _graph_load_cache.popitem(last=False)
+
+
+def clear_graph_load_cache() -> int:
+    """Empty the process graph cache; returns the number of entries removed."""
+    with _graph_load_cache_lock:
+        removed = len(_graph_load_cache)
+        _graph_load_cache.clear()
+    return removed
+
+
+def graph_store_fingerprint(path: Path) -> tuple[int, int, int, int]:
+    """Fingerprint a base graph and its optional append-delta sidecar."""
+
+    base = path.stat()
+    sidecar = path.with_name(path.name + ".delta")
+    try:
+        delta = sidecar.stat()
+        return (base.st_mtime_ns, base.st_size, delta.st_mtime_ns, delta.st_size)
+    except OSError:
+        return (base.st_mtime_ns, base.st_size, 0, 0)
+
+
+def load_any(
+    path: Path,
+    *,
+    normalize_external_refs: bool = False,
+    _include_deltas: bool = True,
+) -> Graph:
     """Load a graph from any supported format: .gg, .ggb, .json, .csv, .tsv.
 
     ``.gg`` is the sole writable native store. The other suffixes are explicit
@@ -453,17 +630,22 @@ def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
     place), so sharing the cached object across callers is safe.
     """
     resolved = path.resolve()
-    cache_key = (str(resolved), normalize_external_refs)
+    cache_key = (str(resolved), normalize_external_refs, _include_deltas)
     try:
-        stat = resolved.stat()
+        fingerprint = (
+            graph_store_fingerprint(resolved)
+            if _include_deltas
+            else (*graph_store_fingerprint(resolved)[:2], 0, 0)
+        )
     except OSError:
-        stat = None
+        fingerprint = None
 
-    if stat is not None:
-        fingerprint = (stat.st_mtime_ns, stat.st_size)
-        cached = _graph_load_cache.get(cache_key)
-        if cached is not None and (cached[0], cached[1]) == fingerprint:
-            return cached[2]
+    if fingerprint is not None:
+        with _graph_load_cache_lock:
+            cached = _graph_load_cache.get(cache_key)
+            if cached is not None and cached[0] == fingerprint:
+                _graph_load_cache.move_to_end(cache_key)
+                return cached[1]
 
     suffix = path.suffix.lower()
     if suffix in _READABLE_BINARY_GRAPH_SUFFIXES:
@@ -473,8 +655,22 @@ def load_any(path: Path, *, normalize_external_refs: bool = False) -> Graph:
     else:
         graph = load_graph(path, normalize_external_refs=normalize_external_refs)
 
-    if stat is not None:
-        _graph_load_cache[cache_key] = (fingerprint[0], fingerprint[1], graph)
+    if (
+        _include_deltas
+        and suffix == _NATIVE_GRAPH_SUFFIX
+        and path.with_name(path.name + ".delta").exists()
+    ):
+        # Local import avoids an io.core <-> storage.delta import cycle.
+        from ..storage.delta import apply_delta_sidecar
+
+        graph = apply_delta_sidecar(graph, path)
+
+    if fingerprint is not None:
+        with _graph_load_cache_lock:
+            _graph_load_cache[cache_key] = (fingerprint, graph)
+            _graph_load_cache.move_to_end(cache_key)
+            while len(_graph_load_cache) > _GRAPH_CACHE_LIMIT:
+                _graph_load_cache.popitem(last=False)
     return graph
 
 

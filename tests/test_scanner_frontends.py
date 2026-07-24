@@ -22,12 +22,566 @@ from graphgraph.scanner.frontends import (
 class FrontendsScannerTest(unittest.TestCase):
     """scanner/frontends/: grammars, parsers, and language extraction."""
 
+    def test_pathologically_nested_python_source_does_not_crash_type_inference(self) -> None:
+        # Adversarial: ast.parse raises RecursionError (a RuntimeError, not a
+        # SyntaxError) on deeply nested expressions -- e.g. a generated or
+        # minified file with one long chained expression (`1+1+...` at ~10k
+        # terms builds a left-recursive BinOp tree deeper than the recursion
+        # limit). The python type-inference helpers only caught
+        # IndentationError/SyntaxError/ValueError, so ONE such file aborted
+        # the entire repository scan with a raw traceback and no graph
+        # written. Unparseable-for-any-reason source must degrade to "no
+        # inference", exactly like a syntax error does.
+        from graphgraph.scanner.frontends.python import (
+            _python_class_field_types,
+            _python_local_types,
+        )
+
+        chained = "def gen():\n    x = " + "+".join(["1"] * 20000)
+        self.assertEqual(_python_local_types(chained), {})
+        self.assertEqual(_python_class_field_types(chained), {})
+
+    def test_javascript_assignment_and_prototype_callables_are_definitions(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var res = {};\n"
+            "res.send = function send(body) { return body; };\n"
+            "function View() {}\n"
+            "View.prototype.render = function render(options, callback) {\n"
+            "  callback(null, options);\n"
+            "};\n"
+            "const normalize = (value) => value;\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "response.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "response.js", "response_js", source)],
+                max_total_symbols=100,
+            )
+
+        by_label = {node.label: node for node in result.nodes.values()}
+        self.assertIn("send", by_label)
+        self.assertIn("render", by_label)
+        self.assertIn("normalize", by_label)
+        self.assertIn(
+            "javascript_definition:property_assignment",
+            by_label["send"].facts,
+        )
+        self.assertIn(
+            "javascript_definition:prototype_assignment",
+            by_label["render"].facts,
+        )
+        self.assertIn(
+            "javascript_definition:variable_callable",
+            by_label["normalize"].facts,
+        )
+
+    def test_javascript_anonymous_test_callback_becomes_a_grounded_node(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "it('sends a response', function(done) {\n"
+            "  done();\n"
+            "});\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "response.test.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "response.test.js", "response_test_js", source)],
+                max_total_symbols=100,
+            )
+
+        callbacks = [
+            node
+            for node in result.nodes.values()
+            if "javascript_definition:callback" in node.facts
+        ]
+        self.assertEqual(len(callbacks), 1)
+        self.assertTrue(callbacks[0].label.startswith("it_callback_L1C"))
+        self.assertIn("callback_registered_by:it", callbacks[0].facts)
+        self.assertIn("role:test", callbacks[0].facts)
+
+    def test_member_call_telemetry_is_partitioned_by_language(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "store.py": (
+                "class Store:\n"
+                "    def persist(self, value):\n"
+                "        return value\n"
+                "def save(store: Store):\n"
+                "    return store.persist(1)\n"
+            ),
+            "box.js": (
+                "class Box { push(value) { return value; } }\n"
+                "function append() {\n"
+                "  const box = new Box();\n"
+                "  return box.push(1);\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for rel, text in sources.items():
+                path = Path(tmp) / rel
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+        by_language = {
+            language: {
+                "resolved": resolved,
+                "ambiguous": ambiguous,
+                "unknown_receiver": unknown_receiver,
+                "external_resolved": external_resolved,
+                "unmatched": unmatched,
+            }
+            for (
+                language,
+                resolved,
+                ambiguous,
+                unknown_receiver,
+                external_resolved,
+                unmatched,
+            ) in result.member_calls_by_language
+        }
+        self.assertGreaterEqual(by_language["python"]["resolved"], 1)
+        self.assertGreaterEqual(by_language["javascript"]["resolved"], 1)
+        self.assertEqual(
+            sum(item["resolved"] for item in by_language.values()),
+            result.resolved_member_calls,
+        )
+
     def test_frontend_capabilities(self) -> None:
         caps = available_frontends()
         names = {cap.name for cap in caps}
         self.assertIn("regex", names)
         self.assertIn("tree_sitter", names)
         self.assertTrue(next(cap for cap in caps if cap.name == "regex").available)
+
+    def test_csharp_member_calls_resolve_from_local_and_param_types(self) -> None:
+        # Regression for the C# 0/6,454 finding (cycle 8): the edge builder had
+        # no local-type inference for .cs, so every member call went unresolved.
+        # New-expression locals, typed parameters, and this.Method() (C#'s
+        # member_access object lives on the `expression` field) must all resolve
+        # to the correct owner.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "namespace App {\n"
+            "  public class Store {\n"
+            "    public int Persist(int item) { return item; }\n"
+            "    public int Load() { return 0; }\n"
+            "  }\n"
+            "  public class Service {\n"
+            "    public int Run(Store injected) {\n"
+            "      Store local = new Store();\n"
+            "      local.Persist(1);\n"
+            "      injected.Load();\n"
+            "      return this.Helper();\n"
+            "    }\n"
+            "    public int Helper() { return 42; }\n"
+            "  }\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Store.cs"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "Store.cs", "Store_cs", source)],
+                max_total_symbols=100,
+            )
+
+        self.assertGreaterEqual(result.resolved_member_calls, 3)
+        resolved = {
+            (result.nodes[e.source].label, result.nodes[e.target].label)
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertIn(("Run", "Persist"), resolved)  # new-expression local
+        self.assertIn(("Run", "Load"), resolved)      # typed parameter
+        self.assertIn(("Run", "Helper"), resolved)    # this.Method()
+
+    def test_module_qualified_calls_resolve_via_imports(self) -> None:
+        # F3 (graybox 2026-07-22): `module.func()` where `module` is imported
+        # and `func` is defined in that module went entirely unresolved, even
+        # though the import + contains edges were already in the graph. Plain
+        # and aliased imports must both resolve; a class-instance call in the
+        # same file must still resolve via the receiver-type path, untouched.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "io_utils.py": "def load_metadata(p):\n    return {}\n",
+            "store.py": "class Store:\n    def persist(self, x):\n        return x\n",
+            "app.py": (
+                "import io_utils\n"
+                "from store import Store\n"
+                "def run(path):\n"
+                "    meta = io_utils.load_metadata(path)\n"
+                "    s = Store()\n"
+                "    s.persist(meta)\n"
+                "    return meta\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for rel, text in sources.items():
+                path = Path(tmp) / rel
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        by_provenance = {
+            (result.nodes[e.source].label, result.nodes[e.target].label): e.provenance
+            for e in result.edges
+            if e.type == "calls"
+        }
+        # Module-qualified call resolved through the import join.
+        self.assertEqual(
+            by_provenance.get(("run", "load_metadata")), "tree_sitter_module_qualified"
+        )
+        # Class-instance call still resolves via the receiver-type path.
+        self.assertEqual(
+            by_provenance.get(("run", "persist")), "tree_sitter_type_resolved"
+        )
+
+    def test_module_qualified_resolution_is_unit_testable(self) -> None:
+        from graphgraph.scanner.frontends.module_calls import (
+            module_alias_targets,
+            resolve_module_qualified_call,
+        )
+
+        aliases = module_alias_targets(
+            ".py",
+            "import model_io\nfrom pkg import model_io as mio\nimport os.path as osp\n",
+        )
+        self.assertEqual(aliases.get("model_io"), "model_io")
+        self.assertEqual(aliases.get("mio"), "pkg.model_io")
+        self.assertEqual(aliases.get("osp"), "os.path")
+
+        from graphgraph.graph.core import Node
+        from graphgraph.scanner.frontends.syntax import _lang_family
+
+        lang = _lang_family("x.py")
+        nodes = {
+            "pkg_model_io_py__load_metadata": Node(
+                "pkg_model_io_py__load_metadata", "load_metadata", "function", "pkg/model_io.py"
+            ),
+            "other_model_io_py__load_metadata": Node(
+                "other_model_io_py__load_metadata", "load_metadata", "function", "other/model_io.py"
+            ),
+        }
+        name_to_symbols = {"load_metadata": list(nodes)}
+        # A full `pkg.model_io` path disambiguates between two same-stem files.
+        self.assertEqual(
+            resolve_module_qualified_call(
+                "mio", "load_metadata", {"mio": "pkg.model_io"}, name_to_symbols, nodes, "caller", lang
+            ),
+            "pkg_model_io_py__load_metadata",
+        )
+        # A leaf-only `model_io` against two same-stem files is ambiguous -> None.
+        self.assertIsNone(
+            resolve_module_qualified_call(
+                "model_io", "load_metadata", {"model_io": "model_io"}, name_to_symbols, nodes, "caller", lang
+            )
+        )
+        # An unimported receiver is never a module call.
+        self.assertIsNone(
+            resolve_module_qualified_call(
+                "self", "load_metadata", {}, name_to_symbols, nodes, "caller", lang
+            )
+        )
+
+    def test_js_module_alias_targets_from_require_and_import(self) -> None:
+        from graphgraph.scanner.frontends.module_calls import module_alias_targets
+
+        aliases = module_alias_targets(
+            ".js",
+            "const store = require('./store');\n"
+            "const fmt = require('../lib/format.js');\n"
+            "import * as util from './util';\n"
+            "import cfg from './config/index';\n"
+            "import { named } from './named';\n",  # named binding is not a namespace
+        )
+        self.assertEqual(aliases.get("store"), "store")
+        self.assertEqual(aliases.get("fmt"), "lib.format")
+        self.assertEqual(aliases.get("util"), "util")
+        self.assertEqual(aliases.get("cfg"), "config")  # trailing index dropped
+        self.assertNotIn("named", aliases)              # destructured export, not a module
+
+    def test_js_named_local_from_factory_return_type_resolves(self) -> None:
+        # `const s = createStore()` where `createStore` returns `new Store()`:
+        # the local's type is the factory's inferred return type, so `s.save()`
+        # must resolve to `Store.save`. This is the dominant unresolved JS
+        # receiver shape (`named_local`) for the factory pattern.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "class Store {\n"
+            "  save(x) { return x; }\n"
+            "}\n"
+            "function createStore() { return new Store(); }\n"
+            "function run() {\n"
+            "  const s = createStore();\n"
+            "  return s.save(1);\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "app.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "app.js", "app_js", source)], max_total_symbols=100
+            )
+        resolved = {
+            (result.nodes[e.source].label, result.nodes[e.target].label)
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertIn(("run", "save"), resolved)
+
+    def test_js_module_qualified_calls_resolve_via_require(self) -> None:
+        # A CommonJS/ESM module receiver (`store.persist()` where `store` is a
+        # required/imported module) must resolve like Python's `module.func()`.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "store.js": "function persist(x){return x;}\nmodule.exports = { persist };\n",
+            "app.js": (
+                "const store = require('./store');\n"
+                "function run(){ return store.persist(1); }\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for name, text in sources.items():
+                path = Path(tmp) / name
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, name, name.replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+        by_provenance = {
+            (result.nodes[e.source].label, result.nodes[e.target].label): e.provenance
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertEqual(
+            by_provenance.get(("run", "persist")), "tree_sitter_module_qualified"
+        )
+
+    def test_java_member_calls_resolve(self) -> None:
+        # Java was worse than C#'s 0/6,454: its `method_invocation` carries the
+        # receiver as a sibling `object` field, so calls read as bare
+        # identifiers and were never even detected as member calls (0 sites).
+        # Detecting the direct object field + reusing the C#/Java local-type
+        # inference must resolve locals, parameters, and this.method().
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "class Store {\n"
+            "    int persist(int item) { return item; }\n"
+            "    int load() { return 0; }\n"
+            "}\n"
+            "class Service {\n"
+            "    int run(Store injected) {\n"
+            "        Store local = new Store();\n"
+            "        local.persist(1);\n"
+            "        injected.load();\n"
+            "        return this.helper();\n"
+            "    }\n"
+            "    int helper() { return 42; }\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Service.java"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "Service.java", "Service_java", source)],
+                max_total_symbols=100,
+            )
+
+        self.assertGreaterEqual(result.resolved_member_calls, 3)
+        resolved = {
+            (result.nodes[e.source].label, result.nodes[e.target].label)
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertIn(("run", "persist"), resolved)
+        self.assertIn(("run", "load"), resolved)
+        self.assertIn(("run", "helper"), resolved)
+
+    def test_csharp_field_receiver_calls_resolve(self) -> None:
+        # T13: field receivers (`_repo.Save()`) are the dominant real-world
+        # C#/Java member-call shape and were unresolved -- a field's type lives
+        # at class level, invisible to the method-body local inference. The
+        # field declaration names the type; a bare field receiver and the
+        # explicit `this._repo` form must both resolve to it.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "namespace App {\n"
+            "  public class Repo {\n"
+            "    public int Save(int x) { return x; }\n"
+            "  }\n"
+            "  public class Service {\n"
+            "    private readonly Repo _repo;\n"
+            "    public Service(Repo repo) { _repo = repo; }\n"
+            "    public int Run() {\n"
+            "      _repo.Save(1);\n"
+            "      return this._repo.Save(2);\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Service.cs"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "Service.cs", "Service_cs", source)],
+                max_total_symbols=100,
+            )
+        resolved = {
+            (result.nodes[e.source].label, result.nodes[e.target].label)
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertIn(("Run", "Save"), resolved)
+
+    def test_java_field_receiver_calls_resolve(self) -> None:
+        # T13: the Java analogue -- `repo.save()` on a declared field, plus the
+        # explicit `this.repo` form.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "class Repo {\n"
+            "    int save(int x) { return x; }\n"
+            "}\n"
+            "class Service {\n"
+            "    private final Repo repo;\n"
+            "    Service(Repo repo) { this.repo = repo; }\n"
+            "    int run() {\n"
+            "        repo.save(1);\n"
+            "        return this.repo.save(2);\n"
+            "    }\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Service.java"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "Service.java", "Service_java", source)],
+                max_total_symbols=100,
+            )
+        resolved = {
+            (result.nodes[e.source].label, result.nodes[e.target].label)
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertIn(("run", "save"), resolved)
+
+    def test_cpp_inline_method_field_receiver_calls_resolve(self) -> None:
+        # T13: C++ class/struct specifiers establish lexical ownership, and a
+        # class-scope field declaration types the bare `repo_` receiver.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "class Repo {\n"
+            "public:\n"
+            "  int save(int x) { return x; }\n"
+            "};\n"
+            "class Service {\n"
+            "  Repo repo_;\n"
+            "public:\n"
+            "  int run() { return repo_.save(1); }\n"
+            "};\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "service.cpp"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "service.cpp", "service_cpp", source)],
+                max_total_symbols=100,
+            )
+        callables = [n for n in result.nodes.values() if n.label in {"save", "run"}]
+        self.assertTrue(callables, "expected the inline callables to be extracted")
+        self.assertTrue(all(n.kind == "method" for n in callables))
+        self.assertEqual(
+            {n.label for n in result.nodes.values() if n.kind in {"class", "struct"}},
+            {"Repo", "Service"},
+        )
+        resolved = {
+            (result.nodes[e.source].label, result.nodes[e.target].label)
+            for e in result.edges
+            if e.type == "calls"
+        }
+        self.assertIn(("run", "save"), resolved)
+
+    def test_cpp_class_field_types_unit(self) -> None:
+        from graphgraph.scanner.frontends.cpp import cpp_class_field_types
+
+        types = cpp_class_field_types(
+            "class Service {\n"
+            "  Repo repo_;\n"
+            "  Store* store;\n"
+            "  int count;\n"
+            "  void run() { Local local; }\n"
+            "};"
+        )
+        self.assertEqual(types.get(("Service", "repo_")), "Repo")
+        self.assertEqual(types.get(("Service", "store")), "Store")
+        self.assertNotIn(("Service", "count"), types)
+        self.assertNotIn(("Service", "local"), types)
+
+    def test_csharp_class_field_types_unit(self) -> None:
+        from graphgraph.scanner.frontends.csharp import csharp_class_field_types
+
+        types = csharp_class_field_types(
+            "public class Service {\n"
+            "  private readonly Repo _repo;\n"
+            "  public Cache Cache { get; set; }\n"
+            "  private int _count;\n"
+            "  public void Run() { Local l = new Local(); }\n"
+            "}"
+        )
+        self.assertEqual(types.get(("Service", "_repo")), "Repo")   # field
+        self.assertEqual(types.get(("Service", "Cache")), "Cache")  # auto-property
+        self.assertNotIn(("Service", "_count"), types)              # primitive field
+        # A method-body local has no access modifier, so the field scan -- which
+        # requires one -- must not mistake it for a class field.
+        self.assertNotIn(("Service", "l"), types)
+
+    def test_csharp_local_type_inference_unit(self) -> None:
+        from graphgraph.scanner.frontends.csharp import csharp_local_types
+
+        types = csharp_local_types(
+            "public int Run(Store injected, int count) {\n"
+            "  Store local = new Store();\n"
+            "  Widget w = Build();\n"
+            "  var ignored = 3;\n"
+            "}"
+        )
+        self.assertEqual(types.get("injected"), "Store")   # parameter
+        self.assertEqual(types.get("local"), "Store")       # new-expression
+        self.assertEqual(types.get("w"), "Widget")          # declared type
+        self.assertNotIn("count", types)                    # primitive param
+        self.assertNotIn("ignored", types)                  # untyped var
+
+    def test_cpg_is_advertised_as_planned_not_usable(self) -> None:
+        # cpg has no extractor and select_extractor would fall back to regex.
+        # It must not report as available/selectable, and requesting it must
+        # fail loudly rather than silently degrade a type-evidence request.
+        from graphgraph.scanner.frontends import select_extractor
+
+        cpg = next(cap for cap in available_frontends() if cap.name == "cpg")
+        self.assertFalse(cpg.available)
+        self.assertFalse(cpg.selectable)
+        self.assertIn("PLANNED", cpg.description)
+        with self.assertRaises(RuntimeError):
+            select_extractor("cpg")
 
     def test_frontend_capabilities_report_per_language_readiness(self) -> None:
         with patch(
@@ -1581,6 +2135,70 @@ class FrontendsScannerTest(unittest.TestCase):
             and result.nodes[edge.target].label == "act"
         }
         self.assertEqual(owners, {"Declared"}, f"declared type must win, got {owners}")
+
+    def test_external_and_unmatched_are_separated_not_merged(self) -> None:
+        # The combined external_or_unmatched bucket merged two opposite
+        # outcomes: correctly declining to link a call the graph does not own
+        # (success) and failing to link one it does (failure). On z3 that
+        # bucket held 94.3% of all call sites, so the tool's largest health
+        # counter could not distinguish working from broken. These two calls
+        # sit in the same function and must land in different buckets.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            # Owner defines `persist`; nothing internal defines `dumps`.
+            "src/store.py": (
+                "class Store:\n"
+                "    def persist(self, item):\n"
+                "        return item\n"
+            ),
+            # `other` is typed to Store, but `missing` is defined on no
+            # internal symbol at all -> external. `helper` IS defined
+            # internally (on Store, as persist's sibling) but not on the
+            # receiver's type -> a real miss.
+            "src/run.py": (
+                "import json\n"
+                "from store import Store\n"
+                "class Other:\n"
+                "    def helper(self):\n"
+                "        return 1\n"
+                "def run(payload):\n"
+                "    other: Store = Store()\n"
+                "    other.helper()\n"
+                "    return json.dumps(payload)\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        # The invariant that makes the split safe to publish: the two halves
+        # must exactly partition the legacy total, so existing consumers
+        # reading `unresolved` see no drift.
+        self.assertEqual(
+            result.external_resolved_member_calls + result.unmatched_member_calls,
+            result.unresolved_member_calls,
+        )
+        # And the split must actually discriminate -- a partition that dumps
+        # everything into one side would satisfy the sum above while being
+        # exactly as undiagnostic as the merged counter it replaced.
+        self.assertGreater(
+            result.external_resolved_member_calls,
+            0,
+            "a call to a name no internal symbol defines must count as external",
+        )
+        self.assertGreater(
+            result.unmatched_member_calls,
+            0,
+            "a typed receiver whose method exists internally but not on that "
+            "type is a real miss, not an external call",
+        )
 
     def test_unknown_receiver_histogram_partitions_the_total(self) -> None:
         # A single opaque unknown_receiver total says a resolver pass is

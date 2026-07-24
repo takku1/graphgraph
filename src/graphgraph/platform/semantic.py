@@ -11,7 +11,24 @@ from pathlib import Path
 from threading import RLock
 
 from ..graph.core import Graph, Node
+from .embeddings import (
+    HASH_BACKEND_NAME,
+    EmbeddingBackend,
+    active_backend_name,
+    normalize_dense,
+    resolve_backend,
+)
 from .persistence import atomic_write_json
+
+
+class SemanticBackendMismatch(ValueError):
+    """An index built by one backend was queried through another.
+
+    The offline hash space and any embedding space are unrelated coordinate
+    systems; scoring a query from one against vectors from the other yields
+    confident nonsense. Refusing is the only safe response -- the caller should
+    rebuild the index under the active backend.
+    """
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,}")
 _INDEX_CACHE_LIMIT = 4
@@ -29,20 +46,56 @@ class SemanticIndex:
         self.dimensions = max(32, dimensions)
         self.vectors: dict[str, dict[int, float]] = {}
         self.signature = ""
+        # Which backend produced these vectors. "hash" is the offline default;
+        # any other value is an embedding space and must be queried through the
+        # same backend. Set on build/load, checked on query.
+        self.backend_name = HASH_BACKEND_NAME
 
-    def build(self, graph: Graph) -> "SemanticIndex":
-        self.vectors = {
-            node.id: _vector(_node_text(node), self.dimensions)
-            for node in graph.nodes.values()
-            if node.active
-        }
+    def build(self, graph: Graph, *, backend: EmbeddingBackend | None = None) -> "SemanticIndex":
+        active = backend if backend is not None else resolve_backend()
+        nodes = [node for node in graph.nodes.values() if node.active]
+        if active is not None:
+            # One batched call, not one request per node: the offline path is
+            # free but a network backend is not, and per-node calls made a
+            # large repo unusably slow.
+            dense = active.embed([_node_text(node) for node in nodes])
+            self.vectors = {
+                node.id: normalize_dense(vector)
+                for node, vector in zip(nodes, dense)
+            }
+            self.backend_name = active.name
+        else:
+            self.vectors = {
+                node.id: _vector(_node_text(node), self.dimensions)
+                for node in nodes
+            }
+            self.backend_name = HASH_BACKEND_NAME
         self.signature = _graph_signature(graph)
         if self.path:
             self.save()
         return self
 
-    def query(self, text: str, *, limit: int = 10, threshold: float = 0.05) -> list[tuple[str, float]]:
-        query_vector = _vector(text, self.dimensions)
+    def _query_vector(self, text: str, backend: EmbeddingBackend | None) -> dict[int, float]:
+        if self.backend_name == HASH_BACKEND_NAME:
+            return _vector(text, self.dimensions)
+        active = backend if backend is not None else resolve_backend()
+        if active is None or active.name != self.backend_name:
+            raise SemanticBackendMismatch(
+                f"index was built by backend {self.backend_name!r} but the "
+                f"active backend is {active_backend_name()!r}; rebuild the "
+                "semantic index under the active backend before querying"
+            )
+        return normalize_dense(active.embed([text])[0])
+
+    def query(
+        self,
+        text: str,
+        *,
+        limit: int = 10,
+        threshold: float = 0.05,
+        backend: EmbeddingBackend | None = None,
+    ) -> list[tuple[str, float]]:
+        query_vector = self._query_vector(text, backend)
         scored = [
             (node_id, _cosine(query_vector, vector))
             for node_id, vector in self.vectors.items()
@@ -59,6 +112,7 @@ class SemanticIndex:
             "version": 3,
             "dimensions": self.dimensions,
             "signature": self.signature,
+            "backend": self.backend_name,
             "vector_encoding": _VECTOR_ENCODING,
             "vectors": {
                 node_id: _encode_vector(vector)
@@ -81,6 +135,8 @@ class SemanticIndex:
         data = json.loads(resolved.read_text(encoding="utf-8"))
         index = cls(path, dimensions=int(data.get("dimensions", 2048)))
         index.signature = str(data.get("signature", ""))
+        # Pre-backend indexes carry no "backend" key; they are hash indexes.
+        index.backend_name = str(data.get("backend", HASH_BACKEND_NAME))
         vectors = data.get("vectors", {})
         if int(data.get("version", 0)) >= 3:
             if data.get("vector_encoding") != _VECTOR_ENCODING:
@@ -100,7 +156,15 @@ class SemanticIndex:
         return index
 
     def is_current(self, graph: Graph) -> bool:
-        return bool(self.signature) and self.signature == _graph_signature(graph)
+        # Stale if the graph changed OR the active backend differs from the one
+        # that built the vectors -- an index carried across a backend switch is
+        # not reusable, and treating it as current would trip the query-time
+        # mismatch guard on every call.
+        return (
+            bool(self.signature)
+            and self.signature == _graph_signature(graph)
+            and self.backend_name == active_backend_name()
+        )
 
 
 def _node_text(node: Node) -> str:

@@ -71,11 +71,15 @@ def available_frontends() -> list[FrontendCapability]:
         ),
         FrontendCapability(
             name="cpg",
-            available=tree_sitter_available(),
-            confidence=0.95,
-            description="Multi-language control, data, field, and type evidence normalized into GraphGraph IR.",
-            ready_languages=ready,
-            unavailable_languages=unavailable,
+            # Not implemented: there is no CPG extractor, and select_extractor
+            # would silently fall back to regex. Reporting available=True here
+            # for eight cycles claimed control/data/type evidence the tool does
+            # not produce. It is planned, not usable, so it is neither available
+            # nor selectable until a real extractor exists.
+            available=False,
+            confidence=0.0,
+            description="PLANNED (not implemented): multi-language control, data, field, and type evidence. Use tree_sitter today.",
+            selectable=False,
         ),
     ]
 

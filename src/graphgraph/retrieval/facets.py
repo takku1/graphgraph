@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 
 from ..concepts.doccode import is_code_like
@@ -14,6 +15,76 @@ from .scoping import (
     _is_test_node,
     _qualified_query_symbols,
 )
+
+# Terms naming *the concept of a definition* rather than a definition's content.
+# A facet term that is one of these (or that names a node kind the graph
+# actually contains) describes the shape of the wanted answer, not a content
+# entity, so its absence as literal node text must not trigger abstention.
+_DEFINITION_TERMS = frozenset({
+    "definition", "definitions", "def", "declaration", "declarations",
+    "declare", "declared", "implementation", "implementations", "body",
+    "signature", "signatures", "prototype", "prototypes",
+})
+
+# A facet term must clear this normalized-IDF bar to count as content. A term
+# in a large fraction of nodes carries little discriminative power (Sparck
+# Jones 1972: term specificity is inverse to collection frequency), so it
+# cannot, on its own, make a facet a required part of the answer.
+_CONTENT_SPECIFICITY_FLOOR = 0.22
+
+
+def _graph_kind_terms(graph: Graph) -> frozenset[str]:
+    """The vocabulary of node kinds the graph actually contains, as terms.
+
+    Data-driven, not a hand-list: whatever kinds exist here (``class``,
+    ``method``, ``struct`` ...) are structural descriptors, and a query term
+    that merely names one is satisfied by an anchor of that kind rather than by
+    a node whose *text* contains the word.
+    """
+    cache = getattr(graph, "_facet_kind_terms_cache", None)
+    if cache is not None:
+        return cache
+    terms: set[str] = set(_DEFINITION_TERMS)
+    for node in graph.nodes.values():
+        for part in term_key(str(node.kind)).split():
+            if part:
+                terms.add(part)
+    frozen = frozenset(terms)
+    try:
+        graph._facet_kind_terms_cache = frozen  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - caching is best-effort
+        pass
+    return frozen
+
+
+def _term_specificity(term: str, token_index: dict, node_count: int) -> float:
+    """Normalized inverse document frequency of *term* over the graph, in [0, 1)."""
+    if node_count <= 1:
+        return 1.0
+    df = len(token_index.get(term, ()))
+    return math.log(node_count / (1 + df)) / math.log(node_count + 1)
+
+
+def _facet_is_required(
+    terms: tuple[str, ...],
+    kind_terms: frozenset[str],
+    token_index: dict,
+    node_count: int,
+) -> bool:
+    """A facet forces abstention only if it names genuine content.
+
+    Content = a term that is neither a structural/kind descriptor nor a
+    near-ubiquitous word. ``"definition of LoRAModule class"`` reduces (after
+    the identifier is pulled out) to ``definition``/``class`` -- both
+    structural -- so the facet is not required and its absence as node text
+    does not abstain over an answer the anchors already carry.
+    """
+    for term in terms:
+        if term in kind_terms:
+            continue
+        if _term_specificity(term, token_index, node_count) >= _CONTENT_SPECIFICITY_FLOOR:
+            return True
+    return False
 
 
 def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -182,8 +253,31 @@ def facet_coverage(
     *,
     roots: tuple[str, ...] = (),
 ) -> dict[str, object]:
+    # Requiredness needs the IDF index, which is only worth building when a
+    # facet is actually unfulfilled and must be classified. Compute it lazily so
+    # a fully-answered query (notably the exact-lookup fast path) never forces
+    # the token index to build just to confirm there is nothing to gate on.
+    requiredness_state: dict[str, object] = {}
+
+    def _is_required(terms: tuple[str, ...]) -> bool:
+        if "index" not in requiredness_state:
+            from .search import _search_token_index
+
+            requiredness_state["index"] = _search_token_index(graph)
+            requiredness_state["count"] = sum(
+                1 for node in graph.nodes.values() if node.active
+            )
+            requiredness_state["kinds"] = _graph_kind_terms(graph)
+        return _facet_is_required(
+            terms,
+            requiredness_state["kinds"],  # type: ignore[arg-type]
+            requiredness_state["index"],  # type: ignore[arg-type]
+            requiredness_state["count"],  # type: ignore[arg-type]
+        )
+
     fulfilled: list[dict[str, object]] = []
     unfulfilled: list[str] = []
+    unfulfilled_required: list[str] = []
     for label, terms in facets:
         structural_first = _affected_output_contract_facet(terms)
         evidence = (
@@ -230,11 +324,18 @@ def facet_coverage(
             fulfilled.append({"facet": label, "evidence": evidence[:5]})
         else:
             unfulfilled.append(label)
+            if _is_required(terms):
+                unfulfilled_required.append(label)
     return {
         "fulfilled": fulfilled,
         "unfulfilled": unfulfilled,
+        # Only content facets (not structural/generic scaffolding) gate the
+        # answerability decision; see _facet_is_required. An unfulfilled facet
+        # that is pure query-shape ("definition", "class") is recorded but does
+        # not abstain over an answer the anchors already carry.
+        "unfulfilled_required": unfulfilled_required,
         "coverage_ratio": round(len(fulfilled) / max(1, len(facets)), 4),
-        "warning": "unfulfilled query facets" if unfulfilled else "",
+        "warning": "unfulfilled query facets" if unfulfilled_required else "",
     }
 
 def _facet_structural_evidence(

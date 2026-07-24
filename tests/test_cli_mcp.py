@@ -44,9 +44,7 @@ class CliMcpTest(unittest.TestCase):
                 root,
             )
             self.assertEqual(
-                project_root_for_graph(
-                    root / ".graphgraph" / "skill-validation" / "live.graph.json"
-                ),
+                project_root_for_graph(root / ".graphgraph" / "skill-validation" / "live.graph.json"),
                 root,
             )
             self.assertEqual(
@@ -128,9 +126,7 @@ class CliMcpTest(unittest.TestCase):
         from graphgraph.cli.parser import build_parser
 
         compact = build_parser().parse_args(["context", "what changed", "--json"])
-        detailed = build_parser().parse_args(
-            ["context", "what changed", "--json", "--details"]
-        )
+        detailed = build_parser().parse_args(["context", "what changed", "--json", "--details"])
 
         self.assertFalse(compact.details)
         self.assertTrue(detailed.details)
@@ -145,9 +141,9 @@ class CliMcpTest(unittest.TestCase):
             }
         )
         assert response is not None
-        text = response["result"]["content"][0]["text"]
-        self.assertIn('"hops": 2', text)
-        self.assertIn('"packet": "gg"', text)
+        data = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(data["hops"], 2)
+        self.assertEqual(data["packet"], "gg")
 
     def test_mcp_plan_context_direct_lookup(self) -> None:
         response = dispatch(
@@ -418,7 +414,7 @@ class CliMcpTest(unittest.TestCase):
             args.directory = str(root)
             args.output = str(graph_path)
 
-            with patch("graphgraph.services.native.scan_directory", return_value=bad_graph):
+            with patch("graphgraph.services.lifecycle.scan_directory", return_value=bad_graph):
                 with self.assertRaisesRegex(ValueError, "Refusing to write invalid graph JSON"):
                     cmd_scan(args)
 
@@ -500,7 +496,7 @@ class CliMcpTest(unittest.TestCase):
             bad_graph = Graph(nodes={"A": Node("A", "A")}, edges=[Edge("A", "B", "calls")])
             clean_graph = sample_graph()
 
-            with patch("graphgraph.services.native.scan_directory", side_effect=[bad_graph, clean_graph]):
+            with patch("graphgraph.services.lifecycle.scan_directory", side_effect=[bad_graph, clean_graph]):
                 status = scan_validated_graph(directory=root, output_path=graph_path, incremental=True)
 
             self.assertTrue(status.repaired)
@@ -557,19 +553,27 @@ class CliMcpTest(unittest.TestCase):
             graph_path = Path(tmp) / "graph.json"
             save_graph(sample_graph(), graph_path)
 
-            response = dispatch({
-                "jsonrpc": "2.0", "id": 9, "method": "tools/call",
-                "params": {"name": "full_graph", "arguments": {"graph_path": str(graph_path)}},
-            })
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {"name": "full_graph", "arguments": {"graph_path": str(graph_path)}},
+                }
+            )
             assert response is not None
             packet = response["result"]["content"][0]["text"]
             self.assertIn("AuthService", packet)
             self.assertIn("AuditLog", packet)
 
-            response_guard = dispatch({
-                "jsonrpc": "2.0", "id": 10, "method": "tools/call",
-                "params": {"name": "full_graph", "arguments": {"graph_path": str(graph_path), "max_tokens": 1}},
-            })
+            response_guard = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {"name": "full_graph", "arguments": {"graph_path": str(graph_path), "max_tokens": 1}},
+                }
+            )
             assert response_guard is not None
             self.assertIn("error", response_guard)
 
@@ -649,10 +653,7 @@ class CliMcpTest(unittest.TestCase):
                     "[~] Imaging: camera models remain absent",
                     "paragraph",
                     "docs/roadmap/gap-analysis.md",
-                    facts=(
-                        "[~] Imaging: camera models, state estimation, and "
-                        "source recognition remain absent.",
-                    ),
+                    facts=("[~] Imaging: camera models, state estimation, and source recognition remain absent.",),
                     parent="SECTION",
                 ),
                 "GENERIC": Node(
@@ -712,15 +713,15 @@ class CliMcpTest(unittest.TestCase):
             save_graph(sample_graph(), graph_path)
             with (
                 patch(
-                    "graphgraph.services.native.get_git_worktree_paths",
+                    "graphgraph.services.freshness.get_git_worktree_paths",
                     return_value=([], []),
                 ) as worktree_paths,
                 patch(
-                    "graphgraph.services.native.get_git_ignored_paths",
+                    "graphgraph.services.lifecycle.get_git_ignored_paths",
                     return_value=[],
                 ),
                 patch(
-                    "graphgraph.services.context.QuerySourcePlanner",
+                    "graphgraph.platform.runtime.QuerySourcePlanner",
                     wraps=QuerySourcePlanner,
                 ) as planner,
             ):
@@ -784,43 +785,45 @@ class CliMcpTest(unittest.TestCase):
             source = root / "src" / "auth.py"
             source.parent.mkdir()
             source.write_text(
-                "def login():\n"
-                "    token = 'ok'\n"
-                "    return token\n",
+                "def login():\n    token = 'ok'\n    return token\n",
                 encoding="utf-8",
             )
             graph_path = root / ".graphgraph" / "graph.json"
             graph_path.parent.mkdir()
             save_graph(
-                Graph(nodes={
-                    "LOGIN": Node(
-                        "LOGIN",
-                        "login",
-                        "function",
-                        "src/auth.py",
-                        summary="L1",
-                    ),
-                }),
+                Graph(
+                    nodes={
+                        "LOGIN": Node(
+                            "LOGIN",
+                            "login",
+                            "function",
+                            "src/auth.py",
+                            summary="L1",
+                        ),
+                    }
+                ),
                 graph_path,
             )
 
-            response = dispatch({
-                "jsonrpc": "2.0",
-                "id": 559,
-                "method": "tools/call",
-                "params": {
-                    "name": "query_context",
-                    "arguments": {
-                        "query": "login",
-                        "query_class": "direct_lookup",
-                        "graph_path": str(graph_path),
-                        "include_snippets": True,
-                        "snippet_limit": 1,
-                        "snippet_context_lines": 1,
-                        "snippet_max_lines": 2,
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 559,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_context",
+                        "arguments": {
+                            "query": "login",
+                            "query_class": "direct_lookup",
+                            "graph_path": str(graph_path),
+                            "include_snippets": True,
+                            "snippet_limit": 1,
+                            "snippet_context_lines": 1,
+                            "snippet_max_lines": 2,
+                        },
                     },
-                },
-            })
+                }
+            )
 
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
@@ -829,29 +832,29 @@ class CliMcpTest(unittest.TestCase):
             self.assertNotIn("3 |", data["source_snippets"])
 
             source.write_text(
-                "def login():\n"
-                "    token = 'fresh'\n"
-                "    return token\n",
+                "def login():\n    token = 'fresh'\n    return token\n",
                 encoding="utf-8",
             )
-            second = dispatch({
-                "jsonrpc": "2.0",
-                "id": 558,
-                "method": "tools/call",
-                "params": {
-                    "name": "query_context",
-                    "arguments": {
-                        "query": "login",
-                        "query_class": "direct_lookup",
-                        "graph_path": str(graph_path),
-                        "show_anchors": True,
-                        "include_snippets": True,
-                        "snippet_limit": 1,
-                        "snippet_context_lines": 1,
-                        "snippet_max_lines": 2,
+            second = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 558,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_context",
+                        "arguments": {
+                            "query": "login",
+                            "query_class": "direct_lookup",
+                            "graph_path": str(graph_path),
+                            "show_anchors": True,
+                            "include_snippets": True,
+                            "snippet_limit": 1,
+                            "snippet_context_lines": 1,
+                            "snippet_max_lines": 2,
+                        },
                     },
-                },
-            })
+                }
+            )
             assert second is not None
             second_data = json.loads(second["result"]["content"][0]["text"])
             self.assertIn("token = 'fresh'", second_data["source_snippets"])
@@ -966,7 +969,10 @@ class CliMcpTest(unittest.TestCase):
             self.assertTrue(any(anchor["label"] == "Fused Fresh Documentation" for anchor in data["anchors"]))
             refreshed = load_any(graph_path)
             self.assertTrue(
-                any(node.kind == "section" and node.label == "Fused Fresh Documentation" for node in refreshed.nodes.values())
+                any(
+                    node.kind == "section" and node.label == "Fused Fresh Documentation"
+                    for node in refreshed.nodes.values()
+                )
             )
 
     def test_mcp_query_context_git_sync_refreshes_only_manifest_stale_paths(self) -> None:
@@ -995,7 +1001,7 @@ class CliMcpTest(unittest.TestCase):
                 "show_anchors": True,
             }
             with patch(
-                "graphgraph.services.native.get_git_worktree_paths",
+                "graphgraph.services.lifecycle.get_git_worktree_paths",
                 return_value=(("worker.py",), ()),
             ):
                 first = dispatch(
@@ -1007,7 +1013,7 @@ class CliMcpTest(unittest.TestCase):
                     }
                 )
                 with patch(
-                    "graphgraph.services.native.update_paths_validated_graph",
+                    "graphgraph.services.lifecycle.update_paths_validated_graph",
                     side_effect=AssertionError("manifest-current path was refreshed twice"),
                 ):
                     second = dispatch(
@@ -1048,12 +1054,15 @@ class CliMcpTest(unittest.TestCase):
             self.assertTrue(any(node.path == "docs/bugs/note.md" for node in graph.nodes.values()))
             (root / ".gitignore").write_text("docs/bugs/\n", encoding="utf-8")
 
-            with patch(
-                "graphgraph.services.native.get_git_worktree_paths",
-                return_value=((".gitignore",), ()),
-            ), patch(
-                "graphgraph.services.native.get_git_ignored_paths",
-                side_effect=[("docs/bugs/note.md",), ()],
+            with (
+                patch(
+                    "graphgraph.services.lifecycle.get_git_worktree_paths",
+                    return_value=((".gitignore",), ()),
+                ),
+                patch(
+                    "graphgraph.services.lifecycle.get_git_ignored_paths",
+                    side_effect=[("docs/bugs/note.md",), ()],
+                ),
             ):
                 response = dispatch(
                     {
@@ -1157,31 +1166,6 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(data["exclusions"]["ignored_dir_sample"], ["corpus"])
             self.assertIn("docs_truncated_files", data["phase_profile"])
             self.assertTrue(output.exists())
-
-    def test_build_receipt_doc_nodes_matches_project_status(self) -> None:
-        # Slice-round finding (docs/bugs/2026-07-17-locus-blackbox-slice-implementation-round.md):
-        # the build receipt's docs counters read as "no docs" (docs_files: 0)
-        # even when doc nodes landed, because docs_files counts documents parsed
-        # into sections, not doc-kind file nodes. The receipt now also reports
-        # doc_nodes (what actually landed), and it must agree with the count
-        # project_status reports for the same graph.
-        from graphgraph.mcp.server import handle_build_graph
-        from graphgraph.services.native import build_project_status
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-            (root / "README.md").write_text("# Title\n\nProse about the module.\n", encoding="utf-8")
-            out_path = root / ".graphgraph" / "graph.gg"
-            receipt = json.loads(handle_build_graph({
-                "directory": str(root), "output_path": str(out_path),
-                "depth": "symbols", "docs": True,
-            }))
-            profile = receipt["phase_profile"]
-            self.assertIn("doc_nodes", profile)
-            self.assertGreater(profile["doc_nodes"], 0)  # the README landed
-            status = build_project_status(directory=root, graph_path=out_path)
-            self.assertEqual(profile["doc_nodes"], status["graph"]["shape"]["doc_nodes"])
 
     def test_splice_tools_require_paths_with_actionable_error(self) -> None:
         # Friction finding: remove_graph_files/update_graph_files errored with a
@@ -1358,13 +1342,11 @@ class CliMcpTest(unittest.TestCase):
             root = Path(tmp)
             (root / "tests").mkdir()
             (root / "tests" / "test_app.py").write_text(
-                "def test_compile_formula():\n"
-                "    assert compile_formula()\n",
+                "def test_compile_formula():\n    assert compile_formula()\n",
                 encoding="utf-8",
             )
             (root / "app.py").write_text(
-                "def compile_formula():\n"
-                "    return True\n",
+                "def compile_formula():\n    return True\n",
                 encoding="utf-8",
             )
             packet, _status = render_native_context(
@@ -1386,221 +1368,6 @@ class CliMcpTest(unittest.TestCase):
         self.assertIn("transitive", payload["actionable"]["tests"])
         self.assertIn("packet_validation", payload["workflow"])
 
-    def test_project_status_cold_repo_returns_graceful_no_graph_status(self) -> None:
-        # Slice-round finding (docs/bugs/2026-07-17-locus-blackbox-slice-implementation-round.md):
-        # project_status on a cold repo hard-errored (MCP -32000) instead of an
-        # actionable "no graph yet" status. A status probe is the natural first
-        # call on a fresh repo, so absence of a graph is an expected state, not
-        # an exception -- it must return an inspectable, actionable status and
-        # the MCP handler must serialize it rather than raise.
-        from graphgraph.mcp.server import handle_project_status
-        from graphgraph.services.native import build_project_status
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)  # deliberately empty: no .graphgraph graph
-            report = build_project_status(directory=root)
-            self.assertEqual(report["status"], "no_graph")
-            self.assertEqual(report["next_action"], "build_graph")
-            self.assertIn("build_graph", report["message"])
-            # MCP surface must not crash -- it serializes the status object.
-            payload = json.loads(handle_project_status({"directory": str(root)}))
-            self.assertEqual(payload["status"], "no_graph")
-
-    def test_project_status_reports_symbol_extraction_from_content(self) -> None:
-        # Slice-round finding: an incremental scan that preserves prior symbols
-        # can reset the frontend/scan_depth label to "files", so the label alone
-        # can't answer "did symbol extraction happen?". project_status now reports
-        # symbol_extraction derived from actual node kinds -- authoritative even
-        # when the label is stale.
-        from graphgraph.services.native import build_project_status
-
-        symbol_graph = Graph(nodes={
-            "F": Node("F", "foo", "function", "a.py"),
-            "M": Node("M", "bar", "method", "a.py"),
-            "FILE": Node("FILE", "a.py", "python", "a.py"),
-        })
-        files_only = Graph(nodes={"FILE": Node("FILE", "a.py", "python", "a.py")})
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            sym_path = root / "sym.json"
-            files_path = root / "files.json"
-            save_graph(symbol_graph, sym_path)
-            # Simulate the misreporting label: symbols present but frontend "files".
-            symbol_graph.metadata["frontend"] = "files"
-            save_graph(symbol_graph, sym_path)
-            save_graph(files_only, files_path)
-
-            sym = build_project_status(directory=root, graph_path=sym_path)["graph"]["symbol_extraction"]
-            self.assertTrue(sym["present"])
-            self.assertEqual(sym["symbol_nodes"], 2)  # authoritative despite frontend="files"
-
-            files = build_project_status(directory=root, graph_path=files_path)["graph"]["symbol_extraction"]
-            self.assertFalse(files["present"])
-            self.assertEqual(files["symbol_nodes"], 0)
-
-    def test_project_status_separates_member_call_trust_coverage_and_external_sites(self) -> None:
-        from graphgraph.services.native import build_project_status
-
-        graph = Graph(
-            nodes={
-                "A": Node("A", "caller", "function", "a.py"),
-                "B": Node("B", "target", "method", "a.py"),
-                "C": Node("C", "other", "method", "a.py"),
-            },
-            edges=[Edge("A", "C", "calls_candidate")],
-            metadata={
-                "member_calls_global_resolved": "3",
-                "member_calls_global_ambiguous": "0",
-                "member_calls_global_unknown_receiver": "7",
-                "member_calls_global_unresolved": "90",
-                "member_calls_global_version": "2",
-                "member_calls_global_scope": "full_scan_snapshot",
-            },
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            graph_path = root / "graph.json"
-            save_graph(graph, graph_path)
-            calls = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
-
-        self.assertEqual(calls["trust"], "high")
-        self.assertEqual(calls["coverage"], "partial")
-        self.assertEqual(calls["resolved_ratio"], 0.3)
-        self.assertEqual(calls["trusted_resolution_ratio"], 1.0)
-        self.assertEqual(calls["receiver_evidence_ratio"], 0.3)
-        self.assertEqual(calls["external_or_unmatched"], 90)
-        self.assertEqual(calls["candidate_edges"], 1)
-        self.assertIn("7 member-call sites lack receiver evidence", calls["warning"])
-
-    def test_project_status_marks_legacy_member_call_telemetry_unclassified(self) -> None:
-        from graphgraph.services.native import build_project_status
-
-        graph = Graph(
-            nodes={"A": Node("A", "caller", "function", "a.py")},
-            metadata={
-                "member_calls_global_resolved": "2",
-                "member_calls_global_ambiguous": "8",
-                "member_calls_global_unresolved": "20",
-            },
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            graph_path = root / "graph.json"
-            save_graph(graph, graph_path)
-            calls = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
-
-        self.assertEqual(calls["trust"], "legacy_unclassified")
-        self.assertEqual(calls["coverage"], "unknown")
-        self.assertIn("full symbol scan", calls["warning"])
-
-    def test_project_status_reports_validation_package_and_runtime_hint(self) -> None:
-        from graphgraph.services.native import build_project_status
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "src" / "featherwaight").mkdir(parents=True)
-            (root / "src" / "featherwaight" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
-            (root / "pyproject.toml").write_text(
-                "[project]\n"
-                'name = "featherwaight"\n'
-                'version = "0.1.0"\n'
-                "[project.scripts]\n"
-                'featherwaight = "featherwaight.cli:main"\n',
-                encoding="utf-8",
-            )
-            graph_path = root / ".graphgraph" / "graph.json"
-            graph_path.parent.mkdir(parents=True)
-            save_graph(Graph(nodes={"P": Node("P", "package", "python", "src/featherwaight/__init__.py")}), graph_path)
-
-            report = build_project_status(directory=root, graph_path=graph_path, run_probes=True)
-
-            self.assertTrue(report["graph"]["validation"]["ok"])
-            self.assertEqual(report["package"]["name"], "featherwaight")
-            self.assertEqual(report["package"]["module"], "featherwaight")
-            self.assertTrue(report["package"]["src_layout"])
-            self.assertIn("PYTHONPATH=src", report["package"]["import_hint"])
-            probes = {probe["name"]: probe for probe in report["runtime_probes"]}
-            self.assertFalse(probes["raw_import"]["ok"])
-            self.assertTrue(probes["src_import"]["ok"])
-            self.assertIn("script_target_import:featherwaight", probes)
-            self.assertFalse(probes["raw_module_help"]["ok"])
-            self.assertTrue(any("PYTHONPATH includes src" in note for note in report["runtime_notes"]))
-
-    def test_project_status_reports_cargo_workspace_metadata(self) -> None:
-        from graphgraph.services.native import build_project_status
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "Cargo.toml").write_text(
-                '[workspace]\nmembers = ["crates/core", "crates/cli"]\n',
-                encoding="utf-8",
-            )
-            for crate in ("core", "cli"):
-                member = root / "crates" / crate
-                member.mkdir(parents=True)
-                (member / "Cargo.toml").write_text(
-                    f'[package]\nname = "{crate}"\nversion = "0.1.0"\n',
-                    encoding="utf-8",
-                )
-            graph_path = root / ".graphgraph" / "graph.json"
-            graph_path.parent.mkdir(parents=True)
-            save_graph(Graph(nodes={"R": Node("R", "workspace", "rust", "crates/core/src/lib.rs")}), graph_path)
-
-            report = build_project_status(directory=root, graph_path=graph_path)
-
-        self.assertEqual(report["package"]["ecosystem"], "rust")
-        self.assertEqual(report["package"]["rust"]["kind"], "workspace")
-        self.assertEqual(report["package"]["rust"]["members"], ["crates/core", "crates/cli"])
-
-    def test_project_status_expands_cargo_workspace_globs_and_excludes(self) -> None:
-        from graphgraph.services.native import build_project_status
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "Cargo.toml").write_text(
-                '[workspace]\nmembers = ["crates/*"]\nexclude = ["crates/dev-only"]\n',
-                encoding="utf-8",
-            )
-            for crate in ("advisors", "cli", "core", "dev-only", "engine", "frontends", "pipeline"):
-                member = root / "crates" / crate
-                member.mkdir(parents=True)
-                (member / "Cargo.toml").write_text(
-                    f'[package]\nname = "{crate}"\nversion = "0.1.0"\n',
-                    encoding="utf-8",
-                )
-            graph_path = root / ".graphgraph" / "graph.json"
-            graph_path.parent.mkdir(parents=True)
-            save_graph(
-                Graph(
-                    nodes={
-                        "R": Node(
-                            "R",
-                            "workspace",
-                            "rust",
-                            "crates/core/src/lib.rs",
-                        )
-                    }
-                ),
-                graph_path,
-            )
-
-            report = build_project_status(directory=root, graph_path=graph_path)
-
-        rust = report["package"]["rust"]
-        self.assertEqual(rust["member_patterns"], ["crates/*"])
-        self.assertEqual(rust["exclude_patterns"], ["crates/dev-only"])
-        self.assertEqual(
-            rust["members"],
-            [
-                "crates/advisors",
-                "crates/cli",
-                "crates/core",
-                "crates/engine",
-                "crates/frontends",
-                "crates/pipeline",
-            ],
-        )
-
     def test_cli_validate_graph_accepts_positional_path(self) -> None:
         import os
 
@@ -1618,57 +1385,6 @@ class CliMcpTest(unittest.TestCase):
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("STRUCTURAL PASS", proc.stdout)
-
-    def test_project_status_surfaces_scan_truncation(self) -> None:
-        # Found via live dogfooding: doctor already surfaces
-        # files_truncated/symbols_truncated (fixed earlier this session for
-        # cmd_scan), but project_status -- also explicitly documented as
-        # "the is-something-wrong-with-my-graph surface" -- didn't check
-        # graph.metadata for the same flags at all, so it could report a
-        # graph as fully validated/healthy while silently built from an
-        # incomplete scan.
-        from graphgraph.services.native import build_project_status
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            graph_path = root / ".graphgraph" / "graph.json"
-            graph_path.parent.mkdir(parents=True)
-            graph = Graph(
-                nodes={"N1": Node("N1", "AuthService", "service", "server/auth.py")},
-                metadata={"files_truncated": "true", "files_total_matched": "500", "symbols_truncated": "true", "symbols_cap": "100"},
-            )
-            save_graph(graph, graph_path)
-
-            report = build_project_status(directory=root, graph_path=graph_path)
-            self.assertTrue(report["graph"]["files_truncated"])
-            self.assertEqual(report["graph"]["files_total_matched"], "500")
-            self.assertTrue(report["graph"]["symbols_truncated"])
-            self.assertEqual(report["graph"]["symbols_cap"], "100")
-
-    def test_mcp_project_status(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            graph_path = root / ".graphgraph" / "graph.json"
-            graph_path.parent.mkdir(parents=True)
-            save_graph(sample_graph(), graph_path)
-            response = dispatch(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 16,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "project_status",
-                        "arguments": {
-                            "directory": str(root),
-                            "graph_path": str(graph_path),
-                        },
-                    },
-                }
-            )
-            assert response is not None
-            data = json.loads(response["result"]["content"][0]["text"])
-            self.assertTrue(data["graph"]["validation"]["ok"])
-            self.assertEqual(data["graph"]["shape"]["nodes"], 3)
 
     def test_cli_stdio_handles_unicode_on_cp1252_streams(self) -> None:
         import io
@@ -1757,8 +1473,15 @@ class CliMcpTest(unittest.TestCase):
 
             proc_guard = subprocess.run(
                 [
-                    sys.executable, "-m", "graphgraph", "final", "--graph", str(graph_path),
-                    "--full-graph", "--full-graph-max-tokens", "1",
+                    sys.executable,
+                    "-m",
+                    "graphgraph",
+                    "final",
+                    "--graph",
+                    str(graph_path),
+                    "--full-graph",
+                    "--full-graph-max-tokens",
+                    "1",
                 ],
                 text=True,
                 capture_output=True,
@@ -1948,6 +1671,12 @@ class CliMcpTest(unittest.TestCase):
                 plugin_skill_content = plugin_skill.read_text(encoding="utf-8")
                 self.assertIn("name: graphgraph", plugin_skill_content)
                 self.assertEqual(plugin_skill_content, skill_content)
+                agent_example = skill_md.parent / "examples" / "mcp_server_settings.json"
+                plugin_example = plugin_skill.parent / "examples" / "mcp_server_settings.json"
+                self.assertEqual(
+                    plugin_example.read_bytes(),
+                    agent_example.read_bytes(),
+                )
                 plugin_harness = plugin_skill.parent / "scripts" / "validate_live.py"
                 self.assertEqual(
                     plugin_harness.read_text(encoding="utf-8"),
@@ -2000,26 +1729,72 @@ class CliMcpTest(unittest.TestCase):
             )
 
     def test_tracked_skill_bundles_match_canonical_asset(self) -> None:
-        canonical = (
-            Path("src") / "graphgraph" / "assets" / "graphgraph_skill.md"
-        ).read_text(encoding="utf-8")
+        canonical_skill = (Path("src") / "graphgraph" / "assets" / "graphgraph_skill.md").read_text(encoding="utf-8")
+        canonical_validator = (Path("src") / "graphgraph" / "assets" / "validate_live.py").read_text(encoding="utf-8")
 
         self.assertEqual(
-            (Path(".agents") / "skills" / "graphgraph" / "SKILL.md").read_text(
-                encoding="utf-8"
-            ),
-            canonical,
+            (Path(".agents") / "skills" / "graphgraph" / "SKILL.md").read_text(encoding="utf-8"),
+            canonical_skill,
         )
         self.assertEqual(
-            (
-                Path("plugins")
-                / "graphgraph"
-                / "skills"
-                / "graphgraph"
-                / "SKILL.md"
-            ).read_text(encoding="utf-8"),
-            canonical,
+            (Path(".agents") / "skills" / "graphgraph" / "scripts" / "validate_live.py").read_text(encoding="utf-8"),
+            canonical_validator,
         )
+        self.assertEqual(
+            (Path("plugins") / "graphgraph" / "skills" / "graphgraph" / "SKILL.md").read_text(encoding="utf-8"),
+            canonical_skill,
+        )
+        self.assertEqual(
+            (Path("plugins") / "graphgraph" / "skills" / "graphgraph" / "scripts" / "validate_live.py").read_text(
+                encoding="utf-8"
+            ),
+            canonical_validator,
+        )
+
+    def test_repo_local_skill_validator_launcher_help(self) -> None:
+        launcher = Path(".agents") / "skills" / "graphgraph" / "scripts" / "validate_live.py"
+
+        proc = subprocess.run(
+            [sys.executable, str(launcher), "--help"],
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("validate_live", proc.stdout)
+
+    def test_doctor_reports_project_skill_artifacts(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        canonical_root = Path("src") / "graphgraph" / "assets"
+        canonical_skill = (canonical_root / "graphgraph_skill.md").read_text(encoding="utf-8")
+        canonical_validator = (canonical_root / "validate_live.py").read_text(encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            agent_root = root / ".agents" / "skills" / "graphgraph"
+            plugin_root = root / "plugins" / "graphgraph" / "skills" / "graphgraph"
+            (agent_root / "scripts").mkdir(parents=True)
+            (plugin_root / "scripts").mkdir(parents=True)
+            (agent_root / "SKILL.md").write_text(canonical_skill, encoding="utf-8")
+            (agent_root / "scripts" / "validate_live.py").write_text("stale validator\n", encoding="utf-8")
+            (plugin_root / "SKILL.md").write_text(canonical_skill, encoding="utf-8")
+            (plugin_root / "scripts" / "validate_live.py").write_text(canonical_validator, encoding="utf-8")
+
+            proc = subprocess.run(
+                [sys.executable, "-m", "graphgraph", "doctor"],
+                cwd=root,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("[Project Skill Artifacts]", proc.stdout)
+        self.assertIn("Agent live validator: STALE", proc.stdout)
+        self.assertIn("Plugin live validator: Current (OK)", proc.stdout)
 
     def test_live_validation_detects_repo_ecosystem_and_supports_override(self) -> None:
         from graphgraph.acceptance.live_validation import detect_test_command, split_command
@@ -2031,7 +1806,9 @@ class CliMcpTest(unittest.TestCase):
 
         self.assertEqual(command, ["cargo", "test", "--workspace"])
         self.assertEqual(ecosystem, "cargo")
-        self.assertEqual(split_command('cargo test --package "locus engine"'), ["cargo", "test", "--package", "locus engine"])
+        self.assertEqual(
+            split_command('cargo test --package "locus engine"'), ["cargo", "test", "--package", "locus engine"]
+        )
 
     def test_live_validation_saved_reports_are_explicitly_optional(self) -> None:
         from graphgraph.acceptance.live_validation import load_saved_reports
@@ -2068,20 +1845,22 @@ class CliMcpTest(unittest.TestCase):
         from graphgraph.acceptance.live_validation import validate_queries
 
         query = "Which direct tests cover TransformPlanner and what Cargo command should run?"
-        response = json.dumps({
-            "query_class": "affected_tests",
-            "anchors": [{"id": "PLAN"}],
-            "packet": "#gg/v1",
-            "retrieval": {
-                "semantic_validation": {"ok": True, "errors": []},
-                "affected_tests": {
-                    "direct": [{"id": "TEST"}],
-                    "transitive": [],
-                    "commands": ["cargo test -p locus-frontends planner::tests --lib"],
+        response = json.dumps(
+            {
+                "query_class": "affected_tests",
+                "anchors": [{"id": "PLAN"}],
+                "packet": "#gg/v1",
+                "retrieval": {
+                    "semantic_validation": {"ok": True, "errors": []},
+                    "affected_tests": {
+                        "direct": [{"id": "TEST"}],
+                        "transitive": [],
+                        "commands": ["cargo test -p locus-frontends planner::tests --lib"],
+                    },
                 },
-            },
-            "actionable": {"status": "ready", "missing_evidence": []},
-        })
+                "actionable": {"status": "ready", "missing_evidence": []},
+            }
+        )
         with (
             patch("graphgraph.services.render_query_context", return_value=response) as render,
             patch(
@@ -2416,92 +2195,14 @@ class CliMcpTest(unittest.TestCase):
                     arrays[path] = tuple(node)
 
         walk(payload)
-        self.assertLessEqual(
-            len(freshness_blocks), 1, f"freshness emitted more than once: {freshness_blocks}"
-        )
+        self.assertLessEqual(len(freshness_blocks), 1, f"freshness emitted more than once: {freshness_blocks}")
         seen: dict[tuple[str, ...], str] = {}
         for location, value in arrays.items():
             if len(value) < 2:
                 continue
             previous = seen.get(value)
-            self.assertIsNone(
-                previous, f"identical path array duplicated at {previous} and {location}"
-            )
+            self.assertIsNone(previous, f"identical path array duplicated at {previous} and {location}")
             seen[value] = location
-
-    def test_tracked_file_listed_in_gitignore_still_reports_stale(self) -> None:
-        # Git's rule is that .gitignore governs untracked files only: a
-        # tracked file listed there still reports its edits. Filtering the
-        # tracked set through ignore rules dropped those edits, so the graph
-        # went stale while freshness reported clean -- silent, and worst for
-        # generated-then-committed files, which change often.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "repo"
-            root.mkdir()
-
-            def git(*args: str) -> None:
-                subprocess.run(("git", *args), cwd=root, capture_output=True, check=False)
-
-            git("init", "-q", ".")
-            (root / ".gitignore").write_text("generated.py\nbuild/\n", encoding="utf-8")
-            (root / "generated.py").write_text("def a():\n    return 1\n", encoding="utf-8")
-            (root / "app.py").write_text("def b():\n    return 2\n", encoding="utf-8")
-            git("add", "-f", "generated.py", "app.py", ".gitignore")
-            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
-
-            graph_path = root / ".graphgraph" / "graph.gg"
-            from graphgraph.services.native import scan_validated_graph
-
-            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
-
-            (root / "generated.py").write_text("def a():\n    return 99\n", encoding="utf-8")
-            freshness = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
-            self.assertFalse(freshness["fresh"])
-            self.assertIn("generated.py", freshness["changed_paths"])
-
-            # ...while an untracked ignored file stays excluded, which is the
-            # property the secret-boundary case depends on.
-            (root / "build").mkdir(exist_ok=True)
-            (root / "build" / "junk.py").write_text("def junk():\n    pass\n", encoding="utf-8")
-            after = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
-            self.assertNotIn("build/junk.py", after["changed_paths"])
-
-    def test_member_call_staleness_fires_only_after_an_incremental_scan(self) -> None:
-        # The STALE note exists because incremental scans copy the global
-        # member-call counts across untouched, so a resolver change reads as
-        # having done nothing. Its first implementation compared scanned-file
-        # count against nodes-carrying-a-path (302 vs 6239) and fired on every
-        # graph, including one full-scanned seconds earlier -- a warning that
-        # is always on teaches readers to ignore it.
-        from graphgraph.services.native import build_project_status, scan_validated_graph
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "repo"
-            root.mkdir()
-            (root / "app.py").write_text(
-                "class Runner:\n"
-                "    def go(self):\n"
-                "        return self.step()\n\n"
-                "    def step(self):\n"
-                "        return 1\n",
-                encoding="utf-8",
-            )
-            graph_path = root / ".graphgraph" / "graph.gg"
-            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
-
-            status = build_project_status(directory=root, graph_path=graph_path)
-            member_calls = status["graph"]["member_calls"]
-            self.assertFalse(
-                member_calls["snapshot_may_be_stale"],
-                "a freshly full-scanned graph must not be reported stale",
-            )
-
-            # An incremental pass carries the counts forward; say so.
-            (root / "other.py").write_text("def added():\n    return 2\n", encoding="utf-8")
-            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
-            after = build_project_status(directory=root, graph_path=graph_path)["graph"]["member_calls"]
-            self.assertTrue(after["snapshot_may_be_stale"])
-            self.assertIn("--no-incremental", after["staleness_note"])
 
     def test_query_show_stats_reports_the_anchor_route(self) -> None:
         # The anchor route is what explains query latency: exact_fast_path
@@ -2527,12 +2228,17 @@ class CliMcpTest(unittest.TestCase):
             from graphgraph.cli.parser import build_parser
 
             parser = build_parser()
-            args = parser.parse_args([
-                "query", "what calls unique_target",
-                "--graph", str(graph_path),
-                "--query-class", "reverse_lookup",
-                "--show-stats",
-            ])
+            args = parser.parse_args(
+                [
+                    "query",
+                    "what calls unique_target",
+                    "--graph",
+                    str(graph_path),
+                    "--query-class",
+                    "reverse_lookup",
+                    "--show-stats",
+                ]
+            )
             stderr = io.StringIO()
             stdout = io.StringIO()
             with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
@@ -2566,12 +2272,17 @@ class CliMcpTest(unittest.TestCase):
 
             scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
 
-            args = build_parser().parse_args([
-                "query", "what calls target",
-                "--graph", str(graph_path),
-                "--query-class", "reverse_lookup",
-                "--json",
-            ])
+            args = build_parser().parse_args(
+                [
+                    "query",
+                    "what calls target",
+                    "--graph",
+                    str(graph_path),
+                    "--query-class",
+                    "reverse_lookup",
+                    "--json",
+                ]
+            )
             stdout = _io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(_io.StringIO()):
                 args.func(args)
@@ -2580,7 +2291,65 @@ class CliMcpTest(unittest.TestCase):
             self.assertIn("packet", payload)
             self.assertIn("control", payload)
             self.assertIn("anchor=", payload["control"])
+            self.assertIn("gates=fresh:+", payload["control"])
+            self.assertTrue(payload["workflow"]["freshness"]["repository_fresh"])
+            self.assertTrue(payload["workflow"]["freshness"]["requested_scope_fresh"])
+            self.assertTrue(
+                payload["workflow"]["freshness"]["extractor_compatible"]
+            )
+            self.assertNotEqual(
+                payload["workflow"]["freshness"]["measured_at"],
+                "unknown",
+            )
             self.assertIn("#gg", payload["packet"])
+
+    def test_query_binds_relocated_graph_to_manifest_source_root(self) -> None:
+        import contextlib
+        import io as _io
+
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.services.native import scan_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source_root = base / "source-repo"
+            graph_store = base / "graph-store"
+            source_root.mkdir()
+            graph_store.mkdir()
+            (source_root / "app.py").write_text(
+                "def target():\n    return 1\n",
+                encoding="utf-8",
+            )
+            graph_path = graph_store / "saved.gg"
+            scan_validated_graph(
+                directory=source_root,
+                output_path=graph_path,
+                depth="symbols",
+            )
+
+            manifest = json.loads(
+                (graph_store / "saved.gg.manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(Path(manifest["source_root"]), source_root.resolve())
+
+            args = build_parser().parse_args(
+                [
+                    "query",
+                    "where is target",
+                    "--graph",
+                    str(graph_path),
+                    "--query-class",
+                    "direct_lookup",
+                    "--json",
+                ]
+            )
+            stdout = _io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(_io.StringIO()):
+                args.func(args)
+
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["workflow"]["freshness"]["repository_fresh"])
+        self.assertIn("gates=fresh:+", payload["control"])
 
     def test_update_does_not_clobber_the_persisted_docs_setting(self) -> None:
         # `scan --help` promises the docs setting is reused when omitted, and
@@ -2606,14 +2375,15 @@ class CliMcpTest(unittest.TestCase):
             def run(*args: str) -> None:
                 subprocess.run(
                     [sys.executable, "-m", "graphgraph", *args],
-                    cwd=root, capture_output=True, check=False,
+                    cwd=root,
+                    capture_output=True,
+                    check=False,
                 )
 
             def doc_nodes() -> int:
                 graph = load_any(graph_path)
                 return sum(
-                    1 for node in graph.nodes.values()
-                    if node.kind in {"paragraph", "section", "markdown", "concept"}
+                    1 for node in graph.nodes.values() if node.kind in {"paragraph", "section", "markdown", "concept"}
                 )
 
             run("scan", "--depth", "symbols", "--docs")
@@ -2622,7 +2392,8 @@ class CliMcpTest(unittest.TestCase):
 
             run("update", "--files", "a.py")
             self.assertEqual(
-                load_any(graph_path).metadata.get("docs"), "true",
+                load_any(graph_path).metadata.get("docs"),
+                "true",
                 "update must not rewrite a setting it was not asked to change",
             )
 

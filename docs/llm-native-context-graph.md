@@ -122,8 +122,9 @@ Use a ladder instead of a single favorite format:
 
 ## Brutal Current Gaps
 
-- Native retrieval is only lexical anchor search plus graph expansion. It is a
-  bootstrap, not yet competitive with hybrid lexical/vector/graph retrieval.
+- Native retrieval is lexical anchor search plus graph expansion, with an
+  optional real-embedding backend for semantic seeds (see below). The offline
+  default remains lexical; without a backend, paraphrase recall is near zero.
 - Symbol extraction and a durable file-hash manifest exist, but the active
   project graph can still regress to file-level evidence if dependencies or
   scanner options are missing.
@@ -133,6 +134,27 @@ Use a ladder instead of a single favorite format:
   interpretation accuracy.
 - `.gg` has basic round-trip tests, but still needs a formal spec, large-graph
   regression coverage, and model parsing tests.
+
+## Optional Embedding Backend
+
+The semantic index (`platform/semantic.py`) defaults to a dependency-free
+hashed bag-of-words. Cosine is high only on shared literal tokens, so a
+paraphrase that resolves to the same node scores near zero — this is why
+black-box cycles measured semantic recall at 0/4. That floor is inherent to the
+hash; no tuning lifts it.
+
+Set `GRAPHGRAPH_EMBED_URL` (optionally `GRAPHGRAPH_EMBED_MODEL`,
+`GRAPHGRAPH_EMBED_API_KEY`) to a JSON embedding endpoint and the index builds
+and queries from real embeddings instead, recovering paraphrase matches on the
+weak-lexical fallback path. The endpoint takes `{"input": [text, ...]}` and
+returns `{"embeddings": [[float, ...], ...]}` (OpenAI-shaped `data[].embedding`
+is also accepted). No third-party package is required; the backend uses only
+the standard library. A heavier local model can register via
+`graphgraph.platform.set_backend`.
+
+Provenance is enforced: the index records which backend built it, and a query
+through a different (or absent) backend is refused rather than scored against a
+foreign vector space. `graphgraph doctor` reports the active backend.
 
 ## Near-Term Direction
 

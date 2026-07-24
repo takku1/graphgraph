@@ -190,8 +190,9 @@ you may assert, not as decoration.
 | `!  STALE: counts were measured by a full scan ...` (`status`) | Member-call telemetry was carried forward | The resolution numbers describe an older scan, not this graph |
 | `Unresolved receivers by shape: ...` (`status`) | Why receivers went untyped | Diagnostic for resolver work. Bucket **size is not addressability** — most large buckets iterate generic/stdlib types that can never name a repo symbol |
 
-Current member-call resolution is ~23.8%. A symbol reported with zero callers
-may simply be called through an unresolved receiver. This is the single most
+Run `graphgraph status` for the current repository-specific member-call
+resolution rate and telemetry scope. A symbol reported with zero callers may
+simply be called through an unresolved receiver. This is the single most
 important limitation to carry into any dead-code, island, or blast-radius
 conclusion.
 
@@ -236,7 +237,9 @@ is not uniform:
 | Python | parameter/variable annotations, `x = Type()`, class fields, base classes |
 | Rust | parameter and `let` types, container element types, callee return types, `impl` blocks |
 | TypeScript/JavaScript | parameter/variable annotations, `new T()`, `as T`, `this.field` |
-| Others | none -- symbols are extracted, but member calls do not resolve |
+| C#/Java | typed parameters/locals, `new T()`, field/property declarations, and both `this.member` and bare field receivers (`_repo.Method()`) |
+| C/C++ | C and C++ parameter/local declaration types and qualified receivers; C++ member-field receivers are not yet typed (class extraction pending) |
+| Other supported languages | symbol/call extraction varies; inspect `status` before trusting caller completeness |
 
 Inherited methods resolve through the base-class chain. A symbol reported with
 zero callers may simply be called through a receiver that could not be typed;

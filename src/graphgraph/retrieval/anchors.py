@@ -308,6 +308,7 @@ def qualified_symbol_anchor_matches(
         context_terms = set(term_key(" ".join((
             node.id,
             node.summary,
+            *node.facts,
             graph.nodes[node.parent].label
             if node.parent and node.parent in graph.nodes
             else "",
@@ -582,6 +583,41 @@ def _is_high_confidence_exact_anchor(match: Match) -> bool:
         reason in {"label_exact_terms", "label_all_terms", "basename_exact_terms", "basename_all_terms"}
         for reason in match.reasons
     )
+
+def retrieval_confidence(matches: tuple[Match, ...]) -> float:
+    """How trustworthy the *answer* is, from the actual anchor evidence.
+
+    This is deliberately distinct from ``QueryRoute.confidence``, which scores
+    only how certain the *classifier* is about which query class the wording
+    implies. That value is a function of query text alone -- it never sees the
+    graph -- so it is identical for every query that trips the same class
+    signals, regardless of whether those queries anchored to a strong exact
+    symbol or to nothing at all. Presenting it as answer-confidence made a
+    real central symbol and a nonexistent one score the same.
+
+    This signal instead varies per query with the evidence that was actually
+    found: the match quality of the strongest anchor, how much probability
+    mass it carries, and how cleanly it separates from the runners-up. Weights
+    are hand-set priors in the same spirit as ``_dynamic_anchor_limit`` above;
+    they are not calibrated against a labelled set, so treat the ordering as
+    meaningful and the absolute value as indicative.
+    """
+    live = tuple(match for match in matches if match.score > 0)
+    if not live:
+        return 0.0
+    shape = _anchor_score_shape(live, window=8)
+    top = live[0]
+    # Backbone: an exact label/basename hit is strong standalone evidence; a
+    # fuzzy or partial hit is only as strong as the mass it concentrates.
+    if _is_high_confidence_exact_anchor(top):
+        backbone = 0.85
+    else:
+        backbone = 0.25 + 0.45 * shape.top_mass
+    # A top anchor standing clear of the field is more trustworthy than one
+    # tied in a plateau of near-equal candidates.
+    conf = backbone * (0.7 + 0.3 * shape.score_gap)
+    return max(0.0, min(1.0, conf))
+
 
 def _is_targeted_symbol_anchor(match: Match) -> bool:
     if match.node.kind not in {"function", "method", "class", "struct", "trait", "enum", "field"}:

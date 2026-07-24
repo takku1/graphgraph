@@ -16,29 +16,13 @@ from pathlib import Path
 from typing import Callable
 
 from ..io import load_any
+from ..packets import PACKET_FORMAT_NAMES
 from ..scanner.files import collect_files
-from .compiler import GraphProgram, GraphRuntime
-from .contracts import StructuralEvidenceProvider
-from .cpg import CpgEvidenceProvider
-from .evidence_store import EvidenceStore
+from .compiler import COMPILER_PASS_NAMES, GraphProgram
 from .memory import MemoryStore
 from .persistence import PLATFORM_STATE_VERSION, append_jsonl_many, migrate_platform_state
-from .source_planner import QuerySourcePlanner
+from .runtime import create_graph_runtime
 from .temporal import Episode, TemporalStore
-
-_PACKETS = {
-    "lowlevel",
-    "sql",
-    "hybrid",
-    "semantic_arrow",
-    "gg",
-    "gg_hybrid",
-    "gg_lex",
-    "gg_lex_hybrid",
-    "svo",
-    "doc_summary",
-}
-_PASSES = {"evidence", "inference", "hierarchy"}
 
 
 class _GraphFileCache:
@@ -198,6 +182,8 @@ def create_server(
                         kind=_bounded_text(data.get("kind", "fact"), "kind", 100),
                         source=_bounded_text(data.get("source", "http"), "source", 1000),
                         related_nodes=_string_tuple(data.get("related_nodes"), 100, 200),
+                        graph=graph_cache.get(),
+                        anchor_limit=min(int(data.get("anchor_limit") or 8), 100),
                     )
                     self._json({"ok": True, "record": asdict(record)}, HTTPStatus.CREATED)
                     return
@@ -298,30 +284,35 @@ def create_server(
 
         def _compile(self, graph, data: dict[str, object]) -> dict[str, object]:
             text = _bounded_text(data.get("query"), "query", 20_000)
+            query_class = _bounded_text(data.get("query_class", "auto"), "query_class", 100)
             packet = _bounded_text(data.get("packet", "gg"), "packet", 100)
-            if packet not in _PACKETS:
+            if packet not in PACKET_FORMAT_NAMES:
                 raise ValueError(f"unknown packet: {packet}")
             raw_passes = data.get("passes", [])
             if not isinstance(raw_passes, list):
                 raise ValueError("passes must be an array")
             passes = tuple(str(value) for value in raw_passes)
-            unknown = set(passes) - _PASSES
+            unknown = set(passes) - set(COMPILER_PASS_NAMES)
             if unknown:
                 raise ValueError(f"unknown compiler passes: {', '.join(sorted(unknown))}")
             max_nodes = data.get("max_nodes")
             if max_nodes is not None:
                 max_nodes = min(1000, max(1, int(max_nodes)))
-            result = GraphRuntime(
-                graph,
-                (StructuralEvidenceProvider(), CpgEvidenceProvider()),
-                evidence_store=EvidenceStore(resolved.parent / "evidence.db"),
-                source_planner=QuerySourcePlanner(resolved.parent, graph_path=resolved),
+            result = create_graph_runtime(
+                resolved,
+                graph=graph,
                 source_mode=_bounded_text(
                     data.get("source_mode", "auto"),
                     "source_mode",
                     20,
                 ),
-            ).compile(GraphProgram(text, packet=packet, passes=passes, max_nodes=max_nodes))
+            ).compile(GraphProgram(
+                text,
+                query_class=query_class,
+                packet=packet,
+                passes=passes,
+                max_nodes=max_nodes,
+            ))
             return json.loads(result.envelope())
 
         def _send(self, status: HTTPStatus, body: str, content_type: str) -> None:

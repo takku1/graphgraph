@@ -58,6 +58,56 @@ class QueryRoute:
     router_version: str = ROUTER_VERSION
 
 
+@dataclass(frozen=True)
+class QueryClassSpec:
+    name: str
+    description: str
+    automatic: bool = True
+
+
+QUERY_CLASSES: tuple[QueryClassSpec, ...] = (
+    QueryClassSpec("direct_lookup", "Locate a definition or focused symbol."),
+    QueryClassSpec("reverse_lookup", "Find callers, references, implementors, or dependents."),
+    QueryClassSpec("affected_tests", "Find direct, transitive, and behavioral tests affected by a change."),
+    QueryClassSpec("multi_hop_path", "Trace a dependency, call, control, or data-flow path."),
+    QueryClassSpec("blast_radius", "Estimate downstream change impact and supporting evidence."),
+    QueryClassSpec("subsystem_summary", "Summarize a subsystem or architecture slice."),
+    QueryClassSpec("doc_summary", "Ground an answer in document sections and paragraphs."),
+    QueryClassSpec("negative_query", "Prove absence, isolation, or lack of references."),
+    QueryClassSpec("recent_changes", "Retrieve qualifying recent history and fixes evidence."),
+    QueryClassSpec("spreading_activation", "Use explicit multi-step activation retrieval.", automatic=False),
+)
+QUERY_CLASS_NAMES: tuple[str, ...] = tuple(spec.name for spec in QUERY_CLASSES)
+
+
+def query_class_schema(
+    *,
+    include_auto: bool = False,
+    default: str | None = None,
+) -> dict[str, object]:
+    names = (("auto", *QUERY_CLASS_NAMES) if include_auto else QUERY_CLASS_NAMES)
+    schema: dict[str, object] = {
+        "type": "string",
+        "enum": list(names),
+        "description": "Query routing class. Supported values: " + ", ".join(names) + ".",
+    }
+    if default is not None:
+        schema["default"] = default
+    return schema
+
+
+def query_class_markdown_table() -> str:
+    rows = [
+        "| Query class | Routing | Purpose |",
+        "| --- | --- | --- |",
+    ]
+    rows.extend(
+        f"| `{spec.name}` | {'automatic or explicit' if spec.automatic else 'explicit'} | {spec.description} |"
+        for spec in QUERY_CLASSES
+    )
+    return "\n".join(rows)
+
+
 # Primary lexical signals: (query_class, weight, reason, pattern).
 _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
     ("affected_tests", 7.0, "affected-test intent", re.compile(

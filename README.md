@@ -106,9 +106,14 @@ Gemini/Antigravity. Hand-edit only if you need a client it doesn't cover yet.
 entry). Generate/refresh it with:
 ```powershell
 graphgraph install --project --platform codex
+graphgraph artifacts --check
 codex plugin marketplace add <path-to-graphgraph>
 codex plugin add graphgraph@graphgraph-local
 ```
+The packaged files under `src/graphgraph/assets` plus the typed generators in
+`graphgraph.distribution` are canonical. Maintainers regenerate tracked
+`.agents` and `plugins/graphgraph` copies with `graphgraph artifacts`; CI runs
+`graphgraph artifacts --check`. Do not hand-edit those generated copies.
 Then start a Codex thread and ask a structural codebase question, or invoke
 `@graphgraph` directly. To pin the plugin to an uninstalled dev checkout
 instead of the installed console script, run
@@ -270,6 +275,7 @@ $env:GEMINI_API_KEY="your-gemini-key"
 ```powershell
 python benchmarks\context_graph\run_all.py    # full benchmark suite
 graphgraph eval --graph .graphgraph/graph.gg --tasks benchmarks/context_graph/data/locus_tasks.json --max-nodes 40
+graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-self.json --calibration  # labeled confidence receipt; not a fitted production threshold
 graphgraph platform benchmark --config multi-repo-acceptance.json  # enforced multi-repo gates
 graphgraph platform acceptance --repo ../locus                     # sealed black-box release floor
 graphgraph platform quality                                       # token/recall/precision regression gate

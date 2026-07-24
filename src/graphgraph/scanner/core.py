@@ -33,7 +33,14 @@ from .rust_references import filter_rust_reference_edges
 logger = logging.getLogger(__name__)
 ScanProgress = Callable[[str, str], None]
 _MEMBER_CALL_TELEMETRY_VERSION = "2"
-_MEMBER_CALL_TELEMETRY_FIELDS = ("resolved", "ambiguous", "unknown_receiver", "unresolved")
+_MEMBER_CALL_TELEMETRY_FIELDS = (
+    "resolved",
+    "ambiguous",
+    "unknown_receiver",
+    "unresolved",
+    "external_resolved",
+    "unmatched",
+)
 
 
 def _emit_progress(progress: ScanProgress | None, phase: str, detail: str) -> None:
@@ -124,6 +131,7 @@ def scan_directory(
     include: list[str] | None = None,
     exclude_paths: list[str] | list[Path] | None = None,
     progress: ScanProgress | None = None,
+    manifest_sink: list | None = None,
 ) -> Graph:
     """Scan *root* and build a Graph of file-level (and optionally symbol-level) nodes.
 
@@ -236,6 +244,7 @@ def scan_directory(
         manifest=manifest,
         previous_graph=previous_graph,
         manifest_path=manifest_path,
+        manifest_sink=manifest_sink,
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         depth=depth,
@@ -326,6 +335,7 @@ def update_paths(
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
     deleted_paths: list[str] | None = None,
+    manifest_sink: list | None = None,
 ) -> Graph:
     """Re-extract exactly *paths* and splice the result into the existing graph.
 
@@ -392,6 +402,7 @@ def update_paths(
         manifest=manifest,
         previous_graph=previous_graph,
         manifest_path=manifest_path,
+        manifest_sink=manifest_sink,
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         depth=depth,
@@ -415,6 +426,7 @@ def remove_paths(
     max_history_commits: int = 300,
     previous_graph_path: Path | None = None,
     manifest_path: Path | None = None,
+    manifest_sink: list | None = None,
 ) -> Graph:
     """Drop *paths* (deleted/renamed-away files) from the graph, no re-extraction.
 
@@ -453,6 +465,7 @@ def remove_paths(
         manifest=manifest,
         previous_graph=previous_graph,
         manifest_path=manifest_path,
+        manifest_sink=manifest_sink,
         max_nodes=max_nodes,
         generic_mentions=generic_mentions,
         depth=depth,
@@ -491,6 +504,7 @@ def _build_graph_from_split(
     rule_pruned_dirs: tuple[str, ...] = (),
     default_pruned_dirs: tuple[str, ...] = (),
     progress: ScanProgress | None = None,
+    manifest_sink: list | None = None,
 ) -> Graph:
     """Shared body: given a dirty/skip split (however it was determined),
     build the resulting Graph. Used by both the full-discovery
@@ -657,6 +671,9 @@ def _build_graph_from_split(
             prior_value = previous_graph.metadata.get(f"member_calls_global_{provenance}", "")
             if prior_value:
                 metadata[f"member_calls_global_{provenance}"] = prior_value
+        prior_languages = previous_graph.metadata.get("member_calls_global_by_language", "")
+        if prior_languages:
+            metadata["member_calls_global_by_language"] = prior_languages
     if files_truncated:
         # collect_files() hit max_nodes before covering every matched file --
         # some real files were never even read, let alone symbol-extracted.
@@ -698,6 +715,31 @@ def _build_graph_from_split(
             metadata["member_calls_ambiguous"] = str(extraction.ambiguous_member_calls)
             metadata["member_calls_unknown_receiver"] = str(extraction.unknown_receiver_member_calls)
             metadata["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
+            metadata["member_calls_external_resolved"] = str(extraction.external_resolved_member_calls)
+            metadata["member_calls_unmatched"] = str(extraction.unmatched_member_calls)
+            language_calls = {
+                language: {
+                    "resolved": resolved,
+                    "ambiguous": ambiguous,
+                    "unknown_receiver": unknown_receiver,
+                    "external_resolved": external_resolved,
+                    "unmatched": unmatched,
+                }
+                for (
+                    language,
+                    resolved,
+                    ambiguous,
+                    unknown_receiver,
+                    external_resolved,
+                    unmatched,
+                ) in extraction.member_calls_by_language
+            }
+            encoded_language_calls = json.dumps(
+                language_calls,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            metadata["member_calls_by_language"] = encoded_language_calls
             metadata["member_call_telemetry_version"] = _MEMBER_CALL_TELEMETRY_VERSION
             telemetry_scope = (
                 "full_scan"
@@ -710,6 +752,8 @@ def _build_graph_from_split(
                 ("ambiguous", extraction.ambiguous_member_calls),
                 ("unknown_receiver", extraction.unknown_receiver_member_calls),
                 ("unresolved", extraction.unresolved_member_calls),
+                ("external_resolved", extraction.external_resolved_member_calls),
+                ("unmatched", extraction.unmatched_member_calls),
             ):
                 metadata[f"member_calls_last_update_{name}"] = str(value)
                 if telemetry_scope == "full_scan":
@@ -729,6 +773,7 @@ def _build_graph_from_split(
                     ]
             metadata["member_calls_last_update_scope"] = telemetry_scope
             metadata["member_calls_last_update_version"] = _MEMBER_CALL_TELEMETRY_VERSION
+            metadata["member_calls_last_update_by_language"] = encoded_language_calls
             if telemetry_scope == "full_scan":
                 metadata["member_calls_global_scope"] = "full_scan_snapshot"
                 metadata["member_calls_global_version"] = _MEMBER_CALL_TELEMETRY_VERSION
@@ -742,6 +787,7 @@ def _build_graph_from_split(
                     timespec="seconds"
                 )
                 metadata["member_calls_global_scanned_files"] = str(len(active_rels))
+                metadata["member_calls_global_by_language"] = encoded_language_calls
             metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
             metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
             metadata["frontend_unsupported_count"] = str(len(extraction.unsupported_files))
@@ -1026,7 +1072,14 @@ def _build_graph_from_split(
                 edges=file_edges,
             )
         if manifest_path is not None:
-            manifest.save(manifest_path)
+            manifest.source_root = str(root)
+            if manifest_sink is not None:
+                # Defer the write so the lifecycle can commit the manifest only
+                # after the graph is durably persisted. Writing it here left the
+                # manifest describing nodes a failed graph write never committed.
+                manifest_sink.append((manifest, manifest_path))
+            else:
+                manifest.save(manifest_path)
 
     # Edge confidence is epistemic: it records how trustworthy the extraction
     # is. Centrality and symbol visibility are relevance signals, not evidence

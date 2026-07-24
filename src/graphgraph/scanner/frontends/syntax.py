@@ -10,11 +10,21 @@ from typing import Any
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
+from .javascript import (
+    js_callback_definition,
+    js_definition_facts,
+    js_function_definition,
+)
 from .model import (
     SourceFile,
     _CallSite,
     _TsDef,
 )
+
+# Functions in JS/TS are usually assigned, not declared; see javascript.py.
+_JS_DEFINITION_SUFFIXES = frozenset({
+    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts",
+})
 
 
 def _definition_summary(text: str, line: int) -> str:
@@ -41,6 +51,11 @@ def _definition_node_id(source: SourceFile, definition: _TsDef) -> str:
 
 _DEF_TYPES = {
     "class_definition": "class",
+    # C++ (tree-sitter-cpp). Inline function_definition nodes nested inside
+    # these types are converted to owned methods by
+    # _attach_lexical_method_owners below.
+    "class_specifier": "class",
+    "struct_specifier": "struct",
     "function_definition": "function",
     "function_item": "function",
     "struct_item": "struct",
@@ -110,6 +125,33 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             continue
         kind = _DEF_TYPES.get(node.type)
         if not kind:
+            # JS/TS functions are usually assigned, not declared -- recover the
+            # `res.send = function` / `const f = () => ...` idioms the
+            # declaration walk cannot see (javascript.py).
+            if source.path.suffix.lower() in _JS_DEFINITION_SUFFIXES:
+                assigned = js_function_definition(node)
+                callback = js_callback_definition(node)
+                if assigned is not None or callback is not None:
+                    if assigned is not None:
+                        name, kind = assigned
+                        js_facts = js_definition_facts(node)
+                    else:
+                        assert callback is not None
+                        name, kind, js_facts = callback
+                    defs.append(_TsDef(
+                        name=name,
+                        kind=kind,
+                        start=int(node.start_byte),
+                        end=int(node.end_byte),
+                        line=int(node.start_point[0]) + 1,
+                        facts=(
+                            *_definition_facts(source, node, text),
+                            *js_facts,
+                        ),
+                        extra=(),
+                        return_type=_declared_return_type(node, text),
+                        node=node,
+                    ))
             continue
         name_node = _name_node(node)
         if name_node is None:
@@ -570,7 +612,10 @@ def _resolve_member_call(
         # A matching method name is not receiver evidence.  Keeping this as
         # telemetry instead of materializing name-only candidate edges avoids
         # turning list.append()/dict.get() collisions into graph topology.
-        return "unknown_receiver" if all_candidates else "unresolved"
+        # No internal symbol carries this method name at all, so there is
+        # nothing in the graph this call could have resolved to: not owning the
+        # callee is the correct outcome, not a miss. See _unmatched_or_external.
+        return "unknown_receiver" if all_candidates else "external_resolved"
     candidates = [node_id for node_id in all_candidates if _method_owner(node_id, nodes) == receiver_type]
     if not candidates and base_classes:
         # Inherited call: the receiver's type is known and the method exists,
@@ -613,7 +658,13 @@ def _resolve_member_call(
                 ),
             ))
         return "ambiguous"
-    return "unresolved"
+    # Receiver type is known and every candidate was filtered out. Split on
+    # whether the graph owns the method name at all: if some internal symbol
+    # defines it, this call should have resolved and did not (a real miss); if
+    # none does, the callee lives outside the graph and declining to link it is
+    # correct. Collapsing both into one bucket made the largest telemetry
+    # counter unable to distinguish working from broken.
+    return "unmatched" if all_candidates else "external_resolved"
 
 def _select_import_target(
     name: str,
@@ -774,8 +825,33 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                 parts = qualified_text.split("::")
                 if len(parts) >= 2:
                     qualifier = "::".join(parts[:-1])
+            # Java/Kotlin `method_invocation` carries the receiver as a sibling
+            # `object` field on the call node itself, so the name reads as a
+            # bare identifier and the call was misclassified as unqualified --
+            # every Java member call went undetected (0 sites, cycle 8's C#
+            # finding is worse in Java). Other languages nest the receiver
+            # inside the name/function child, so this only fires where the call
+            # node exposes its own object field.
+            if not is_qualified and fn.type in _NAME_NODE_TYPES:
+                direct_object = None
+                for field in ("object", "receiver"):
+                    try:
+                        direct_object = node.child_by_field_name(field)
+                    except Exception:
+                        direct_object = None
+                    if direct_object is not None:
+                        break
+                if direct_object is not None:
+                    is_qualified = True
+                    receiver = _node_text(direct_object, text).strip()
             if is_qualified:
-                for field in ("value", "object", "receiver"):
+                # `expression` is C#'s object field on member_access_expression
+                # (its object is reachable only via the field, not as a named
+                # child, so the named-child fallback below cannot recover it).
+                # Ordered last with the break so languages that use
+                # value/object/receiver still bind their own field first.
+                # Skip when a direct object field already set the receiver above.
+                for field in () if receiver else ("value", "object", "receiver", "expression"):
                     try:
                         receiver_node = fn.child_by_field_name(field)
                     except Exception:

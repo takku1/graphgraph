@@ -198,11 +198,21 @@ class TreeSitterExtractor:
             resolved_member_calls=member_call_stats.resolved,
             ambiguous_member_calls=member_call_stats.ambiguous,
             unknown_receiver_member_calls=member_call_stats.unknown_receiver,
-            unresolved_member_calls=member_call_stats.unresolved,
+            external_resolved_member_calls=member_call_stats.external_resolved,
+            unmatched_member_calls=member_call_stats.unmatched,
             unknown_receiver_classes=member_call_stats.unknown_receiver_classes,
+            member_calls_by_language=member_call_stats.by_language,
         )
 
 def select_extractor(prefer: str = "auto") -> Extractor:
+    if prefer == "cpg":
+        # Fail loudly rather than silently hand back regex: cpg is advertised as
+        # planned-not-implemented, and quietly degrading a request for type
+        # evidence to the weakest extractor is exactly the false promise the
+        # capability change removes.
+        raise RuntimeError(
+            "cpg frontend is not implemented (planned); use 'tree_sitter' or 'auto'."
+        )
     if prefer == "tree_sitter":
         if not tree_sitter_available():
             raise RuntimeError("tree_sitter is not installed.")

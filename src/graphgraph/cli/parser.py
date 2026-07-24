@@ -1,34 +1,25 @@
 import argparse
 
+from ..packets import PACKET_FORMAT_NAMES
+from ..planning import QUERY_CLASS_NAMES
 from ..scanner import DEFAULT_SCAN_MAX_NODES
 from ..version import package_version
-from .commands import (
-    cmd_cache,
+from .cache import cmd_cache
+from .descriptions import cmd_frontends, cmd_ontology, cmd_traversal
+from .diagnostics import cmd_doctor, cmd_status
+from .evaluation import cmd_eval
+from .graph_io import (
     cmd_compare,
-    cmd_context,
-    cmd_doctor,
-    cmd_eval,
     cmd_export,
-    cmd_final,
-    cmd_frontends,
     cmd_ingest,
-    cmd_install,
-    cmd_ontology,
-    cmd_plan,
-    cmd_profile,
-    cmd_query,
-    cmd_remove,
-    cmd_render,
-    cmd_scan,
-    cmd_select,
-    cmd_snippets,
-    cmd_status,
-    cmd_traversal,
-    cmd_update,
     cmd_validate,
     cmd_validate_graph,
 )
+from .install import cmd_artifacts, cmd_install
+from .lifecycle import cmd_remove, cmd_scan, cmd_update
+from .planning_commands import cmd_plan, cmd_profile, cmd_select
 from .platform import add_platform_parser
+from .retrieval import cmd_context, cmd_final, cmd_query, cmd_render, cmd_snippets
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,13 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     plan = sub.add_parser("plan")
-    plan.add_argument("--query-class", required=True)
+    plan.add_argument("--query-class", required=True, choices=QUERY_CLASS_NAMES)
     plan.add_argument("--query", default="")
     plan.set_defaults(func=cmd_plan)
 
     render = sub.add_parser("render")
     render.add_argument("--graph")
-    render.add_argument("--query-class", required=True)
+    render.add_argument("--query-class", required=True, choices=QUERY_CLASS_NAMES)
     render.add_argument("--starts", nargs="+", required=True)
     render.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     render.set_defaults(func=cmd_render)
@@ -52,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--graph")
     final.add_argument("--policies")
     final.add_argument("--query", default="")
-    final.add_argument("--query-class", required=False)
+    final.add_argument("--query-class", required=False, choices=("auto", *QUERY_CLASS_NAMES))
     final.add_argument("--starts", nargs="+", required=False)
     final.add_argument("--path", action="append", default=[])
     final.add_argument("--tag", action="append", default=[])
@@ -60,14 +51,14 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--full-graph", action="store_true", help="Render every active node/edge with no query/budget -- an explicit escape hatch, not the default path. Refuses over --full-graph-max-tokens unless raised or disabled.")
     final.add_argument("--full-graph-max-tokens", type=int, default=20_000, help="Token guard for --full-graph (default: 20000). Pass 0 to disable.")
     final.add_argument("--max-nodes", type=int, default=None, help="Expanded node budget. Default: dynamic by query class and graph shape; stable skeleton uses 100.")
-    final.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    final.add_argument("--packet", choices=PACKET_FORMAT_NAMES)
     final.set_defaults(func=cmd_final)
 
     query = sub.add_parser("query", help="Retrieve a query-specific graph context packet without preselecting node IDs.")
     query.add_argument("query", help="Natural-language query used to find graph anchors.")
     query.add_argument("--graph")
-    query.add_argument("--query-class", default="auto", help="Routing policy (default: auto; explicit classes remain supported).")
-    query.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    query.add_argument("--query-class", choices=("auto", *QUERY_CLASS_NAMES), default="auto", help="Routing policy (default: auto; explicit classes remain supported).")
+    query.add_argument("--packet", choices=PACKET_FORMAT_NAMES)
     query.add_argument("--hops", type=int)
     query.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
     query.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
@@ -88,8 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
     context.add_argument("--graph", help="Graph path to read/write (default: .graphgraph/graph.gg).")
     context.add_argument("--rebuild", action="store_true", help="Force a graph rebuild before querying.")
     context.add_argument("--scan-max-nodes", type=int, default=DEFAULT_SCAN_MAX_NODES, help=f"Auto-build file cap; symbol extraction has a separate proportional cap (default: {DEFAULT_SCAN_MAX_NODES} files).")
-    context.add_argument("--query-class", default="auto", help="Routing policy (default: auto; explicit classes remain supported).")
-    context.add_argument("--packet", choices=["lowlevel", "sql", "hybrid", "semantic_arrow", "gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid", "svo", "doc_summary"])
+    context.add_argument("--query-class", choices=("auto", *QUERY_CLASS_NAMES), default="auto", help="Routing policy (default: auto; explicit classes remain supported).")
+    context.add_argument("--packet", choices=PACKET_FORMAT_NAMES)
     context.add_argument("--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class.")
     context.add_argument("--max-nodes", type=int, help="Expanded node budget. Default: dynamic by query class and graph shape.")
     context.add_argument("--scope", action="append", default=[], help="Restrict retrieval to node scope/path prefix. Repeatable.")
@@ -193,6 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
                            "touched via a 'fixes' edge. Reuses the existing graph setting when omitted.")
     scan.add_argument("--no-history", action="store_false", dest="history",
                       help="Disable history extraction even when the existing graph enabled it.")
+    scan.add_argument("--force", action="store_true", default=False,
+        help="Allow a scan that discards more than half the existing graph at --output. Without it, such a write is refused as probable data loss (usually a wrong --directory).")
     scan.add_argument("--incremental", action="store_true", default=True, help="Use hash-based incremental scanner (default: True).")
     scan.add_argument("--no-incremental", action="store_false", dest="incremental", help="Disable incremental scanning.")
     scan.set_defaults(func=cmd_scan)
@@ -214,6 +207,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Extract document sections and concept nodes for doc files among --files. Reuses the existing graph setting when omitted.")
     update.add_argument("--no-docs", action="store_false", dest="docs",
                         help="Disable document extraction for this splice.")
+    update.add_argument("--force", action="store_true", default=False,
+        help="Allow a rebuild that discards more than half the existing graph. Without it, such a write is refused as probable data loss.")
     update.add_argument("--history", action="store_true", default=False)
     update.set_defaults(func=cmd_update)
 
@@ -230,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--depth", choices=["files", "symbols"], default="symbols")
     remove.add_argument("--frontend", choices=["auto", "regex", "tree_sitter"], default="auto")
     remove.add_argument("--docs", action="store_true")
+    remove.add_argument("--force", action="store_true", default=False,
+        help="Allow a rebuild that discards more than half the existing graph. Without it, such a write is refused as probable data loss.")
     remove.add_argument("--history", action="store_true", default=False)
     remove.set_defaults(func=cmd_remove)
 
@@ -266,6 +263,23 @@ def build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument("--graph", required=True)
     eval_cmd.add_argument("--tasks", required=True)
     eval_cmd.add_argument("--max-nodes", type=int)
+    eval_cmd.add_argument(
+        "--calibration",
+        action="store_true",
+        help="Include a calibration receipt pairing answerability confidence with labeled task recall.",
+    )
+    eval_cmd.add_argument(
+        "--calibration-bins",
+        type=int,
+        default=10,
+        help="Equal-width reliability bins used with --calibration (default: 10).",
+    )
+    eval_cmd.add_argument(
+        "--complete-recall",
+        type=float,
+        default=1.0,
+        help="Minimum recall in every declared dimension for a complete answer (default: 1.0).",
+    )
     eval_cmd.set_defaults(func=cmd_eval)
 
     frontends = sub.add_parser("frontends", help="List extraction frontend capabilities.")
@@ -316,6 +330,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recompute PageRank from the current graph, persist it, and clear stale packet caches.",
     )
     cache_cmd.set_defaults(func=cmd_cache)
+
+    artifacts = sub.add_parser(
+        "artifacts",
+        help="Synchronize or check tracked skill, plugin, and MCP distribution artifacts.",
+    )
+    artifacts.add_argument("--check", action="store_true", help="Fail if any generated artifact differs from its canonical source.")
+    artifacts.add_argument("--root", default=".", help="Repository root containing .agents and plugins (default: cwd).")
+    artifacts.set_defaults(func=cmd_artifacts)
 
     install = sub.add_parser("install", help="Register/Install GraphGraph assistant skill, workspace rules, and MCP plugins.")
     install.add_argument("--project", "-p", action="store_true", help="Install locally to the current project repository (.agents/ directory) instead of user home.")

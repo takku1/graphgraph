@@ -7,12 +7,16 @@ from typing import Any
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
+from .cpp import cpp_class_field_types, cpp_local_types
+from .csharp import csharp_class_field_types, csharp_local_types
+from .languages import _SUFFIX_LANGUAGE
 from .model import (
     SourceFile,
     _CallSite,
     _MemberCallStats,
     _TsDef,
 )
+from .module_calls import module_alias_targets, resolve_module_qualified_call
 from .python import (
     _python_class_field_types,
     _python_local_types,
@@ -40,10 +44,13 @@ from .syntax import (
 )
 from .typescript import (
     _ts_class_field_types,
+    _ts_local_call_return_types,
     _ts_local_types,
+    _ts_return_type_from_body,
 )
 
 _TS_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"})
+_CPP_SUFFIXES = frozenset({".cpp", ".cxx", ".cc", ".h", ".hh", ".hpp"})
 
 
 def _add_tree_sitter_implements(
@@ -225,12 +232,18 @@ def _add_tree_sitter_calls(
     # dropped: an ambiguous return is not receiver evidence.
     return_types_by_name: dict[str, set[str]] = {}
     for source, defs, _root in defs_by_file:
-        if source.path.suffix.lower() != ".rs":
+        source_suffix = source.path.suffix.lower()
+        if source_suffix not in ({".rs"} | _TS_SUFFIXES):
             continue
         text_bytes = source.text.encode("utf-8", errors="replace")
         for definition in (item for item in defs if item.kind in {"function", "method"}):
-            return_type = _return_type_name(
-                _node_text_range(text_bytes, definition.start, definition.end)
+            body_text = _node_text_range(text_bytes, definition.start, definition.end)
+            # Rust reads the `-> Type` annotation; JS/TS has none, so infer the
+            # factory return type from `return new X()` in the body.
+            return_type = (
+                _return_type_name(body_text)
+                if source_suffix == ".rs"
+                else _ts_return_type_from_body(body_text)
             )
             if return_type:
                 return_types_by_name.setdefault(definition.name, set()).add(return_type)
@@ -244,7 +257,9 @@ def _add_tree_sitter_calls(
     stats = _MemberCallStats()
     for source, defs, root in defs_by_file:
         suffix = source.path.suffix.lower()
+        language = _SUFFIX_LANGUAGE.get(suffix, suffix.lstrip(".") or "unknown")
         imported_sources = _imported_symbol_sources(suffix, source.text)
+        module_aliases = module_alias_targets(suffix, source.text)
         src_lang = _lang_family(source.rel)
         
         # Build local resolutions dictionary starting with globally unique callables
@@ -268,6 +283,8 @@ def _add_tree_sitter_calls(
         rust_field_types: dict[tuple[str, str], str] = {}
         python_field_types: dict[tuple[str, str], str] = {}
         ts_field_types: dict[tuple[str, str], str] = {}
+        csharp_field_types: dict[tuple[str, str], str] = {}
+        cpp_field_types: dict[tuple[str, str], str] = {}
         if suffix == ".rs":
             text_bytes = source.text.encode("utf-8", errors="replace")
             for struct in (item for item in defs if item.kind == "struct"):
@@ -283,6 +300,10 @@ def _add_tree_sitter_calls(
             python_field_types = _python_class_field_types(source.text)
         elif suffix in _TS_SUFFIXES:
             ts_field_types = _ts_class_field_types(source.text)
+        elif suffix in {".cs", ".java"}:
+            csharp_field_types = csharp_class_field_types(source.text)
+        elif suffix in _CPP_SUFFIXES:
+            cpp_field_types = cpp_class_field_types(source.text)
         for d in callable_defs:
             src_id = _definition_node_id(source, d)
             if src_id not in nodes:
@@ -305,6 +326,13 @@ def _add_tree_sitter_calls(
             )
             if suffix in _TS_SUFFIXES:
                 local_types = _ts_local_types(body)
+                # `const s = createStore();` -- bind the local to the factory's
+                # inferred return type, unless a stronger annotation/`new` type
+                # was already found (setdefault preserves the direct evidence).
+                for binding, inferred in _ts_local_call_return_types(
+                    body, unique_return_types
+                ).items():
+                    local_types.setdefault(binding, inferred)
             elif suffix == ".rs":
                 local_types = _rust_local_types(body)
                 # `let ir = parse_ir(src);` -- bind the local to the callee's
@@ -322,27 +350,61 @@ def _add_tree_sitter_calls(
                     local_types.setdefault(binding, inferred)
             elif suffix == ".py":
                 local_types = _python_local_types(body)
+            elif suffix in {".cs", ".java"}:
+                # Java shares C#'s declaration shapes (`Type x`, `new Type()`,
+                # typed params), so the same inference serves both.
+                local_types = csharp_local_types(body)
+            elif suffix in _CPP_SUFFIXES:
+                local_types = cpp_local_types(body)
             else:
                 local_types = {}
             if d.owner:
                 local_types["self"] = d.owner
                 if suffix == ".py":
                     local_types["cls"] = d.owner
-                if suffix in _TS_SUFFIXES:
+                # C#/Java/TS/C++ spell the enclosing-instance receiver `this`,
+                # not `self`; without this a `this.Method()` / `this->Method()`
+                # call never resolved to its own class.
+                if (
+                    suffix in _TS_SUFFIXES
+                    or suffix in {".cs", ".java"}
+                    or suffix in _CPP_SUFFIXES
+                ):
                     local_types["this"] = d.owner
                 field_types = (
                     ts_field_types if suffix in _TS_SUFFIXES
                     else rust_field_types if suffix == ".rs"
+                    else csharp_field_types if suffix in {".cs", ".java"}
+                    else cpp_field_types if suffix in _CPP_SUFFIXES
                     else python_field_types
                 )
-                receiver_word = "this" if suffix in _TS_SUFFIXES else "self"
+                owner_fields = {
+                    field_name: field_type
+                    for (owner, field_name), field_type in field_types.items()
+                    if owner == d.owner
+                }
+                # The enclosing-instance receiver is spelled differently per
+                # language, and C#/Java also read fields *bare* (`_repo.M()`,
+                # not `this._repo.M()`).
+                if suffix in {".cs", ".java"}:
+                    qualified_prefix, bare_access = "this.", True
+                elif suffix in _TS_SUFFIXES:
+                    qualified_prefix, bare_access = "this.", False
+                elif suffix in _CPP_SUFFIXES:
+                    qualified_prefix, bare_access = "this->", True
+                else:  # rust, python
+                    qualified_prefix, bare_access = "self.", False
                 local_types.update(
                     {
-                        f"{receiver_word}.{field_name}": field_type
-                        for (owner, field_name), field_type in field_types.items()
-                        if owner == d.owner
+                        f"{qualified_prefix}{field_name}": field_type
+                        for field_name, field_type in owner_fields.items()
                     }
                 )
+                if bare_access:
+                    # A real local of the same name is stronger evidence, so
+                    # setdefault lets the already-populated local win.
+                    for field_name, field_type in owner_fields.items():
+                        local_types.setdefault(field_name, field_type)
             calls = _call_sites_in_range(root, text_bytes, d.start, d.end)
             rust_macro_calls = (
                 {
@@ -360,6 +422,31 @@ def _add_tree_sitter_calls(
             calls.update(rust_macro_calls)
             for call in calls:
                 if call.qualified:
+                    # Try import-aware module.func() resolution before the
+                    # receiver-type resolver. It only binds when a top-level
+                    # symbol of the imported module matches, so obj.method()
+                    # calls find nothing here and fall through untouched.
+                    module_target = resolve_module_qualified_call(
+                        call.receiver,
+                        call.name,
+                        module_aliases,
+                        name_to_symbols,
+                        nodes,
+                        src_id,
+                        src_lang,
+                    )
+                    if module_target:
+                        edges.append(Edge(
+                            src_id,
+                            module_target,
+                            "calls",
+                            confidence=0.94,
+                            provenance="tree_sitter_module_qualified",
+                            source_location=source.rel,
+                            evidence=f"module {call.receiver}.{call.name}",
+                        ))
+                        stats = stats.add("resolved", call.receiver, language)
+                        continue
                     outcome = _resolve_member_call(
                         source=source,
                         source_id=src_id,
@@ -370,7 +457,7 @@ def _add_tree_sitter_calls(
                         edges=edges,
                         base_classes=base_classes,
                     )
-                    stats = stats.add(outcome, call.receiver)
+                    stats = stats.add(outcome, call.receiver, language)
                     continue
                 tgt_id = (
                     _resolve_path_qualified_target(call, name_to_symbols, nodes)

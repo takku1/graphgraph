@@ -18,15 +18,15 @@ graphgraph scan --depth symbols --docs
 # 3. Ask a question — this discovers anchors and renders a packet in one step
 graphgraph context "how does X work" --query-class subsystem_summary
 
-# 4. Sanity-check a packet before trusting it (mechanical validator, not a model judgment)
-graphgraph validate --graph .graphgraph/graph.gg
+# 4. Sanity-check the saved graph (mechanical validator, not a model judgment)
+graphgraph validate-graph --graph .graphgraph/graph.gg
 
-# 5. Pull exact source lines for the nodes a packet named
-graphgraph query "where is X defined" --show-stats
+# 5. Pull exact source lines for a node ID returned by query/context
+graphgraph snippets --starts <node-id>
 ```
 
-That's the whole default path: **install → doctor → scan → context → validate
-→ query/snippets.**
+That's the whole default path: **install → doctor → scan → context →
+validate-graph → snippets.**
 
 ## What's expert mode
 

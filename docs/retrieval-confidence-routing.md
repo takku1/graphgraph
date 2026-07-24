@@ -128,6 +128,29 @@ architectural/conceptual answers.
   for one call. Not observed in testing; worth tightening if it ever shows
   up.
 
+## Labeled answerability calibration
+
+`graphgraph eval` can now measure the separate `answerability.confidence`
+signal against declared eval expectations:
+
+```powershell
+graphgraph eval --graph .graphgraph\graph.gg --tasks eval\graphgraph-self.json --calibration
+```
+
+With `--calibration`, the JSON envelope contains the ordinary per-task results
+plus Brier score, a binned Murphy decomposition, ECE/MCE, and reliability bins.
+The label rule is explicit: every node/edge recall dimension declared by a task
+must meet `--complete-recall` (default `1.0`). Tasks without expectations or
+without an answerability confidence are excluded instead of being counted as
+successes.
+
+This receipt measures a signal; it does not make the signal calibrated. The
+current five-task self-eval is too small to fit or select a recalibration curve.
+In particular, do not turn absent runtime-trace edges into negative labels: a
+trace proves what ran, not everything that could have run. A deployable mapping
+requires broader labeled tasks, frozen held-out splits, minimum samples per
+query/evidence stratum, and improvement on held-out scoring and recall gates.
+
 ## Sources
 
 - Query-performance prediction for confidence-aware retrieval routing:

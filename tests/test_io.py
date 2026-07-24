@@ -99,6 +99,70 @@ class IOTest(unittest.TestCase):
                 load_graph(path)
             self.assertIn("load_any", str(ctx.exception))
 
+    def test_truncated_binary_gg_raises_clean_value_error(self) -> None:
+        # Adversarial: a binary .gg cut short (interrupted copy, disk-full
+        # write from another tool) used to escape as a raw struct.error
+        # traceback from unpack_from. Corruption must surface as ValueError
+        # so the CLI prints a clean error and the update/remove repair paths
+        # can treat it as a rebuildable graph.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg"
+            save_gg(sample_graph(), path)
+            truncated = Path(tmp) / "trunc.gg"
+            truncated.write_bytes(path.read_bytes()[:200])
+            with self.assertRaises(ValueError) as ctx:
+                load_any(truncated)
+            message = str(ctx.exception).lower()
+            self.assertTrue("corrupt" in message or "truncated" in message, message)
+
+    def test_text_gg_without_version_marker_is_rejected(self) -> None:
+        # Adversarial: the legacy text .gg format is self-describing via a
+        # gg/1 or gg/2 first line, but the parser never required it -- so ANY
+        # text file (a stray JSON object, a README, a corrupted-to-text
+        # graph) "parsed" into a nonsense graph and even passed
+        # validate-graph as STRUCTURAL PASS. Reject text .gg content that
+        # does not declare the marker.
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, content in (
+                ("wrong_schema.gg", '{"hello": "world"}\n'),
+                ("empty.gg", ""),
+                ("prose.gg", "this is not a graph\n"),
+            ):
+                path = Path(tmp) / name
+                path.write_text(content, encoding="utf-8")
+                with self.assertRaises(ValueError, msg=name) as ctx:
+                    load_any(path)
+                self.assertIn("gg/1", str(ctx.exception), name)
+
+    def test_legacy_text_gg_with_marker_still_loads_via_load_any(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy.gg"
+            path.write_text(
+                "gg/1\nhelper [function] a.py\n  calls other 1.0\nother [function] b.py\n",
+                encoding="utf-8",
+            )
+            graph = load_any(path)
+            self.assertEqual(len(graph.nodes), 2)
+            self.assertEqual(len(graph.edges), 1)
+
+    def test_wrong_schema_json_raises_clean_value_error(self) -> None:
+        # Adversarial: valid JSON that is not GraphGraph's schema used to
+        # escape as raw KeyError('nodes') / TypeError / KeyError('id')
+        # tracebacks from load_graph's comprehension.
+        cases = (
+            ("missing_nodes.json", '{"hello": "world"}'),
+            ("nodes_not_list.json", '{"nodes": "notalist"}'),
+            ("node_without_id.json", '{"nodes": [{"label": "no id"}]}'),
+            ("top_level_list.json", '[1, 2, 3]'),
+            ("edge_without_endpoints.json", '{"nodes": [{"id": "N1"}], "edges": [{"type": "calls"}]}'),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, content in cases:
+                path = Path(tmp) / name
+                path.write_text(content, encoding="utf-8")
+                with self.assertRaises(ValueError, msg=name):
+                    load_graph(path)
+
     def test_load_gg_text_preserves_distinct_nodes_with_duplicate_labels(self) -> None:
         # Regression: two distinct nodes sharing the exact same label (e.g.
         # two different "helper" functions in different files -- this
@@ -482,7 +546,7 @@ class IOTest(unittest.TestCase):
                 save_gg(sample_graph(), legacy)
 
     def test_explicit_test_root_remains_attributed_direct_evidence(self) -> None:
-        from graphgraph.retrieval.context import affected_test_recommendations
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
 
         graph = Graph(
             nodes={
@@ -520,21 +584,29 @@ class IOTest(unittest.TestCase):
 
         production_path = "src/graphgraph/retrieval/test_recommendations.py"
         self.assertFalse(_is_test_path(production_path))
-        self.assertFalse(_is_test_node(Node(
-            "PRODUCTION",
-            "affected_test_recommendations",
-            "function",
-            production_path,
-        )))
+        self.assertFalse(
+            _is_test_node(
+                Node(
+                    "PRODUCTION",
+                    "affected_test_recommendations",
+                    "function",
+                    production_path,
+                )
+            )
+        )
 
         self.assertTrue(_is_test_path("tests/test_recommendations.py"))
         self.assertTrue(_is_test_path("src/ui/recommendations.test.ts"))
-        self.assertTrue(_is_test_node(Node(
-            "TEST",
-            "test_recommendations",
-            "function",
-            "tests/test_recommendations.py",
-        )))
+        self.assertTrue(
+            _is_test_node(
+                Node(
+                    "TEST",
+                    "test_recommendations",
+                    "function",
+                    "tests/test_recommendations.py",
+                )
+            )
+        )
 
     def test_load_csv_edges_basic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

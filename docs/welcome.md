@@ -19,7 +19,10 @@ This bootstrap script will:
 4. Verify that the CLI executes successfully.
 
 ### Workspace Skill Activation
-Upon cloning this repository, the custom workspace skill located at [.agents/skills/graphgraph/SKILL.md](file:///.agents/skills/graphgraph/SKILL.md) is automatically registered. Read that file next to learn the integration commands and contract.
+Upon cloning this repository, the custom workspace skill located at
+[`.agents/skills/graphgraph/SKILL.md`](../.agents/skills/graphgraph/SKILL.md) is
+available to supported agents. Read that file next to learn the integration
+commands and contract.
 
 ---
 
@@ -57,8 +60,9 @@ Once the setup script finishes, verify the environment and explore:
 
 3. **Run Tests**:
    ```powershell
-   python -m unittest discover -s tests
+   python -m pytest
    ```
 
 4. **Read Integration Contract**:
-   Read [.agents/skills/graphgraph/SKILL.md](file:///.agents/skills/graphgraph/SKILL.md) for full documentation on how to perform codebase scans, query classes, and final LLM packet generation.
+   Read [`.agents/skills/graphgraph/SKILL.md`](../.agents/skills/graphgraph/SKILL.md)
+   for the codebase scan, query, and packet-generation contract.

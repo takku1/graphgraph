@@ -6,21 +6,19 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ..io import find_graph_path, load_any, save_validated_graph
+from ..packets import PACKET_FORMAT_NAMES
 from ..platform import (
-    CpgEvidenceProvider,
-    EvidenceStore,
+    COMPILER_PASS_NAMES,
     GraphProgram,
-    GraphRuntime,
     MemoryStore,
     ProjectRegistry,
-    QuerySourcePlanner,
     SemanticIndex,
-    StructuralEvidenceProvider,
     TemporalStore,
     build_change_packet,
     build_continuation_receipt,
     build_hierarchy,
     build_repair_context,
+    create_graph_runtime,
     evaluate_cases,
     graph_as_of,
     infer_edges,
@@ -41,8 +39,8 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
     compile_cmd.add_argument("query")
     compile_cmd.add_argument("--graph")
     compile_cmd.add_argument("--query-class", default="auto")
-    compile_cmd.add_argument("--packet", default="gg")
-    compile_cmd.add_argument("--pass", action="append", dest="passes", choices=["evidence", "inference", "hierarchy"], default=[])
+    compile_cmd.add_argument("--packet", choices=PACKET_FORMAT_NAMES, default="gg")
+    compile_cmd.add_argument("--pass", action="append", dest="passes", choices=COMPILER_PASS_NAMES, default=[])
     compile_cmd.add_argument("--scope", action="append", default=[])
     compile_cmd.add_argument("--max-nodes", type=int)
     compile_cmd.add_argument("--evidence-store")
@@ -85,13 +83,16 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
     semantic.add_argument("--limit", type=int, default=10)
 
     memory = actions.add_parser("memory", help="Add or search scoped agent/project memory.")
-    memory.add_argument("operation", choices=["add", "query", "list"])
+    memory.add_argument("operation", choices=["add", "query", "search", "list"])
     memory.add_argument("text", nargs="?")
+    memory.add_argument("--text", dest="text_option")
     memory.add_argument("--store", default=".graphgraph/memory.json")
     memory.add_argument("--scope", action="append", default=[])
     memory.add_argument("--kind", default="fact")
     memory.add_argument("--source", default="")
     memory.add_argument("--related", action="append", default=[])
+    memory.add_argument("--graph")
+    memory.add_argument("--anchor-limit", type=int, default=8)
     memory.add_argument("--limit", type=int, default=10)
 
     episode = actions.add_parser("episode", help="Append or inspect temporal graph episodes.")
@@ -111,7 +112,7 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
     as_of.add_argument("--output", required=True)
 
     transform = actions.add_parser("transform", help="Persist evidence, inference, or hierarchy graph passes.")
-    transform.add_argument("passes", nargs="+", choices=["evidence", "inference", "hierarchy"])
+    transform.add_argument("passes", nargs="+", choices=COMPILER_PASS_NAMES)
     transform.add_argument("--graph")
     transform.add_argument("--output", required=True)
     transform.add_argument("--evidence-store")
@@ -187,19 +188,26 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
     platform.set_defaults(func=cmd_platform)
 
 
+def platform_capabilities() -> dict[str, object]:
+    registry = create_graph_runtime(None, graph=_empty_graph(), source_planning=False).providers
+    return {
+        "model": "LLM-native graph IR compiler",
+        "hot_path": ["SYNC", "EXTRACT", "NORMALIZE_IR", "ANCHOR", "EXPAND", "SELECT", "PACK"],
+        "passes": list(COMPILER_PASS_NAMES),
+        "packet_formats": list(PACKET_FORMAT_NAMES),
+        "providers": registry.capabilities(),
+        "adapters": ["federation", "semantic", "temporal", "memory", "runtime_trace", "repair", "evaluation", "interop", "http", "watch"],
+    }
+
+
 def cmd_platform(args: argparse.Namespace) -> None:
     action = args.platform_action
     if action == "compile":
         graph_path = _graph_path(args)
-        graph = load_any(graph_path)
-        runtime = GraphRuntime(
-            graph,
-            (StructuralEvidenceProvider(), CpgEvidenceProvider()),
-            evidence_store=EvidenceStore(
-                Path(args.evidence_store) if args.evidence_store else graph_path.parent / "evidence.db"
-            ),
+        runtime = create_graph_runtime(
+            graph_path,
+            evidence_store_path=Path(args.evidence_store) if args.evidence_store else None,
             refresh_evidence=args.refresh_evidence,
-            source_planner=QuerySourcePlanner(graph_path.parent, graph_path=graph_path),
         )
         result = runtime.compile(GraphProgram(
             args.query,
@@ -231,14 +239,7 @@ def cmd_platform(args: argparse.Namespace) -> None:
         print(text)
         return
     if action == "capabilities":
-        registry = GraphRuntime(_empty_graph(), (StructuralEvidenceProvider(), CpgEvidenceProvider())).providers
-        print(json.dumps({
-            "model": "LLM-native graph IR compiler",
-            "hot_path": ["SYNC", "EXTRACT", "NORMALIZE_IR", "ANCHOR", "EXPAND", "SELECT", "PACK"],
-            "passes": ["evidence", "inference", "hierarchy"],
-            "providers": registry.capabilities(),
-            "adapters": ["federation", "semantic", "temporal", "memory", "runtime_trace", "repair", "evaluation", "interop", "http", "watch"],
-        }, indent=2))
+        print(json.dumps(platform_capabilities(), indent=2))
         return
     if action == "register":
         graph_path = Path(args.graph) if args.graph else find_graph_path(Path(args.root))
@@ -260,15 +261,35 @@ def cmd_platform(args: argparse.Namespace) -> None:
     if action == "memory":
         store = MemoryStore(Path(args.store))
         scopes = tuple(args.scope)
+        memory_text = args.text_option or args.text
         if args.operation == "add":
-            if not args.text:
+            if not memory_text:
                 raise ValueError("memory add requires text")
             scope = scopes[0] if scopes else "project"
-            data = asdict(store.remember(args.text, scope=scope, kind=args.kind, source=args.source, related_nodes=tuple(args.related)))
-        elif args.operation == "query":
-            if not args.text:
+            try:
+                memory_graph = _graph(args)
+            except FileNotFoundError:
+                memory_graph = None
+            data = asdict(store.remember(
+                memory_text,
+                scope=scope,
+                kind=args.kind,
+                source=args.source,
+                related_nodes=tuple(args.related),
+                graph=memory_graph,
+                anchor_limit=args.anchor_limit,
+            ))
+        elif args.operation in {"query", "search"}:
+            if not memory_text:
                 raise ValueError("memory query requires text")
-            data = [asdict(record) for record in store.search(args.text, scopes=scopes, limit=args.limit)]
+            data = [
+                asdict(record)
+                for record in store.search(
+                    memory_text,
+                    scopes=scopes,
+                    limit=args.limit,
+                )
+            ]
         else:
             data = [asdict(record) for record in store.read(scopes=scopes)]
         print(json.dumps(data, indent=2, ensure_ascii=False))
@@ -296,16 +317,11 @@ def cmd_platform(args: argparse.Namespace) -> None:
         receipts = []
         for item in args.passes:
             if item == "evidence":
-                graph, provider_receipts = GraphRuntime(
-                    graph,
-                    (StructuralEvidenceProvider(), CpgEvidenceProvider()),
-                    evidence_store=EvidenceStore(
-                        Path(args.evidence_store)
-                        if args.evidence_store
-                        else graph_path.parent / "evidence.db"
-                    ),
+                graph, provider_receipts = create_graph_runtime(
+                    graph_path,
+                    graph=graph,
+                    evidence_store_path=Path(args.evidence_store) if args.evidence_store else None,
                     refresh_evidence=args.refresh_evidence,
-                    source_planner=QuerySourcePlanner(graph_path.parent, graph_path=graph_path),
                 ).apply_evidence()
                 receipts.extend(asdict(receipt) for receipt in provider_receipts)
             elif item == "inference":

@@ -1,5 +1,8 @@
 from .cache import clear_graph_cache, load_any_cached, remember_graph
 from .core import (
+    GraphShrinkRefused,
+    RemovalMatchedNothing,
+    assert_no_catastrophic_shrink,
     graph_to_json,
     load_any,
     load_csv_edges,
@@ -40,6 +43,9 @@ __all__ = [
     "remember_graph",
     "save_gg",
     "save_graph",
+    "GraphShrinkRefused",
+    "RemovalMatchedNothing",
+    "assert_no_catastrophic_shrink",
     "save_validated_graph",
     "validate_graph_file",
 ]

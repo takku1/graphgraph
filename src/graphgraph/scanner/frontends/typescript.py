@@ -57,6 +57,42 @@ def _nominal(type_name: str) -> str:
     return candidate
 
 
+_JS_RETURN_NEW = re.compile(r"\breturn\s+new\s+([A-Z][\w$]*)")
+# `const x = factory()` / `let y = await make()` -- a local bound to a call.
+_JS_LOCAL_CALL = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\("
+)
+
+
+def _ts_return_type_from_body(body: str) -> str | None:
+    """Infer a function's return type from ``return new X()`` (the factory shape).
+
+    JS has no return annotations, so a body returning exactly one concrete class
+    is the only receiver evidence a factory offers. Several distinct classes are
+    ambiguous and yield nothing -- the single-concrete-type rule the Rust
+    return-type join already uses.
+    """
+    types = set(_JS_RETURN_NEW.findall(body))
+    if len(types) == 1:
+        candidate = next(iter(types))
+        return candidate if _nominal(candidate) else None
+    return None
+
+
+def _ts_local_call_return_types(body: str, return_types: dict[str, str]) -> dict[str, str]:
+    """Bind ``const x = factory()`` locals to the factory's known return type.
+
+    Recovers the dominant unresolved JS receiver shape (``named_local``): a local
+    assigned from a call whose return type the repo-wide join has inferred.
+    """
+    inferred: dict[str, str] = {}
+    for match in _JS_LOCAL_CALL.finditer(body):
+        return_type = return_types.get(match.group(2), "")
+        if return_type:
+            inferred.setdefault(match.group(1), return_type)
+    return inferred
+
+
 def _ts_local_types(body: str) -> dict[str, str]:
     """Receiver types declared in one TypeScript/JavaScript function body."""
     result: dict[str, str] = {}

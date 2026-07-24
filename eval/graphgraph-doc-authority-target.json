@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "T10/T11 TARGET fixture (not yet part of the passing self-suite). Run with:",
+    "  graphgraph scan --depth symbols --docs --no-incremental",
+    "  graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-doc-authority-target.json",
+    "",
+    "Purpose: measure whether a question about the *current* architecture and",
+    "the *latest* findings surfaces the authoritative, most-recent documents",
+    "rather than drifting into the large truncated roadmap (planned-work.md) or",
+    "code. Expectations are hand-verified against docs/architecture.md section",
+    "headings and the newest gray-box cycle document (cycle 3).",
+    "",
+    "Recorded baseline (2026-07-23, before authority-aware doc anchoring/caps):",
+    "  Task A current-architecture : node_recall 0.167 (1/6), mrr 0.026, status partial",
+    "  Task B latest-findings      : node_recall 1.000,        mrr 0.023, status partial",
+    "Task A shows the drift directly (architecture.md contributes ~1 node); Task",
+    "B shows the newest cycle doc is present but buried (~rank 44). Promote these",
+    "tasks into eval/graphgraph-self.json only once tuning lifts recall AND rank",
+    "(the T11 acceptance bar), so the regression suite never carries a red target."
+  ],
+  "tasks": [
+    {
+      "query": "summarize the current architecture document: native storage contract, shared IR, source routes, packet formats, query classes, constraint policies",
+      "expected": [
+        "Native Storage Contract",
+        "Shared IR",
+        "Source Routes",
+        "Packet Formats",
+        "Query Classes",
+        "Constraint Policies"
+      ]
+    },
+    {
+      "query": "what are the latest gray-box evaluation findings",
+      "expected": [
+        "findings/2026-07-22-graybox-cycle3-crosslang.md"
+      ]
+    }
+  ]
+}

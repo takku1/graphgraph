@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from ..graph.core import Edge, Graph
+from ..graph.ontology import traversal_strength
 
 
 class ActivationStateCache:
@@ -71,23 +72,38 @@ def spreading_activation(
             if energy <= 0.01:
                 continue
 
-            neighbors = []
+            # Weight each neighbour by the same ontology strength that PPR and
+            # expand_context use, rather than splitting energy uniformly. A
+            # uniform split makes a `calls` edge (strength 1.0) and a
+            # `section_of` edge (strength 0.08) propagate identically, so this
+            # path used to disagree with every other ranker in the system about
+            # what an edge is worth. traversal_strength returns 0.0 for
+            # non-traversable relations, which drops them from the spread
+            # entirely -- matching expand_context's allowed_relations gating.
+            neighbors: list[tuple[str, float]] = []
             if node_id in outg:
                 neighbors.extend(
-                    e.target for e in outg[node_id]
+                    (e.target, traversal_strength(e.type) * max(0.0, e.weight))
+                    for e in outg[node_id]
                     if e.active and e.target in graph.nodes and graph.nodes[e.target].active
                 )
             if node_id in inc:
                 neighbors.extend(
-                    e.source for e in inc[node_id]
+                    (e.source, traversal_strength(e.type) * max(0.0, e.weight))
+                    for e in inc[node_id]
                     if e.active and e.source in graph.nodes and graph.nodes[e.source].active
                 )
 
-            if neighbors:
-                # Distribute alpha fraction of current energy to neighbors
-                spread_energy = (alpha * energy) / len(neighbors)
-                for neighbor in neighbors:
-                    next_activation[neighbor] = next_activation.get(neighbor, 0.0) + spread_energy
+            neighbors = [(nid, w) for nid, w in neighbors if w > 0.0]
+            total_weight = sum(w for _nid, w in neighbors)
+            if total_weight > 0.0:
+                # Distribute alpha fraction of current energy proportionally to
+                # relation strength. Total energy emitted is unchanged from the
+                # uniform version (alpha * energy); only its allocation differs.
+                spread_energy = alpha * energy
+                for neighbor, weight in neighbors:
+                    share = spread_energy * (weight / total_weight)
+                    next_activation[neighbor] = next_activation.get(neighbor, 0.0) + share
 
         # 4. Marginal-utility early stopping: a greedy cutoff, not a value function or
         # MDP formalism -- stop spreading once the new energy per estimated token spent

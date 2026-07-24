@@ -140,6 +140,115 @@ class ControlReceiptTest(unittest.TestCase):
         self.assertEqual(json.loads(first)["workflow"]["cache"]["state"], "miss")
         self.assertEqual(json.loads(second)["workflow"]["cache"]["state"], "hit")
 
+    def test_session_signature_excludes_the_tools_own_artifacts(self) -> None:
+        # The self-invalidating-cache bug: in a repo that does not gitignore
+        # .graphgraph/, `git ls-files --others` lists kv_cache.json as an
+        # untracked worktree file. It was folded into the cache key with its
+        # mtime, so writing the cache changed the key keyed on it and the next
+        # query always missed -- a 0% hit rate visible only on scanned external
+        # repos. The signature must ignore the tool's own outputs while still
+        # reacting to real source edits.
+        from unittest.mock import patch
+
+        from graphgraph.retrieval import git_utils
+        from graphgraph.services import context as ctxmod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "real.py").write_text("x = 1\n", encoding="utf-8")
+            (root / ".graphgraph").mkdir()
+            (root / ".graphgraph" / "kv_cache.json").write_text("{}", encoding="utf-8")
+            (root / "graph.gg").write_text("gg\n", encoding="utf-8")
+            (root / "semantic.json").write_text("{}", encoding="utf-8")
+
+            worktree = (
+                (
+                    "real.py",
+                    ".graphgraph/kv_cache.json",
+                    "graph.gg",
+                    "semantic.json",
+                ),
+                (),
+            )
+            with patch.object(git_utils, "get_git_worktree_paths", return_value=worktree):
+                sig = ctxmod._session_signature(root)
+
+        tracked = {entry[0] for entry in sig}
+        self.assertIn("real.py", tracked)
+        self.assertNotIn(".graphgraph/kv_cache.json", tracked)
+        self.assertNotIn("graph.gg", tracked)
+        self.assertNotIn("semantic.json", tracked)
+
+    def test_is_tool_artifact_classification(self) -> None:
+        from graphgraph.services.context import _is_tool_artifact
+
+        for artifact in (
+            ".graphgraph/kv_cache.json",
+            ".graphgraph/graph.gg",
+            "kv_cache.json",
+            "semantic.json",
+            "activation_state.json",
+            "graph.gg",
+            "graph.gg.manifest.json",
+            "sub/dir/.graphgraph/anything.json",
+        ):
+            self.assertTrue(_is_tool_artifact(artifact), artifact)
+        for real in ("src/app.py", "README.md", "semantic_test.py", "graph_builder.py"):
+            self.assertFalse(_is_tool_artifact(real), real)
+
+    def test_query_cache_hits_when_graphgraph_dir_is_not_gitignored(self) -> None:
+        # The end-to-end guard, through render_query_context (the `graphgraph
+        # query` path where the self-invalidating-cache bug actually lived), in
+        # a real git repo whose .gitignore does NOT cover .graphgraph/ -- the
+        # reviewer's external-repo scenario. The scan writes .graphgraph/ into
+        # the worktree; `git ls-files --others` then lists kv_cache.json, and
+        # before the fix its per-run mtime busted the key every time.
+        import subprocess
+
+        from graphgraph.services.context import render_query_context
+        from graphgraph.services.native import scan_validated_graph
+
+        def git(*args, cwd):
+            subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text(
+                "def normalize_rust():\n    return True\n", encoding="utf-8"
+            )
+            try:
+                git("init", cwd=root)
+                git("config", "user.email", "t@t", cwd=root)
+                git("config", "user.name", "t", cwd=root)
+                git("add", "-A", cwd=root)
+                git("commit", "-m", "init", cwd=root)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                self.skipTest("git unavailable")
+
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(directory=root, output_path=graph_path, docs=False)
+
+            kwargs = dict(
+                query="where is normalize_rust",
+                query_class="direct_lookup",
+                graph_path=graph_path,
+                cache_namespace="cli_query",
+                show_anchors=True,
+                json_anchors=True,
+            )
+            # git_utils caches worktree state per-process; clear it so the
+            # second call re-derives the signature exactly as a fresh process
+            # would, which is where the bug manifested.
+            from graphgraph.retrieval import git_utils
+
+            git_utils._git_path_cache.clear()
+            first = render_query_context(**kwargs)
+            git_utils._git_path_cache.clear()
+            second = render_query_context(**kwargs)
+
+        self.assertEqual(json.loads(first)["workflow"]["cache"]["state"], "miss")
+        self.assertEqual(json.loads(second)["workflow"]["cache"]["state"], "hit")
+
     def test_benchmark_promotes_smallest_lossless_self_contained_candidate(self) -> None:
         report = evaluate_candidates()
         candidates = {row["candidate"]: row for row in report["candidates"]}

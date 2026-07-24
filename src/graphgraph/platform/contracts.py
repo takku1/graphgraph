@@ -252,7 +252,7 @@ class PythonAstEvidenceProvider:
             try:
                 text = source.read_text(encoding="utf-8", errors="replace")
                 tree = ast.parse(text, filename=rel_path)
-            except (OSError, SyntaxError) as exc:
+            except (OSError, SyntaxError, ValueError, RecursionError) as exc:
                 warnings.append(f"{rel_path}:{type(exc).__name__}")
                 continue
             for definition in (item for item in ast.walk(tree) if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))):

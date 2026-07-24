@@ -25,12 +25,20 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
             edges=[Edge("A", "B", "calls")],
         )
         strict = retrieve_context(
-            graph, "run_formula_yield_benchmark", "direct_lookup", hops=1,
-            scopes=("crates/locus-pipeline",), scope_mode="strict",
+            graph,
+            "run_formula_yield_benchmark",
+            "direct_lookup",
+            hops=1,
+            scopes=("crates/locus-pipeline",),
+            scope_mode="strict",
         )
         expanded = retrieve_context(
-            graph, "run_formula_yield_benchmark", "direct_lookup", hops=1,
-            scopes=("crates/locus-pipeline",), scope_mode="expand",
+            graph,
+            "run_formula_yield_benchmark",
+            "direct_lookup",
+            hops=1,
+            scopes=("crates/locus-pipeline",),
+            scope_mode="expand",
         )
         self.assertEqual(strict.nodes, {"A"})
         self.assertIn("B", expanded.nodes)
@@ -41,7 +49,9 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
             nodes={
                 "RUN": Node("RUN", "run_formula_yield_benchmark", "function", "crates/locus-pipeline/src/yield.rs"),
                 "VAL": Node("VAL", "validate_candidates_detailed", "method", "crates/locus-pipeline/src/lib.rs"),
-                "TEST": Node("TEST", "pinned_formula_corpus", "function", "crates/locus-pipeline/tests/yield_benchmark.rs"),
+                "TEST": Node(
+                    "TEST", "pinned_formula_corpus", "function", "crates/locus-pipeline/tests/yield_benchmark.rs"
+                ),
                 "NOISE": Node("NOISE", "identity_validation", "function", "crates/locus-core/src/numerical.rs"),
             },
             edges=[
@@ -120,10 +130,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                     confidence=0.94,
                     provenance="tree_sitter_type_resolved_field_assertion",
                 ),
-                *[
-                    Edge(f"A_NOISE_{index}", "CANDIDATE", "references", confidence=0.6)
-                    for index in range(8)
-                ],
+                *[Edge(f"A_NOISE_{index}", "CANDIDATE", "references", confidence=0.6) for index in range(8)],
             ],
         )
 
@@ -187,7 +194,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertNotIn("HOMONYM", result.starts)
 
     def test_domain_facets_credit_promotable_yield_and_parent_traversal_rejection(self) -> None:
-        from graphgraph.retrieval.context import facet_coverage
+        from graphgraph.retrieval.facets import facet_coverage
 
         graph = Graph(
             nodes={
@@ -317,10 +324,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
 
         result = retrieve_context(
             graph,
-            (
-                "Where is StochasticProcessesAdvisor registered and which tests "
-                "exercise it?"
-            ),
+            ("Where is StochasticProcessesAdvisor registered and which tests exercise it?"),
             "reverse_lookup",
             hops=1,
             anchor_limit=1,
@@ -331,10 +335,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertNotIn("OTHER", result.nodes)
         self.assertEqual(result.metadata["facet_coverage"]["unfulfilled"], [])
         self.assertEqual(result.metadata["answerability"]["status"], "answerable")
-        fulfilled = {
-            item["facet"]: set(item["evidence"])
-            for item in result.metadata["facet_coverage"]["fulfilled"]
-        }
+        fulfilled = {item["facet"]: set(item["evidence"]) for item in result.metadata["facet_coverage"]["fulfilled"]}
         self.assertEqual(fulfilled["registered"], {"REGISTRY"})
         self.assertEqual(fulfilled["exercise"], {"TEST"})
 
@@ -593,7 +594,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         )
 
     def test_test_path_does_not_turn_file_fields_or_locals_into_test_cases(self) -> None:
-        from graphgraph.retrieval.context import _is_test_node
+        from graphgraph.retrieval.scoping import _is_test_node
 
         path = "crates/locus-engine/tests/suite/groebner_test.rs"
         self.assertFalse(_is_test_node(Node("FILE", "groebner_test.rs", "rust", path)))
@@ -699,7 +700,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual(result.metadata["anchor_paths"][0]["role"], "file_fallback")
 
     def test_preferred_path_anchors_do_not_repeat_global_search_per_facet(self) -> None:
-        from graphgraph.retrieval.context import preferred_path_anchor_matches
+        from graphgraph.retrieval.anchors import preferred_path_anchor_matches
 
         path = "src/planner.rs"
         graph = Graph(
@@ -711,7 +712,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         )
 
         with patch(
-            "graphgraph.retrieval.context.search_nodes",
+            "graphgraph.retrieval.search.search_nodes",
             side_effect=AssertionError("exact-path anchoring must stay path-local"),
         ):
             matches = preferred_path_anchor_matches(
@@ -724,7 +725,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
 
         self.assertEqual(matches[0].node.id, "PLAN")
         with patch(
-            "graphgraph.retrieval.context.search_nodes",
+            "graphgraph.retrieval.search.search_nodes",
             side_effect=AssertionError("exact-path retrieval must not run global search"),
         ):
             result = retrieve_context(
@@ -770,7 +771,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertNotIn("NOISE", result.starts)
 
     def test_facet_parser_drops_output_instructions_and_connective_phrases(self) -> None:
-        from graphgraph.retrieval.context import query_facets
+        from graphgraph.retrieval.facets import query_facets
 
         facets = query_facets(
             "After adding TransformPlanner plan deduplication, return minimal runnable Cargo commands "
@@ -795,7 +796,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         )
 
     def test_facet_coverage_translates_behavior_words_to_code_level_forms(self) -> None:
-        from graphgraph.retrieval.context import facet_coverage
+        from graphgraph.retrieval.facets import facet_coverage
 
         graph = Graph(
             nodes={
@@ -855,10 +856,12 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
             "reason": "unfulfilled query facets",
         }
         result.metadata["affected_tests"]["commands"] = ["cargo test -p locus-pipeline --test yield_benchmark"]
-        result.metadata["affected_tests"]["command_provenance"] = [{
-            "command": "cargo test -p locus-pipeline --test yield_benchmark",
-            "tests": [{"id": "TEST"}],
-        }]
+        result.metadata["affected_tests"]["command_provenance"] = [
+            {
+                "command": "cargo test -p locus-pipeline --test yield_benchmark",
+                "tests": [{"id": "TEST"}],
+            }
+        ]
 
         errors = reconcile_retrieval_receipt(
             graph,
@@ -949,15 +952,17 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                 "OLD_TYPE": Node("OLD_TYPE", "YieldBaseline", "struct", path),
                 "NEW_TYPE": Node("NEW_TYPE", "SourceYieldBaseline", "struct", path),
                 "OLD_EVAL": Node("OLD_EVAL", "evaluate", "method", path, summary="[YieldBaseline::evaluate]"),
-                "NEW_EVAL": Node(
-                    "NEW_EVAL", "evaluate", "method", path, summary="[SourceYieldBaseline::evaluate]"
-                ),
+                "NEW_EVAL": Node("NEW_EVAL", "evaluate", "method", path, summary="[SourceYieldBaseline::evaluate]"),
                 "OLD_TEST": Node(
-                    "OLD_TEST", "formula_baseline", "function",
+                    "OLD_TEST",
+                    "formula_baseline",
+                    "function",
                     "crates/locus-pipeline/tests/yield_benchmark.rs",
                 ),
                 "NEW_TEST": Node(
-                    "NEW_TEST", "source_baseline", "function",
+                    "NEW_TEST",
+                    "source_baseline",
+                    "function",
                     "crates/locus-pipeline/tests/source_yield.rs",
                 ),
             },
@@ -982,12 +987,15 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         )
 
     def test_qualified_method_bypasses_a_crowded_lexical_candidate_list(self) -> None:
-        from graphgraph.retrieval.context import select_anchor_matches
+        from graphgraph.retrieval.anchors import select_anchor_matches
         from graphgraph.retrieval.models import Match
 
         owner = Node("TYPE", "SourceYieldBaseline", "struct", "src/yield.rs")
         method = Node(
-            "EVAL", "evaluate", "method", "src/yield.rs",
+            "EVAL",
+            "evaluate",
+            "method",
+            "src/yield.rs",
             summary="[SourceYieldBaseline::evaluate]",
         )
         graph = Graph(nodes={"TYPE": owner, "EVAL": method})
@@ -1011,15 +1019,21 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                 "EVAL": Node("EVAL", "evaluate", "method", pipeline, summary="SourceYieldBaseline::evaluate"),
                 "PARSE_FIELD": Node("PARSE_FIELD", "max_parse_failures", "field", pipeline),
                 "HELPER": Node(
-                    "HELPER", "parse_failure_findings", "function",
+                    "HELPER",
+                    "parse_failure_findings",
+                    "function",
                     "crates/locus-frontends/src/normalizer.rs",
                 ),
                 "GOOD_TEST": Node(
-                    "GOOD_TEST", "source_baseline_positive", "function",
+                    "GOOD_TEST",
+                    "source_baseline_positive",
+                    "function",
                     "crates/locus-pipeline/tests/yield_benchmark.rs",
                 ),
                 "NOISE_TEST": Node(
-                    "NOISE_TEST", "fpcore_parse_failures", "function",
+                    "NOISE_TEST",
+                    "fpcore_parse_failures",
+                    "function",
                     "crates/locus-frontends/tests/suite/fpcore_test.rs",
                 ),
             },
@@ -1045,15 +1059,13 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         )
 
     def test_facet_normalization_drops_meta_language_and_accepts_verified_preview(self) -> None:
-        from graphgraph.retrieval.context import facet_coverage, query_facets
+        from graphgraph.retrieval.facets import facet_coverage, query_facets
 
         facets = query_facets("verified source applications, and which tests cover every part")
         self.assertEqual(facets, (("verified source applications", ("verified", "source", "applications")),))
         graph = Graph(
             nodes={
-                "PREVIEW": Node(
-                    "PREVIEW", "preview_fixes", "function", "crates/locus-frontends/src/refactor.rs"
-                ),
+                "PREVIEW": Node("PREVIEW", "preview_fixes", "function", "crates/locus-frontends/src/refactor.rs"),
             }
         )
         coverage = facet_coverage(graph, {"PREVIEW"}, facets)
@@ -1061,7 +1073,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual(coverage["coverage_ratio"], 1.0)
 
     def test_facet_normalization_keeps_single_noise_and_strips_method_verbs(self) -> None:
-        from graphgraph.retrieval.context import query_facets
+        from graphgraph.retrieval.facets import query_facets
 
         facets = query_facets(
             "How does SourceYieldBaseline::evaluate assess strategy yield, noise, and parse failures?"
@@ -1082,16 +1094,23 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         graph = Graph(
             nodes={
                 "SourceYieldBaseline__evaluate": Node(
-                    "SourceYieldBaseline__evaluate", "evaluate", "method", path,
+                    "SourceYieldBaseline__evaluate",
+                    "evaluate",
+                    "method",
+                    path,
                     summary="SourceYieldBaseline::evaluate",
                 ),
                 "YieldBenchmarkReport__field_successful_verified_applications": Node(
                     "YieldBenchmarkReport__field_successful_verified_applications",
-                    "successful_verified_applications", "field", path,
+                    "successful_verified_applications",
+                    "field",
+                    path,
                 ),
                 "SourceYieldBenchmarkReport__field_successful_verified_applications": Node(
                     "SourceYieldBenchmarkReport__field_successful_verified_applications",
-                    "successful_verified_applications", "field", path,
+                    "successful_verified_applications",
+                    "field",
+                    path,
                 ),
             },
         )
@@ -1119,19 +1138,27 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                 "RUN": Node("RUN", "run_initial_strategy_yield_benchmark", "function", path),
                 "OLD": Node("OLD", "run_strategy_yield_benchmark", "function", path),
                 "IDENTITY": Node(
-                    "IDENTITY", "IdentityDiscoveryAdvisor", "struct",
+                    "IDENTITY",
+                    "IdentityDiscoveryAdvisor",
+                    "struct",
                     "crates/locus-advisors/src/identity_discovery.rs",
                 ),
                 "SIMPLE": Node(
-                    "SIMPLE", "SimplerFormDiscovery", "function",
+                    "SIMPLE",
+                    "SimplerFormDiscovery",
+                    "function",
                     "crates/locus-advisors/src/simpler_form.rs",
                 ),
                 "FINITE": Node(
-                    "FINITE", "finite_field_equivalence", "function",
+                    "FINITE",
+                    "finite_field_equivalence",
+                    "function",
                     "crates/locus-frontends/src/cross_file.rs",
                 ),
                 "CONJ": Node(
-                    "CONJ", "conjugate_rationalization", "function",
+                    "CONJ",
+                    "conjugate_rationalization",
+                    "function",
                     "crates/locus-advisors/src/numerical_stability.rs",
                 ),
                 "VERIFIED": Node("VERIFIED", "successful_verified_applications", "function", path),
@@ -1142,10 +1169,8 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                     "crates/locus-pipeline/tests/yield_benchmark.rs",
                 ),
             },
-            edges=[
-                Edge("RUN", target, "calls")
-                for target in ("IDENTITY", "SIMPLE", "FINITE", "CONJ", "VERIFIED")
-            ] + [Edge("TEST", "RUN", "calls")],
+            edges=[Edge("RUN", target, "calls") for target in ("IDENTITY", "SIMPLE", "FINITE", "CONJ", "VERIFIED")]
+            + [Edge("TEST", "RUN", "calls")],
         )
         result = retrieve_context(
             graph,

@@ -27,7 +27,8 @@ from graphgraph.graph.traversal import (  # noqa: E402
 from graphgraph.io import load_any  # noqa: E402
 from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.planning import plan_context  # noqa: E402
-from graphgraph.retrieval.context import apply_shape_budget, expand_context  # noqa: E402
+from graphgraph.retrieval.anchors import apply_shape_budget  # noqa: E402
+from graphgraph.retrieval.expansion import expand_context  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "real_projects"
 REPORT_JSON = OUT / "production_retrieval.json"

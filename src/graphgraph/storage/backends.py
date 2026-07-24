@@ -30,7 +30,11 @@ _PAGERANK_SCORE_RECORD = struct.Struct("<Id")
 
 def is_binary_gg(path: Path) -> bool:
     try:
-        return path.read_bytes()[:4] in {_GGB_MAGIC, b"GGB2"}
+        # Read only the magic header -- read_bytes() would pull the whole
+        # store into memory just to inspect 4 bytes, doubling the I/O of
+        # every load (the caller reads the file again immediately after).
+        with path.open("rb") as fh:
+            return fh.read(4) in {_GGB_MAGIC, b"GGB2"}
     except OSError:
         return False
 
@@ -160,11 +164,26 @@ def save_graph_binary(graph: Graph, path: Path) -> None:
 def load_graph_binary(path: Path) -> Graph:
     data = path.read_bytes()
     magic = data[:4]
-    if magic == b"GGB2":
-        return _load_ggb2(data)
-    if magic != _GGB_MAGIC:
-        raise ValueError(f"unsupported .gg binary magic/version: {magic!r}")
+    try:
+        if magic == b"GGB2":
+            return _load_ggb2(data)
+        if magic != _GGB_MAGIC:
+            raise ValueError(f"unsupported .gg binary magic/version: {magic!r}")
+        return _load_ggb3(data)
+    except (struct.error, IndexError, UnicodeDecodeError, OverflowError) as exc:
+        # A short read past the end of the buffer (struct.error/IndexError) or
+        # undecodable dictionary bytes mean the store was truncated or
+        # damaged after the magic header -- e.g. an interrupted copy or a
+        # partial write by another tool. Surface it as ValueError so the CLI
+        # reports a clean error and repair paths treat it as rebuildable
+        # instead of leaking a raw struct traceback.
+        raise ValueError(
+            f"{path} is a corrupted or truncated .gg binary graph "
+            f"({len(data)} bytes): {exc}. Re-run `graphgraph scan` to rebuild it."
+        ) from exc
 
+
+def _load_ggb3(data: bytes) -> Graph:
     offset = 0
     (
         _magic,

@@ -611,6 +611,91 @@ class PlatformTest(unittest.TestCase):
             self.assertIn(f"memory:{record.id}", projected.nodes)
             self.assertIn("remembers", {edge.type for edge in projected.edges})
 
+    def test_memory_auto_anchors_exact_symbols_with_ambiguity_receipt(self) -> None:
+        graph = Graph(
+            nodes={
+                "router": Node(
+                    "router",
+                    "Router",
+                    "class",
+                    "src/router.py",
+                ),
+                "primary": Node(
+                    "primary",
+                    "search_path",
+                    "method",
+                    "src/router.py",
+                    parent="router",
+                ),
+                "secondary": Node(
+                    "secondary",
+                    "search_path",
+                    "function",
+                    "src/helpers.py",
+                ),
+                "file_collision": Node(
+                    "file_collision",
+                    "search_path",
+                    "python",
+                    "tests/search_path.py",
+                ),
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            store = MemoryStore(Path(tmp) / "memory.json")
+            record = store.remember(
+                "Keep the PCRE2 decision near Router::search_path and search_path.",
+                graph=graph,
+            )
+            reloaded = store.read()[0]
+            projected = store.project(graph)
+
+        self.assertEqual(record.related_nodes, ("primary", "secondary"))
+        self.assertEqual(reloaded.related_nodes, record.related_nodes)
+        self.assertEqual(
+            reloaded.anchor_receipt["ambiguous"][0]["mention"],
+            "search_path",
+        )
+        self.assertEqual(
+            reloaded.anchor_receipt["ambiguous"][0]["candidate_count"],
+            2,
+        )
+        self.assertNotIn("file_collision", record.related_nodes)
+        self.assertEqual(
+            {
+                edge.target
+                for edge in projected.edges
+                if edge.source == f"memory:{record.id}"
+                and edge.type == "remembers"
+            },
+            {"primary", "secondary"},
+        )
+
+    def test_memory_anchor_limit_is_explicit_and_deterministic(self) -> None:
+        graph = Graph(
+            nodes={
+                "one": Node("one", "target_symbol", "function", "one.py"),
+                "two": Node("two", "target_symbol", "function", "two.py"),
+                "prose_collision": Node(
+                    "prose_collision",
+                    "alias",
+                    "function",
+                    "aliases.py",
+                ),
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            record = MemoryStore(Path(tmp) / "memory.json").remember(
+                "Alias validation decision about target_symbol",
+                graph=graph,
+                anchor_limit=1,
+            )
+
+        self.assertEqual(record.related_nodes, ("one",))
+        self.assertNotIn("prose_collision", record.related_nodes)
+        self.assertTrue(record.anchor_receipt["truncated"])
+        self.assertEqual(record.anchor_receipt["limit"], 1)
+
     def test_federation_namespaces_and_links_repositories(self) -> None:
         federated = federate_graphs({"api": platform_graph(), "worker": platform_graph()})
         self.assertIn("api::run", federated.nodes)
@@ -689,6 +774,42 @@ class PlatformTest(unittest.TestCase):
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertTrue(data["receipt"]["valid"])
+            memory_path = Path(tmp) / "memory.json"
+            remembered = dispatch({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "memory_context",
+                    "arguments": {
+                        "operation": "add",
+                        "text": "Keep the retry decision near `run`",
+                        "graph_path": str(graph_path),
+                        "store_path": str(memory_path),
+                    },
+                },
+            })
+            assert remembered is not None
+            memory_data = json.loads(
+                remembered["result"]["content"][0]["text"]
+            )
+            self.assertEqual(memory_data["related_nodes"], ["run"])
+            self.assertEqual(
+                memory_data["anchor_receipt"]["accepted"],
+                ["run"],
+            )
+
+    def test_memory_cli_accepts_observed_text_and_search_aliases(self) -> None:
+        added = build_parser().parse_args(
+            ["platform", "memory", "add", "--text", "Remember search_path"]
+        )
+        searched = build_parser().parse_args(
+            ["platform", "memory", "search", "search path"]
+        )
+
+        self.assertEqual(added.text_option, "Remember search_path")
+        self.assertEqual(searched.operation, "search")
+        self.assertEqual(searched.text, "search path")
 
     def test_http_service_exposes_status_and_compiler(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -806,6 +927,235 @@ class PlatformTest(unittest.TestCase):
             self.assertIn("echo existing", content)
             self.assertEqual(content.count("# >>> graphgraph managed >>>"), 1)
             self.assertIn("graphgraph context", content)
+
+
+class SemanticEmbeddingBackendTest(unittest.TestCase):
+    """The optional embedding backend: real semantics when present, hash when
+    not, and a hard refusal to mix the two coordinate spaces."""
+
+    class _ConceptBackend:
+        """Toy meaning-space so paraphrases with no shared tokens still align."""
+
+        name = "test:concept-v1"
+        _MAP = {
+            "delete": (1, 0, 0), "remove": (1, 0, 0), "erase": (1, 0, 0), "purge": (1, 0, 0),
+            "user": (0, 1, 0), "account": (0, 1, 0), "profile": (0, 1, 0), "person": (0, 1, 0),
+            "render": (0, 0, 1), "dashboard": (0, 0, 1), "draw": (0, 0, 1), "view": (0, 0, 1),
+        }
+
+        def embed(self, texts):
+            out = []
+            for text in texts:
+                vec = [0.0, 0.0, 0.0]
+                for word in text.lower().replace("_", " ").split():
+                    for i, x in enumerate(self._MAP.get(word, (0, 0, 0))):
+                        vec[i] += x
+                out.append(vec)
+            return out
+
+    def _graph(self):
+        return Graph(
+            nodes={
+                "A": Node("A", "delete_user_account", "function", "accounts.py",
+                          summary="removes a user and purges their records"),
+                "B": Node("B", "render_dashboard", "function", "ui.py",
+                          summary="draws the main dashboard view"),
+            },
+            edges=[],
+        )
+
+    def tearDown(self) -> None:
+        from graphgraph.platform import reset_backend_cache
+
+        reset_backend_cache()
+
+    def test_offline_hash_misses_token_disjoint_paraphrase(self) -> None:
+        # This is the reviewer's 0/4 in miniature: no shared tokens, no hit.
+        from graphgraph.platform import SemanticIndex, reset_backend_cache
+
+        reset_backend_cache()
+        index = SemanticIndex().build(self._graph())
+        self.assertEqual(index.backend_name, "hash")
+        self.assertEqual(index.query("erase somebody's profile", limit=1), [])
+
+    def test_embedding_backend_recovers_the_paraphrase(self) -> None:
+        # The whole point: a real meaning-space resolves the paraphrase to the
+        # deletion function the hash could not reach.
+        from graphgraph.platform import SemanticIndex, set_backend
+
+        set_backend(self._ConceptBackend())
+        index = SemanticIndex().build(self._graph())
+        self.assertEqual(index.backend_name, "test:concept-v1")
+        hits = index.query("erase a person", limit=1)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0][0], "A")
+
+    def test_semantic_extra_gates_the_local_backend(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        from graphgraph.platform import embeddings
+
+        os.environ.pop(embeddings.EMBED_URL_ENV, None)
+        # Absent `[semantic]` extra -> the offline hash, unchanged.
+        with patch.object(embeddings, "_local_backend_available", return_value=False):
+            embeddings.reset_backend_cache()
+            self.assertIsNone(embeddings.resolve_backend())
+            self.assertEqual(embeddings.active_backend_name(), embeddings.HASH_BACKEND_NAME)
+        # Extra installed -> the local ONNX backend auto-registers, no config.
+        with patch.object(embeddings, "_local_backend_available", return_value=True):
+            embeddings.reset_backend_cache()
+            self.assertIsInstance(embeddings.resolve_backend(), embeddings.FastEmbedBackend)
+            self.assertTrue(embeddings.active_backend_name().startswith("fastembed:"))
+        embeddings.reset_backend_cache()
+
+    def test_explicit_embed_url_overrides_the_local_backend(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        from graphgraph.platform import embeddings
+
+        with patch.dict(os.environ, {embeddings.EMBED_URL_ENV: "http://localhost:9/embed"}):
+            with patch.object(embeddings, "_local_backend_available", return_value=True):
+                embeddings.reset_backend_cache()
+                self.assertIsInstance(embeddings.resolve_backend(), embeddings.HttpEmbeddingBackend)
+        embeddings.reset_backend_cache()
+
+    def test_fastembed_backend_is_lazy(self) -> None:
+        # Constructing the backend must not import fastembed or load a model.
+        from graphgraph.platform.embeddings import FastEmbedBackend
+
+        backend = FastEmbedBackend()
+        self.assertTrue(backend.name.startswith("fastembed:"))
+        self.assertIsNone(backend._model)
+
+    def test_provenance_guard_refuses_cross_space_query(self) -> None:
+        from graphgraph.platform import (
+            SemanticBackendMismatch,
+            SemanticIndex,
+            reset_backend_cache,
+            set_backend,
+        )
+
+        set_backend(self._ConceptBackend())
+        index = SemanticIndex().build(self._graph())
+
+        # Backend vanishes -> embedding vectors vs a hash query vector is
+        # garbage, so the query must refuse rather than score it.
+        reset_backend_cache()
+        with self.assertRaises(SemanticBackendMismatch):
+            index.query("erase a person")
+
+    def test_index_is_stale_when_backend_changes(self) -> None:
+        from graphgraph.platform import SemanticIndex, reset_backend_cache, set_backend
+
+        reset_backend_cache()
+        graph = self._graph()
+        hash_index = SemanticIndex().build(graph)
+        self.assertTrue(hash_index.is_current(graph))
+        # Same graph, but an embedding backend is now active: the hash index is
+        # no longer reusable and must be rebuilt.
+        set_backend(self._ConceptBackend())
+        self.assertFalse(hash_index.is_current(graph))
+
+    def test_hash_path_is_unaffected_when_no_backend(self) -> None:
+        # Regression fence: with no backend configured, behaviour must be
+        # byte-identical to before the abstraction existed.
+        from graphgraph.platform import SemanticIndex, reset_backend_cache
+
+        reset_backend_cache()
+        index = SemanticIndex().build(self._graph())
+        by_name = index.query("delete user account", limit=1)
+        self.assertEqual(by_name[0][0], "A")
+
+
+class EmbeddingBackendHttpIntegrationTest(unittest.TestCase):
+    """The env-var -> HTTP -> index path that the mock-backend unit tests skip.
+
+    The unit tests inject a backend via set_backend(); a black-box caller can
+    only set GRAPHGRAPH_EMBED_URL. This exercises resolve_backend() reading the
+    env, HttpEmbeddingBackend doing the real HTTP round-trip, and a paraphrase
+    with no shared tokens being recovered through it -- the whole GATE 23
+    plumbing end to end, against a stdlib stub standing in for a real model.
+    """
+
+    _CONCEPT = {
+        "delete": (1, 0, 0), "remove": (1, 0, 0), "erase": (1, 0, 0),
+        "purge": (1, 0, 0), "removes": (1, 0, 0),
+        "user": (0, 1, 0), "account": (0, 1, 0), "person": (0, 1, 0),
+        "records": (0, 1, 0), "profile": (0, 1, 0),
+        "render": (0, 0, 1), "dashboard": (0, 0, 1), "draws": (0, 0, 1),
+    }
+
+    @classmethod
+    def _embed(cls, text: str) -> list[float]:
+        vec = [0.0, 0.0, 0.0]
+        for word in text.lower().replace("_", " ").replace(".", " ").split():
+            for i, x in enumerate(cls._CONCEPT.get(word, (0, 0, 0))):
+                vec[i] += x
+        return vec
+
+    def setUp(self) -> None:
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):  # noqa: A002 - silence test server
+                pass
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                payload = json.dumps(
+                    {"embeddings": [outer._embed(t) for t in body.get("input", [])]}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        self.url = f"http://{host}:{port}"
+
+    def tearDown(self) -> None:
+        from graphgraph.platform import reset_backend_cache
+
+        self.server.shutdown()
+        self.server.server_close()
+        os.environ.pop("GRAPHGRAPH_EMBED_URL", None)
+        reset_backend_cache()
+
+    def test_env_configured_backend_recovers_paraphrase_over_http(self) -> None:
+        from graphgraph.platform import SemanticIndex, reset_backend_cache
+
+        graph = Graph(
+            nodes={
+                "A": Node("A", "delete_user_account", "function", "accounts.py",
+                          summary="removes a user and purges their records"),
+                "B": Node("B", "render_dashboard", "function", "ui.py",
+                          summary="draws the main dashboard"),
+            },
+            edges=[],
+        )
+
+        # Offline: the token-disjoint paraphrase does not resolve.
+        reset_backend_cache()
+        self.assertEqual(SemanticIndex().build(graph).query("erase a person", limit=1), [])
+
+        # Env-configured HTTP backend: same paraphrase now resolves to A, and
+        # the index records the http backend name (not "hash").
+        os.environ["GRAPHGRAPH_EMBED_URL"] = self.url
+        reset_backend_cache()
+        index = SemanticIndex().build(graph)
+        self.assertTrue(index.backend_name.startswith("http:"))
+        hits = index.query("erase a person", limit=1)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0][0], "A")
 
 
 class FileLockTest(unittest.TestCase):

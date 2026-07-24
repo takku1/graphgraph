@@ -1,0 +1,48 @@
+[
+  {
+    "_comment": "Persisted flask retrieval suite. Cycle 6 onward. Fixture: resources/flask @ scan --depth symbols --docs (5868 nodes / 15368 edges). Pairs are (lexical name) vs (semantic description of the SAME target) so lexical-vs-semantic parity is directly measurable.",
+    "query": "dispatch_request",
+    "expected": ["src_flask_app_py__Flask__dispatch_request"],
+    "facet": "lexical_name"
+  },
+  {
+    "query": "match the incoming request to a view function and call it",
+    "expected": ["src_flask_app_py__Flask__dispatch_request"],
+    "facet": "semantic_paraphrase"
+  },
+  {
+    "query": "JSONProvider",
+    "expected": ["src_flask_json_provider_py__JSONProvider"],
+    "facet": "lexical_name"
+  },
+  {
+    "query": "pluggable interface for swapping how responses are serialized",
+    "expected": ["src_flask_json_provider_py__JSONProvider"],
+    "facet": "semantic_paraphrase"
+  },
+  {
+    "query": "send_file",
+    "expected": ["src_flask_helpers_py__send_file"],
+    "facet": "lexical_name"
+  },
+  {
+    "query": "return a file from disk to the client as a response",
+    "expected": ["src_flask_helpers_py__send_file"],
+    "facet": "semantic_paraphrase"
+  },
+  {
+    "query": "register_blueprint",
+    "expected": ["src_flask_sansio_app_py__App__register_blueprint"],
+    "facet": "lexical_name"
+  },
+  {
+    "query": "attach a modular group of routes onto the application",
+    "expected": ["src_flask_sansio_app_py__App__register_blueprint"],
+    "facet": "semantic_paraphrase"
+  },
+  {
+    "query": "totally_fake_symbol_qqq_red_control",
+    "expected": ["src_flask_app_py__Flask__totally_fake_symbol_qqq"],
+    "facet": "red_control_must_score_zero"
+  }
+]

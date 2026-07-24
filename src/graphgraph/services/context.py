@@ -18,13 +18,14 @@ from ..packets.validation import validate_packet
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph, route_query
 from ..planning.budgets import plan_terms
 from ..planning.policies import render_policy_packet, select_policies
-from ..platform.compiler import GraphProgram, GraphRuntime
-from ..platform.source_planner import QuerySourcePlanner, source_state_signature
+from ..platform.compiler import GraphProgram
+from ..platform.runtime import create_graph_runtime
+from ..platform.source_planner import source_state_signature
 from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # noqa: F401
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
-QUERY_RESPONSE_CACHE_VERSION = "request_v9_reverse_structural_evidence"
+QUERY_RESPONSE_CACHE_VERSION = "request_v10_subsystem_map_actionable"
 
 _DOCUMENT_EVIDENCE_KINDS = frozenset({
     "concept",
@@ -322,8 +323,10 @@ def render_query_context(
     route = route_query(query, query_class, scopes=scopes)
     query_class = route.query_class
     resolved_graph_path = graph_path or find_graph_path()
-    project_root = project_root_for_graph(resolved_graph_path)
-    source_signature = source_state_signature(project_root)
+    from .freshness import source_root_for_saved_graph
+
+    project_root = source_root_for_saved_graph(resolved_graph_path)
+    source_signature = source_state_signature(project_root, graph_dir=resolved_graph_path.parent)
     plan = plan_context(
         query_class,
         query,
@@ -376,12 +379,10 @@ def render_query_context(
     else:
         remember_graph(resolved_graph_path, graph)
 
-    compiled = GraphRuntime(
-        graph,
-        source_planner=QuerySourcePlanner(
-            project_root,
-            graph_path=resolved_graph_path,
-        ),
+    compiled = create_graph_runtime(
+        resolved_graph_path,
+        graph=graph,
+        enable_evidence=False,
         source_mode=source_mode,
         memory_scopes=memory_scopes,
         changed_paths=anchor_paths,
@@ -791,7 +792,7 @@ def _actionable_receipt(
         else "structural_context"
     )
 
-    return {
+    receipt: dict[str, object] = {
         "status": answerability.get("status", "unknown"),
         "evidence_role": evidence_role,
         "evidence_points": evidence_points,
@@ -812,6 +813,14 @@ def _actionable_receipt(
         "freshness_ref": freshness_ref,
         "semantic_validation": metadata.get("semantic_validation", {}),
     }
+    # The subsystem map is the actionable answer to a broad architecture query,
+    # and it is far terser than the packet it summarizes. Surfacing it here --
+    # not only in the verbose `retrieval` metadata -- keeps it in the compact
+    # JSON payload, which drops everything except `actionable`.
+    subsystem_map = metadata.get("subsystem_map")
+    if subsystem_map:
+        receipt["subsystem_map"] = subsystem_map
+    return receipt
 
 
 def _raise_if_invalid(packet: str) -> None:
@@ -826,6 +835,40 @@ def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
     )
 
 
+#: Basenames GraphGraph itself writes beside a graph. They are outputs of a
+#: query, never inputs to one, so they must never enter the cache key.
+_TOOL_ARTIFACT_NAMES = frozenset({
+    "kv_cache.json",
+    "semantic.json",
+    "activation_state.json",
+    "memory.json",
+    "episodes.jsonl",
+    "projects.json",
+    "runtime-trace.jsonl",
+    "traces.jsonl",
+    "trace.jsonl",
+})
+
+
+def _is_tool_artifact(path: str) -> bool:
+    """True for GraphGraph's own generated files in the git worktree.
+
+    Including these in the session fingerprint made the packet cache
+    self-invalidating in any repo that does not gitignore `.graphgraph/`:
+    `git ls-files --others` then lists `kv_cache.json` as an untracked file,
+    writing the cache rewrites its mtime, and the very next query -- keyed in
+    part on that mtime -- misses. It presented as a flat 0% hit rate that only
+    appeared on scanned external repos (the tool's own repo gitignores the
+    directory, so the bug was invisible from inside it).
+    """
+    parts = Path(path).parts
+    if ".graphgraph" in parts:
+        return True
+    name = parts[-1] if parts else path
+    # A graph store and its manifest sit next to these, under any basename.
+    return name in _TOOL_ARTIFACT_NAMES or name.endswith((".gg", ".gg.manifest.json"))
+
+
 def _session_signature(start: Path | None = None) -> tuple[tuple[str, int, int], ...]:
     """Fingerprint the working tree for the packet cache key.
 
@@ -836,6 +879,10 @@ def _session_signature(start: Path | None = None) -> tuple[tuple[str, int, int],
     *count* the other helper returns added nothing here -- mtime and size
     already move whenever a file's content does, which is all a cache key
     needs.
+
+    GraphGraph's own artifacts are excluded: they are products of the query,
+    not inputs, and keying on them made the cache invalidate itself (see
+    ``_is_tool_artifact``).
     """
     from ..retrieval.git_utils import get_git_worktree_paths
 
@@ -843,6 +890,8 @@ def _session_signature(start: Path | None = None) -> tuple[tuple[str, int, int],
     root = start.resolve() if start is not None else Path.cwd().resolve()
     changed, deleted = get_git_worktree_paths(root)
     for path in (*changed, *deleted):
+        if _is_tool_artifact(path):
+            continue
         source_path = root / path
         try:
             stat = source_path.stat()

@@ -20,7 +20,7 @@ def _python_type_name(annotation: py_ast.AST | None) -> str:
     elif isinstance(annotation, py_ast.Constant) and isinstance(annotation.value, str):
         try:
             parsed = py_ast.parse(annotation.value, mode="eval").body
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError):
             parsed = None
         if parsed is not None and not (
             isinstance(parsed, py_ast.Constant) and parsed.value == annotation.value
@@ -105,7 +105,11 @@ def _python_local_types(body: str) -> dict[str, str]:
     """Infer Python receiver types only from explicit, stable local evidence."""
     try:
         module = py_ast.parse(textwrap.dedent(body))
-    except (IndentationError, SyntaxError, ValueError):
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        # RecursionError: ast construction blows the recursion limit on
+        # pathologically nested/chained source (generated or minified code).
+        # One such file must degrade to "no inference" like a syntax error,
+        # not abort the whole repository scan.
         return {}
     function = next(
         (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
@@ -180,7 +184,7 @@ def _python_class_field_types(source: str) -> dict[tuple[str, str], str]:
     """Infer stable ``self.field`` types from annotations or constructor writes."""
     try:
         module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError):
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
         return {}
     result: dict[tuple[str, str], str] = {}
     writes: dict[tuple[str, str], list[str]] = {}

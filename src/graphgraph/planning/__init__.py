@@ -2,7 +2,15 @@ from .budgets import default_anchor_limit, default_node_budget, retrieval_node_b
 from .context import plan_context, refine_plan_for_subgraph
 from .packet import choose_packet, choose_packet_for_subgraph, refine_packet_for_subgraph
 from .policies import path_matches, policy_applies, render_policy_packet, select_policies
-from .routing import QueryRoute, route_query
+from .routing import (
+    QUERY_CLASS_NAMES,
+    QUERY_CLASSES,
+    QueryClassSpec,
+    QueryRoute,
+    query_class_markdown_table,
+    query_class_schema,
+    route_query,
+)
 from .shape import (
     BudgetRecommendation,
     ContextWindowRecommendation,
@@ -22,6 +30,9 @@ __all__ = [
     "ContextWindowRecommendation",
     "GraphShape",
     "PacketChoice",
+    "QUERY_CLASSES",
+    "QUERY_CLASS_NAMES",
+    "QueryClassSpec",
     "QueryRoute",
     "SubgraphStats",
     "choose_packet",
@@ -34,6 +45,8 @@ __all__ = [
     "plan_context",
     "policy_applies",
     "profile_graph_shape",
+    "query_class_markdown_table",
+    "query_class_schema",
     "recommend_context_window",
     "recommend_facts_per_node",
     "recommend_node_budget",

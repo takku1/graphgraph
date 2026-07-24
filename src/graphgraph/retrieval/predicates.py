@@ -107,9 +107,18 @@ def caller_evidence_quality(graph: Graph) -> tuple[bool, str]:
     ``project_status``.
     """
     metadata = graph.metadata or {}
+    has_global_snapshot = any(
+        metadata.get(f"member_calls_global_{name}") not in (None, "")
+        for name in ("resolved", "unknown_receiver", "ambiguous")
+    )
 
     def _count(name: str) -> int:
-        for key in (f"member_calls_{name}", f"member_calls_global_{name}"):
+        keys = (
+            (f"member_calls_global_{name}", f"member_calls_{name}")
+            if has_global_snapshot
+            else (f"member_calls_{name}",)
+        )
+        for key in keys:
             raw = metadata.get(key)
             if raw not in (None, ""):
                 try:
@@ -125,12 +134,26 @@ def caller_evidence_quality(graph: Graph) -> tuple[bool, str]:
     if typed_eligible <= 0:
         return True, "no member-call telemetry on this graph"
     ratio = resolved / typed_eligible
+    scope = str(
+        metadata.get("member_calls_global_scope", "full_scan_snapshot")
+        if has_global_snapshot
+        else metadata.get("member_call_telemetry_scope", "unavailable")
+    )
+    last_update_scope = str(metadata.get("member_calls_last_update_scope", ""))
+    scope_detail = f"scope={scope}"
+    if has_global_snapshot and last_update_scope and last_update_scope != scope:
+        scope_detail += f"; last_update={last_update_scope}"
+    scope_detail = f" [{scope_detail}]"
     if unknown == 0:
-        return True, f"member-call resolution complete ({resolved}/{typed_eligible})"
+        return True, (
+            f"member-call resolution complete ({resolved}/{typed_eligible})"
+            f"{scope_detail}"
+        )
     return False, (
         f"member-call resolution {ratio:.1%} ({resolved}/{typed_eligible}); "
         f"{unknown} call sites lack receiver evidence and produce no calls edge, "
         "so zero-caller counts are an upper bound on dead code, not a proof"
+        f"{scope_detail}"
     )
 
 
@@ -308,6 +331,10 @@ def parse_criteria(expression: str, *, limit: int = 200) -> SelectionCriteria:
             labels = tuple(dict.fromkeys(item.casefold() for item in _parse_list(value)))
         elif field_name == "kind" and operator == "=":
             kinds.append(value)
+        elif field_name == "kind" and operator == "in":
+            # Symmetric with `label in [...]`: `kind = method` already exists,
+            # but the list form was rejected, forcing one query per kind.
+            kinds.extend(dict.fromkeys(_parse_list(value)))
         elif field_name == "production_callers" and operator in _COMPARISONS:
             production_callers = Bound(operator, _as_int(value, field_name))
         elif field_name == "callers" and operator in _COMPARISONS:
@@ -318,8 +345,8 @@ def parse_criteria(expression: str, *, limit: int = 200) -> SelectionCriteria:
             raise ValueError(
                 f"unsupported predicate clause: {clause!r} (supported: "
                 "production_callers/callers with = != > >= < <=, kind=K, "
-                "path|crate contains S, path|crate != S, label contains S, "
-                "label in [a, b, c], include_tests=BOOL)"
+                "kind in [a, b, c], path|crate contains S, path|crate != S, "
+                "label contains S, label in [a, b, c], include_tests=BOOL)"
             )
 
     return SelectionCriteria(

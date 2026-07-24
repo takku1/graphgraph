@@ -78,15 +78,42 @@ serialization.
 
 ## Packet Formats
 
-Current official packet targets:
+Current public packet targets:
 
-- `lowlevel`: compact GG-LL adjacency
-- `sql`: SQL-style rows
-- `hybrid`: graph rows plus grounding snippets
-- `svo`: compact subject-verb-object triples
-- `semantic_arrow`: relation words inline with directed arrows
-- `gg_max`: integer node/relation coding for larger topology packets
-- `gg_max_hybrid`: `gg_max` plus compact summaries/facts
+<!-- BEGIN GENERATED: packet-formats -->
+| Packet | Relative tokens | Use |
+| --- | ---: | --- |
+| `lowlevel` | 1.03x | XML-tagged adjacency; a readable structural fallback. |
+| `sql` | 1.38x+ | Table-row layout for models that prefer relational structure. |
+| `hybrid` | ~2.3x | Readable Markdown node and edge lists with higher token overhead. |
+| `semantic_arrow` | 1.49x | SVO arrows; preferred for zero-edge structural results. |
+| `gg` | 1.00x | Measured token floor for non-empty structural graph packets. |
+| `gg_hybrid` | ~1.6x | Integer-id gg plus inline grounded node facts. |
+| `gg_lex` | ~1.0x | Compact gg topology with stable lexical node identifiers. |
+| `gg_lex_hybrid` | ~1.6x | Lexical-id gg plus inline grounded node facts. |
+| `svo` | ~1.1x | Self-describing subject-verb-object triples. |
+| `doc_summary` | ~0.6x | Grounded document sections and notes without topology. |
+<!-- END GENERATED: packet-formats -->
+
+Older research docs call the compact `gg` representation `gg_max`; the
+accepted CLI/API name is `gg`.
+
+## Query Classes
+
+<!-- BEGIN GENERATED: query-classes -->
+| Query class | Routing | Purpose |
+| --- | --- | --- |
+| `direct_lookup` | automatic or explicit | Locate a definition or focused symbol. |
+| `reverse_lookup` | automatic or explicit | Find callers, references, implementors, or dependents. |
+| `affected_tests` | automatic or explicit | Find direct, transitive, and behavioral tests affected by a change. |
+| `multi_hop_path` | automatic or explicit | Trace a dependency, call, control, or data-flow path. |
+| `blast_radius` | automatic or explicit | Estimate downstream change impact and supporting evidence. |
+| `subsystem_summary` | automatic or explicit | Summarize a subsystem or architecture slice. |
+| `doc_summary` | automatic or explicit | Ground an answer in document sections and paragraphs. |
+| `negative_query` | automatic or explicit | Prove absence, isolation, or lack of references. |
+| `recent_changes` | automatic or explicit | Retrieve qualifying recent history and fixes evidence. |
+| `spreading_activation` | explicit | Use explicit multi-step activation retrieval. |
+<!-- END GENERATED: query-classes -->
 
 Low-level and SQL packets should pass mechanical validation before they are
 returned to an LLM client. Validation checks block structure, node references,
@@ -96,9 +123,9 @@ The adaptive planner chooses per query class. Use `query_context` or
 `graphgraph context` as the default agent entry point so anchors are discovered
 from the natural-language query before packet rendering:
 
-- direct/reverse: usually `1hop gg_max`
-- path/blast: usually `2hop gg_max`
-- summary: `gg_max` for structural summaries or `doc_summary` when grounded
+- direct/reverse: usually `1hop gg`
+- path/blast: usually `2hop gg`
+- summary: `gg` for structural summaries or `doc_summary` when grounded
   docs/facts dominate
 - zero-edge packets: usually `semantic_arrow`
 

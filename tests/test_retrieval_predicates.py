@@ -39,6 +39,16 @@ class PredicateParsingTest(unittest.TestCase):
         self.assertEqual(criteria.path_contains, "locus-engine")
         self.assertEqual(criteria.kinds, ("method",))
 
+    def test_kind_in_list_is_symmetric_with_label_in(self) -> None:
+        # `label in [...]` worked but `kind in [...]` was rejected, forcing one
+        # query per kind. They must be symmetric.
+        criteria = parse_criteria("kind in [function, method]")
+        self.assertEqual(criteria.kinds, ("function", "method"))
+        # And it still composes with other clauses.
+        composed = parse_criteria("kind in [class, struct] and include_tests = false")
+        self.assertEqual(composed.kinds, ("class", "struct"))
+        self.assertFalse(composed.include_tests)
+
     def test_leading_where_and_quotes_are_tolerated(self) -> None:
         criteria = parse_criteria("where label contains 'normalize' and include_tests = false")
         self.assertEqual(criteria.label_contains, "normalize")
@@ -117,6 +127,37 @@ class SelectSymbolsTest(unittest.TestCase):
 
 
 class CallerEvidenceTest(unittest.TestCase):
+    def test_incremental_metadata_prefers_global_snapshot_and_labels_scope(self) -> None:
+        # A changed-file splice overwrites the generic counters with the slice
+        # telemetry while retaining the repository-wide full-scan snapshot.
+        # Dead-code caveats must describe the repository snapshot, not the last
+        # edited batch.
+        graph = _graph()
+        graph.metadata.update({
+            "member_calls_resolved": "2",
+            "member_calls_unknown_receiver": "8",
+            "member_calls_ambiguous": "0",
+            "member_call_telemetry_scope": "changed_files",
+            "member_calls_global_resolved": "80",
+            "member_calls_global_unknown_receiver": "20",
+            "member_calls_global_ambiguous": "0",
+            "member_calls_global_scope": "full_scan",
+            "member_calls_last_update_scope": "changed_files",
+        })
+
+        complete, detail = caller_evidence_quality(graph)
+
+        self.assertFalse(complete)
+        self.assertIn("80.0% (80/100)", detail)
+        self.assertIn("scope=full_scan", detail)
+        self.assertIn("last_update=changed_files", detail)
+        self.assertNotIn("20.0% (2/10)", detail)
+
+        selected = select_symbols(
+            graph, parse_criteria("production_callers = 0"), mode="count"
+        )
+        self.assertEqual(selected.caller_evidence, detail)
+
     def test_partial_member_call_resolution_is_reported_as_incomplete(self) -> None:
         # Without this, a zero-caller count reads as proof of dead code even
         # though unresolved member calls emit no `calls` edge at all.

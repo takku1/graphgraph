@@ -35,7 +35,7 @@ def test_affected_tests_query_excludes_homonym_symbol_with_no_structural_path() 
         ],
     )
 
-    from graphgraph.retrieval.context import structural_anchor_query
+    from graphgraph.retrieval.scoping import structural_anchor_query
     from graphgraph.retrieval.search import search_nodes
 
     raw = "if SourceCaseBaseline evaluate changes, which tests are affected?"
@@ -86,20 +86,24 @@ def test_doc_summary_flags_missing_document_extraction() -> None:
     # the graph simply lacks grounded doc bodies. Retrieval now flags the
     # missing extraction with an actionable rebuild hint (docs=true). When docs
     # ARE extracted, section/paragraph nodes exist and no hint is emitted.
-    no_docs = Graph(nodes={
-        "MD": Node("MD", "architecture.md", "markdown", "docs/architecture.md"),
-        "F": Node("F", "refract", "function", "code.py"),
-    })
+    no_docs = Graph(
+        nodes={
+            "MD": Node("MD", "architecture.md", "markdown", "docs/architecture.md"),
+            "F": Node("F", "refract", "function", "code.py"),
+        }
+    )
     result = retrieve_context(no_docs, "how does the architecture handle refraction", "doc_summary", hops=2)
     extraction = result.metadata.get("document_extraction", {})
     assert extraction.get("grounded") is False
     assert "docs=true" in extraction.get("hint", "")
 
-    with_docs = Graph(nodes={
-        "MD": Node("MD", "architecture.md", "markdown", "docs/architecture.md"),
-        "S": Node("S", "Refraction", "section", "docs/architecture.md"),
-        "P": Node("P", "The refraction pass rewrites expressions", "paragraph", "docs/architecture.md"),
-    })
+    with_docs = Graph(
+        nodes={
+            "MD": Node("MD", "architecture.md", "markdown", "docs/architecture.md"),
+            "S": Node("S", "Refraction", "section", "docs/architecture.md"),
+            "P": Node("P", "The refraction pass rewrites expressions", "paragraph", "docs/architecture.md"),
+        }
+    )
     grounded = retrieve_context(with_docs, "how does refraction rewrite expressions", "doc_summary", hops=2)
     assert "document_extraction" not in grounded.metadata  # grounded: no hint
 
@@ -113,11 +117,15 @@ def test_facet_credited_by_domain_equivalent_evidence_already_in_packet() -> Non
     # "running loaded cases" vs "load_and_run"), so only the domain-equivalence
     # mapping in _facet_evidence_queries can credit them -- these assertions fail
     # if that mapping regresses, they are not vacuous.
-    from graphgraph.retrieval.context import facet_coverage, query_facets
+    from graphgraph.retrieval.facets import facet_coverage, query_facets
 
     scenarios = [
         ("what tests catch yield loss", "min_promotable_candidates", "minimum promotable candidates threshold"),
-        ("is there unsafe path rejection", "disk_backed_source_corpus_rejects_parent_traversal", "test rejects parent traversal"),
+        (
+            "is there unsafe path rejection",
+            "disk_backed_source_corpus_rejects_parent_traversal",
+            "test rejects parent traversal",
+        ),
         ("does it support running loaded cases", "load_and_run_corpus_case", "loads a case from disk and runs it"),
     ]
     for query, label, summary in scenarios:

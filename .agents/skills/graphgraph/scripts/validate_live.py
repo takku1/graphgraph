@@ -34,7 +34,7 @@ def _graphgraph_python() -> Path | None:
 
 def _run() -> int:
     try:
-        from graphgraph.live_validation import main
+        from graphgraph.acceptance.live_validation import main
     except ModuleNotFoundError as exc:
         if exc.name != "graphgraph":
             raise
@@ -46,7 +46,7 @@ def _run() -> int:
                 "that owns the `graphgraph` command."
             ) from exc
         return subprocess.call(
-            [str(owning_python), "-m", "graphgraph.live_validation", *sys.argv[1:]]
+            [str(owning_python), "-m", "graphgraph.acceptance.live_validation", *sys.argv[1:]]
         )
     return main()
 
