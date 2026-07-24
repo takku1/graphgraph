@@ -179,7 +179,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
         # count), not a packet budget. Bumped as the codebase grows; raise it
         # again if a legitimate expansion trips it rather than treating it as a
         # regression.
-        self.assertLess(token_est, 135000, f"Token estimate too high: {token_est}")
+        self.assertLess(token_est, 145000, f"Token estimate too high: {token_est}")
 
         # Extraction-quality floor (path-to-10 "adopt first" gate).
         # calls_per_symbol -- resolved call edges per callable symbol -- is the

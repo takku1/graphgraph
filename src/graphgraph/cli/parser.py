@@ -23,16 +23,14 @@ def _lazy_cmd(module: str, name: str):
     return _run
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="graphgraph")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
+def _add_plan_command(sub) -> None:
     plan = sub.add_parser("plan")
     plan.add_argument("--query-class", required=True, choices=QUERY_CLASS_NAMES)
     plan.add_argument("--query", default="")
     plan.set_defaults(func=_lazy_cmd("planning_commands", "cmd_plan"))
 
+
+def _add_retrieval_commands(sub) -> None:
     render = sub.add_parser("render")
     render.add_argument("--graph")
     render.add_argument("--query-class", required=True, choices=QUERY_CLASS_NAMES)
@@ -138,6 +136,8 @@ def build_parser() -> argparse.ArgumentParser:
     snippets.add_argument("--max-lines", type=int, default=40, help="Maximum lines per excerpt. Default: 40.")
     snippets.set_defaults(func=_lazy_cmd("retrieval", "cmd_snippets"))
 
+
+def _add_status_command(sub) -> None:
     status = sub.add_parser("status", help="Summarize graph validity, code/doc balance, package metadata, and optional runtime probes.")
     status.add_argument("--directory", "-d", help="Project root directory (default: cwd).")
     status.add_argument("--graph", help="Graph JSON path. Auto-detected from native .graphgraph if omitted.")
@@ -145,6 +145,8 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     status.set_defaults(func=_lazy_cmd("diagnostics", "cmd_status"))
 
+
+def _add_graph_validation_commands(sub) -> None:
     validate = sub.add_parser("validate", help="Validate a rendered graph packet, or auto-detect saved graph JSON.")
     validate.add_argument("--packet", help="Rendered packet file, graph JSON file, or omitted to read stdin.")
     validate.set_defaults(func=_lazy_cmd("graph_io", "cmd_validate"))
@@ -154,6 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
     validate_graph.add_argument("--graph", help="Graph JSON path. Auto-detected from .graphgraph if omitted.")
     validate_graph.set_defaults(func=_lazy_cmd("graph_io", "cmd_validate_graph"))
 
+
+def _add_lifecycle_commands(sub) -> None:
     scan = sub.add_parser("scan", help="Scan a directory and build a graph from import relationships.")
     scan.add_argument("--directory", "-d", help="Root directory to scan (default: cwd).")
     scan.add_argument(
@@ -231,6 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
     remove.add_argument("--history", action="store_true", default=False)
     remove.set_defaults(func=_lazy_cmd("lifecycle", "cmd_remove"))
 
+
+def _add_graph_io_commands(sub) -> None:
     ingest = sub.add_parser(
         "ingest",
         help=(
@@ -251,15 +257,21 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--output", "-o", help="Output .gg path (default: same dir as source).")
     export.set_defaults(func=_lazy_cmd("graph_io", "cmd_export"))
 
+
+def _add_ontology_command(sub) -> None:
     ontology = sub.add_parser("ontology", help="List native relation ontology and traversal weights.")
     ontology.add_argument("--family", help="Filter by relation family.")
     ontology.set_defaults(func=_lazy_cmd("descriptions", "cmd_ontology"))
 
+
+def _add_compare_command(sub) -> None:
     compare = sub.add_parser("compare", help="Compare two graph files by size, relation types, and overlap.")
     compare.add_argument("--left", required=True)
     compare.add_argument("--right", required=True)
     compare.set_defaults(func=_lazy_cmd("graph_io", "cmd_compare"))
 
+
+def _add_eval_command(sub) -> None:
     eval_cmd = sub.add_parser("eval", help="Evaluate retrieval recall and packet token cost against task expectations.")
     eval_cmd.add_argument("--graph", required=True)
     eval_cmd.add_argument("--tasks", required=True)
@@ -283,6 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_cmd.set_defaults(func=_lazy_cmd("evaluation", "cmd_eval"))
 
+
+def _add_description_commands(sub) -> None:
     frontends = sub.add_parser("frontends", help="List extraction frontend capabilities.")
     frontends.set_defaults(func=_lazy_cmd("descriptions", "cmd_frontends"))
 
@@ -290,6 +304,8 @@ def build_parser() -> argparse.ArgumentParser:
     traversal.add_argument("--query-class")
     traversal.set_defaults(func=_lazy_cmd("descriptions", "cmd_traversal"))
 
+
+def _add_analysis_commands(sub) -> None:
     profile = sub.add_parser("profile", help="Measure graph shape and show dynamic budget candidates.")
     profile.add_argument("--graph", help="Graph path. Auto-detected from native .graphgraph if omitted.")
     profile.add_argument("--query", default="", help="Optional query text for doc/query budget heuristics.")
@@ -319,9 +335,13 @@ def build_parser() -> argparse.ArgumentParser:
     select.add_argument("--pretty", action="store_true", help="Indent --json output for reading by eye. Costs ~26%% more tokens; omit for machine consumption.")
     select.set_defaults(func=_lazy_cmd("planning_commands", "cmd_select"))
 
+
+def _add_doctor_command(sub) -> None:
     doctor = sub.add_parser("doctor", help="Run local diagnostics for graph files, CLI runtime, dependencies, optional benchmark credentials, and MCP configs.")
     doctor.set_defaults(func=_lazy_cmd("diagnostics", "cmd_doctor"))
 
+
+def _add_cache_command(sub) -> None:
     cache_cmd = sub.add_parser("cache", help="Inspect, clear, or rebuild query/ranking caches.")
     cache_cmd.add_argument("--graph", help="Graph path (used to locate cache file). Defaults to .graphgraph/.")
     cache_cmd.add_argument("--clear", action="store_true", help="Delete all cached entries.")
@@ -332,6 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cache_cmd.set_defaults(func=_lazy_cmd("cache", "cmd_cache"))
 
+
+def _add_maintenance_commands(sub) -> None:
     artifacts = sub.add_parser(
         "artifacts",
         help="Synchronize or check tracked skill, plugin, and MCP distribution artifacts.",
@@ -365,6 +387,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     install.set_defaults(func=_lazy_cmd("install", "cmd_install"))
 
+
+def build_parser() -> argparse.ArgumentParser:
+    """Assemble the top-level CLI parser.
+
+    Each subcommand family is registered by a focused ``_add_*`` helper; the call
+    order below is the subcommand order shown in ``--help`` and is preserved
+    verbatim from when this was one flat function.
+    """
+    parser = argparse.ArgumentParser(prog="graphgraph")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    _add_plan_command(sub)
+    _add_retrieval_commands(sub)
+    _add_status_command(sub)
+    _add_graph_validation_commands(sub)
+    _add_lifecycle_commands(sub)
+    _add_graph_io_commands(sub)
+    _add_ontology_command(sub)
+    _add_compare_command(sub)
+    _add_eval_command(sub)
+    _add_description_commands(sub)
+    _add_analysis_commands(sub)
+    _add_doctor_command(sub)
+    _add_cache_command(sub)
+    _add_maintenance_commands(sub)
     add_platform_parser(sub)
 
     return parser
