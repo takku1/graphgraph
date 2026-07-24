@@ -154,6 +154,32 @@ class SearchIndexRow:
     path_stem: str
 
 
+def _exact_lookup_index(graph: Graph) -> dict[str, tuple[str, ...]]:
+    """`{alias_kind}:{value}` -> node ids for id/label/path/basename lookups.
+
+    Cached on the graph and invalidated by its node revision. Extracted verbatim
+    from :func:`search_nodes` for readability; behavior is unchanged.
+    """
+    if graph._exact_lookup_cache and graph._exact_lookup_cache[0] == graph.node_revision:
+        return graph._exact_lookup_cache[1]
+    index_sets: dict[str, set[str]] = defaultdict(set)
+    for node in graph.nodes.values():
+        if not node.active:
+            continue
+        path = node.path.replace("\\", "/").lower() if node.path else ""
+        for alias_kind, value in (
+            ("id", node.id.lower()),
+            ("label", node.label.lower()),
+            ("path", path),
+            ("basename", path.rsplit("/", 1)[-1] if path else ""),
+        ):
+            if value:
+                index_sets[f"{alias_kind}:{value}"].add(node.id)
+    index = {alias: tuple(sorted(node_ids)) for alias, node_ids in index_sets.items()}
+    graph._exact_lookup_cache = (graph.node_revision, index)
+    return index
+
+
 def search_nodes(
     graph: Graph,
     query: str,
@@ -178,27 +204,7 @@ def search_nodes(
                 any(marker in raw for marker in ("_", "::", ".", "/", "\\", "-"))
                 or any(char.isupper() for char in raw)
             )
-            if graph._exact_lookup_cache and graph._exact_lookup_cache[0] == graph.node_revision:
-                index = graph._exact_lookup_cache[1]
-            else:
-                index_sets: dict[str, set[str]] = defaultdict(set)
-                for node in graph.nodes.values():
-                    if not node.active:
-                        continue
-                    path = node.path.replace("\\", "/").lower() if node.path else ""
-                    for alias_kind, value in (
-                        ("id", node.id.lower()),
-                        ("label", node.label.lower()),
-                        ("path", path),
-                        ("basename", path.rsplit("/", 1)[-1] if path else ""),
-                    ):
-                        if value:
-                            index_sets[f"{alias_kind}:{value}"].add(node.id)
-                index = {
-                    alias: tuple(sorted(node_ids))
-                    for alias, node_ids in index_sets.items()
-                }
-                graph._exact_lookup_cache = (graph.node_revision, index)
+            index = _exact_lookup_index(graph)
             aliases = [("id", f"id:{normalized}"), ("path", f"path_exact:{normalized}")]
             if explicit_label:
                 aliases.extend((

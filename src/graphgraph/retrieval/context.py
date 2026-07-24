@@ -645,19 +645,34 @@ def retrieve_context(
                 edges=[],
                 metadata=metadata,
             )
+        no_anchor_metadata: dict[str, object] = {
+            "answerability": {
+                "status": "unanswerable",
+                "abstained": True,
+                "reason": "no matching graph anchors",
+                "confidence": round(anchors.retrieval_confidence(matches), 4),
+            },
+        }
+        # A whole-graph architecture map does not depend on query anchors, so a
+        # broad "what are the subsystems" query is answered by the map even when
+        # no single node anchored. Without this the map was reachable only when a
+        # node happened to match, making the answer depend on lexical luck.
+        if subsystems.wants_subsystem_map(query, query_class):
+            subsystem_map = subsystems.build_subsystem_map(graph)
+            if subsystem_map["subsystems"]:
+                no_anchor_metadata["subsystem_map"] = subsystem_map
+                no_anchor_metadata["answerability"] = {
+                    "status": "answerable",
+                    "abstained": False,
+                    "reason": "architecture map derived from source layout",
+                    "confidence": round(anchors.retrieval_confidence(matches), 4),
+                }
         return RetrievalResult(
             starts=(),
             matches=matches,
             nodes=set(),
             edges=[],
-            metadata={
-                "answerability": {
-                    "status": "unanswerable",
-                    "abstained": True,
-                    "reason": "no matching graph anchors",
-                    "confidence": round(anchors.retrieval_confidence(matches), 4),
-                },
-            },
+            metadata=no_anchor_metadata,
         )
 
     if query_class == "spreading_activation":
