@@ -1,5 +1,9 @@
-from .commands import *
 from .parser import build_parser
+
+# `commands` intentionally not star-imported here: it eagerly aggregates every
+# command handler (and their scanner/services/platform import chains), which the
+# lazy parser dispatch now defers to the invoked subcommand. Callers that want a
+# handler import it from `graphgraph.cli.commands` directly.
 
 
 def _configure_stdio() -> None:

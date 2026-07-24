@@ -234,7 +234,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
         self.assertIs(compatibility_cmd_eval, cmd_eval)
         self.assertEqual(cmd_eval.__module__, "graphgraph.cli.evaluation")
         self.assertNotIn("def cmd_eval", commands_source)
-        self.assertIn("from .evaluation import cmd_eval", parser_source)
+        self.assertIn('_lazy_cmd("evaluation", "cmd_eval")', parser_source)
 
     def test_graph_io_commands_live_in_graph_io_domain(self) -> None:
         from pathlib import Path
@@ -257,7 +257,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
         for function in functions:
             self.assertIs(getattr(commands, function.__name__), function)
             self.assertNotIn(f"def {function.__name__}", commands_source)
-        self.assertIn("from .graph_io import (", parser_source)
+        self.assertIn('_lazy_cmd("graph_io"', parser_source)
 
     def test_description_commands_live_in_descriptions_domain(self) -> None:
         from pathlib import Path
@@ -274,7 +274,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
         for function in functions:
             self.assertIs(getattr(commands, function.__name__), function)
             self.assertNotIn(f"def {function.__name__}", commands_source)
-        self.assertIn("from .descriptions import", parser_source)
+        self.assertIn('_lazy_cmd("descriptions"', parser_source)
 
     def test_cache_command_lives_in_cache_domain(self) -> None:
         from pathlib import Path
@@ -289,7 +289,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
         self.assertIs(compatibility_cmd_cache, cmd_cache)
         self.assertEqual(cmd_cache.__module__, "graphgraph.cli.cache")
         self.assertNotIn("def cmd_cache", commands_source)
-        self.assertIn("from .cache import cmd_cache", parser_source)
+        self.assertIn('_lazy_cmd("cache", "cmd_cache")', parser_source)
 
     def test_install_commands_are_wired_from_install_domain(self) -> None:
         from pathlib import Path
@@ -302,7 +302,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
 
         self.assertIs(commands.cmd_artifacts, cmd_artifacts)
         self.assertIs(commands.cmd_install, cmd_install)
-        self.assertIn("from .install import cmd_artifacts, cmd_install", parser_source)
+        self.assertIn('_lazy_cmd("install"', parser_source)
 
     def test_lifecycle_commands_live_in_lifecycle_domain(self) -> None:
         from pathlib import Path
@@ -325,7 +325,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
         for function in functions:
             self.assertIs(getattr(commands, function.__name__), function)
             self.assertNotIn(f"def {function.__name__}", commands_source)
-        self.assertIn("from .lifecycle import cmd_remove, cmd_scan, cmd_update", parser_source)
+        self.assertIn('_lazy_cmd("lifecycle"', parser_source)
 
     def test_retrieval_commands_live_in_retrieval_domain(self) -> None:
         from pathlib import Path
@@ -348,7 +348,7 @@ class CliDomainBoundaryTest(unittest.TestCase):
         for function in functions:
             self.assertIs(getattr(commands, function.__name__), function)
             self.assertNotIn(f"def {function.__name__}", commands_source)
-        self.assertIn("from .retrieval import", parser_source)
+        self.assertIn('_lazy_cmd("retrieval"', parser_source)
 
     def test_planning_and_diagnostic_commands_own_remaining_bodies(self) -> None:
         from pathlib import Path
@@ -368,8 +368,8 @@ class CliDomainBoundaryTest(unittest.TestCase):
         for function in (*planning, *diagnostics):
             self.assertIs(getattr(commands, function.__name__), function)
             self.assertNotIn(f"def {function.__name__}", commands_source)
-        self.assertIn("from .diagnostics import cmd_doctor, cmd_status", parser_source)
-        self.assertIn("from .planning_commands import", parser_source)
+        self.assertIn('_lazy_cmd("diagnostics"', parser_source)
+        self.assertIn('_lazy_cmd("planning_commands"', parser_source)
 
 
 class McpDomainBoundaryTest(unittest.TestCase):
