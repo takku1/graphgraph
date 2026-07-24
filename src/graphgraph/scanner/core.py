@@ -493,6 +493,115 @@ def _merge_new_edges(edges: list[Edge], new_edges: list[Edge]) -> None:
             edges.append(edge)
 
 
+def _symbol_extraction_metadata(
+    extraction,
+    *,
+    scope_concepts_to_dirty: bool,
+    dirty_count: int,
+    active_count: int,
+) -> dict[str, str]:
+    """Build the member-call + frontend-diagnostics metadata for one extraction.
+
+    Pure function of the extraction result (plus the scope inputs that decide
+    whether this is a full-scan snapshot): it computes strings only and touches
+    no nodes or edges, so it is lifted verbatim out of the pipeline body. The
+    caller ``metadata.update()``s the result, preserving insertion order.
+    """
+    meta: dict[str, str] = {}
+    meta["frontend"] = extraction.frontend
+    meta["member_calls_resolved"] = str(extraction.resolved_member_calls)
+    meta["member_calls_ambiguous"] = str(extraction.ambiguous_member_calls)
+    meta["member_calls_unknown_receiver"] = str(extraction.unknown_receiver_member_calls)
+    meta["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
+    meta["member_calls_external_resolved"] = str(extraction.external_resolved_member_calls)
+    meta["member_calls_unmatched"] = str(extraction.unmatched_member_calls)
+    language_calls = {
+        language: {
+            "resolved": resolved,
+            "ambiguous": ambiguous,
+            "unknown_receiver": unknown_receiver,
+            "external_resolved": external_resolved,
+            "unmatched": unmatched,
+        }
+        for (
+            language,
+            resolved,
+            ambiguous,
+            unknown_receiver,
+            external_resolved,
+            unmatched,
+        ) in extraction.member_calls_by_language
+    }
+    encoded_language_calls = json.dumps(
+        language_calls,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    meta["member_calls_by_language"] = encoded_language_calls
+    meta["member_call_telemetry_version"] = _MEMBER_CALL_TELEMETRY_VERSION
+    telemetry_scope = (
+        "full_scan"
+        if not scope_concepts_to_dirty and dirty_count == active_count
+        else "changed_files"
+    )
+    meta["member_call_telemetry_scope"] = telemetry_scope
+    for name, value in (
+        ("resolved", extraction.resolved_member_calls),
+        ("ambiguous", extraction.ambiguous_member_calls),
+        ("unknown_receiver", extraction.unknown_receiver_member_calls),
+        ("unresolved", extraction.unresolved_member_calls),
+        ("external_resolved", extraction.external_resolved_member_calls),
+        ("unmatched", extraction.unmatched_member_calls),
+    ):
+        meta[f"member_calls_last_update_{name}"] = str(value)
+        if telemetry_scope == "full_scan":
+            meta[f"member_calls_global_{name}"] = str(value)
+    # Histogram of *why* receivers went untyped, not just how
+    # many. A single opaque total says a resolver pass is
+    # needed without saying which one, and inferring the shapes
+    # from source patterns has produced wrong priorities more
+    # than once.
+    if extraction.unknown_receiver_classes:
+        meta["member_calls_unknown_receiver_classes"] = ",".join(
+            f"{name}:{count}" for name, count in extraction.unknown_receiver_classes
+        )
+        if telemetry_scope == "full_scan":
+            meta["member_calls_global_unknown_receiver_classes"] = meta[
+                "member_calls_unknown_receiver_classes"
+            ]
+    meta["member_calls_last_update_scope"] = telemetry_scope
+    meta["member_calls_last_update_version"] = _MEMBER_CALL_TELEMETRY_VERSION
+    meta["member_calls_last_update_by_language"] = encoded_language_calls
+    if telemetry_scope == "full_scan":
+        meta["member_calls_global_scope"] = "full_scan_snapshot"
+        meta["member_calls_global_version"] = _MEMBER_CALL_TELEMETRY_VERSION
+        # Stamp what this snapshot actually covered. An incremental
+        # scan carries these global counts forward verbatim, so
+        # without provenance `status` reports a months-old resolver's
+        # numbers as if they were current -- which silently hides the
+        # effect of any resolver change, since that affects every
+        # file rather than only the changed ones.
+        meta["member_calls_global_scanned_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+        meta["member_calls_global_scanned_files"] = str(active_count)
+        meta["member_calls_global_by_language"] = encoded_language_calls
+    meta["frontend_fallback_count"] = str(len(extraction.fallback_files))
+    meta["frontend_fallback_files"] = ",".join(extraction.fallback_files)
+    meta["frontend_unsupported_count"] = str(len(extraction.unsupported_files))
+    meta["frontend_unsupported_files"] = ",".join(extraction.unsupported_files)
+    meta["frontend_grammar_error_count"] = str(len(extraction.grammar_errors))
+    meta["frontend_grammar_errors"] = ",".join(extraction.grammar_errors)
+    meta["frontend_timeout_count"] = str(len(extraction.timeout_files))
+    meta["frontend_timeout_files"] = ",".join(extraction.timeout_files)
+    meta["frontend_parse_error_count"] = str(len(extraction.parse_error_files))
+    meta["frontend_parse_error_files"] = ",".join(extraction.parse_error_files)
+    if extraction.failed_files:
+        meta["frontend_failure_count"] = str(len(extraction.failed_files))
+        meta["frontend_failures"] = ",".join(extraction.failed_files)
+    return meta
+
+
 def _build_graph_from_split(
     *,
     root: Path,
@@ -726,97 +835,14 @@ def _build_graph_from_split(
                 max_total_symbols=max_syms,
                 context_nodes=context_symbol_nodes,
             )
-            metadata["frontend"] = extraction.frontend
-            metadata["member_calls_resolved"] = str(extraction.resolved_member_calls)
-            metadata["member_calls_ambiguous"] = str(extraction.ambiguous_member_calls)
-            metadata["member_calls_unknown_receiver"] = str(extraction.unknown_receiver_member_calls)
-            metadata["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
-            metadata["member_calls_external_resolved"] = str(extraction.external_resolved_member_calls)
-            metadata["member_calls_unmatched"] = str(extraction.unmatched_member_calls)
-            language_calls = {
-                language: {
-                    "resolved": resolved,
-                    "ambiguous": ambiguous,
-                    "unknown_receiver": unknown_receiver,
-                    "external_resolved": external_resolved,
-                    "unmatched": unmatched,
-                }
-                for (
-                    language,
-                    resolved,
-                    ambiguous,
-                    unknown_receiver,
-                    external_resolved,
-                    unmatched,
-                ) in extraction.member_calls_by_language
-            }
-            encoded_language_calls = json.dumps(
-                language_calls,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            metadata["member_calls_by_language"] = encoded_language_calls
-            metadata["member_call_telemetry_version"] = _MEMBER_CALL_TELEMETRY_VERSION
-            telemetry_scope = (
-                "full_scan"
-                if not scope_concepts_to_dirty and len(dirty_rels) == len(active_rels)
-                else "changed_files"
-            )
-            metadata["member_call_telemetry_scope"] = telemetry_scope
-            for name, value in (
-                ("resolved", extraction.resolved_member_calls),
-                ("ambiguous", extraction.ambiguous_member_calls),
-                ("unknown_receiver", extraction.unknown_receiver_member_calls),
-                ("unresolved", extraction.unresolved_member_calls),
-                ("external_resolved", extraction.external_resolved_member_calls),
-                ("unmatched", extraction.unmatched_member_calls),
-            ):
-                metadata[f"member_calls_last_update_{name}"] = str(value)
-                if telemetry_scope == "full_scan":
-                    metadata[f"member_calls_global_{name}"] = str(value)
-            # Histogram of *why* receivers went untyped, not just how
-            # many. A single opaque total says a resolver pass is
-            # needed without saying which one, and inferring the shapes
-            # from source patterns has produced wrong priorities more
-            # than once.
-            if extraction.unknown_receiver_classes:
-                metadata["member_calls_unknown_receiver_classes"] = ",".join(
-                    f"{name}:{count}" for name, count in extraction.unknown_receiver_classes
+            metadata.update(
+                _symbol_extraction_metadata(
+                    extraction,
+                    scope_concepts_to_dirty=scope_concepts_to_dirty,
+                    dirty_count=len(dirty_rels),
+                    active_count=len(active_rels),
                 )
-                if telemetry_scope == "full_scan":
-                    metadata["member_calls_global_unknown_receiver_classes"] = metadata[
-                        "member_calls_unknown_receiver_classes"
-                    ]
-            metadata["member_calls_last_update_scope"] = telemetry_scope
-            metadata["member_calls_last_update_version"] = _MEMBER_CALL_TELEMETRY_VERSION
-            metadata["member_calls_last_update_by_language"] = encoded_language_calls
-            if telemetry_scope == "full_scan":
-                metadata["member_calls_global_scope"] = "full_scan_snapshot"
-                metadata["member_calls_global_version"] = _MEMBER_CALL_TELEMETRY_VERSION
-                # Stamp what this snapshot actually covered. An incremental
-                # scan carries these global counts forward verbatim, so
-                # without provenance `status` reports a months-old resolver's
-                # numbers as if they were current -- which silently hides the
-                # effect of any resolver change, since that affects every
-                # file rather than only the changed ones.
-                metadata["member_calls_global_scanned_at"] = datetime.now(timezone.utc).isoformat(
-                    timespec="seconds"
-                )
-                metadata["member_calls_global_scanned_files"] = str(len(active_rels))
-                metadata["member_calls_global_by_language"] = encoded_language_calls
-            metadata["frontend_fallback_count"] = str(len(extraction.fallback_files))
-            metadata["frontend_fallback_files"] = ",".join(extraction.fallback_files)
-            metadata["frontend_unsupported_count"] = str(len(extraction.unsupported_files))
-            metadata["frontend_unsupported_files"] = ",".join(extraction.unsupported_files)
-            metadata["frontend_grammar_error_count"] = str(len(extraction.grammar_errors))
-            metadata["frontend_grammar_errors"] = ",".join(extraction.grammar_errors)
-            metadata["frontend_timeout_count"] = str(len(extraction.timeout_files))
-            metadata["frontend_timeout_files"] = ",".join(extraction.timeout_files)
-            metadata["frontend_parse_error_count"] = str(len(extraction.parse_error_files))
-            metadata["frontend_parse_error_files"] = ",".join(extraction.parse_error_files)
-            if extraction.failed_files:
-                metadata["frontend_failure_count"] = str(len(extraction.failed_files))
-                metadata["frontend_failures"] = ",".join(extraction.failed_files)
+            )
             nodes.update(extraction.nodes)
             _merge_new_edges(edges, extraction.edges)
             _emit_progress(
