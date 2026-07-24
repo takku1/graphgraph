@@ -7,28 +7,12 @@ from pathlib import Path
 
 from ..io import find_graph_path, load_any, save_validated_graph
 from ..packets import PACKET_FORMAT_NAMES
-from ..platform import (
-    COMPILER_PASS_NAMES,
-    GraphProgram,
-    MemoryStore,
-    ProjectRegistry,
-    SemanticIndex,
-    TemporalStore,
-    build_change_packet,
-    build_continuation_receipt,
-    build_hierarchy,
-    build_repair_context,
-    create_graph_runtime,
-    evaluate_cases,
-    graph_as_of,
-    infer_edges,
-    ingest_runtime_trace,
-    load_benchmark_config,
-    migrate_platform_state,
-    run_benchmark,
-)
-from ..platform.temporal import new_episode
-from ..services.native import update_paths_validated_graph
+
+# Only the pass-name registry is needed to build the parser; the compiler module
+# that defines it is light (no benchmarking/runtime). The heavy platform runtime
+# imports live inside `cmd_platform` so building the parser -- and every other CLI
+# command -- does not pay for the whole platform stack.
+from ..platform import COMPILER_PASS_NAMES
 
 
 def add_platform_parser(sub: argparse._SubParsersAction) -> None:
@@ -189,6 +173,8 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
 
 
 def platform_capabilities() -> dict[str, object]:
+    from ..platform import create_graph_runtime
+
     registry = create_graph_runtime(None, graph=_empty_graph(), source_planning=False).providers
     return {
         "model": "LLM-native graph IR compiler",
@@ -201,6 +187,30 @@ def platform_capabilities() -> dict[str, object]:
 
 
 def cmd_platform(args: argparse.Namespace) -> None:
+    # Heavy platform runtime, imported here so it loads only when a `platform`
+    # subcommand actually runs -- not when the CLI parser is built.
+    from ..platform import (
+        GraphProgram,
+        MemoryStore,
+        ProjectRegistry,
+        SemanticIndex,
+        TemporalStore,
+        build_change_packet,
+        build_continuation_receipt,
+        build_hierarchy,
+        build_repair_context,
+        create_graph_runtime,
+        evaluate_cases,
+        graph_as_of,
+        infer_edges,
+        ingest_runtime_trace,
+        load_benchmark_config,
+        migrate_platform_state,
+        run_benchmark,
+    )
+    from ..platform.temporal import new_episode
+    from ..services.native import update_paths_validated_graph
+
     action = args.platform_action
     if action == "compile":
         graph_path = _graph_path(args)
