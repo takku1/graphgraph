@@ -101,14 +101,18 @@ def default_anchor_limit(query: str, query_class: str) -> int:
 
 
 def retrieval_node_budget(query: str, query_class: str, max_nodes: int | None) -> int | None:
-    if is_doc_query(query_class, query):
-        return min(max_nodes, DOC_NODE_BUDGET) if max_nodes is not None else DOC_NODE_BUDGET
-    if max_nodes is None:
-        return default_node_budget(query_class, query)
-    if query_class != "subsystem_summary":
+    # An explicit `--max-nodes` is the caller's budget and is honored for every
+    # query class -- raising it is an agent's primary recovery move when an
+    # answer comes back incomplete. The former doc/subsystem branches clamped it
+    # *down* with `min(max_nodes, internal_cap)`, so every value at or above the
+    # cap (12 for docs, 16-32 for subsystems) produced an identical budget and
+    # setting the flag at all could drop below the adaptive default. The internal
+    # budgets now serve only as the default when no budget is given.
+    if max_nodes is not None:
         return max_nodes
-    summary_budget = max(16, min(32, len(plan_terms(query)) * 8))
-    return min(max_nodes, summary_budget)
+    if is_doc_query(query_class, query):
+        return DOC_NODE_BUDGET
+    return default_node_budget(query_class, query)
 
 
 def default_node_budget(query_class: str, query: str = "") -> int:

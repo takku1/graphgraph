@@ -148,18 +148,26 @@ def cmd_query(args: argparse.Namespace) -> None:
     )
     if not freshness["fresh"]:
         incompatible = not freshness.get("extractor_compatible", True)
-        compatibility = " extractor cache is incompatible;" if incompatible else ""
-        remedy = (
-            "`scan --no-incremental`"
-            if incompatible
-            else "`context --sync git`"
-        )
-        print(
-            f"GraphGraph WARNING:{compatibility} graph is stale for "
-            f"{freshness['changed_count']} changed and "
-            f"{freshness['deleted_count']} deleted path(s); use {remedy}.",
-            file=sys.stderr,
-        )
+        changed_count = freshness["changed_count"]
+        deleted_count = freshness["deleted_count"]
+        if incompatible and not changed_count and not deleted_count:
+            # Staleness is purely a scanner-version mismatch (the graph was built
+            # by a different extractor), not file edits. Saying "stale for 0
+            # changed and 0 deleted" reads as a false alarm, so name the real
+            # reason instead.
+            message = (
+                "GraphGraph WARNING: this graph was built by a different scanner "
+                "version, so its extraction may be out of date (no files changed); "
+                "rebuild with `scan --no-incremental`."
+            )
+        else:
+            compatibility = " extractor cache is incompatible;" if incompatible else ""
+            remedy = "`scan --no-incremental`" if incompatible else "`context --sync git`"
+            message = (
+                f"GraphGraph WARNING:{compatibility} graph is stale for "
+                f"{changed_count} changed and {deleted_count} deleted path(s); use {remedy}."
+            )
+        print(message, file=sys.stderr)
     show_stats = getattr(args, "show_stats", False)
     as_json = getattr(args, "json", False)
     output = render_query_context(

@@ -69,6 +69,7 @@ do not rewrite them.
 - [Cycle 3 — Cross-language extraction](findings/2026-07-22-graybox-cycle3-crosslang.md)
 - [Cycle 4 — Differential re-test](findings/2026-07-23-graybox-cycle4-differential.md)
 - [Cycle 5 — Instrumentation](findings/2026-07-23-graybox-cycle5-instrumentation.md)
+- [Cycle 6 — Multi-language retrieval, latency, instrument trust](findings/2026-07-24-graybox-multilang-retrieval-and-latency.md)
 
 ## Comparisons
 

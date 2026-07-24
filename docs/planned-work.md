@@ -835,9 +835,34 @@ clean after each.
   **exit 1** in the current build (the report was measured on an older one).
 - [~] **Orchestrator monoliths — `retrieve_context` reduced 737 → 622 lines** via
   two verbatim, full-suite-verified extractions (`_affected_tests_metadata`,
-  `_document_status_answerability`). The remaining three (and further
-  `retrieve_context` decomposition) stay as incremental, characterization-guarded
-  follow-ups.
+  `_document_status_answerability`), plus `search_nodes`'s exact-lookup index
+  (`_exact_lookup_index`). The remaining three (and further decomposition) stay as
+  incremental, characterization-guarded follow-ups.
+
+**Cycle-6 fixes (2026-07-24).**
+
+- [x] **`--max-nodes` is honored, not inverted** (cycle-6 finding #1). For doc
+  and `subsystem_summary` queries `retrieval_node_budget` clamped an explicit
+  budget *down* with `min(max_nodes, internal_cap)`, so 20/200/1000 were
+  identical and setting the flag dropped below the adaptive default (e.g. 120 →
+  ≤32) -- breaking an agent's main recovery move. An explicit budget is now
+  honored for every class; the internal budgets apply only as the default when
+  none is given. Regression + monotonicity assertions in `test_planning.py`.
+- [x] **Subsystem map is anchor-independent** (cycle-6, latent). A broad
+  architecture query returns the whole-graph map even when no node lexically
+  anchors, instead of an early `unanswerable`. This also de-flaked an
+  order-dependent test.
+- [x] **Clear staleness message on a scanner-version mismatch** (cycle-6, the
+  "false-positive" warning). When a graph is stale only because it was built by a
+  different extractor (0 changed, 0 deleted), the warning now names that reason
+  rather than the confusing "stale for 0 changed and 0 deleted".
+- [~] **Deferred, triaged from cycle 6:** JS 2.2% resolution is dominated by
+  untyped framework receivers (`res.json` where `res` is an untyped callback
+  param) -- not statically typeable, an extraction ceiling, not a bug; ranking
+  quality (Rust MRR 0.007) and confidence calibration (inverted) are the deferred
+  T10/T11 and T14 efforts (retrieval tuning / labeled calibration data); the
+  opt-in `[semantic]` model has a first-use download + a dense index ~10x the
+  graph, inherent costs of real embeddings that want an explicit warmup step.
 
 - [x] **Import cycles: none at import time.** A Tarjan SCC pass over the
   package's *top-level* imports finds **zero** runtime cycles; every logical A↔B

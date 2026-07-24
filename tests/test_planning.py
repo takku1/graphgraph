@@ -590,13 +590,25 @@ class PlanningTest(unittest.TestCase):
         self.assertEqual(retrieval_node_budget("auth service", "blast_radius", None), 120)
         self.assertEqual(retrieval_node_budget("matrix subsystem", "subsystem_summary", None), 120)
         self.assertEqual(retrieval_node_budget("missing auth service", "negative_query", None), 8)
+        # An explicit --max-nodes is honored for every class. It was clamped down
+        # to an internal summary/doc cap before, so 20/200/1000 were identical and
+        # setting the flag dropped the budget below the adaptive default -- an
+        # inversion that broke an agent's main recovery move (graybox cycle 6).
         self.assertEqual(
             retrieval_node_budget("matrix transpose orthogonal symmetric square vector rules", "subsystem_summary", 40),
-            32,
+            40,
         )
-        self.assertEqual(retrieval_node_budget("README installation usage", "subsystem_summary", 40), 12)
-        self.assertEqual(retrieval_node_budget("README installation usage", "doc_summary", 40), 12)
+        self.assertEqual(retrieval_node_budget("README installation usage", "subsystem_summary", 40), 40)
+        self.assertEqual(retrieval_node_budget("README installation usage", "doc_summary", 40), 40)
         self.assertEqual(retrieval_node_budget("auth service", "blast_radius", 40), 40)
+        # Distinct values give distinct budgets, and a value above the adaptive
+        # default raises rather than lowers it -- no inversion.
+        self.assertEqual(retrieval_node_budget("matrix subsystem", "subsystem_summary", 200), 200)
+        self.assertEqual(retrieval_node_budget("matrix subsystem", "subsystem_summary", 1000), 1000)
+        self.assertGreater(
+            retrieval_node_budget("matrix subsystem", "subsystem_summary", 200),
+            retrieval_node_budget("matrix subsystem", "subsystem_summary", None),
+        )
 
 
 class SourcePlannerFastPathTest(unittest.TestCase):
