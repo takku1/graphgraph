@@ -181,8 +181,28 @@ class BenchmarkExtractionTest(unittest.TestCase):
         # regression.
         self.assertLess(token_est, 135000, f"Token estimate too high: {token_est}")
 
+        # Extraction-quality floor (path-to-10 "adopt first" gate).
+        # calls_per_symbol -- resolved call edges per callable symbol -- is the
+        # single number that separates a healthy extractor from a broken one: JS
+        # regressed to 0.10 while Python holds ~1.8. This self-graph is Python, so
+        # the gate guards the Python extractor here; per-language enforcement
+        # across js/rust needs the multi-language fixture repos.
+        callable_symbols = sum(
+            1 for node in symbol_nodes.values() if node.kind in {"function", "method", "class"}
+        )
+        call_edges = sum(1 for edge in symbol_edges if edge.type == "calls")
+        calls_per_symbol = call_edges / max(1, callable_symbols)
+        self.assertGreaterEqual(
+            calls_per_symbol,
+            0.5,
+            f"Python calls_per_symbol {calls_per_symbol:.2f} below 0.5 floor -- "
+            "member-call resolution regressed",
+        )
+
         print(
-            f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, edges: {len(symbol_edges)}, token_estimate: {token_est}"
+            f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, "
+            f"edges: {len(symbol_edges)}, token_estimate: {token_est}, "
+            f"calls_per_symbol: {calls_per_symbol:.2f}"
         )
 
     def test_model_reasoning_prompt_records_do_not_embed_answer_keys(self):
