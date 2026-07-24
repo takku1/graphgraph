@@ -34,6 +34,29 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest
 
+  # Quality gates: recall, the RED eval control, and answer-confidence
+  # calibration are measured against the scanned self-graph and enforced, so a
+  # regression that decalibrates confidence or lets the eval be fooled fails CI
+  # rather than passing silently.
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (with dev deps)
+        run: uv sync --dev
+
+      - name: Build the self-graph
+        run: uv run graphgraph scan --depth symbols --docs --no-incremental
+
+      - name: Enforce quality gates (recall, RED control, calibration ECE)
+        run: uv run python scripts/check_quality_gates.py
+
   # Distribution test: source tests passing does not prove the *packaged*
   # wheel is usable. This builds the wheel + sdist and installs the wheel in a
   # clean environment (no editable src on the path), then smoke-tests the
