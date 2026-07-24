@@ -521,3 +521,23 @@ N1,N2,1,0.9
         g = sample_graph()
         packet = render_svo(g, set(g.nodes.keys()), [])
         self.assertEqual(packet, "")
+
+
+class DeadFormatGuardTest(unittest.TestCase):
+    """Every registered packet format must actually render. A format in the
+    public registry that no renderer can produce is a dead format (path-to-10 #8)."""
+
+    def test_every_registered_format_renders_nonempty(self) -> None:
+        from graphgraph.packets import PACKET_FORMAT_NAMES, render_packet
+
+        graph = Graph(
+            nodes={
+                "a": Node("a", "alpha", "function", "a.py", "L1"),
+                "b": Node("b", "beta", "function", "b.py", "L2"),
+            },
+            edges=[Edge("a", "b", "calls")],
+        )
+        for fmt in PACKET_FORMAT_NAMES:
+            with self.subTest(format=fmt):
+                out = render_packet(graph, set(graph.nodes), list(graph.edges), fmt)
+                self.assertTrue(out and out.strip(), f"registered format {fmt!r} rendered empty")

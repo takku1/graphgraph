@@ -6,6 +6,7 @@ import json
 import math
 import re
 import struct
+import warnings
 from collections import OrderedDict
 from pathlib import Path
 from threading import RLock
@@ -54,11 +55,28 @@ class SemanticIndex:
     def build(self, graph: Graph, *, backend: EmbeddingBackend | None = None) -> "SemanticIndex":
         active = backend if backend is not None else resolve_backend()
         nodes = [node for node in graph.nodes.values() if node.active]
+        dense: list | None = None
         if active is not None:
             # One batched call, not one request per node: the offline path is
             # free but a network backend is not, and per-node calls made a
             # large repo unusably slow.
-            dense = active.embed([_node_text(node) for node in nodes])
+            try:
+                dense = active.embed([_node_text(node) for node in nodes])
+            except Exception as exc:  # noqa: BLE001
+                # A real backend can fail at runtime -- an offline first-use model
+                # download, an unreachable embedding endpoint. Degrade to the
+                # offline hash index rather than crashing the scan or query; the
+                # index records `backend_name = hash`, so provenance stays honest
+                # and a later query against a real backend rebuilds rather than
+                # scoring across incompatible vector spaces.
+                warnings.warn(
+                    f"embedding backend {active.name!r} failed ({exc}); "
+                    "falling back to the offline hash index",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                active = None
+        if active is not None and dense is not None:
             self.vectors = {
                 node.id: normalize_dense(vector)
                 for node, vector in zip(nodes, dense)

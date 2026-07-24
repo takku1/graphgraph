@@ -1029,6 +1029,29 @@ class SemanticEmbeddingBackendTest(unittest.TestCase):
         self.assertTrue(backend.name.startswith("fastembed:"))
         self.assertIsNone(backend._model)
 
+    def test_backend_failure_degrades_to_offline_hash(self) -> None:
+        # path-to-10 #7 (cold-start/offline): a real backend that fails at
+        # runtime -- an offline first-use model download, a dead endpoint -- must
+        # degrade to the offline hash index rather than crashing the scan/query.
+        import warnings
+
+        from graphgraph.platform import SemanticIndex
+
+        class _FailingBackend:
+            name = "http:offline-model"
+
+            def embed(self, texts):
+                raise RuntimeError("model download failed: offline")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            index = SemanticIndex().build(self._graph(), backend=_FailingBackend())
+        self.assertEqual(index.backend_name, "hash")   # honest provenance
+        self.assertTrue(index.vectors)                  # still built
+        self.assertTrue(any("offline hash" in str(w.message) for w in caught))
+        # The degraded index is still queryable offline.
+        self.assertIsNotNone(index.query("erase somebody's profile", limit=1))
+
     def test_provenance_guard_refuses_cross_space_query(self) -> None:
         from graphgraph.platform import (
             SemanticBackendMismatch,
