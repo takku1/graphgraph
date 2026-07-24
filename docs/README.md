@@ -102,6 +102,7 @@ These are hypotheses and drafts, not authoritative behavior.
 - [Lean4 / SymPy comparison](lean4_sympy_comparison.md)
 - [kiminotes](kiminotes.md)
 - [kiminotes — follow-up](kiminotes-followup.md)
+- [The Path to 10/10 — prescriptive gate roadmap](findings/2026-07-24-path-to-10.md)
 - [Context-graph maximization report](context_graph_maximization_report.md)
 - [Optimization roadmap](optimization-roadmap.md)
 - [Metric/component logic gaps](metric-component-logic-gaps.md)
