@@ -361,12 +361,12 @@ def _negative_query_abstain(
         metadata={
             "facet_coverage": anchor_coverage,
             "mention_coverage": mention_coverage,
-            "answerability": {
+            "answerability": anchors.gate_answer_confidence({
                 "status": "unanswerable",
                 "abstained": True,
                 "reason": "no code or structural graph evidence covers the requested entity facets",
                 "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
-            },
+            }, selected_matches),
             "plan_reason": plan.reason,
             "planner_version": plan.planner_version,
         },
@@ -432,12 +432,12 @@ def _empty_anchor_result(
                     "packet_constrained": True,
                     "warning": status_warning,
                 },
-                "answerability": {
+                "answerability": anchors.gate_answer_confidence({
                     "status": "incomplete",
                     "abstained": True,
                     "reason": status_warning,
                     "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
-                },
+                }, selected_matches),
             }
         )
         return RetrievalResult(
@@ -448,12 +448,12 @@ def _empty_anchor_result(
             metadata=metadata,
         )
     no_anchor_metadata: dict[str, object] = {
-        "answerability": {
+        "answerability": anchors.gate_answer_confidence({
             "status": "unanswerable",
             "abstained": True,
             "reason": "no matching graph anchors",
             "confidence": round(anchors.retrieval_confidence(matches), 4),
-        },
+        }, matches),
     }
     # A whole-graph architecture map does not depend on query anchors, so a
     # broad "what are the subsystems" query is answered by the map even when
@@ -463,12 +463,12 @@ def _empty_anchor_result(
         subsystem_map = subsystems.build_subsystem_map(graph)
         if subsystem_map["subsystems"]:
             no_anchor_metadata["subsystem_map"] = subsystem_map
-            no_anchor_metadata["answerability"] = {
+            no_anchor_metadata["answerability"] = anchors.gate_answer_confidence({
                 "status": "answerable",
                 "abstained": False,
                 "reason": "architecture map derived from source layout",
                 "confidence": round(anchors.retrieval_confidence(matches), 4),
-            }
+            }, matches)
     return RetrievalResult(
         starts=(),
         matches=matches,
@@ -1004,6 +1004,11 @@ def retrieve_context(
     answerability = metadata.get("answerability")
     if isinstance(answerability, dict) and "confidence" not in answerability:
         answerability["confidence"] = round(anchors.retrieval_confidence(selected_matches), 4)
+    # Confidence must honor the receipt's own status: an incomplete/partial/
+    # abstained answer cannot advertise the anchor-shape confidence of a clean
+    # hit, or the trust signal inverts (a dirty-miss fuzzy collision reads 0.7).
+    if isinstance(answerability, dict):
+        anchors.gate_answer_confidence(answerability, selected_matches)
 
     if subsystems.wants_subsystem_map(query, query_class):
         metadata["subsystem_map"] = subsystems.build_subsystem_map(graph)

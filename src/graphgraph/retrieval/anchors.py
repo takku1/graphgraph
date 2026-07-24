@@ -619,10 +619,13 @@ def retrieval_confidence(matches: tuple[Match, ...]) -> float:
         return 0.0
     shape = _anchor_score_shape(live, window=8)
     top = live[0]
-    # Backbone: an exact label/basename hit is strong standalone evidence (and
-    # empirically near-certain on the calibration set); a fuzzy or partial hit is
-    # only as strong as the mass it concentrates.
-    if _is_high_confidence_exact_anchor(top):
+    # Backbone: an exact hit -- a term-set match or a per-symbol id:/label_exact:
+    # anchor (the query named a real symbol that exists) -- is strong standalone
+    # evidence, empirically near-certain on the calibration set. A fuzzy or
+    # partial hit is only as strong as the mass it concentrates. Recognizing the
+    # per-symbol reasons here (not just the term-set ones) keeps a real
+    # direct/reverse lookup from being scored like a fuzzy guess.
+    if _has_exact_symbol_evidence((top,)):
         backbone = 0.95
     else:
         backbone = 0.25 + 0.45 * shape.top_mass
@@ -630,6 +633,60 @@ def retrieval_confidence(matches: tuple[Match, ...]) -> float:
     # tied in a plateau of near-equal candidates.
     conf = backbone * (0.7 + 0.3 * shape.score_gap)
     return max(0.0, min(1.0, conf))
+
+
+# Answer-confidence ceilings for a *degraded* receipt whose evidence is only
+# fuzzy. A coverage/budget gate that degrades the status is, for fuzzy-only
+# evidence, the same signal that the match is a dirty miss (query tokens collide
+# with real nodes but no symbol actually matches), so its confidence is capped.
+_ANSWER_CONFIDENCE_CEILING_BY_STATUS = {
+    "answerable": 1.0,
+    "partial": 0.5,
+    "incomplete": 0.15,
+    "unanswerable": 0.1,
+}
+
+
+def _has_exact_symbol_evidence(matches: tuple[Match, ...]) -> bool:
+    """Whether any anchor is an exact symbol hit -- the query named a real symbol
+    that exists, as opposed to a fuzzy token collision. Recognizes both the
+    term-set exact reasons and the stronger per-symbol ``id:``/``label_exact:``/
+    ``basename_stem_exact`` reasons (the same convention as a targeted anchor).
+    """
+    for match in matches:
+        if _is_high_confidence_exact_anchor(match):
+            return True
+        if any(
+            reason.startswith(("id:", "label_exact:")) or reason == "basename_stem_exact"
+            for reason in match.reasons
+        ):
+            return True
+    return False
+
+
+def gate_answer_confidence(answerability: dict, matches: tuple[Match, ...] = ()) -> dict:
+    """Keep the answer-confidence signal from inverting against its own status.
+
+    ``retrieval_confidence`` scores the anchor *shape*: a single dominant match
+    reads ~0.7 whether it is a real symbol or a nonexistent one whose tokens
+    still collide with real nodes (a "dirty miss"). When the receipt's own status
+    is degraded (incomplete/partial/unanswerable), that shape alone is not
+    trustworthy -- *unless* a strong exact anchor was found. An exact hit under a
+    truncation caveat (the named symbol is present, only some neighbors were
+    omitted) stays trustworthy and keeps its earned confidence; a degraded
+    receipt backed only by fuzzy evidence is capped by its status. A clean
+    ``answerable`` receipt is always left untouched. Mutates and returns the dict.
+    """
+    if "confidence" not in answerability:
+        return answerability
+    status = answerability.get("status", "answerable")
+    if status == "answerable":
+        return answerability
+    if _has_exact_symbol_evidence(matches):
+        return answerability
+    ceiling = _ANSWER_CONFIDENCE_CEILING_BY_STATUS.get(status, 1.0)
+    answerability["confidence"] = round(min(answerability["confidence"], ceiling), 4)
+    return answerability
 
 
 def _is_targeted_symbol_anchor(match: Match) -> bool:
