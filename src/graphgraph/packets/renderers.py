@@ -254,6 +254,18 @@ def _group_nodes_by_subsystem(nodes: set[str], graph: Graph) -> list[tuple[str, 
     return sorted(subsystems.items(), key=sub_key)
 
 
+def subsystem_node_order(graph: Graph, nodes: set[str]) -> list[str]:
+    """The order nodes are emitted in a structural (gg-family) packet.
+
+    ``render_gg`` walks ``_group_nodes_by_subsystem`` in this exact order to build
+    the ``[n]`` block, so this is the top-to-bottom order the agent reads. It is
+    the faithful basis for "how far down is the answer" rank metrics -- unlike a
+    PageRank re-ranking of the subgraph, which the agent never sees and which
+    ranks a queried symbol above its own callers.
+    """
+    return [node_id for _sub, sub_nodes in _group_nodes_by_subsystem(nodes, graph) for node_id in sub_nodes]
+
+
 def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     """Subject-verb-object triples — self-describing, zero schema overhead.
 

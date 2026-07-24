@@ -8,6 +8,7 @@ from pathlib import Path
 from ..graph.core import Edge, Graph
 from ..io import load_any
 from ..packets import estimate_tokens, render_packet
+from ..packets.renderers import subsystem_node_order
 from ..planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
 from ..planning.routing import route_query
 from ..retrieval import retrieve_context
@@ -134,8 +135,11 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
         returned_node_keys = returned_ids | returned_labels | returned_paths | returned_label_stems | returned_path_stems
         returned_edges = {(edge.source, edge.target, edge.type) for edge in retrieved.edges}
 
-        # Rank retrieved nodes by subgraph PageRank for rank-aware metrics
-        ranked_nodes = rank_nodes_by_subgraph_pagerank(graph, retrieved.nodes, retrieved.edges)
+        # Rank-aware metrics measure how far down the *packet the agent reads*
+        # the answer sits, so rank by the packet's node emission order -- not a
+        # PageRank re-ranking of the subgraph, which the agent never sees and
+        # which buries a queried symbol's callers under the symbol itself.
+        ranked_nodes = subsystem_node_order(graph, retrieved.nodes)
         
         # Map expected node names/paths to resolved node IDs in ranked_nodes
         expected_ids = set()
