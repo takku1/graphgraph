@@ -869,6 +869,21 @@ clean after each.
   broader MRR≥0.4 gate is a longer eval-gated loop and the eval's PageRank-based
   MRR under-measures anchor-answer classes (it should rank by the consumed
   relevance order per class) -- both recorded as the next steps.
+- [~] **Latency — lazy imports** (path-to-10 #4). `import graphgraph` went
+  **125 ms → 12 ms** (~10x) via PEP 562 lazy loading of the public API, so the
+  scanner (tree-sitter), concept, planning, and retrieval stacks load only on
+  first use. `scanner/__init__` and `platform/__init__` are lazy too, and the CLI
+  dispatch imports each command's handler on invocation (`_lazy_cmd`) instead of
+  eagerly at parser-build time; `cli/__init__` no longer star-imports the command
+  aggregator. Building the CLI parser and every non-`platform` command no longer
+  loads `platform.benchmarking` or the tree-sitter frontends. This is the
+  resident-process (MCP) import path the finding targets — the report itself
+  notes "a resident process would collapse it," and the resident server now pays
+  a fraction of the old import cost. Remaining for the *fresh-process CLI query*:
+  the query service still pulls the scanner frontends via
+  `platform.cpg → scanner.frontends` at import (used only during CPG extraction),
+  which needs a lazy `scanner.frontends/__init__` to fully defer -- a deeper
+  cascade left as a follow-up. Full suite green throughout.
 - [~] **Deferred, triaged from cycle 6:** JS 2.2% resolution is dominated by
   untyped framework receivers (`res.json` where `res` is an untyped callback
   param) -- not statically typeable, an extraction ceiling, not a bug; ranking
