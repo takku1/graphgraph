@@ -455,7 +455,16 @@ def _adaptive_anchor_limit(matches: tuple[Match, ...], plan: ContextPlan, query:
         return min(limit, max(len(identifiers), min(8, len(identifiers) * 2)))
 
     if top.node.kind in {"concept", "section"}:
-        return min(limit, 2)
+        # A single section/concept is usually a narrow answer, so cap the fanout
+        # at 2. But a query that explicitly names several section titles -- each
+        # boosted with `section_title_in_query` -- wants all of them as roots
+        # (e.g. an architecture overview listing its subsystem headings), so widen
+        # to the number of named sections.
+        named_sections = sum(
+            1 for match in matches[: min(12, len(matches))]
+            if "section_title_in_query" in match.reasons
+        )
+        return min(limit, max(2, named_sections))
 
     if plan.query_class == "subsystem_summary":
         # Summary queries often contain several implementation nouns. The old

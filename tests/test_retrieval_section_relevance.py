@@ -1519,6 +1519,27 @@ class SectionTitleInQueryBoostTest(unittest.TestCase):
         reasons = {m.node.id: m.reasons for m in matches}
         self.assertNotIn("section_title_in_query", reasons.get("sec", ()))
 
+    def test_query_naming_several_sections_anchors_all_not_just_two(self) -> None:
+        # A section-topped result used to cap anchor fanout at 2, so an
+        # architecture overview naming six section titles surfaced only two of
+        # them. When several sections are explicitly named, all become roots.
+        titles = ["Native Storage Contract", "Packet Formats", "Query Classes", "Constraint Policies"]
+        nodes = {
+            f"s{i}": Node(f"s{i}", title, "section", "docs/architecture.md",
+                          summary=f"about {title.lower()}")
+            for i, title in enumerate(titles)
+        }
+        graph = Graph(nodes=nodes, edges=[])
+        result = retrieve_context(
+            graph,
+            "architecture native storage contract packet formats query classes constraint policies",
+            "subsystem_summary",
+            hops=0,
+        )
+        retrieved = {graph.nodes[nid].label for nid in result.nodes if nid in graph.nodes}
+        for title in titles:
+            self.assertIn(title, retrieved)
+
 
 if __name__ == "__main__":
     unittest.main()
