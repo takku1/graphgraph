@@ -602,6 +602,128 @@ def _symbol_extraction_metadata(
     return meta
 
 
+def _source_concept_scan_metadata(
+    *,
+    candidate_count: int,
+    eligible_count: int,
+    interpretation_edges: list[Edge],
+    concepts_ms: float,
+    scope_concepts_to_dirty: bool,
+) -> dict[str, str]:
+    """Build the per-scan source-concept telemetry from this scan's linking pass.
+
+    A pure function of the counts and the edges just produced by the
+    interpretation-concept loop; the caller ``metadata.update()``s the result.
+    The global full-graph snapshot is a separate recompute (see below).
+    """
+    meta: dict[str, str] = {}
+    meta["source_concepts_profile_ms"] = f"{concepts_ms:.3f}"
+    meta["source_concepts_candidates"] = str(candidate_count)
+    meta["source_concepts_eligible"] = str(eligible_count)
+    meta["source_concepts_links"] = str(len(interpretation_edges))
+    linked_source_nodes = {edge.source for edge in interpretation_edges}
+    meta["source_concepts_linked_nodes"] = str(len(linked_source_nodes))
+    meta["source_concepts_coverage_ratio"] = (
+        f"{len(linked_source_nodes) / max(1, eligible_count):.6f}"
+    )
+    typed_fact_links = sum(
+        edge.provenance == "interpretation_registry_fact"
+        for edge in interpretation_edges
+    )
+    exact_alias_links = len(interpretation_edges) - typed_fact_links
+    meta["source_concepts_typed_fact_links"] = str(typed_fact_links)
+    meta["source_concepts_exact_alias_links"] = str(exact_alias_links)
+    meta["source_concepts_linked_concepts"] = str(len({
+        edge.target for edge in interpretation_edges
+    }))
+    meta["source_concepts_mode"] = "closed_registry_typed_fact_or_exact_alias_v2"
+    meta["source_concepts_rejected_excluded_kind"] = str(candidate_count - eligible_count)
+    meta["source_concepts_rejected_no_registry_alias"] = str(
+        eligible_count - len(linked_source_nodes)
+    )
+    meta["source_concepts_rejected_no_evidence"] = meta[
+        "source_concepts_rejected_no_registry_alias"
+    ]
+    for field in (
+        "candidates",
+        "eligible",
+        "links",
+        "linked_nodes",
+        "coverage_ratio",
+        "typed_fact_links",
+        "exact_alias_links",
+        "linked_concepts",
+        "rejected_excluded_kind",
+        "rejected_no_registry_alias",
+        "rejected_no_evidence",
+    ):
+        meta[f"source_concepts_last_update_{field}"] = meta[f"source_concepts_{field}"]
+    meta["source_concepts_last_update_scope"] = (
+        "changed_files" if scope_concepts_to_dirty else "full_scan"
+    )
+    return meta
+
+
+def _global_source_concept_metadata(
+    nodes: dict[str, Node],
+    edges: list[Edge],
+    excluded_concept_kinds: set[str],
+) -> dict[str, str]:
+    """Recompute the full-graph source-concept snapshot over the final graph.
+
+    Unlike the per-scan pass (which may be scoped to dirty files), this measures
+    the whole assembled graph so ``status`` reports coverage for what was
+    actually persisted. Pure function of the final nodes/edges.
+    """
+    global_eligible_concept_nodes = {
+        node_id
+        for node_id, node in nodes.items()
+        if node.active
+        and node.kind not in excluded_concept_kinds
+        and node_id not in INTERPRETATION_CONCEPT_IDS
+    }
+    global_interpretation_edges = [
+        edge
+        for edge in edges
+        if edge.active
+        and edge.type in SOURCE_CONCEPT_RELATIONS
+        and edge.source in global_eligible_concept_nodes
+    ]
+    global_linked_source_nodes = {
+        edge.source for edge in global_interpretation_edges
+    }
+    return {
+        "source_concepts_candidates": str(len(nodes)),
+        "source_concepts_eligible": str(len(global_eligible_concept_nodes)),
+        "source_concepts_links": str(len(global_interpretation_edges)),
+        "source_concepts_linked_nodes": str(len(global_linked_source_nodes)),
+        "source_concepts_coverage_ratio": (
+            f"{len(global_linked_source_nodes) / max(1, len(global_eligible_concept_nodes)):.6f}"
+        ),
+        "source_concepts_typed_fact_links": str(sum(
+            edge.provenance == "interpretation_registry_fact"
+            for edge in global_interpretation_edges
+        )),
+        "source_concepts_exact_alias_links": str(sum(
+            edge.provenance == "interpretation_registry"
+            for edge in global_interpretation_edges
+        )),
+        "source_concepts_linked_concepts": str(len({
+            edge.target for edge in global_interpretation_edges
+        })),
+        "source_concepts_rejected_excluded_kind": str(
+            len(nodes) - len(global_eligible_concept_nodes)
+        ),
+        "source_concepts_rejected_no_registry_alias": str(
+            len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
+        ),
+        "source_concepts_rejected_no_evidence": str(
+            len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
+        ),
+        "source_concepts_scope": "full_graph_snapshot",
+    }
+
+
 def _build_graph_from_split(
     *,
     root: Path,
@@ -957,53 +1079,14 @@ def _build_graph_from_split(
         nodes.update(interpretation_nodes)
         _merge_new_edges(edges, interpretation_edges)
     concepts_ms = (time.perf_counter() - concepts_started) * 1000.0
-    metadata["source_concepts_profile_ms"] = f"{concepts_ms:.3f}"
-    metadata["source_concepts_candidates"] = str(len(concept_source_nodes))
-    metadata["source_concepts_eligible"] = str(len(eligible_concept_nodes))
-    metadata["source_concepts_links"] = str(len(interpretation_edges))
-    linked_source_nodes = {edge.source for edge in interpretation_edges}
-    metadata["source_concepts_linked_nodes"] = str(len(linked_source_nodes))
-    metadata["source_concepts_coverage_ratio"] = (
-        f"{len(linked_source_nodes) / max(1, len(eligible_concept_nodes)):.6f}"
-    )
-    typed_fact_links = sum(
-        edge.provenance == "interpretation_registry_fact"
-        for edge in interpretation_edges
-    )
-    exact_alias_links = len(interpretation_edges) - typed_fact_links
-    metadata["source_concepts_typed_fact_links"] = str(typed_fact_links)
-    metadata["source_concepts_exact_alias_links"] = str(exact_alias_links)
-    metadata["source_concepts_linked_concepts"] = str(len({
-        edge.target for edge in interpretation_edges
-    }))
-    metadata["source_concepts_mode"] = "closed_registry_typed_fact_or_exact_alias_v2"
-    metadata["source_concepts_rejected_excluded_kind"] = str(
-        len(concept_source_nodes) - len(eligible_concept_nodes)
-    )
-    metadata["source_concepts_rejected_no_registry_alias"] = str(
-        len(eligible_concept_nodes) - len(linked_source_nodes)
-    )
-    metadata["source_concepts_rejected_no_evidence"] = metadata[
-        "source_concepts_rejected_no_registry_alias"
-    ]
-    for field in (
-        "candidates",
-        "eligible",
-        "links",
-        "linked_nodes",
-        "coverage_ratio",
-        "typed_fact_links",
-        "exact_alias_links",
-        "linked_concepts",
-        "rejected_excluded_kind",
-        "rejected_no_registry_alias",
-        "rejected_no_evidence",
-    ):
-        metadata[f"source_concepts_last_update_{field}"] = metadata[
-            f"source_concepts_{field}"
-        ]
-    metadata["source_concepts_last_update_scope"] = (
-        "changed_files" if scope_concepts_to_dirty else "full_scan"
+    metadata.update(
+        _source_concept_scan_metadata(
+            candidate_count=len(concept_source_nodes),
+            eligible_count=len(eligible_concept_nodes),
+            interpretation_edges=interpretation_edges,
+            concepts_ms=concepts_ms,
+            scope_concepts_to_dirty=scope_concepts_to_dirty,
+        )
     )
     _emit_progress(
         progress,
@@ -1108,53 +1191,9 @@ def _build_graph_from_split(
     # that an edge exists, so applying them here made confidence change when an
     # unrelated file was added or removed. Keep those signals in retrieval-time
     # ranking and preserve the frontend/provenance calibration in the graph.
-    global_eligible_concept_nodes = {
-        node_id
-        for node_id, node in nodes.items()
-        if node.active
-        and node.kind not in excluded_concept_kinds
-        and node_id not in INTERPRETATION_CONCEPT_IDS
-    }
-    global_interpretation_edges = [
-        edge
-        for edge in edges
-        if edge.active
-        and edge.type in SOURCE_CONCEPT_RELATIONS
-        and edge.source in global_eligible_concept_nodes
-    ]
-    global_linked_source_nodes = {
-        edge.source for edge in global_interpretation_edges
-    }
-    metadata.update({
-        "source_concepts_candidates": str(len(nodes)),
-        "source_concepts_eligible": str(len(global_eligible_concept_nodes)),
-        "source_concepts_links": str(len(global_interpretation_edges)),
-        "source_concepts_linked_nodes": str(len(global_linked_source_nodes)),
-        "source_concepts_coverage_ratio": (
-            f"{len(global_linked_source_nodes) / max(1, len(global_eligible_concept_nodes)):.6f}"
-        ),
-        "source_concepts_typed_fact_links": str(sum(
-            edge.provenance == "interpretation_registry_fact"
-            for edge in global_interpretation_edges
-        )),
-        "source_concepts_exact_alias_links": str(sum(
-            edge.provenance == "interpretation_registry"
-            for edge in global_interpretation_edges
-        )),
-        "source_concepts_linked_concepts": str(len({
-            edge.target for edge in global_interpretation_edges
-        })),
-        "source_concepts_rejected_excluded_kind": str(
-            len(nodes) - len(global_eligible_concept_nodes)
-        ),
-        "source_concepts_rejected_no_registry_alias": str(
-            len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
-        ),
-        "source_concepts_rejected_no_evidence": str(
-            len(global_eligible_concept_nodes) - len(global_linked_source_nodes)
-        ),
-        "source_concepts_scope": "full_graph_snapshot",
-    })
+    metadata.update(
+        _global_source_concept_metadata(nodes, edges, excluded_concept_kinds)
+    )
     _emit_progress(progress, "complete", f"nodes={len(nodes)} edges={len(edges)}")
     return Graph(nodes=nodes, edges=edges, metadata=metadata)
 
