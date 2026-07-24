@@ -1477,3 +1477,48 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertEqual(semantic["minimum_supported_coverage_ratio"], 0.2)
         self.assertIn("no verified registry-evidence links", semantic["diagnostic_reason"])
         self.assertEqual(semantic["retrieval_mode"], "lexical_document_fallback")
+
+
+class SectionTitleInQueryBoostTest(unittest.TestCase):
+    """A curated section heading fully named in a multi-term query is a direct
+    answer and must outrank code symbols that merely contain one of its words
+    (graybox path-to-10 #1: architecture.md sections ranked ~33rd for a query
+    that literally listed their titles)."""
+
+    def test_named_section_outranks_incidental_code_matches(self) -> None:
+        from graphgraph.retrieval.search import search_nodes
+
+        graph = Graph(
+            nodes={
+                "sec": Node("sec", "Packet Formats", "section", "docs/architecture.md",
+                            summary="The gg and gg_lex packet formats."),
+                "fn1": Node("fn1", "render_packet", "function", "src/pkg/render.py",
+                            summary="render a packet in a chosen format"),
+                "fn2": Node("fn2", "choose_packet", "function", "src/pkg/plan.py",
+                            summary="choose the packet format for a query"),
+            },
+            edges=[],
+        )
+        matches = search_nodes(graph, "architecture packet formats query classes", limit=5)
+        self.assertTrue(matches)
+        self.assertEqual(matches[0].node.id, "sec")
+        self.assertIn("section_title_in_query", matches[0].reasons)
+
+    def test_boost_needs_the_whole_title_not_one_word(self) -> None:
+        from graphgraph.retrieval.search import search_nodes
+
+        graph = Graph(
+            nodes={
+                "sec": Node("sec", "Packet Formats", "section", "docs/architecture.md"),
+                "fn": Node("fn", "render_packet", "function", "src/pkg/render.py"),
+            },
+            edges=[],
+        )
+        # Only "packet" is in the query, not the full title -> no section boost.
+        matches = search_nodes(graph, "packet rendering pipeline", limit=5)
+        reasons = {m.node.id: m.reasons for m in matches}
+        self.assertNotIn("section_title_in_query", reasons.get("sec", ()))
+
+
+if __name__ == "__main__":
+    unittest.main()

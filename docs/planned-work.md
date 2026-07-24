@@ -856,6 +856,19 @@ clean after each.
   "false-positive" warning). When a graph is stale only because it was built by a
   different extractor (0 changed, 0 deleted), the warning now names that reason
   rather than the confusing "stale for 0 changed and 0 deleted".
+- [~] **Ranking — anchor selection surfaces authoritative doc sections**
+  (path-to-10 #1, first measured lever). A curated multi-word section heading
+  whose full title appears in the query (`label_terms ⊆ query_terms`) now gets a
+  direct-answer boost in `search_nodes`, and such a section is exempt from the
+  document-intent penalty (it is the answer, not incidental prose). Measured on
+  the self-graph: for "current architecture …" listing the section titles,
+  `architecture.md` sections went from **rank ~33 → ranks 1-5**, and the
+  doc-authority fixture's current-architecture recall rose **0.0 → 0.333** with
+  **no self-eval regression** (reverse_lookup still `node_recall 1.0`, RED test
+  still `0.0`). Regression tests in `test_retrieval_section_relevance.py`. The
+  broader MRR≥0.4 gate is a longer eval-gated loop and the eval's PageRank-based
+  MRR under-measures anchor-answer classes (it should rank by the consumed
+  relevance order per class) -- both recorded as the next steps.
 - [~] **Deferred, triaged from cycle 6:** JS 2.2% resolution is dominated by
   untyped framework receivers (`res.json` where `res` is an untyped callback
   param) -- not statically typeable, an extraction ceiling, not a bug; ranking

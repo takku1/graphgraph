@@ -432,6 +432,16 @@ def search_nodes(
                 elif query_terms <= label_terms:
                     score += 25.0
                     reasons.append("label_all_terms")
+                elif document_node and len(label_terms) >= 2 and label_terms <= query_terms:
+                    # A curated document heading whose full multi-word title
+                    # appears in the query is a direct answer to that concept --
+                    # the section "Packet Formats" for "... packet formats ...".
+                    # Without this a concise, authoritative section title loses to
+                    # any code symbol that merely contains one of the query words
+                    # (measured: architecture.md sections ranked ~33rd for a query
+                    # that literally lists their titles).
+                    score += 20.0
+                    reasons.append("section_title_in_query")
                 elif len(label_query_matches := {
                     term for term in query_terms
                     if (
@@ -458,12 +468,14 @@ def search_nodes(
             score *= 0.5 + coverage
             if node.kind == "community":
                 score *= 0.65
-            if document_node:
+            if document_node and "section_title_in_query" not in reasons:
                 # A lexical prose paragraph can repeat every word in a
                 # code-flow question while proving none of the flow. Convert
                 # document intent into a continuous prior: docs retain full
                 # rank for explicit doc queries and become supporting evidence
                 # (rather than primary anchors) as doc intent approaches zero.
+                # A section explicitly named by the query is exempt -- it is the
+                # answer, not incidental prose.
                 doc_prior = min(1.0, 0.20 + 0.80 * (doc_intensity / 0.25))
                 if doc_prior < 1.0:
                     score *= doc_prior

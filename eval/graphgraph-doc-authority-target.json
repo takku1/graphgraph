@@ -33,7 +33,7 @@
     {
       "query": "what are the latest gray-box evaluation findings",
       "expected": [
-        "findings/2026-07-22-graybox-cycle3-crosslang.md"
+        "findings/2026-07-24-graybox-multilang-retrieval-and-latency.md"
       ]
     }
   ]
