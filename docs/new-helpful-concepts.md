@@ -40,8 +40,8 @@ See:
 
 - [Architecture](./architecture.md)
 - [Empirical Findings](./empirical-findings.md)
-- [Real-project packet balance](../benchmarks/context_graph/out/real_projects/real_project_packet_balance.md)
-- [Frontier policy benchmark](../benchmarks/context_graph/out/real_projects/frontier_policy_report.md)
+- [Real-project packet balance benchmark](../benchmarks/context_graph/real_project_packet_balance.py) — run to regenerate the report (output lands in the git-ignored `out/` dir)
+- [Frontier policy benchmark](../benchmarks/context_graph/frontier_policy_benchmark.py) — run to regenerate the report (output lands in the git-ignored `out/` dir)
 
 ## Practical Implication
 
