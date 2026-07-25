@@ -633,12 +633,25 @@ def _compiled_control_receipt(
     route_ok = not automatic_route or float(compiled.route.confidence) >= 0.25
     truncation = result.metadata.get("truncation", {})
     truncated = bool(truncation.get("truncated")) if isinstance(truncation, dict) else False
+    # `semantic_validation` checks packet-receipt *consistency*, so with no
+    # semantic retrieval (semantic_seeds == 0, no index) it passes vacuously.
+    # Reporting that as `semantic:+` reads as "semantic support active" when the
+    # answer was pure lexical -- a silent degradation. Show `?` (not applicable)
+    # when semantic did not contribute; keep `-` (repair) for a real failure.
+    sources = result.metadata.get("sources", {})
+    semantic_seeds = int(sources.get("semantic_seeds", 0) or 0) if isinstance(sources, dict) else 0
     gates: dict[str, bool | None] = {
         "fresh": freshness,
         "route": route_ok,
         "anchor": bool(result.starts),
         "evidence": state == "answerable" and not truncated,
-        "semantic": compiled.receipt.semantic_validation == "pass",
+        "semantic": (
+            False
+            if compiled.receipt.semantic_validation == "fail"
+            else True
+            if semantic_seeds > 0
+            else None
+        ),
         "packet": (
             compiled.receipt.structural_validation == "pass"
             if packet

@@ -96,6 +96,34 @@ class ControlReceiptTest(unittest.TestCase):
         self.assertEqual(metrics["proxy_tokens"], control.packet_tokens)
         self.assertEqual(metrics["characters"], len(packet))
 
+    def test_semantic_gate_is_not_applicable_when_semantic_did_not_contribute(self) -> None:
+        # A pure-lexical answer -- no semantic index, semantic_seeds == 0 -- must
+        # not report semantic:+. The `semantic_validation` check is packet-receipt
+        # consistency, so it passes vacuously when nothing semantic ran; surfacing
+        # that as `+` reads as active semantic support (a silent degradation).
+        # The gate must be `?` (None), reserving `-` for a real validation failure.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text(
+                "def normalize_rust():\n    return True\n",
+                encoding="utf-8",
+            )
+            rendered, _status = render_native_context(
+                query="where is normalize_rust",
+                directory=root,
+                graph_path=root / ".graphgraph" / "graph.json",
+                query_class="direct_lookup",
+                json_output=True,
+                max_nodes=20,
+            )
+
+        payload = json.loads(rendered)
+        gates = dict(parse_control_ir(payload["control"]).gates)
+        self.assertIsNone(
+            gates["semantic"],
+            f"pure-lexical answer must report semantic:? not {gates['semantic']!r}",
+        )
+
     def test_compact_json_keeps_control_and_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
