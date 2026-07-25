@@ -663,9 +663,13 @@ def packet_priority(
     The renderer emits ``priority`` nodes first, so this decides what the agent
     reads at the top. For most classes the answer *is* the start anchors (a
     direct lookup's own symbol), so they lead. For a reverse lookup the target is
-    not the answer -- its callers are -- so the nodes that use the target lead,
-    then the target itself. This is what keeps a direct lookup's symbol off
-    packet rank 19 and a reverse lookup's callers above the symbol they call.
+    not the answer -- its callers are -- so the nodes that use the target lead.
+
+    Regression-safety for languages with sparse call extraction (e.g. JS, whose
+    untyped receivers leave few resolved ``calls`` edges): if no callers resolve,
+    return *no* priority so the packet keeps its default order, rather than
+    forcing the non-answer target to rank 1 and pushing the real results down.
+    The target is still in the packet either way -- this only decides the lead.
     """
     if query_class != "reverse_lookup":
         return tuple(starts)
@@ -680,10 +684,8 @@ def packet_priority(
     # Sort callers by node id: ids are path-derived, so this groups production
     # (``src_...``) ahead of tests (``tests_...``) and matches the packet's own
     # sorted numbering -- the callers an agent asking "what calls X" means come
-    # first. Then the target itself, as trailing context.
-    ordered = sorted(callers)
-    ordered += [start for start in starts if start not in callers]
-    return tuple(ordered)
+    # first. With no callers resolved, lead with nothing (baseline order).
+    return tuple(sorted(callers))
 
 
 def _has_exact_symbol_evidence(matches: tuple[Match, ...]) -> bool:

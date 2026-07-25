@@ -581,11 +581,22 @@ class PacketPriorityTest(unittest.TestCase):
     def test_packet_priority_reverse_lookup_leads_with_callers(self) -> None:
         graph = _calls_graph()
         priority = packet_priority(("T",), set(graph.nodes), list(graph.edges), "reverse_lookup")
-        # The caller (source of the calls-edge into T) leads; the target trails
-        # as context; the unrelated callee is not promoted.
-        self.assertEqual(priority[0], "C")
-        self.assertEqual(priority[-1], "T")
-        self.assertNotIn("X", priority[: priority.index("T")])
+        # The caller (source of the calls-edge into T) leads; the target is not
+        # promoted (it is not the answer), and neither is the unrelated callee.
+        self.assertEqual(priority, ("C",))
+
+    def test_packet_priority_reverse_lookup_without_callers_is_empty(self) -> None:
+        # Sparse call extraction (e.g. untyped JS receivers) resolves no callers.
+        # Priority must be empty so the packet keeps its baseline order rather
+        # than forcing the non-answer target to rank 1 -- the express regression.
+        graph = Graph(
+            nodes={"T": Node("T", "target", "function", "src/t.py")},
+            edges=[],
+        )
+        self.assertEqual(
+            packet_priority(("T",), set(graph.nodes), [], "reverse_lookup"),
+            (),
+        )
 
     def test_reverse_priority_sorts_production_callers_before_tests(self) -> None:
         # ids are path-derived, so src_ sorts before tests_ -- the callers an
