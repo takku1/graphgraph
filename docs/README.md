@@ -72,6 +72,7 @@ do not rewrite them.
 - [Cycle 6 — Multi-language retrieval, latency, instrument trust](findings/2026-07-24-graybox-multilang-retrieval-and-latency.md)
 - [100% agent efficiency — four-property analysis](findings/2026-07-24-hundred-percent-agent-efficiency.md)
 - [Bug findings pass 5 — GG-NEW-001 (resolved)](findings/NEWFINDINGS5.md)
+- [Redis (C) — new language stratum; extraction vs ranking separation](findings/2026-07-25-cycle5-redis-c-language-stratum.md)
 
 ## Comparisons
 
