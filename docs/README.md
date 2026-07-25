@@ -70,6 +70,8 @@ do not rewrite them.
 - [Cycle 4 — Differential re-test](findings/2026-07-23-graybox-cycle4-differential.md)
 - [Cycle 5 — Instrumentation](findings/2026-07-23-graybox-cycle5-instrumentation.md)
 - [Cycle 6 — Multi-language retrieval, latency, instrument trust](findings/2026-07-24-graybox-multilang-retrieval-and-latency.md)
+- [100% agent efficiency — four-property analysis](findings/2026-07-24-hundred-percent-agent-efficiency.md)
+- [Bug findings pass 5 — GG-NEW-001 (resolved)](findings/NEWFINDINGS5.md)
 
 ## Comparisons
 
