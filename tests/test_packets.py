@@ -27,9 +27,11 @@ from graphgraph.packets import (
     render_sql,
     render_svo,
 )
+from graphgraph.packets.renderers import render_gg, subsystem_node_order
 from graphgraph.planning.policies import render_policy_packet
 from graphgraph.retrieval import (
     budget_edges,
+    packet_priority,
 )
 
 
@@ -541,3 +543,80 @@ class DeadFormatGuardTest(unittest.TestCase):
             with self.subTest(format=fmt):
                 out = render_packet(graph, set(graph.nodes), list(graph.edges), fmt)
                 self.assertTrue(out and out.strip(), f"registered format {fmt!r} rendered empty")
+
+
+class PacketPriorityTest(unittest.TestCase):
+    """The packet leads with the query's answer so a direct lookup's own symbol
+    is not buried, without disturbing the default (skeleton) ordering."""
+
+    def _n_block(self, packet: str) -> list[str]:
+        lines = packet.splitlines()
+        start = lines.index("[n]") + 1
+        end = lines.index("[e]")
+        return [ln for ln in lines[start:end] if ln and not ln.startswith(" ")]
+
+    def test_no_priority_is_byte_identical(self) -> None:
+        # The stable skeleton and every existing packet render through the
+        # default path; passing an empty priority must not change a single byte.
+        graph = sample_graph()
+        nodes, edges = graph.expand(["N1"], hops=2)
+        self.assertEqual(
+            render_gg(graph, nodes, edges),
+            render_gg(graph, nodes, edges, priority=()),
+        )
+
+    def test_priority_node_leads_and_is_numbered_first(self) -> None:
+        graph = sample_graph()
+        nodes, edges = graph.expand(["N1"], hops=2)
+        rows = self._n_block(render_gg(graph, nodes, edges, priority=("N3",)))
+        self.assertTrue(rows[0].startswith("1 AuditLog"), rows)
+
+    def test_packet_priority_direct_lookup_is_starts(self) -> None:
+        graph = _calls_graph()
+        self.assertEqual(
+            packet_priority(("T",), set(graph.nodes), list(graph.edges), "direct_lookup"),
+            ("T",),
+        )
+
+    def test_packet_priority_reverse_lookup_leads_with_callers(self) -> None:
+        graph = _calls_graph()
+        priority = packet_priority(("T",), set(graph.nodes), list(graph.edges), "reverse_lookup")
+        # The caller (source of the calls-edge into T) leads; the target trails
+        # as context; the unrelated callee is not promoted.
+        self.assertEqual(priority[0], "C")
+        self.assertEqual(priority[-1], "T")
+        self.assertNotIn("X", priority[: priority.index("T")])
+
+    def test_reverse_priority_sorts_production_callers_before_tests(self) -> None:
+        # ids are path-derived, so src_ sorts before tests_ -- the callers an
+        # agent means come first.
+        graph = Graph(
+            nodes={
+                "src_pkg_t": Node("src_pkg_t", "t", "function", "src/pkg/t.py"),
+                "src_pkg_caller": Node("src_pkg_caller", "caller", "function", "src/pkg/c.py"),
+                "tests_test_t": Node("tests_test_t", "test_t", "function", "tests/test_t.py"),
+            },
+            edges=[
+                Edge("tests_test_t", "src_pkg_t", "calls"),
+                Edge("src_pkg_caller", "src_pkg_t", "calls"),
+            ],
+        )
+        priority = packet_priority(("src_pkg_t",), set(graph.nodes), list(graph.edges), "reverse_lookup")
+        self.assertEqual(priority[0], "src_pkg_caller")
+
+    def test_subsystem_node_order_honors_priority(self) -> None:
+        graph = sample_graph()
+        order = subsystem_node_order(graph, set(graph.nodes), priority=("N3",))
+        self.assertEqual(order[0], "N3")
+        self.assertEqual(set(order), set(graph.nodes))
+
+
+def _calls_graph() -> Graph:
+    return Graph(
+        nodes={
+            "T": Node("T", "target", "function", "src/t.py"),
+            "C": Node("C", "caller", "function", "src/c.py"),
+            "X": Node("X", "callee", "function", "src/x.py"),
+        },
+        edges=[Edge("C", "T", "calls"), Edge("T", "X", "calls")],
+    )

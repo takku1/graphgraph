@@ -10,7 +10,7 @@ from ..concepts import (
     INTERPRETATION_CONCEPT_IDS,
 )
 from ..concepts.terms import term_key
-from ..graph.core import Graph
+from ..graph.core import Edge, Graph
 from ..planning import ContextPlan
 from ..planning.budgets import explicit_query_identifiers, plan_terms
 from ..planning.shape import profile_graph_shape, recommend_node_budget
@@ -645,6 +645,45 @@ _ANSWER_CONFIDENCE_CEILING_BY_STATUS = {
     "incomplete": 0.15,
     "unanswerable": 0.1,
 }
+
+
+# Edge types whose source "uses" its target -- the answer set for a reverse
+# lookup ("what calls/uses X" is answered by the nodes pointing into X), as
+# distinct from structural containment or documentation edges.
+_REVERSE_ANSWER_RELATIONS = frozenset(
+    {"calls", "references", "imports_from", "implements", "tests"}
+)
+
+
+def packet_priority(
+    starts: tuple[str, ...], nodes: set[str], edges: list[Edge], query_class: str
+) -> tuple[str, ...]:
+    """Answer-ordered anchor nodes to lead the rendered packet.
+
+    The renderer emits ``priority`` nodes first, so this decides what the agent
+    reads at the top. For most classes the answer *is* the start anchors (a
+    direct lookup's own symbol), so they lead. For a reverse lookup the target is
+    not the answer -- its callers are -- so the nodes that use the target lead,
+    then the target itself. This is what keeps a direct lookup's symbol off
+    packet rank 19 and a reverse lookup's callers above the symbol they call.
+    """
+    if query_class != "reverse_lookup":
+        return tuple(starts)
+    targets = set(starts)
+    callers = {
+        edge.source
+        for edge in edges
+        if edge.target in targets
+        and edge.source in nodes
+        and edge.type in _REVERSE_ANSWER_RELATIONS
+    }
+    # Sort callers by node id: ids are path-derived, so this groups production
+    # (``src_...``) ahead of tests (``tests_...``) and matches the packet's own
+    # sorted numbering -- the callers an agent asking "what calls X" means come
+    # first. Then the target itself, as trailing context.
+    ordered = sorted(callers)
+    ordered += [start for start in starts if start not in callers]
+    return tuple(ordered)
 
 
 def _has_exact_symbol_evidence(matches: tuple[Match, ...]) -> bool:

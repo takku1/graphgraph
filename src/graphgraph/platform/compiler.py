@@ -17,6 +17,7 @@ from ..planning import (
 from ..retrieval import (
     RetrievalResult,
     apply_shape_budget,
+    packet_priority,
     reconcile_semantic_retrieval_receipt,
     retrieve_context,
     search_nodes,
@@ -250,7 +251,13 @@ class GraphRuntime:
             )
         packet_format = program.packet or plan.packet
         packet = (
-            render_packet(graph, retrieval.nodes, retrieval.edges, packet_format)
+            render_packet(
+                graph,
+                retrieval.nodes,
+                retrieval.edges,
+                packet_format,
+                priority=packet_priority(retrieval.starts, retrieval.nodes, retrieval.edges, route.query_class),
+            )
             if retrieval.starts
             else ""
         )

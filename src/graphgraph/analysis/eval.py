@@ -12,6 +12,7 @@ from ..packets.renderers import subsystem_node_order
 from ..planning import choose_packet, choose_packet_for_subgraph, compute_subgraph_stats
 from ..planning.routing import route_query
 from ..retrieval import retrieve_context
+from ..retrieval.anchors import packet_priority
 from .calibration import calibration_report
 
 
@@ -126,7 +127,8 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
             compute_subgraph_stats(graph, retrieved.nodes, retrieved.edges),
             query_class=task.query_class,
         )
-        packet = render_packet(graph, retrieved.nodes, retrieved.edges, choice.packet)
+        priority = packet_priority(retrieved.starts, retrieved.nodes, retrieved.edges, task.query_class)
+        packet = render_packet(graph, retrieved.nodes, retrieved.edges, choice.packet, priority=priority)
         returned_labels = {graph.nodes[nid].label for nid in retrieved.nodes if nid in graph.nodes}
         returned_paths = {graph.nodes[nid].path for nid in retrieved.nodes if nid in graph.nodes}
         returned_label_stems = {_strip_known_suffix(label) for label in returned_labels}
@@ -139,7 +141,7 @@ def evaluate_graph(graph_path: Path, tasks: list[EvalTask], max_nodes: int | Non
         # the answer sits, so rank by the packet's node emission order -- not a
         # PageRank re-ranking of the subgraph, which the agent never sees and
         # which buries a queried symbol's callers under the symbol itself.
-        ranked_nodes = subsystem_node_order(graph, retrieved.nodes)
+        ranked_nodes = subsystem_node_order(graph, retrieved.nodes, priority=priority)
         
         # Map expected node names/paths to resolved node IDs in ranked_nodes
         expected_ids = set()

@@ -21,7 +21,7 @@ from ..planning.policies import render_policy_packet, select_policies
 from ..platform.compiler import GraphProgram
 from ..platform.runtime import create_graph_runtime
 from ..platform.source_planner import source_state_signature
-from ..retrieval import apply_shape_budget, expand_context, retrieve_context  # noqa: F401
+from ..retrieval import apply_shape_budget, expand_context, packet_priority, retrieve_context  # noqa: F401
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
@@ -180,7 +180,10 @@ def render_final_packet(
 
     selected = select_policies(policies, query)
     policy_packet = render_policy_packet(selected, compact=True)
-    graph_packet = render_packet(graph, nodes, edges, plan.packet)
+    graph_packet = render_packet(
+        graph, nodes, edges, plan.packet,
+        priority=packet_priority(tuple(resolved_starts), nodes, edges, query_class),
+    )
     _raise_if_invalid(graph_packet)
 
     out_lines: list[str] = []

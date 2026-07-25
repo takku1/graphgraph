@@ -1,5 +1,5 @@
 from ..planning import default_anchor_limit, default_node_budget, retrieval_node_budget
-from .anchors import apply_shape_budget
+from .anchors import apply_shape_budget, packet_priority
 from .budgeting import budget_edges, enrich_runtime_context
 from .context import retrieve_context
 from .expansion import expand_context
@@ -16,6 +16,7 @@ __all__ = [
     "RetrievalResult",
     "apply_shape_budget",
     "budget_edges",
+    "packet_priority",
     "default_anchor_limit",
     "default_node_budget",
     "enrich_runtime_context",

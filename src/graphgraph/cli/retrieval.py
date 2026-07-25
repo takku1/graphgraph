@@ -16,7 +16,7 @@ from ..io import (
 from ..packets import render_packet
 from ..packets.validation import validate_any
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
-from ..retrieval import apply_shape_budget
+from ..retrieval import apply_shape_budget, packet_priority
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from ..services import (
     FullGraphTooLargeError,
@@ -63,7 +63,10 @@ def cmd_render(args: argparse.Namespace) -> None:
         print(cached_packet)
         return
 
-    packet = render_packet(graph, nodes, edges, plan.packet)
+    packet = render_packet(
+        graph, nodes, edges, plan.packet,
+        priority=packet_priority(tuple(starts), nodes, edges, args.query_class),
+    )
     cache.set(
         graph_path,
         cache_key,

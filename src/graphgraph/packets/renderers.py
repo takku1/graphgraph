@@ -96,6 +96,7 @@ def render_gg(
     *,
     lexical: bool = False,
     facts: bool = False,
+    priority: tuple[str, ...] = (),
 ) -> str:
     """Canonical GraphGraph structural packet — one renderer for the whole
     ``[r]/[n]/[e]`` family, with two orthogonal knobs.
@@ -120,32 +121,39 @@ def render_gg(
     for rel, rel_id in relation_ids.items():
         lines.append(f"{rel_id}:{rel}")
     lines.append("[n]")
+    # Emission order = what the agent reads top-to-bottom. Default is the
+    # subsystem grouping; when priority (the query's answer anchors) is given,
+    # those nodes lead so a direct lookup's own symbol is not buried under
+    # alphabetically-earlier expansion. Integer ids then follow reading order
+    # (answer == node 1); the no-priority path keeps the sorted numbering
+    # byte-for-byte so the stable skeleton and existing packets are unchanged.
+    ordered = subsystem_node_order(graph, nodes, priority=priority)
     if lexical:
         node_to_id = _lexical_ids(nodes, graph)
+    elif priority:
+        node_to_id = {node_id: str(i + 1) for i, node_id in enumerate(ordered)}
     else:
         node_to_id = {node_id: str(i + 1) for i, node_id in enumerate(sorted(nodes))}
-    grouped = _group_nodes_by_subsystem(nodes, graph)
     facts_per_node = recommend_facts_per_node(len(nodes))
-    for sub, sub_nodes in grouped:
-        for node_id in sub_nodes:
-            node = graph.nodes[node_id]
-            nid = node_to_id[node_id]
-            context = _compact_source_context(node)
-            if facts:
-                # Only emit metadata tokens that actually exist — fall back to plain label if none.
-                meta_parts = []
-                if node.kind and node.kind != "unknown":
-                    meta_parts.append(f"[{node.kind}]")
-                if context:
-                    meta_parts.append(context)
-                if meta_parts:
-                    lines.append(f"{nid} {node.label} {' '.join(meta_parts)}")
-                else:
-                    lines.append(f"{nid} {node.label}")
-                for fact in node.facts[:facts_per_node]:
-                    lines.append(f" {fact}")
+    for node_id in ordered:
+        node = graph.nodes[node_id]
+        nid = node_to_id[node_id]
+        context = _compact_source_context(node)
+        if facts:
+            # Only emit metadata tokens that actually exist — fall back to plain label if none.
+            meta_parts = []
+            if node.kind and node.kind != "unknown":
+                meta_parts.append(f"[{node.kind}]")
+            if context:
+                meta_parts.append(context)
+            if meta_parts:
+                lines.append(f"{nid} {node.label} {' '.join(meta_parts)}")
             else:
-                lines.append(f"{nid} {node.label}{f' {context}' if context else ''}")
+                lines.append(f"{nid} {node.label}")
+            for fact in node.facts[:facts_per_node]:
+                lines.append(f" {fact}")
+        else:
+            lines.append(f"{nid} {node.label}{f' {context}' if context else ''}")
     lines.append("[e]")
     for rel_id, rel_edges in _group_edges_by_relation(edges, relation_ids):
         lines.append(f"{rel_id}:")
@@ -254,16 +262,26 @@ def _group_nodes_by_subsystem(nodes: set[str], graph: Graph) -> list[tuple[str, 
     return sorted(subsystems.items(), key=sub_key)
 
 
-def subsystem_node_order(graph: Graph, nodes: set[str]) -> list[str]:
+def subsystem_node_order(
+    graph: Graph, nodes: set[str], priority: tuple[str, ...] = ()
+) -> list[str]:
     """The order nodes are emitted in a structural (gg-family) packet.
 
-    ``render_gg`` walks ``_group_nodes_by_subsystem`` in this exact order to build
-    the ``[n]`` block, so this is the top-to-bottom order the agent reads. It is
-    the faithful basis for "how far down is the answer" rank metrics -- unlike a
-    PageRank re-ranking of the subgraph, which the agent never sees and which
-    ranks a queried symbol above its own callers.
+    ``render_gg`` builds the ``[n]`` block in this exact order, so it is the
+    top-to-bottom order the agent reads -- the faithful basis for "how far down
+    is the answer" rank metrics, unlike a PageRank re-ranking of the subgraph the
+    agent never sees. ``priority`` (the query's answer anchors) leads, in the
+    given order, so a direct lookup's own symbol is not buried under
+    alphabetically-earlier expansion; the rest follow the subsystem grouping.
     """
-    return [node_id for _sub, sub_nodes in _group_nodes_by_subsystem(nodes, graph) for node_id in sub_nodes]
+    grouped = [
+        node_id for _sub, sub_nodes in _group_nodes_by_subsystem(nodes, graph) for node_id in sub_nodes
+    ]
+    if not priority:
+        return grouped
+    lead = [node_id for node_id in dict.fromkeys(priority) if node_id in nodes]
+    lead_set = set(lead)
+    return lead + [node_id for node_id in grouped if node_id not in lead_set]
 
 
 def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
@@ -375,9 +393,32 @@ _PACKET_RENDERERS = {
     "doc_summary": render_doc_summary,
 }
 
+# gg-family renderers can lead the packet with the query's answer anchors so a
+# direct lookup's own symbol is not buried. Other formats have their own fixed
+# ordering and ignore the hint (passing it would be a no-op at best).
+_PRIORITY_AWARE_FORMATS = {"gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid"}
 
-def render_packet(graph: Graph, nodes: set[str], edges: list[Edge], packet: str) -> str:
+
+def render_packet(
+    graph: Graph,
+    nodes: set[str],
+    edges: list[Edge],
+    packet: str,
+    priority: tuple[str, ...] = (),
+) -> str:
     try:
-        return _PACKET_RENDERERS[packet](graph, nodes, edges)
+        renderer = _PACKET_RENDERERS[packet]
     except KeyError:
         raise ValueError(f"unknown packet format: {packet}") from None
+    if priority and packet in _PRIORITY_AWARE_FORMATS:
+        # Only the base gg renderer takes the kwarg directly; the parameterized
+        # variants are lambdas, so route through render_gg with the right knobs.
+        return render_gg(
+            graph,
+            nodes,
+            edges,
+            lexical="lex" in packet,
+            facts="hybrid" in packet,
+            priority=priority,
+        )
+    return renderer(graph, nodes, edges)
