@@ -47,3 +47,8 @@ tmp/
 *.sqlite
 Thumbs.db
 .DS_Store
+
+# External-repo eval/reproduction fixtures (ripgrep, flask, ...): local-only
+# working data. graphgraph stays self-contained -- never commit third-party
+# graph blobs into this repo.
+eval-fixtures/
