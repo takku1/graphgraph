@@ -28,5 +28,6 @@ from .planning_commands import cmd_select as cmd_select
 from .retrieval import cmd_context as cmd_context
 from .retrieval import cmd_final as cmd_final
 from .retrieval import cmd_query as cmd_query
+from .retrieval import cmd_relations as cmd_relations
 from .retrieval import cmd_render as cmd_render
 from .retrieval import cmd_snippets as cmd_snippets

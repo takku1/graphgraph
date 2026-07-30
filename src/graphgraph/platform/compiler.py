@@ -14,6 +14,12 @@ from ..planning import (
     refine_plan_for_subgraph,
     route_query,
 )
+from ..representation import (
+    REPRESENTATION_NAMES,
+    HybridRepresentationConfig,
+    accept_representation,
+    compile_hybrid_representation,
+)
 from ..retrieval import (
     RetrievalResult,
     apply_shape_budget,
@@ -65,6 +71,8 @@ class GraphProgram:
     anchor_limit: int | None = None
     scope_mode: str = "strict"
     anchor_paths: tuple[str, ...] = ()
+    representation: str = "flat"
+    representation_budget: int | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +89,7 @@ class CompilationReceipt:
     answerability: str = "unknown"
     provider_receipts: tuple[dict[str, object], ...] = field(default_factory=tuple)
     source_receipt: dict[str, object] = field(default_factory=dict)
+    representation_receipt: dict[str, object] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
 
 
@@ -143,6 +152,11 @@ class GraphRuntime:
         )
 
     def compile(self, program: GraphProgram) -> CompilationResult:
+        if program.representation not in REPRESENTATION_NAMES:
+            raise ValueError(
+                f"unknown representation policy: {program.representation}; "
+                f"expected one of {', '.join(REPRESENTATION_NAMES)}"
+            )
         graph = self.graph
         source_seed_ids: tuple[str, ...] = ()
         source_preferred_paths: tuple[str, ...] = program.anchor_paths
@@ -250,17 +264,61 @@ class GraphRuntime:
                 compute_subgraph_stats(graph, retrieval.nodes, retrieval.edges),
             )
         packet_format = program.packet or plan.packet
+        priority = packet_priority(
+            retrieval.starts,
+            retrieval.nodes,
+            retrieval.edges,
+            route.query_class,
+            graph=graph,
+        )
         packet = (
             render_packet(
                 graph,
                 retrieval.nodes,
                 retrieval.edges,
                 packet_format,
-                priority=packet_priority(retrieval.starts, retrieval.nodes, retrieval.edges, route.query_class),
+                priority=priority,
             )
             if retrieval.starts
             else ""
         )
+        representation_receipt: dict[str, object] = {}
+        if packet and program.representation == "hybrid":
+            seed_weights = {
+                match.node.id: max(0.0, float(match.score))
+                for match in retrieval.matches
+                if match.node.id in graph.nodes and match.score > 0.0
+            }
+            for start in retrieval.starts:
+                seed_weights[start] = max(1.0, seed_weights.get(start, 0.0))
+            try:
+                hybrid = compile_hybrid_representation(
+                    graph,
+                    seed_weights,
+                    packet_format=packet_format,
+                    priority=priority,
+                    config=HybridRepresentationConfig(
+                        token_budget=program.representation_budget or 4096,
+                    ),
+                )
+            except ValueError as exc:
+                warning = f"hybrid representation fell back to flat: {exc}"
+                warnings.append(warning)
+                representation_receipt = {
+                    "policy": "hybrid",
+                    "status": "fallback_flat",
+                    "reason": str(exc),
+                    "token_budget": program.representation_budget or 4096,
+                }
+            else:
+                hybrid_packet, representation_receipt = accept_representation(hybrid)
+                if hybrid_packet is not None:
+                    packet = hybrid_packet
+                else:
+                    warnings.append(
+                        f"hybrid representation fell back to flat: {representation_receipt['reason']}"
+                    )
+            retrieval.metadata["representation"] = representation_receipt
         validation = validate_packet(packet) if packet else None
         structural_validation = (
             "pass" if validation is not None and validation.ok
@@ -284,6 +342,7 @@ class GraphRuntime:
             answerability=answerability,
             provider_receipts=tuple(asdict(item) for item in provider_receipts),
             source_receipt=source_receipt,
+            representation_receipt=representation_receipt,
             warnings=(
                 tuple(warnings)
                 + (validation.errors if validation is not None else ())

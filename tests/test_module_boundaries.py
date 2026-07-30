@@ -483,6 +483,7 @@ class McpDomainBoundaryTest(unittest.TestCase):
             build_full_graph,
             build_query_context,
             handle_project_status,
+            handle_query_relations,
             handle_search_nodes,
             handle_select_symbols,
             handle_source_snippets,
@@ -496,17 +497,68 @@ class McpDomainBoundaryTest(unittest.TestCase):
             build_query_context,
             handle_source_snippets,
             handle_project_status,
+            handle_query_relations,
             handle_select_symbols,
             handle_search_nodes,
         )
 
-        self.assertTrue({"query_context", "final_packet", "search_nodes", "select_symbols"} <= RETRIEVAL_TOOL_NAMES)
+        self.assertTrue(
+            {"query_context", "query_relations", "final_packet", "search_nodes", "select_symbols"}
+            <= RETRIEVAL_TOOL_NAMES
+        )
         for handler in handlers:
             self.assertEqual(handler.__module__, "graphgraph.mcp.retrieval_tools")
             self.assertIs(getattr(server, handler.__name__), handler)
             self.assertNotIn(f"def {handler.__name__}", server_source)
         self.assertNotIn("def handle_tools_call", server_source)
         self.assertLess(len(server_source.splitlines()), 100)
+
+
+class ResearchBoundaryTest(unittest.TestCase):
+    """`graphgraph.research` is a laboratory, never a runtime dependency.
+
+    The tournament protocol only produces interpretable results if research
+    code cannot leak into production control flow: a candidate whose formula is
+    already executing in the shipped path has no measurable causal effect left
+    to isolate. Tests and benchmarks are allowed consumers; production is not.
+    """
+
+    def test_production_modules_never_import_the_research_package(self) -> None:
+        import ast
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1] / "src" / "graphgraph"
+        offenders: list[str] = []
+        for path in sorted(src.rglob("*.py")):
+            if "research" in path.relative_to(src).parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    # level>0 is relative; resolve against the package path.
+                    prefix = "." * node.level
+                    names = [f"{prefix}{node.module or ''}"]
+                else:
+                    continue
+                for name in names:
+                    bare = name.lstrip(".")
+                    if bare == "research" or bare.startswith("research."):
+                        offenders.append(f"{path.relative_to(src)}:{node.lineno} -> {name}")
+                    if bare == "graphgraph.research" or bare.startswith("graphgraph.research."):
+                        offenders.append(f"{path.relative_to(src)}:{node.lineno} -> {name}")
+        self.assertEqual(offenders, [], f"production imports of graphgraph.research: {offenders}")
+
+    def test_the_boundary_check_can_actually_fail(self) -> None:
+        # Guard against the scan silently passing because it matched nothing:
+        # the research package must exist and be importable on its own.
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1] / "src" / "graphgraph"
+        self.assertTrue((src / "research" / "__init__.py").exists())
+        production = [p for p in src.rglob("*.py") if "research" not in p.relative_to(src).parts]
+        self.assertGreater(len(production), 50)
 
 
 if __name__ == "__main__":

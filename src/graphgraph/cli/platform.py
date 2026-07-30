@@ -5,14 +5,10 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from ..io import find_graph_path, load_any, save_validated_graph
-from ..packets import PACKET_FORMAT_NAMES
-
-# Only the pass-name registry is needed to build the parser; the compiler module
-# that defines it is light (no benchmarking/runtime). The heavy platform runtime
-# imports live inside `cmd_platform` so building the parser -- and every other CLI
-# command -- does not pay for the whole platform stack.
-from ..platform import COMPILER_PASS_NAMES
+# Parser construction needs only names, which `surface` supplies without
+# importing anything. `..io` and the platform runtime are imported inside
+# `cmd_platform`, so building the parser does not pay for either stack.
+from ..surface import COMPILER_PASS_NAMES, PACKET_FORMAT_NAMES
 
 
 def add_platform_parser(sub: argparse._SubParsersAction) -> None:
@@ -189,6 +185,7 @@ def platform_capabilities() -> dict[str, object]:
 def cmd_platform(args: argparse.Namespace) -> None:
     # Heavy platform runtime, imported here so it loads only when a `platform`
     # subcommand actually runs -- not when the CLI parser is built.
+    from ..io import find_graph_path, load_any, save_validated_graph  # noqa: F401
     from ..platform import (
         GraphProgram,
         MemoryStore,
@@ -461,10 +458,14 @@ def cmd_platform(args: argparse.Namespace) -> None:
 
 
 def _graph(args: argparse.Namespace):
+    from ..io import load_any
+
     return load_any(_graph_path(args))
 
 
 def _graph_path(args: argparse.Namespace) -> Path:
+    from ..io import find_graph_path
+
     return Path(args.graph) if getattr(args, "graph", None) else find_graph_path()
 
 

@@ -168,6 +168,54 @@ class ControlReceiptTest(unittest.TestCase):
         self.assertEqual(json.loads(first)["workflow"]["cache"]["state"], "miss")
         self.assertEqual(json.loads(second)["workflow"]["cache"]["state"], "hit")
 
+    def test_affected_test_command_contract_invalidates_legacy_response_cache(self) -> None:
+        from unittest.mock import patch
+
+        from graphgraph.services import context as ctxmod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text(
+                "def make_response():\n    return 'ok'\n",
+                encoding="utf-8",
+            )
+            (root / "test_app.py").write_text(
+                "from app import make_response\n\ndef test_make_response():\n    assert make_response() == 'ok'\n",
+                encoding="utf-8",
+            )
+            arguments = {
+                "query": "which tests cover make_response and what commands should run",
+                "directory": root,
+                "graph_path": root / ".graphgraph" / "graph.json",
+                "query_class": "affected_tests",
+                "json_output": True,
+                "max_nodes": 20,
+            }
+
+            with patch.object(
+                ctxmod,
+                "QUERY_RESPONSE_CACHE_VERSION",
+                "request_v17_path_intent_equivalence",
+            ):
+                v17_first, _status = render_native_context(**arguments)
+                v17_second, _status = render_native_context(**arguments)
+
+            with patch.object(
+                ctxmod,
+                "QUERY_RESPONSE_CACHE_VERSION",
+                "request_v18_affected_test_command_closure",
+            ):
+                v18_first, _status = render_native_context(**arguments)
+                v18_second, _status = render_native_context(**arguments)
+
+            current, _status = render_native_context(**arguments)
+
+        self.assertEqual(json.loads(v17_first)["workflow"]["cache"]["state"], "miss")
+        self.assertEqual(json.loads(v17_second)["workflow"]["cache"]["state"], "hit")
+        self.assertEqual(json.loads(v18_first)["workflow"]["cache"]["state"], "miss")
+        self.assertEqual(json.loads(v18_second)["workflow"]["cache"]["state"], "hit")
+        self.assertEqual(json.loads(current)["workflow"]["cache"]["state"], "miss")
+
     def test_session_signature_excludes_the_tools_own_artifacts(self) -> None:
         # The self-invalidating-cache bug: in a repo that does not gitignore
         # .graphgraph/, `git ls-files --others` lists kv_cache.json as an
@@ -241,9 +289,7 @@ class ControlReceiptTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "app.py").write_text(
-                "def normalize_rust():\n    return True\n", encoding="utf-8"
-            )
+            (root / "app.py").write_text("def normalize_rust():\n    return True\n", encoding="utf-8")
             try:
                 git("init", cwd=root)
                 git("config", "user.email", "t@t", cwd=root)

@@ -19,7 +19,12 @@ def cmd_eval(args: argparse.Namespace) -> None:
         tasks = load_eval_tasks(Path(args.tasks))
     except EvalTasksError as exc:
         raise SystemExit(f"graphgraph eval: {exc}") from exc
-    results = evaluate_graph(Path(args.graph), tasks, max_nodes=args.max_nodes)
+    results = evaluate_graph(
+        Path(args.graph),
+        tasks,
+        max_nodes=args.max_nodes,
+        source_mode=getattr(args, "source_mode", "auto"),
+    )
     if getattr(args, "calibration", False):
         try:
             payload = results_with_calibration_to_json(

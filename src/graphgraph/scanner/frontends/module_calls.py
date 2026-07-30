@@ -15,6 +15,7 @@ module) finds no top-level module symbol and falls through to the receiver-type
 resolver untouched, and an ambiguous module name emits nothing rather than a
 guess -- the same error direction the whole call-resolution surface protects.
 """
+
 from __future__ import annotations
 
 import re
@@ -34,17 +35,40 @@ _JS_SUFFIXES = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"})
 _JS_SOURCE_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _ID = r"[A-Za-z_$][\w$]*"
 # `const store = require('./store')` -- a CommonJS module binding.
-_JS_REQUIRE = re.compile(
-    rf"\b(?:const|let|var)\s+({_ID})\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)"
-)
+_JS_REQUIRE = re.compile(rf"\b(?:const|let|var)\s+({_ID})\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
 # `import * as util from './util'` -- an ESM namespace binding.
-_JS_IMPORT_NS = re.compile(
-    rf"\bimport\s+\*\s+as\s+({_ID})\s+from\s+['\"]([^'\"]+)['\"]"
-)
+_JS_IMPORT_NS = re.compile(rf"\bimport\s+\*\s+as\s+({_ID})\s+from\s+['\"]([^'\"]+)['\"]")
 # `import cfg from './config'` -- an ESM default binding (whole-module value).
-_JS_IMPORT_DEFAULT = re.compile(
-    rf"\bimport\s+({_ID})\s+from\s+['\"]([^'\"]+)['\"]"
+_JS_IMPORT_DEFAULT = re.compile(rf"\bimport\s+({_ID})\s+from\s+['\"]([^'\"]+)['\"]")
+
+
+# `var send = require('send')` binding the *whole* module, as opposed to
+# `var f = require('./utils').f`, which binds one exported symbol. The negative
+# lookahead is what separates them: without it the member form matches too, and
+# suppressing on it discards correct edges to the imported symbol.
+_JS_REQUIRE_WHOLE = re.compile(
+    rf"\b(?:const|let|var)\s+({_ID})\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)\s*(?!\.)"
 )
+
+
+def whole_module_binding_names(suffix: str, text: str) -> frozenset[str]:
+    """Local names bound to an entire imported module.
+
+    A bare call to one of these invokes the module itself, so it must not fall
+    back to a same-named method defined nearby. Express binds
+    `var send = require('send')` and separately defines `res.send`; without this
+    distinction the module call was attributed to the method.
+
+    Member bindings (`require('./utils').normalizeTypes`) are deliberately
+    excluded -- those name a real exported symbol that the importer should
+    resolve to.
+    """
+    if suffix not in _JS_SUFFIXES:
+        return frozenset()
+    names = {match.group(1) for match in _JS_REQUIRE_WHOLE.finditer(text)}
+    names |= {match.group(1) for match in _JS_IMPORT_NS.finditer(text)}
+    names |= {match.group(1) for match in _JS_IMPORT_DEFAULT.finditer(text)}
+    return frozenset(names)
 
 
 def _js_module_path(spec: str) -> str:
@@ -59,11 +83,7 @@ def _js_module_path(spec: str) -> str:
         if spec.endswith(suffix):
             spec = spec[: -len(suffix)]
             break
-    parts = [
-        segment
-        for segment in spec.replace("\\", "/").split("/")
-        if segment and segment not in (".", "..")
-    ]
+    parts = [segment for segment in spec.replace("\\", "/").split("/") if segment and segment not in (".", "..")]
     if parts and parts[-1] == "index":
         parts.pop()  # `./store/index` is addressed as `store`
     return ".".join(parts)
@@ -102,9 +122,12 @@ def module_alias_targets(suffix: str, text: str) -> dict[str, str]:
                 if _MODULE_TOKEN.match(module) and _identifier(alias):
                     targets.setdefault(alias, module)
             elif _MODULE_TOKEN.match(part):
-                # `import a.b.c` binds `a`, but the usable call receiver is the
-                # full dotted path `a.b.c`; key on the receiver text.
+                # `import a.b.c` binds `a` and makes the imported dotted module
+                # addressable as `a.b.c`. Preserve both namespaces: callers
+                # may use either `a.export()` or `a.b.c.function()`.
                 targets.setdefault(part, part)
+                root = part.split(".", 1)[0]
+                targets.setdefault(root, root)
     for match in _PY_FROM.finditer(text):
         package = match.group(1).strip(".")  # drop leading dots on relative imports
         body = match.group(2) or match.group(3) or ""
@@ -150,14 +173,35 @@ def resolve_module_qualified_call(
     nodes,
     source_id: str,
     src_lang: str | None,
+    reexports: dict[tuple[str, str], str] | None = None,
 ) -> str | None:
     """Resolve ``receiver.name()`` to a symbol id, or None to leave it unresolved."""
     module_path = alias_targets.get(receiver)
+    if module_path is None:
+        # ``import flask`` also binds the lexical namespace used by
+        # ``flask.helpers.make_response``.  Extend only a proven import alias;
+        # an arbitrary ``object.field`` chain remains unresolved.
+        for alias in sorted(alias_targets, key=len, reverse=True):
+            if receiver.startswith(f"{alias}."):
+                suffix = receiver[len(alias) + 1 :]
+                module_path = f"{alias_targets[alias]}.{suffix}"
+                break
     if module_path is None:
         return None
     module_parts = [segment for segment in module_path.split(".") if segment]
     if not module_parts:
         return None
+    if reexports:
+        reexport = reexports.get((module_parts[-1].casefold(), name))
+        if reexport is not None:
+            node = nodes.get(reexport)
+            if (
+                node is not None
+                and reexport != source_id
+                and node.kind in _RESOLVABLE_KINDS
+                and (src_lang is None or _lang_family(node.path) in (None, src_lang))
+            ):
+                return reexport
     best: str | None = None
     best_score = (-1, 1)
     ambiguous = False

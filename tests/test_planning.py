@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from conftest import sample_graph
 
@@ -698,6 +700,143 @@ class WeakLexicalTest(unittest.TestCase):
         from graphgraph.platform.source_planner import _weak_lexical
 
         self.assertTrue(_weak_lexical([], "anything at all"))
+
+
+class SemanticPlannerWarmupBoundaryTest(unittest.TestCase):
+    """Interactive auto mode consumes semantic state but never builds it."""
+
+    def _graph(self):
+        return Graph(
+            nodes={
+                "handler": Node(
+                    "handler",
+                    "CredentialRevocationHandler",
+                    "class",
+                    "src/security.py",
+                ),
+            },
+            edges=[],
+        )
+
+    def test_auto_mode_does_not_build_a_missing_index(self) -> None:
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(
+                SemanticIndex,
+                "build",
+                side_effect=AssertionError("auto query attempted semantic build"),
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    self._graph(),
+                    "how are expired credentials revoked safely",
+                )
+
+        self.assertEqual(plan.receipt.semantic_index_state, "missing")
+        self.assertFalse(plan.receipt.semantic_rebuilt)
+        self.assertEqual(plan.receipt.semantic_seeds, 0)
+        self.assertIn("semantic:index_missing", plan.receipt.warnings)
+
+    def test_auto_mode_does_not_load_or_rebuild_a_stale_dense_index(self) -> None:
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            semantic_path = Path(tmp) / "semantic.json"
+            semantic_path.write_text(
+                json.dumps({
+                    "version": 3,
+                    "dimensions": 384,
+                    "signature": "not-the-current-graph",
+                    "backend": "hash",
+                    "vector_encoding": "base85-u32-f32-le",
+                    "vectors": {"large-vector-payload-is-not-decoded": ""},
+                }),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(
+                    SemanticIndex,
+                    "load",
+                    side_effect=AssertionError("auto query decoded stale vectors"),
+                ),
+                patch.object(
+                    SemanticIndex,
+                    "build",
+                    side_effect=AssertionError("auto query rebuilt stale vectors"),
+                ),
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    self._graph(),
+                    "how are expired credentials revoked safely",
+                )
+
+        self.assertEqual(plan.receipt.semantic_index_state, "stale")
+        self.assertFalse(plan.receipt.semantic_rebuilt)
+        self.assertIn("semantic:index_stale", plan.receipt.warnings)
+
+    def test_auto_mode_does_not_initialize_a_cold_fastembed_backend(self) -> None:
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(
+                    SemanticIndex,
+                    "state_for_graph",
+                    return_value="current",
+                ),
+                patch(
+                    "graphgraph.platform.source_planner.active_backend_is_warm",
+                    return_value=False,
+                ),
+                patch.object(
+                    SemanticIndex,
+                    "load",
+                    side_effect=AssertionError("auto query initialized FastEmbed"),
+                ),
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    self._graph(),
+                    "how are expired credentials revoked safely",
+                )
+
+        self.assertEqual(plan.receipt.semantic_index_state, "cold_backend")
+        self.assertFalse(plan.receipt.semantic_rebuilt)
+        self.assertEqual(plan.receipt.semantic_seeds, 0)
+        self.assertIn("semantic:index_cold_backend", plan.receipt.warnings)
+
+    def test_all_mode_retains_explicit_rebuild_semantics(self) -> None:
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        graph = self._graph()
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch(
+                    "graphgraph.platform.semantic.resolve_backend",
+                    return_value=None,
+                ),
+                patch(
+                    "graphgraph.platform.semantic.active_backend_name",
+                    return_value="hash",
+                ),
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    graph,
+                    "credential revocation",
+                    mode="all",
+                )
+                self.assertTrue((Path(tmp) / "semantic.json").exists())
+                self.assertEqual(
+                    SemanticIndex.state_for_graph(Path(tmp) / "semantic.json", graph),
+                    "current",
+                )
+
+        self.assertEqual(plan.receipt.semantic_index_state, "rebuilt")
+        self.assertTrue(plan.receipt.semantic_rebuilt)
+        self.assertGreater(plan.receipt.semantic_seeds, 0)
 
 
 class SemanticSeedBalanceTest(unittest.TestCase):

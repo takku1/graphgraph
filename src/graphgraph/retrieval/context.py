@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from ..concepts import INTERPRETATION_CONCEPT_IDS
 from ..concepts.doccode import doc_code_bias, is_code_like
 from ..graph.core import Graph
 from ..graph.ontology import provenance_confidence
@@ -14,6 +15,7 @@ from . import (
     anchors,
     document_status,
     expansion,
+    obligations,
     quality,
     reservations,
     scoping,
@@ -24,9 +26,18 @@ from . import (
 from . import facets as facet_stage
 from .models import Match, RetrievalResult
 
-_OVERLOAD_DEF_KINDS = frozenset({
-    "function", "method", "class", "struct", "trait", "enum", "interface", "type",
-})
+_OVERLOAD_DEF_KINDS = frozenset(
+    {
+        "function",
+        "method",
+        "class",
+        "struct",
+        "trait",
+        "enum",
+        "interface",
+        "type",
+    }
+)
 
 
 def _exact_overload_disambiguation(
@@ -60,13 +71,14 @@ def _exact_overload_disambiguation(
         return None
     # Count graph-wide for an accurate receipt; the anchor budget may have
     # trimmed `matches` below the true number of definitions.
-    definitions = max(count, sum(
-        1
-        for node in graph.nodes.values()
-        if node.active
-        and node.kind in _OVERLOAD_DEF_KINDS
-        and node.label.casefold() == label
-    ))
+    definitions = max(
+        count,
+        sum(
+            1
+            for node in graph.nodes.values()
+            if node.active and node.kind in _OVERLOAD_DEF_KINDS and node.label.casefold() == label
+        ),
+    )
     display = next(
         (match.node.label for match in matches if match.node.label.casefold() == label),
         label,
@@ -74,10 +86,7 @@ def _exact_overload_disambiguation(
     return {
         "identifier": display,
         "definitions": definitions,
-        "reason": (
-            f"'{display}' resolves to {definitions} exact definitions; "
-            "ranked to disambiguate"
-        ),
+        "reason": (f"'{display}' resolves to {definitions} exact definitions; ranked to disambiguate"),
     }
 
 
@@ -101,20 +110,13 @@ def _truncated_requested_documents(
     raw = graph.metadata.get("docs_truncated_files", "")
     if not raw or not anchor_paths:
         return []
-    truncated = {
-        normalized
-        for entry in raw.split(",")
-        if (normalized := _normalize_doc_path(entry))
-    }
+    truncated = {normalized for entry in raw.split(",") if (normalized := _normalize_doc_path(entry))}
     if not truncated:
         return []
     hits: list[str] = []
     for anchor in anchor_paths:
         norm = _normalize_doc_path(anchor)
-        if any(
-            norm == cut or norm.endswith("/" + cut) or cut.endswith("/" + norm)
-            for cut in truncated
-        ):
+        if any(norm == cut or norm.endswith("/" + cut) or cut.endswith("/" + norm) for cut in truncated):
             hits.append(anchor)
     return sorted(dict.fromkeys(hits))
 
@@ -361,15 +363,79 @@ def _negative_query_abstain(
         metadata={
             "facet_coverage": anchor_coverage,
             "mention_coverage": mention_coverage,
-            "answerability": anchors.gate_answer_confidence({
-                "status": "unanswerable",
-                "abstained": True,
-                "reason": "no code or structural graph evidence covers the requested entity facets",
-                "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
-            }, selected_matches),
+            "answerability": anchors.gate_answer_confidence(
+                {
+                    "status": "unanswerable",
+                    "abstained": True,
+                    "reason": "no code or structural graph evidence covers the requested entity facets",
+                    "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
+                },
+                selected_matches,
+            ),
             "plan_reason": plan.reason,
             "planner_version": plan.planner_version,
         },
+    )
+
+
+def _semantic_novelty_result(
+    graph: Graph,
+    *,
+    query_class: str,
+    coverage: dict[str, object],
+    structural_coverage: dict[str, object],
+    selected_matches: tuple[Match, ...],
+    plan,
+    scopes: tuple[str, ...],
+    scope_mode: str,
+    inferred_scope: str,
+    effective_anchor_limit: int,
+    anchor_paths: tuple[str, ...],
+) -> RetrievalResult:
+    """Return a zero-packet reject receipt for a complete semantic miss."""
+    effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
+    metadata = quality.packet_quality_metadata(
+        graph,
+        set(),
+        [],
+        (),
+        effective_scope,
+        query_class=query_class,
+    )
+    metadata.update(
+        {
+            "scope": list(scopes),
+            "scope_mode": "auto_expand" if inferred_scope and not scopes else scope_mode,
+            "inferred_scope": inferred_scope,
+            "anchor_strategy": "ranked",
+            "plan_reason": plan.reason,
+            "planner_version": plan.planner_version,
+            "node_budget": plan.node_budget,
+            "anchor_limit": effective_anchor_limit,
+            "anchor_paths": _anchor_paths_metadata(
+                anchor_paths,
+                selected_matches,
+                query_class,
+            ),
+            "facet_coverage": coverage,
+            "structural_facet_coverage": structural_coverage,
+            # This is answer confidence, not confidence in the reject
+            # decision. A real exact anchor (for example ``Flask``) does not
+            # support an answer when every required compound facet misses.
+            "answerability": {
+                "status": "unanswerable",
+                "abstained": True,
+                "reason": ("no code or structural graph evidence covers any required query facet"),
+                "confidence": 0.0,
+            },
+        }
+    )
+    return RetrievalResult(
+        starts=(),
+        matches=selected_matches,
+        nodes=set(),
+        edges=[],
+        metadata=metadata,
     )
 
 
@@ -399,9 +465,7 @@ def _empty_anchor_result(
     if status_constrained:
         status_labels = ["absent" if status == "" else "partial" for status in sorted(requested_statuses)]
         status_warning = (
-            "no literal "
-            + "/".join(status_labels)
-            + " capability rows were found in the requested roadmap documents"
+            "no literal " + "/".join(status_labels) + " capability rows were found in the requested roadmap documents"
         )
         effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
         metadata = quality.packet_quality_metadata(
@@ -432,12 +496,15 @@ def _empty_anchor_result(
                     "packet_constrained": True,
                     "warning": status_warning,
                 },
-                "answerability": anchors.gate_answer_confidence({
-                    "status": "incomplete",
-                    "abstained": True,
-                    "reason": status_warning,
-                    "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
-                }, selected_matches),
+                "answerability": anchors.gate_answer_confidence(
+                    {
+                        "status": "incomplete",
+                        "abstained": True,
+                        "reason": status_warning,
+                        "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
+                    },
+                    selected_matches,
+                ),
             }
         )
         return RetrievalResult(
@@ -448,12 +515,15 @@ def _empty_anchor_result(
             metadata=metadata,
         )
     no_anchor_metadata: dict[str, object] = {
-        "answerability": anchors.gate_answer_confidence({
-            "status": "unanswerable",
-            "abstained": True,
-            "reason": "no matching graph anchors",
-            "confidence": round(anchors.retrieval_confidence(matches), 4),
-        }, matches),
+        "answerability": anchors.gate_answer_confidence(
+            {
+                "status": "unanswerable",
+                "abstained": True,
+                "reason": "no matching graph anchors",
+                "confidence": round(anchors.retrieval_confidence(matches), 4),
+            },
+            matches,
+        ),
     }
     # A whole-graph architecture map does not depend on query anchors, so a
     # broad "what are the subsystems" query is answered by the map even when
@@ -463,12 +533,15 @@ def _empty_anchor_result(
         subsystem_map = subsystems.build_subsystem_map(graph)
         if subsystem_map["subsystems"]:
             no_anchor_metadata["subsystem_map"] = subsystem_map
-            no_anchor_metadata["answerability"] = anchors.gate_answer_confidence({
-                "status": "answerable",
-                "abstained": False,
-                "reason": "architecture map derived from source layout",
-                "confidence": round(anchors.retrieval_confidence(matches), 4),
-            }, matches)
+            no_anchor_metadata["answerability"] = anchors.gate_answer_confidence(
+                {
+                    "status": "answerable",
+                    "abstained": False,
+                    "reason": "architecture map derived from source layout",
+                    "confidence": round(anchors.retrieval_confidence(matches), 4),
+                },
+                matches,
+            )
     return RetrievalResult(
         starts=(),
         matches=matches,
@@ -503,7 +576,7 @@ def retrieve_context(
     identifiers = explicit_query_identifiers(query)
     qualified_matches = (
         anchors.qualified_symbol_anchor_matches(graph, query, scopes=scopes)
-        if query_class == "direct_lookup" and not anchor_paths
+        if query_class in {"direct_lookup", "multi_hop_path"} and not anchor_paths
         else ()
     )
     facet_aware = query_class in {
@@ -512,7 +585,8 @@ def retrieve_context(
         "multi_hop_path",
         "negative_query",
         "doc_summary",
-    } or (query_class in {"direct_lookup", "reverse_lookup"} and bool(identifiers))
+        "reverse_lookup",
+    } or (query_class == "direct_lookup" and bool(identifiers))
     facets = facet_stage.query_facets(query) if facet_aware else ()
     if status_constrained:
         # The typed status-row matcher owns this predicate. Leaving the same
@@ -522,6 +596,42 @@ def retrieve_context(
         facets = tuple(
             facet for facet in facets if not document_status._document_status_facet(facet[1], requested_statuses)
         )
+    plan = plan_context(
+        query_class,
+        query,
+        anchor_limit=anchor_limit,
+        max_nodes=max_nodes,
+        hops=hops,
+    )
+    if query_class == "reverse_lookup" and facets:
+        # A collection-wide evidence-facet feasibility pass is cheaper than eight
+        # ranked searches for a query whose required entities do not exist.
+        # It uses the same matcher and IDF requiredness contract as final
+        # answerability, so this is a proof of complete miss, not a score
+        # threshold. Mixed queries (at least one fulfilled facet) continue.
+        preflight_scopes = scopes if scope_mode == "strict" else ()
+        evidence_nodes = {
+            node_id
+            for node_id, node in graph.nodes.items()
+            if node.active
+            and (is_code_like(node) or node_id in INTERPRETATION_CONCEPT_IDS)
+            and (not preflight_scopes or scoping._path_in_scopes(node.path, preflight_scopes))
+        }
+        global_coverage = facet_stage.facet_coverage(graph, evidence_nodes, facets)
+        if not global_coverage.get("fulfilled") and global_coverage.get("unfulfilled_required"):
+            return _semantic_novelty_result(
+                graph,
+                query_class=query_class,
+                coverage=global_coverage,
+                structural_coverage=global_coverage,
+                selected_matches=(),
+                plan=plan,
+                scopes=scopes,
+                scope_mode=scope_mode,
+                inferred_scope="",
+                effective_anchor_limit=plan.anchor_limit,
+                anchor_paths=anchor_paths,
+            )
     anchor_query = scoping.structural_anchor_query(query, query_class)
     path_matches = anchors.preferred_path_anchor_matches(
         graph,
@@ -555,7 +665,6 @@ def retrieve_context(
         doc_intensity = doc_intensity_score(query_class, query)
         graph_bias = doc_code_bias(graph)
         doc_intensity *= 0.75 + graph_bias * 0.5
-    plan = plan_context(query_class, query, anchor_limit=anchor_limit, max_nodes=max_nodes, hops=hops)
     if max_nodes is None and exact_match is None:
         plan = anchors.apply_shape_budget(graph, plan, query)
     candidate_limit = max(
@@ -568,7 +677,7 @@ def retrieve_context(
         candidate_limit = max(candidate_limit, 24)
     matches = (
         path_matches
-        or ((exact_match,) if exact_match is not None else ())
+        or exact_matches
         or search.search_nodes(
             graph,
             anchor_query,
@@ -614,7 +723,7 @@ def retrieve_context(
     if priority_matches:
         priority_ids = {match.node.id for match in priority_matches}
         matches = priority_matches + tuple(match for match in matches if match.node.id not in priority_ids)
-    exact_anchor_fast_path = len(matches) == 1 and "exact_fast_path" in matches[0].reasons
+    exact_anchor_fast_path = bool(matches) and all("exact_fast_path" in match.reasons for match in matches)
     if facets and not path_matches and not exact_anchor_fast_path:
         # A single bag-of-words search for a conjunction is dominated by nodes
         # that repeat the query's common subsystem terms. Search each facet
@@ -838,7 +947,12 @@ def retrieve_context(
         nodes = set(starts) | {edge.target for edge in edges}
     if query_class in scoping.STRUCTURAL_QUERY_CLASSES:
         nodes, edges = reservations.prune_unexplained_structural_nodes(nodes, edges, starts)
-    if inferred_scope:
+    if inferred_scope and not (query_class == "multi_hop_path" and exact_anchor_fast_path):
+        # A post-hoc top-k scope cap recomputes boundary scores over the current
+        # packet, so a newly admitted connector can evict a node returned at a
+        # smaller budget. Exact path packets already have precise endpoints and
+        # a hard node budget; preserve their universal expansion prefix instead
+        # of applying a second, non-monotone optimizer.
         nodes, edges = quality.cap_inferred_scope_crossings(graph, nodes, edges, inferred_scope, protected=starts)
     if scopes and scope_mode == "strict":
         nodes = {node_id for node_id in nodes if scoping._path_in_scopes(graph.nodes[node_id].path, scopes)}
@@ -916,6 +1030,29 @@ def retrieve_context(
             "reason": "",
             "confidence": round(anchors.retrieval_confidence(selected_matches), 4),
         }
+    if query_class == "multi_hop_path" and exact_anchor_fast_path and len(starts) >= 2:
+        closure, closure_confidence = obligations.exact_path_obligation_closure(
+            starts,
+            nodes,
+            edges,
+            plan_terms(query),
+        )
+        metadata["obligation_closure"] = closure
+        if closure["ratio"] == 1.0:
+            if metadata["answerability"]["status"] == "answerable":
+                metadata["answerability"]["confidence"] = max(
+                    metadata["answerability"]["confidence"],
+                    closure_confidence,
+                )
+        else:
+            metadata["answerability"] = {
+                "status": "incomplete",
+                "abstained": True,
+                "reason": (
+                    f"required structural obligations are unresolved: {closure['proven']}/{closure['required']} proven"
+                ),
+                "confidence": closure_confidence,
+            }
     _document_status_answerability(
         metadata,
         graph=graph,
@@ -972,9 +1109,7 @@ def retrieve_context(
     # downgrade a would-be-answerable receipt to an explicit, non-abstaining
     # partial -- a stronger abstention set upstream (conflicting status rows, an
     # empty doc graph) is left untouched.
-    requested_doc_paths = tuple(
-        dict.fromkeys((*anchor_paths, *(match.node.path for match in selected_matches)))
-    )
+    requested_doc_paths = tuple(dict.fromkeys((*anchor_paths, *(match.node.path for match in selected_matches))))
     truncated_documents = _truncated_requested_documents(graph, requested_doc_paths)
     if truncated_documents:
         metadata["document_truncation"] = {
@@ -982,8 +1117,7 @@ def retrieve_context(
             "requested_documents": truncated_documents,
             "reason": (
                 "requested document(s) were truncated during scan; "
-                "the packet reflects a partial document: "
-                + ", ".join(truncated_documents)
+                "the packet reflects a partial document: " + ", ".join(truncated_documents)
             ),
         }
         answerability = metadata.get("answerability")

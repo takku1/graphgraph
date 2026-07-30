@@ -129,11 +129,26 @@ graphgraph scan --directory . --depth symbols --output .graphgraph/graph.gg
 
 # Ask a question — discovers anchors and renders a packet in one step
 graphgraph context "what is the blast radius of auth changes" --show-stats
+
+# Exact symbol already known — 1-hop tuple IR without planner/packet expansion
+graphgraph relations authenticate --direction callers
+
+# Same lookup when repository freshness matters (fused Git delta refresh)
+graphgraph relations authenticate --direction callers --sync git
 ```
 
 `context` and `query` route natural-language intent automatically with a
 deterministic, no-I/O classifier. Explicit `--query-class` remains available
 for repeatable benchmarks and callers that already know the policy they need.
+For exact one-hop caller/callee maps, `relations` (MCP: `query_relations`) is
+the low-level lane: compact tuple rows, tests opt-in, and separate receipts for
+result truncation, call-topology coverage, and freshness. The default keeps
+freshness unchecked to preserve the hot path; add `--sync git` (MCP:
+`"sync":"git"`) to fuse an incremental Git-delta refresh into the same call.
+Micro IR v2 is self-decoding: `tk` describes target tuple `t`, `k` describes
+neighbor tuples `n`, `r` contains receipts, and optional `a` values are stable
+next-action opcodes. `answer_complete` is true only when the returned rows are
+untruncated, topology telemetry is complete, and freshness was checked.
 
 Scans honor repository and nested `.gitignore`/`.ignore` rules (including
 negation), and exclude secret-bearing environment files plus local agent/MCP
@@ -147,7 +162,9 @@ validation/save phase events to stderr and finish with an explicit receipt for
 ignore files, pruned directories, frontend/fallbacks, validation, and
 truncation. Ignore-matched directories are pruned before descent rather than
 walked file by file. MCP `build_graph` returns the same frontend and exclusion
-receipt in JSON.
+receipt in JSON. MCP `describe_frontends` reports `ready_languages` and
+`unavailable_languages`; aggregate `tree_sitter.available=true` means at least
+one grammar works, not that every advertised language grammar is installed.
 
 Broad natural-language `subsystem_summary`/`blast_radius` queries use a
 48-node orientation cap when anchor discovery cannot identify a targeted
@@ -215,6 +232,7 @@ project-loop comparison, selection math, and capability roadmap.
 | `remove` | Drop the named files from the existing graph. |
 | `context` | One-step: ensure a graph exists, discover anchors, render a packet. |
 | `query` | Discover anchors and render a packet from an existing graph only. |
+| `relations` | Exact one-hop callers/callees as self-decoding micro IR; optionally `--sync git`. |
 | `final` | Render a packet from confirmed node IDs (no anchor discovery). |
 | `snippets` | Bounded source excerpts for selected node IDs/labels/paths. |
 | `status` | Graph validity, code/doc balance, package metadata, optional runtime probes. |
@@ -231,6 +249,31 @@ project-loop comparison, selection math, and capability roadmap.
 | `platform` | Compile evidence/memory/time/federation/trace/repair workflows into native GraphGraph IR and receipts. |
 
 Run `graphgraph <command> --help` for full flags.
+
+### Experimental: project representation
+
+`context`, `query`, and `final` accept `--representation {flat,hybrid}` with
+`--representation-budget`. **`flat` is the default and the only supported
+setting.**
+
+`hybrid` compiles the research candidate `C1-HYBRID-RESERVE-003`: it reserves a
+token budget for an exact query frontier and represents every remaining active
+entity through aggregate path cells, emitting a machine-checkable coverage
+receipt. It has **not passed any tournament gate** and is not wired into the
+MCP surface.
+
+It is also currently degenerate on real graphs. Because influence diffuses
+along edge direction and 62.9% of active entities are directed sinks, the far
+field receives no mass — a live compile yields `aggregate_mass 0.0`,
+`refinements 0`, and a single cover line for 98.8% of the project. See
+[the coupling finding](docs/findings/2026-07-29-influence-field-coupling.md)
+for the measurement and
+[the tournament](docs/context_system_research_tournament.md) for the promotion
+rules. Use it to reproduce that result, not to get better context.
+
+If a compiled hybrid packet misses its budget, the packet is withheld and the
+command degrades to `flat`; the receipt records `status: fallback_flat` with
+the observed `proxy_tokens`.
 
 ## Diagnostics
 

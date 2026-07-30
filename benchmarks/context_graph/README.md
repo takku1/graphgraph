@@ -90,6 +90,8 @@ Current run-all support scripts that are not promotion gates:
 - `hop_frontier_benchmark.py`
 - `interpretability_benchmark.py`
 - `mathematical_limit_search.py`
+- `global_attention_phase0.py`
+- `global_attention_phase1.py`
 - `minmax_analysis.py`
 - `model_reasoning_benchmark.py`
 - `packet_roundtrip_validator.py`
@@ -113,6 +115,50 @@ Current exploratory script:
 - `density_benchmark.py`
 
 ## Cross-Project Live Shape
+
+## Global Project Attention Phase 0
+
+Run the exact-oracle laboratory before implementing a multiresolution context
+candidate in production:
+
+```powershell
+python benchmarks\context_graph\global_attention_phase0.py
+```
+
+It exhaustively computes the minimum squared field error available from a
+small hierarchy under each representation-unit budget, compares greedy
+refinement and top-k, and gates coverage, mass conservation, monotone optimal
+error, and leaf-resolution exactness. Oracle cell mass is answer-key evidence,
+so this is a mathematical ceiling only; it does not pass H1 or authorize a
+production change.
+
+## Global Project Attention Phase 1
+
+Run the frozen multi-project, equal-token representation screen:
+
+```powershell
+python benchmarks\context_graph\global_attention_phase1.py
+```
+
+Candidate compilation receives only task starts and PPR. Expected evidence is
+used after both C1 and the flat packet are frozen. The initial
+`C1-PATH-L2MASS-001` formula produced **no champion**: GraphGraph and Requests
+passed, while Chess and Express failed the preregistered transfer gate. This
+result rejects that exact formula/weight as a cross-project default; it does
+not reject every multiresolution cover and does not promote H1.
+
+The follow-up offline sweeps are:
+
+```powershell
+python benchmarks\context_graph\global_attention_phase1_formula_sweep.py
+python benchmarks\context_graph\global_attention_phase1_resolution_sweep.py
+```
+
+Both returned **no formula champion**. The first demonstrates why a mass-only
+coefficient cannot guide internal refinement; the second tests a log-cell-size
+penalty that can, but still fails worst-project and exact-recall gates. These
+four projects are now development/validation data and cannot serve as fresh
+holdouts for a later candidate.
 
 ## Codex Integration Check
 

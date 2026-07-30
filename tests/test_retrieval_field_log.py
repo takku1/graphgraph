@@ -84,6 +84,147 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
         self.assertEqual(result.metadata["inferred_scope"], "crates/locus-pipeline")
         self.assertNotIn("NOISE", result.starts)
 
+    def test_affected_tests_commands_cover_every_runnable_python_direct_test(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "make_response", "function", "src/flask/helpers.py"),
+                "BASIC": Node("BASIC", "test_make_response", "function", "tests/test_basic.py"),
+                "HELPERS": Node(
+                    "HELPERS",
+                    "test_make_response",
+                    "method",
+                    "tests/test_helpers.py",
+                ),
+                "OWNER": Node(
+                    "OWNER",
+                    "test_view_decorators",
+                    "function",
+                    "tests/test_views.py",
+                ),
+                "NESTED": Node(
+                    "NESTED",
+                    "add_x_parachute",
+                    "function",
+                    "tests/test_views.py",
+                ),
+            },
+            edges=[
+                Edge("BASIC", "TARGET", "calls"),
+                Edge("HELPERS", "TARGET", "calls"),
+                Edge("OWNER", "TARGET", "calls"),
+                Edge("NESTED", "TARGET", "calls"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "which direct tests cover make_response and what runnable commands should run",
+            "affected_tests",
+            hops=2,
+        )
+        affected = result.metadata["affected_tests"]
+
+        self.assertEqual(
+            {item["id"] for item in affected["direct"]},
+            {"BASIC", "HELPERS", "OWNER"},
+        )
+        self.assertEqual(
+            set(affected["commands"]),
+            {
+                "python -m pytest tests/test_basic.py",
+                "python -m pytest tests/test_helpers.py",
+                "python -m pytest tests/test_views.py",
+            },
+        )
+        self.assertEqual(affected["command_selection"]["uncovered_direct_tests"], [])
+        self.assertEqual(
+            affected["structural_witnesses"],
+            [
+                {
+                    "id": "NESTED",
+                    "label": "add_x_parachute",
+                    "path": "tests/test_views.py",
+                    "distance": 1,
+                    "in_packet": False,
+                    "evidence": [
+                        {
+                            "type": "calls",
+                            "confidence": 1.0,
+                            "provenance": "extracted",
+                        }
+                    ],
+                    "covers": [{"id": "TARGET", "label": "make_response"}],
+                    "root_paths": [
+                        {
+                            "root": {"id": "TARGET", "label": "make_response"},
+                            "nodes": [
+                                {"id": "NESTED", "label": "add_x_parachute"},
+                                {"id": "TARGET", "label": "make_response"},
+                            ],
+                            "edges": [
+                                {
+                                    "source": "NESTED",
+                                    "target": "TARGET",
+                                    "type": "calls",
+                                    "confidence": 1.0,
+                                    "provenance": "extracted",
+                                }
+                            ],
+                        }
+                    ],
+                    "attributed_to": {
+                        "id": "OWNER",
+                        "label": "test_view_decorators",
+                        "path": "tests/test_views.py",
+                    },
+                }
+            ],
+        )
+
+    def test_affected_tests_treats_exact_attribute_use_as_direct_evidence(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "wsgi_app", "method", "src/flask/app.py"),
+                "TEST": Node(
+                    "TEST",
+                    "test_session_using_application_root",
+                    "function",
+                    "tests/test_basic.py",
+                ),
+            },
+            edges=[
+                Edge(
+                    "TEST",
+                    "TARGET",
+                    "reads",
+                    confidence=0.82,
+                    provenance="python_ast_attribute_use",
+                ),
+                Edge(
+                    "TEST",
+                    "TARGET",
+                    "writes",
+                    confidence=0.82,
+                    provenance="python_ast_attribute_use",
+                ),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "which tests cover wsgi_app",
+            "affected_tests",
+            hops=2,
+        )
+
+        direct = result.metadata["affected_tests"]["direct"]
+        self.assertEqual([item["id"] for item in direct], ["TEST"])
+        self.assertEqual(
+            {edge["type"] for edge in direct[0]["evidence"]},
+            {"reads", "writes"},
+        )
+        self.assertEqual(direct[0]["covers"], [{"id": "TARGET", "label": "wsgi_app"}])
+
     def test_affected_tests_reserves_multi_field_assertion_ahead_of_generic_tests(self) -> None:
         graph = Graph(
             nodes={

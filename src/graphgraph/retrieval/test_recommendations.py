@@ -25,9 +25,12 @@ from .pruning import (
     _least_valuable_context_node,
 )
 from .scoping import (
+    _is_runnable_test_node,
     _is_test_node,
     _is_test_path,
 )
+
+_TEST_EVIDENCE_RELATIONS = frozenset({"calls", "references", "tests", "reads", "writes"})
 
 
 def _cargo_source_context(source: str) -> tuple[str, Path, Path] | None:
@@ -38,7 +41,11 @@ def _cargo_source_context(source: str) -> tuple[str, Path, Path] | None:
     if not source_path.exists():
         return None
     manifest = next(
-        (parent / "Cargo.toml" for parent in (source_path.parent, *source_path.parents) if (parent / "Cargo.toml").is_file()),
+        (
+            parent / "Cargo.toml"
+            for parent in (source_path.parent, *source_path.parents)
+            if (parent / "Cargo.toml").is_file()
+        ),
         None,
     )
     if manifest is None:
@@ -52,6 +59,7 @@ def _cargo_source_context(source: str) -> tuple[str, Path, Path] | None:
     if not package or not relative.parts or source_path.suffix != ".rs":
         return None
     return package, manifest.parent, relative
+
 
 def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
     """Return (package, integration target, optional module filter)."""
@@ -94,6 +102,7 @@ def _cargo_test_target(source: str) -> tuple[str, str, str] | None:
             return package, target_name, "" if source_path.name == "main.rs" else source_path.stem
     return None
 
+
 def _cargo_inline_rust_test_target(source: str) -> tuple[str, str, str] | None:
     """Return package, module filter, and Cargo target for an inline Rust test."""
     context = _cargo_source_context(source)
@@ -114,6 +123,7 @@ def _cargo_inline_rust_test_target(source: str) -> tuple[str, str, str] | None:
     module_filter = "::".join((*module_parts, "tests"))
     return package, module_filter, target
 
+
 def _cargo_inline_rust_module_command(source: str) -> str:
     target = _cargo_inline_rust_test_target(source)
     if target is None:
@@ -121,6 +131,7 @@ def _cargo_inline_rust_module_command(source: str) -> str:
     package, module_filter, cargo_target = target
     suffix = f" {module_filter}" if module_filter else ""
     return f"cargo test -p {package}{suffix} {cargo_target}"
+
 
 @lru_cache(maxsize=2048)
 def _rust_test_module_calls_symbol(source: str, label: str) -> bool:
@@ -135,8 +146,9 @@ def _rust_test_module_calls_symbol(source: str, label: str) -> bool:
     marker = re.search(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]", text)
     if marker is None:
         return False
-    test_module = text[marker.end():]
+    test_module = text[marker.end() :]
     return bool(re.search(rf"\b{re.escape(label)}\s*\(", test_module))
+
 
 def _test_command(
     path: str,
@@ -173,24 +185,21 @@ def _test_command(
         return f"npm test -- {normalized}"
     return ""
 
+
 def changed_path_test_recommendations(
     graph: Graph,
     paths: tuple[str, ...],
 ) -> dict[str, object]:
     """Derive deterministic regression commands from explicit changed test paths."""
-    normalized_paths = tuple(
-        dict.fromkeys(path.replace("\\", "/").strip("/") for path in paths)
-    )
+    normalized_paths = tuple(dict.fromkeys(path.replace("\\", "/").strip("/") for path in paths))
     candidates: list[dict[str, object]] = []
     commands: list[str] = []
     provenance: list[dict[str, object]] = []
     for path in normalized_paths:
         path_nodes = [
-            node
-            for node in graph.nodes.values()
-            if node.active and node.path.replace("\\", "/").strip("/") == path
+            node for node in graph.nodes.values() if node.active and node.path.replace("\\", "/").strip("/") == path
         ]
-        test_nodes = [node for node in path_nodes if _is_test_node(node)]
+        test_nodes = [node for node in path_nodes if _is_runnable_test_node(node)]
         command_tests: dict[str, list[dict[str, object]]] = {}
         for node in test_nodes:
             command = _test_command(
@@ -226,16 +235,19 @@ def changed_path_test_recommendations(
         for command, tests in command_tests.items():
             if command not in commands:
                 commands.append(command)
-                provenance.append({
-                    "command": command,
-                    "role": "changed_path_regression",
-                    "tests": tests,
-                })
+                provenance.append(
+                    {
+                        "command": command,
+                        "role": "changed_path_regression",
+                        "tests": tests,
+                    }
+                )
     return {
         "candidates": candidates,
         "commands": commands,
         "command_provenance": provenance,
     }
+
 
 def affected_test_recommendations(
     graph: Graph,
@@ -246,7 +258,7 @@ def affected_test_recommendations(
 ) -> dict[str, object]:
     incoming: dict[str, list[Edge]] = {}
     for edge in graph.edges:
-        if edge.active and edge.type in {"calls", "references", "tests"}:
+        if edge.active and edge.type in _TEST_EVIDENCE_RELATIONS:
             incoming.setdefault(edge.target, []).append(edge)
     distances = {start: 0 for start in starts}
     covered_starts: dict[str, set[str]] = {start: {start} for start in starts}
@@ -260,21 +272,14 @@ def affected_test_recommendations(
         owned_edges = [
             edge
             for edge in graph.edges
-            if edge.active
-            and edge.type == "contains"
-            and edge.source == start
-            and edge.target in graph.nodes
+            if edge.active and edge.type == "contains" and edge.source == start and edge.target in graph.nodes
         ]
-        owned_targets = {
-            node_id
-            for node_id, node in graph.nodes.items()
-            if node.active and node.parent == start
-        } | {edge.target for edge in owned_edges}
+        owned_targets = {node_id for node_id, node in graph.nodes.items() if node.active and node.parent == start} | {
+            edge.target for edge in owned_edges
+        }
         frontier = {start, *owned_targets}
         seen = set(frontier)
-        root_paths: dict[str, tuple[tuple[str, ...], tuple[Edge, ...]]] = {
-            start: ((start,), ())
-        }
+        root_paths: dict[str, tuple[tuple[str, ...], tuple[Edge, ...]]] = {start: ((start,), ())}
         for target in owned_targets:
             containment = next(
                 (edge for edge in owned_edges if edge.target == target),
@@ -304,10 +309,12 @@ def affected_test_recommendations(
             frontier = next_frontier
     direct: list[dict[str, object]] = []
     transitive: list[dict[str, object]] = []
+    structural_witnesses: list[dict[str, object]] = []
     for node_id, distance in sorted(distances.items(), key=lambda item: (item[1], item[0])):
         node = graph.nodes.get(node_id)
         if node is None or not _is_test_node(node):
             continue
+        runnable = _is_runnable_test_node(node)
         evidence_edges = evidence_by_node.get(node_id, ())
         effective_distance = distance
         if distance == 0:
@@ -361,7 +368,11 @@ def affected_test_recommendations(
                 if start in graph.nodes
             ],
         }
-        (direct if effective_distance == 1 else transitive).append(item)
+        if runnable:
+            (direct if effective_distance == 1 else transitive).append(item)
+        else:
+            structural_witnesses.append(item)
+
     def recommendation_rank(item: dict[str, object]) -> tuple[object, ...]:
         evidence = item.get("evidence", [])
         max_confidence = max(
@@ -377,24 +388,43 @@ def affected_test_recommendations(
 
     direct.sort(key=recommendation_rank)
     transitive.sort(key=recommendation_rank)
+    structural_witnesses.sort(key=recommendation_rank)
     omitted_direct = max(0, len(direct) - 12)
     omitted_transitive = max(0, len(transitive) - 12)
+    omitted_structural_witnesses = max(0, len(structural_witnesses) - 12)
     direct = direct[:12]
     transitive = transitive[:12]
+    structural_witnesses = structural_witnesses[:12]
+
+    # A flattened Python graph may retain a nested helper's call edge without
+    # retaining lexical ownership. Attribute it only when the same file has one
+    # unambiguous runnable direct test; otherwise leave it as an unattributed
+    # structural witness instead of inventing a standalone command target.
+    for witness in structural_witnesses:
+        owners = [item for item in direct if item["path"] == witness["path"]]
+        if len(owners) == 1:
+            owner = owners[0]
+            witness["attributed_to"] = {
+                "id": owner["id"],
+                "label": owner["label"],
+                "path": owner["path"],
+            }
 
     def commands_for(items: list[dict[str, object]]) -> list[str]:
-        return list(dict.fromkeys(
-            command
-            for item in items
-            if (
-                command := _test_command(
-                    str(item["path"]),
-                    graph.nodes[str(item["id"])].source,
-                    inline_test=not _is_test_path(str(item["path"])),
-                    test_label=str(item.get("label", "")),
+        return list(
+            dict.fromkeys(
+                command
+                for item in items
+                if (
+                    command := _test_command(
+                        str(item["path"]),
+                        graph.nodes[str(item["id"])].source,
+                        inline_test=not _is_test_path(str(item["path"])),
+                        test_label=str(item.get("label", "")),
+                    )
                 )
             )
-        ))
+        )
 
     direct_commands = commands_for(direct)
     transitive_commands = commands_for(transitive)
@@ -415,7 +445,8 @@ def affected_test_recommendations(
                     graph.nodes[str(item["id"])].source,
                     inline_test=not _is_test_path(str(item["path"])),
                     test_label=str(item.get("label", "")),
-                ) == command
+                )
+                == command
             ],
         }
         for command in dict.fromkeys((*direct_commands, *transitive_commands))
@@ -430,30 +461,26 @@ def affected_test_recommendations(
         command = _cargo_inline_rust_module_command(node.source)
         if command:
             aggregate_inline_commands.setdefault(command, []).append(item)
-    existing_commands = {
-        str(entry["command"])
-        for entry in candidate_command_provenance
-    }
+    existing_commands = {str(entry["command"]) for entry in candidate_command_provenance}
     for command, items in aggregate_inline_commands.items():
-        unique_items = list({
-            str(item["id"]): item
-            for item in items
-        }.values())
+        unique_items = list({str(item["id"]): item for item in items}.values())
         if len(unique_items) < 2 or command in existing_commands:
             continue
-        candidate_command_provenance.append({
-            "command": command,
-            "selection_scope": "inline_test_module",
-            "tests": [
-                {
-                    "id": item["id"],
-                    "label": item["label"],
-                    "covers": item["covers"],
-                    "root_paths": item["root_paths"],
-                }
-                for item in unique_items
-            ],
-        })
+        candidate_command_provenance.append(
+            {
+                "command": command,
+                "selection_scope": "inline_test_module",
+                "tests": [
+                    {
+                        "id": item["id"],
+                        "label": item["label"],
+                        "covers": item["covers"],
+                        "root_paths": item["root_paths"],
+                    }
+                    for item in unique_items
+                ],
+            }
+        )
         existing_commands.add(command)
     root_ids = set(starts)
     uncovered = set(root_ids)
@@ -462,11 +489,7 @@ def affected_test_recommendations(
     remaining = list(candidate_command_provenance)
 
     def command_covered_roots(entry: dict[str, object]) -> set[str]:
-        return {
-            str(root.get("id", ""))
-            for test in entry.get("tests", [])
-            for root in test.get("covers", [])
-        } | {
+        return {str(root.get("id", "")) for test in entry.get("tests", []) for root in test.get("covers", [])} | {
             str(path.get("root", {}).get("id", ""))
             for test in entry.get("tests", [])
             for path in test.get("root_paths", [])
@@ -505,6 +528,46 @@ def affected_test_recommendations(
     if not selected_command_provenance and candidate_command_provenance:
         selected_command_provenance.append(candidate_command_provenance[0])
         uncovered -= command_covered_roots(candidate_command_provenance[0])
+
+    # Root cover answers "does some test exercise every requested symbol?".
+    # It is not command closure: one test file can cover the only root while
+    # runnable direct tests in other files remain omitted. Direct candidates
+    # are capped at 12, so solve the residual minimum set cover exactly with a
+    # compact bitmask DP (O(commands * 2**direct_tests)) instead of applying a
+    # second greedy heuristic.
+    direct_ids = {str(item["id"]) for item in direct}
+    already_selected_commands = {str(entry["command"]) for entry in selected_command_provenance}
+    already_covered_direct = {
+        str(test.get("id", ""))
+        for entry in selected_command_provenance
+        for test in entry.get("tests", [])
+        if str(test.get("id", "")) in direct_ids
+    }
+    residual_direct = tuple(sorted(direct_ids - already_covered_direct))
+    residual_bit = {test_id: 1 << index for index, test_id in enumerate(residual_direct)}
+    cover_candidates: list[tuple[int, int, dict[str, object]]] = []
+    for index, entry in enumerate(candidate_command_provenance):
+        command = str(entry["command"])
+        if command in already_selected_commands:
+            continue
+        mask = 0
+        for test in entry.get("tests", []):
+            mask |= residual_bit.get(str(test.get("id", "")), 0)
+        if mask:
+            cover_candidates.append((index, mask, entry))
+
+    full_mask = (1 << len(residual_direct)) - 1
+    covers: dict[int, tuple[int, ...]] = {0: ()}
+    for candidate_index, mask, _entry in cover_candidates:
+        for covered_mask, choices in tuple(covers.items()):
+            combined = covered_mask | mask
+            proposal = (*choices, candidate_index)
+            incumbent = covers.get(combined)
+            if incumbent is None or (len(proposal), proposal) < (len(incumbent), incumbent):
+                covers[combined] = proposal
+    chosen_indices = set(covers.get(full_mask, ()))
+    selected_command_provenance.extend(entry for index, _mask, entry in cover_candidates if index in chosen_indices)
+
     structurally_uncovered = set(uncovered)
     execution_scope_covered: set[str] = set()
     for entry in selected_command_provenance:
@@ -513,22 +576,16 @@ def affected_test_recommendations(
         sources = {
             graph.nodes[test_id].source
             for test in entry.get("tests", [])
-            if (test_id := str(test.get("id", ""))) in graph.nodes
-            and graph.nodes[test_id].source
+            if (test_id := str(test.get("id", ""))) in graph.nodes and graph.nodes[test_id].source
         }
         for root in structurally_uncovered:
             root_node = graph.nodes.get(root)
             if root_node is not None and any(
-                _rust_test_module_calls_symbol(source, root_node.label)
-                for source in sources
+                _rust_test_module_calls_symbol(source, root_node.label) for source in sources
             ):
                 execution_scope_covered.add(root)
     uncovered -= execution_scope_covered
-    selected_commands = [
-        str(entry["command"])
-        for entry in selected_command_provenance
-    ]
-    direct_ids = {str(item["id"]) for item in direct}
+    selected_commands = [str(entry["command"]) for entry in selected_command_provenance]
     transitive_ids = {str(item["id"]) for item in transitive}
     selected_test_ids = {
         str(test.get("id", ""))
@@ -542,15 +599,13 @@ def affected_test_recommendations(
         return [
             str(entry["command"])
             for entry in selected_command_provenance
-            if any(
-                str(test.get("id", "")) in test_ids
-                for test in entry.get("tests", [])
-            )
+            if any(str(test.get("id", "")) in test_ids for test in entry.get("tests", []))
         ]
 
     return {
         "direct": direct,
         "transitive": transitive,
+        "structural_witnesses": structural_witnesses,
         "commands": selected_commands,
         "commands_by_role": {
             "direct_behavior_or_contract": selected_commands_covering(direct_ids),
@@ -559,9 +614,7 @@ def affected_test_recommendations(
         "command_provenance": selected_command_provenance,
         "command_selection": {
             "algorithm": (
-                "greedy_root_cover_v3_all_direct_tests"
-                if cover_all_direct_tests
-                else "greedy_root_cover_v3_narrow"
+                "greedy_root_cover_v3_all_direct_tests" if cover_all_direct_tests else "greedy_root_cover_v3_narrow"
             ),
             "candidate_count": len(candidate_command_provenance),
             "selected_count": len(selected_commands),
@@ -575,7 +628,9 @@ def affected_test_recommendations(
         },
         "omitted_direct": omitted_direct,
         "omitted_transitive": omitted_transitive,
+        "omitted_structural_witnesses": omitted_structural_witnesses,
     }
+
 
 def reconcile_semantic_retrieval_receipt(
     graph: Graph,
@@ -595,6 +650,7 @@ def reconcile_semantic_retrieval_receipt(
 
     facet_coverage = metadata.get("facet_coverage", {})
     structural_coverage = metadata.get("structural_facet_coverage", {})
+
     # Gate on *required* (content) facets only: pure query-shape facets
     # ("definition", "class") going unmatched must not force an abstention over
     # an answer the anchors carry (graybox F2). Falls back to the full
@@ -616,12 +672,7 @@ def reconcile_semantic_retrieval_receipt(
         *_required_unfulfilled(facet_coverage),
         *_required_unfulfilled(structural_coverage),
     ]
-    if (
-        repaired_facets
-        and not unfulfilled
-        and status == "incomplete"
-        and original_reason == "unfulfilled query facets"
-    ):
+    if repaired_facets and not unfulfilled and status == "incomplete" and original_reason == "unfulfilled query facets":
         status = "answerable"
         abstained = False
         reasons = []
@@ -655,9 +706,7 @@ def reconcile_semantic_retrieval_receipt(
         ]
         commands = [str(item) for item in affected.get("commands", ())]
         affected["evidence_status"] = (
-            "attributed"
-            if recommendations
-            else ("candidate_only" if commands else "no_evidence")
+            "attributed" if recommendations else ("candidate_only" if commands else "no_evidence")
         )
         if not recommendations:
             status = "incomplete"
@@ -720,24 +769,18 @@ def reconcile_semantic_retrieval_receipt(
             edge.source
             for edge in graph.edges
             if edge.active
-            and edge.type in {"calls", "references", "tests"}
+            and edge.type in _TEST_EVIDENCE_RELATIONS
             and edge.source in result.nodes
             and edge.target in result.starts
             and edge.source in graph.nodes
-            and _is_test_node(graph.nodes[edge.source])
+            and _is_runnable_test_node(graph.nodes[edge.source])
         }
         missing = sorted(packet_direct_tests - recommended_ids)
         if missing:
-            errors.append(
-                "packet contains direct test evidence omitted from affected_tests: "
-                + ", ".join(missing)
-            )
+            errors.append("packet contains direct test evidence omitted from affected_tests: " + ", ".join(missing))
         commands = [str(item) for item in affected.get("commands", ())]
         if commands and not recommended_ids:
-            errors.append(
-                "affected-test commands were emitted without attributed direct or "
-                "transitive test evidence"
-            )
+            errors.append("affected-test commands were emitted without attributed direct or transitive test evidence")
         provenance_commands = {
             str(item.get("command"))
             for item in affected.get("command_provenance", ())
@@ -745,47 +788,31 @@ def reconcile_semantic_retrieval_receipt(
         }
         missing_provenance = sorted(set(commands) - provenance_commands)
         if missing_provenance:
-            errors.append(
-                "affected-test commands lack provenance: " + ", ".join(missing_provenance)
-            )
+            errors.append("affected-test commands lack provenance: " + ", ".join(missing_provenance))
         remaining_output_facets: list[str] = []
-        for raw_label in (
-            facet_coverage.get("unfulfilled", ())
-            if isinstance(facet_coverage, dict)
-            else ()
-        ):
+        for raw_label in facet_coverage.get("unfulfilled", ()) if isinstance(facet_coverage, dict) else ():
             label = str(raw_label)
             terms = set(term_key(label).split())
             if not terms or terms - _AFFECTED_OUTPUT_TERMS:
                 continue
             selection = affected.get("command_selection", {})
-            requires_all_direct = bool(
-                {"all", "direct", "test"} <= terms
-                or {"all", "direct", "tests"} <= terms
-            )
+            requires_all_direct = bool({"all", "direct", "test"} <= terms or {"all", "direct", "tests"} <= terms)
             command_contract_met = bool(commands) and (
                 not requires_all_direct
                 or not isinstance(selection, dict)
                 or not selection.get("uncovered_direct_tests", ())
             )
             contradicted = (
-                (
-                    bool(terms & {"cargo", "command", "commands", "runnable", "run", "runs"})
-                    and command_contract_met
-                )
+                (bool(terms & {"cargo", "command", "commands", "runnable", "run", "runs"}) and command_contract_met)
                 or ("direct" in terms and bool(affected.get("direct")))
                 or ("transitive" in terms and bool(affected.get("transitive")))
-                or (
-                    bool(terms & {"affected", "behavioral", "test", "tests"})
-                    and bool(recommended_ids)
-                )
+                or (bool(terms & {"affected", "behavioral", "test", "tests"}) and bool(recommended_ids))
             )
             if contradicted:
                 remaining_output_facets.append(label)
         if remaining_output_facets:
             errors.append(
-                "affected-test evidence contradicts unfulfilled output facets: "
-                + ", ".join(remaining_output_facets)
+                "affected-test evidence contradicts unfulfilled output facets: " + ", ".join(remaining_output_facets)
             )
 
     metadata["semantic_validation"] = {
@@ -801,8 +828,10 @@ def reconcile_semantic_retrieval_receipt(
     }
     return tuple(errors)
 
+
 # Compatibility name for callers that adopted the first public spelling.
 reconcile_retrieval_receipt = reconcile_semantic_retrieval_receipt
+
 
 def reserve_affected_test_evidence(
     graph: Graph,
@@ -816,26 +845,23 @@ def reserve_affected_test_evidence(
     """Keep strongest direct test assertions in the rendered packet."""
     recommendations = affected_test_recommendations(graph, starts, nodes)
     direct_ids = [
+        str(item["id"]) for item in recommendations["direct"][:direct_limit] if str(item["id"]) in graph.nodes
+    ]
+    witness_ids = [
         str(item["id"])
-        for item in recommendations["direct"][:direct_limit]
+        for item in recommendations["structural_witnesses"][:direct_limit]
         if str(item["id"]) in graph.nodes
     ]
-    if not direct_ids:
+    if not direct_ids and not witness_ids:
         return nodes, edges
 
-    secondary_ids = {
-        str(item["id"])
-        for item in recommendations["transitive"][:6]
-        if str(item["id"]) in graph.nodes
-    }
-    retained_tests = set(direct_ids) | secondary_ids | set(starts)
+    secondary_ids = {str(item["id"]) for item in recommendations["transitive"][:6] if str(item["id"]) in graph.nodes}
+    retained_tests = set(direct_ids) | set(witness_ids) | secondary_ids | set(starts)
     out_nodes = {
-        node_id
-        for node_id in nodes
-        if not _is_test_node(graph.nodes[node_id]) or node_id in retained_tests
+        node_id for node_id in nodes if not _is_runnable_test_node(graph.nodes[node_id]) or node_id in retained_tests
     }
-    protected = set(starts) | set(direct_ids)
-    for node_id in direct_ids:
+    protected = set(starts) | set(direct_ids) | set(witness_ids)
+    for node_id in (*direct_ids, *witness_ids):
         if node_id in out_nodes:
             continue
         if plan.node_budget is not None and len(out_nodes) >= plan.node_budget:
@@ -850,11 +876,11 @@ def reserve_affected_test_evidence(
         for edge in edges
         if edge.source in out_nodes and edge.target in out_nodes
     }
-    direct_set = set(direct_ids)
+    direct_set = set(direct_ids) | set(witness_ids)
     for edge in graph.edges:
         if not edge.active or edge.source not in direct_set:
             continue
-        if edge.target not in out_nodes or edge.type not in {"calls", "references", "tests"}:
+        if edge.target not in out_nodes or edge.type not in _TEST_EVIDENCE_RELATIONS:
             continue
         edge_by_key.setdefault((edge.source, edge.target, edge.type), edge)
     return out_nodes, list(edge_by_key.values())

@@ -20,12 +20,17 @@
       "expected": ["select_symbols"]
     },
     {
-      "query": "what calls _node_recall",
+      "query": "what calls _resolve_node_expectation_ids",
       "expected": ["evaluate_graph"]
     },
     {
       "query": "what calls render_query_context",
-      "expected": ["cmd_query"]
+      "expected": [
+        "validate_queries",
+        "cmd_query",
+        "build_query_context",
+        "render_native_context"
+      ]
     },
     {
       "query": "RED TEST: these symbols do not exist and must score zero",

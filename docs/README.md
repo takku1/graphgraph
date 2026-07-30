@@ -42,6 +42,7 @@ How the pieces fit and the math they run.
 - [Relation Ontology](relation-ontology.md)
 - [Schema Alignment](schema-alignment.md)
 - [Frontend IR Strategy](frontend-ir-strategy.md)
+- [Receiver Type Resolution](receiver-type-resolution.md)
 - [Tensor Context Architecture](tensor_context_architecture.md)
 - [LLM-Native Context Graph](llm-native-context-graph.md)
 - [LLM-Native Platform](llm-native-platform.md)
@@ -58,21 +59,17 @@ selectable), which is distinct from the working platform
 `CpgEvidenceProvider` that emits control/data/type evidence when its pass is
 requested.
 
-## Findings — gray-box evaluation cycles
+## Operational findings — gray-box evaluation cycles
 
-Point-in-time empirical evaluations of the tool as an agent context source.
-These are historical measurements; later cycles supersede earlier numbers but
-do not rewrite them.
+Current empirical evaluation of the tool as an agent context source. It is
+self-contained and supersedes the removed cycle drafts.
 
-- [Cycle 1 — Gray-box evaluation](findings/2026-07-22-graybox-eval.md)
-- [Cycle 2 — "Use, then what-if" vision](findings/2026-07-22-graybox-cycle2-vision.md)
-- [Cycle 3 — Cross-language extraction](findings/2026-07-22-graybox-cycle3-crosslang.md)
-- [Cycle 4 — Differential re-test](findings/2026-07-23-graybox-cycle4-differential.md)
-- [Cycle 5 — Instrumentation](findings/2026-07-23-graybox-cycle5-instrumentation.md)
-- [Cycle 6 — Multi-language retrieval, latency, instrument trust](findings/2026-07-24-graybox-multilang-retrieval-and-latency.md)
-- [100% agent efficiency — four-property analysis](findings/2026-07-24-hundred-percent-agent-efficiency.md)
-- [Bug findings pass 5 — GG-NEW-001 (resolved)](findings/NEWFINDINGS5.md)
-- [Redis (C) — new language stratum; extraction vs ranking separation](findings/2026-07-25-cycle5-redis-c-language-stratum.md)
+- [Comprehensive gray-box evaluation after updates](findings/2026-07-27-graybox-comprehensive.md)
+- [The influence field, not the cover formula, is the failing stage](findings/2026-07-29-influence-field-coupling.md)
+- [Fixing the field did not rescue the cover — it raised the baseline](findings/2026-07-30-recoupled-cover-verdicts.md)
+- [The field has no measurable leverage on production ranking](findings/2026-07-30-coupling-has-no-production-leverage.md)
+- [Gray-box evaluation across six external repositories](findings/2026-07-30-graybox-multilang-critical.md)
+- [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons
 
@@ -105,11 +102,15 @@ These are hypotheses and drafts, not authoritative behavior.
 - [Lean4 / SymPy comparison](lean4_sympy_comparison.md)
 - [kiminotes](kiminotes.md)
 - [kiminotes — follow-up](kiminotes-followup.md)
-- [The Path to 10/10 — prescriptive gate roadmap](findings/2026-07-24-path-to-10.md)
 - [Context-graph maximization report](context_graph_maximization_report.md)
 - [Optimization roadmap](optimization-roadmap.md)
 - [Metric/component logic gaps](metric-component-logic-gaps.md)
 - [SWE-bench evaluation protocol](swe_bench_evaluation_protocol.md)
+- [Global project attention under finite compute](global_project_attention_research_proposal.md)
+- [Context-system research tournament](context_system_research_tournament.md)
+  - [executable claim ledger](../eval/context-system-research.json)
+  - [Phase 0 oracle](../benchmarks/context_graph/global_attention_phase0.py)
+  - [Phase 1 equal-token transfer screen](../benchmarks/context_graph/global_attention_phase1.py)
 
 ## Archive / scratch
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,13 +14,14 @@ from ..io import (
 from ..packets import packet_format_schema
 from ..packets.validation import validate_any
 from ..planning import plan_context, query_class_schema
-from ..retrieval import search_nodes
+from ..retrieval import encode_relation_micro, query_relations, search_nodes
 from ..scanner import DEFAULT_SCAN_MAX_NODES
 from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
 from ..services.freshness import (
     inspect_saved_graph_freshness,
     refresh_receipt,
     scope_freshness,
+    source_root_for_saved_graph,
 )
 from ..services.lifecycle import (
     refresh_saved_graph,
@@ -273,6 +275,37 @@ TOOLS = [
         },
     },
     {
+        "name": "query_relations",
+        "description": (
+            "Indexed exact one-hop caller/callee lookup with no planner or packet expansion. "
+            "Defaults to a tuple-oriented micro IR for model-facing latency and token cost; "
+            "use detailed only for human debugging. Separately reports saved-graph truncation, "
+            "call-topology coverage, and freshness. Pass sync=git to fuse a Git-delta refresh."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Exact node id, symbol label, or path::symbol."},
+                "direction": {"type": "string", "enum": ["callers", "callees"]},
+                "limit": {"type": "integer", "minimum": 0, "default": 20},
+                "include_tests": {"type": "boolean", "default": False, "description": "Include test callers/callees."},
+                "include_external": {
+                    "type": "boolean",
+                    "description": "Include external/builtin nodes. Default: false.",
+                },
+                "format": {"type": "string", "enum": ["micro", "detailed"], "default": "micro"},
+                "sync": {
+                    "type": "string",
+                    "enum": ["none", "git"],
+                    "default": "none",
+                    "description": "Fuse a Git-delta refresh before lookup; default none preserves the latency floor.",
+                },
+                "graph_path": {"type": "string", "description": "Path to graph; auto-detected if omitted."},
+            },
+            "required": ["target", "direction"],
+        },
+    },
+    {
         "name": "validate_packet",
         "description": (
             "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, gg, or "
@@ -399,6 +432,7 @@ RETRIEVAL_TOOL_NAMES = frozenset(
         "final_packet",
         "full_graph",
         "query_context",
+        "query_relations",
         "project_status",
         "validate_packet",
         "source_snippets",
@@ -471,6 +505,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(build_full_graph(args))
     if name == "query_context":
         return content(build_query_context(args))
+    if name == "query_relations":
+        return content(handle_query_relations(args))
     if name == "project_status":
         return content(handle_project_status(args))
     if name == "validate_packet":
@@ -681,6 +717,54 @@ def handle_select_symbols(args: dict[str, Any]) -> str:
     if mode == "select":
         payload["truncated"] = result.truncated
         payload["symbols"] = result.symbols
+    return _json(payload)
+
+
+def handle_query_relations(args: dict[str, Any]) -> str:
+    graph_path_str = args.get("graph_path")
+    graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
+    started = time.perf_counter()
+    sync_git = str(args.get("sync") or "none") == "git"
+    refresh_summary = None
+    freshness = "unchecked"
+    if sync_git:
+        source_root = source_root_for_saved_graph(graph_path)
+        status = refresh_saved_graph(
+            directory=source_root,
+            output_path=graph_path,
+            sync_git=True,
+        )
+        graph = status.graph
+        checked = inspect_saved_graph_freshness(
+            directory=source_root,
+            output_path=graph_path,
+        )
+        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
+        refresh_summary = {
+            "updated": len(status.changed_paths),
+            "removed": len(status.deleted_paths),
+            "write": status.built,
+            "fresh": freshness == "fresh",
+        }
+    else:
+        graph = load_any(graph_path)
+    result = query_relations(
+        graph,
+        str(args["target"]),
+        direction=str(args["direction"]),  # type: ignore[arg-type]
+        limit=int(args["limit"]) if args.get("limit") is not None else 20,
+        include_tests=bool(args.get("include_tests", False)),
+        include_external=bool(args.get("include_external", False)),
+        details=str(args.get("format") or "micro") == "detailed",
+        freshness=freshness,
+    )
+    if refresh_summary is not None and result.get("status") == "ok":
+        result["refresh"] = refresh_summary
+    if result.get("status") == "ok":
+        result["milliseconds"] = round((time.perf_counter() - started) * 1000, 3)
+    payload = encode_relation_micro(result) if str(args.get("format") or "micro") == "micro" else result
+    if result.get("status") == "ok" and isinstance(payload.get("r"), dict):
+        payload["r"]["ms"] = result["milliseconds"]
     return _json(payload)
 
 

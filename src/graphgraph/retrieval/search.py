@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from ..graph.core import Graph, Node
+from ..graph.coupling import EDGE_COUPLINGS, coupled_graph
 from . import git_utils
 from .models import Match
 from .scoping import _is_test_node
@@ -73,6 +74,16 @@ _BENCHMARK_QUERY_TERMS = frozenset({
 })
 _DOCUMENT_NODE_KINDS = frozenset({"section", "paragraph", "markdown", "concept", "rst", "html", "file", "text"})
 
+# Bounded natural-language -> code-vocabulary bridges. These are deliberately
+# directional: a user asking how results are "printed" commonly needs code
+# named write/render/emit/output, while a query about writing configuration
+# should not be broadened to every printer implementation. Additions require a
+# measured retrieval fixture and regression coverage; this is not a thesaurus.
+_CODE_QUERY_ALIASES: dict[str, frozenset[str]] = {
+    "argument": frozenset({"flag", "flags"}),
+    "print": frozenset({"emit", "output", "render", "write"}),
+}
+
 
 def saturating_boost(value: float, cap: float) -> float:
     """Smoothly bound a non-negative boost to ``cap`` without a hard cliff.
@@ -137,6 +148,18 @@ def lexical_forms(term: str) -> set[str]:
     return {form for form in forms if len(form) >= 3}
 
 
+def code_query_alias_forms(term: str) -> set[str]:
+    """Return measured NL-to-code aliases for a query term.
+
+    Inflection stripping is used only to locate the alias key (so ``printed``
+    reaches ``print``); ordinary code identifiers are otherwise not stemmed.
+    """
+    aliases: set[str] = set()
+    for form in lexical_forms(term):
+        aliases.update(_CODE_QUERY_ALIASES.get(form, ()))
+    return aliases
+
+
 @dataclass(frozen=True)
 class SearchIndexRow:
     node: Node
@@ -190,10 +213,19 @@ def search_nodes(
     ppr_mode: str = "auto",
     exact_fast_path: bool = False,
     exact_only: bool = False,
+    coupling: str = "directed",
 ) -> tuple[Match, ...]:
-    """Rank graph nodes with a deterministic lexical score."""
+    """Rank graph nodes with a deterministic lexical score.
+
+    ``coupling`` selects the edge orientation the personalized-PageRank signal
+    diffuses over, and nothing else: lexical scoring and the degree boost keep
+    reading the project's real edges, so the knob isolates the field rather
+    than reshaping every structural signal at once.
+    """
     if ppr_mode not in {"auto", "exact", "local"}:
         raise ValueError(f"unknown personalized PageRank mode: {ppr_mode}")
+    if coupling not in EDGE_COUPLINGS:
+        raise ValueError(f"unknown edge coupling: {coupling}")
     if exact_fast_path:
         raw = query.strip()
         if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"`", "'", '"'}:
@@ -240,6 +272,17 @@ def search_nodes(
     terms = tokenize(query)
     if not terms:
         return ()
+    # In "command line argument(s)", ``command`` and ``line`` form a compound
+    # modifier, not independent requests for subprocess or line-buffer code.
+    # Scoring them independently made those two subsystems dominate CLI parser
+    # paths. The argument->flag bridge below carries the compound's concrete
+    # implementation vocabulary; parse/parsed remains ordinary evidence.
+    if (
+        "command" in terms
+        and "line" in terms
+        and any("argument" in lexical_forms(term) for term in terms)
+    ):
+        terms = tuple(term for term in terms if term not in {"command", "line"})
     # label_term_sequence/label_exact_sequence (built in _search_index) keep
     # stopwords, since a label like "how to deploy" needs "how"/"to" to
     # reconstruct its real word sequence. `terms` above strips them, so a
@@ -306,10 +349,11 @@ def search_nodes(
             and len(graph.nodes) > LOCAL_PPR_GRAPH_THRESHOLD
             and exact_seed
         )
+        field_graph = coupled_graph(graph, coupling)
         pagerank_scores = (
-            graph.localized_personalized_pagerank(personalization)
+            field_graph.localized_personalized_pagerank(personalization)
             if use_local_ppr
-            else graph.personalized_pagerank(personalization)
+            else field_graph.personalized_pagerank(personalization)
         )
     else:
         pagerank_scores = graph.pagerank()
@@ -342,8 +386,9 @@ def search_nodes(
             form for token in haystack_terms for form in (lexical_forms(token) if document_node else {token})
         }
         for term in terms:
+            alias_forms = set() if document_node else code_query_alias_forms(term)
             term_forms = (
-                {term}
+                {term} | alias_forms
                 if not document_node or (supporting_test and term in TEST_QUERY_TERMS)
                 else lexical_forms(term)
             )
@@ -364,6 +409,10 @@ def search_nodes(
                 score += 4.0
                 reasons.append(f"label:{term}")
                 matched_terms.add(term)
+            elif alias_forms & expanded_label_terms:
+                score += 4.0
+                reasons.append(f"label_alias:{term}")
+                matched_terms.add(term)
             elif term_forms & expanded_label_terms:
                 score += 4.0
                 reasons.append(f"label_inflection:{term}")
@@ -379,6 +428,10 @@ def search_nodes(
             elif node.path and term in path_name_terms:
                 score += 3.0
                 reasons.append(f"path:{term}")
+                matched_terms.add(term)
+            elif node.path and alias_forms & expanded_path_terms:
+                score += 3.0
+                reasons.append(f"path_alias:{term}")
                 matched_terms.add(term)
             elif node.path and term_forms & expanded_path_terms:
                 score += 3.0
@@ -404,6 +457,10 @@ def search_nodes(
             if term in haystack_terms and not any(reason.endswith(f":{term}") for reason in reasons):
                 score += 1.0
                 reasons.append(f"term:{term}")
+                matched_terms.add(term)
+            elif alias_forms & expanded_haystack_terms and not any(reason.endswith(f":{term}") for reason in reasons):
+                score += 1.0
+                reasons.append(f"term_alias:{term}")
                 matched_terms.add(term)
             elif term_forms & expanded_haystack_terms and not any(reason.endswith(f":{term}") for reason in reasons):
                 score += 1.0
@@ -445,9 +502,12 @@ def search_nodes(
                 elif len(label_query_matches := {
                     term for term in query_terms
                     if (
-                        {term}
-                        if not document_node or (supporting_test and term in TEST_QUERY_TERMS)
-                        else lexical_forms(term)
+                        (
+                            {term}
+                            if not document_node or (supporting_test and term in TEST_QUERY_TERMS)
+                            else lexical_forms(term)
+                        )
+                        | (code_query_alias_forms(term) if not document_node else set())
                     ) & expanded_label_terms
                 }) >= 2:
                     score += 8.0 * (len(label_query_matches) / len(query_terms))
@@ -588,7 +648,7 @@ def _candidate_rows(graph: Graph, terms: tuple[str, ...], scopes: tuple[str, ...
     by_term = _search_token_index(graph)
     candidate_ids: set[str] = set()
     for term in terms:
-        for form in lexical_forms(term):
+        for form in lexical_forms(term) | code_query_alias_forms(term):
             candidate_ids.update(by_term.get(form, ()))
     if not candidate_ids:
         return rows

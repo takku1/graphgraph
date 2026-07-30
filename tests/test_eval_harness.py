@@ -42,10 +42,7 @@ class RankDeterminismTest(unittest.TestCase):
         # tie, so a non-total order would be visibly seed-dependent.
         from graphgraph.analysis.eval import rank_nodes_by_subgraph_pagerank
 
-        nodes = {
-            f"N{i}": Node(f"N{i}", f"sym_{i}", "function", f"m{i}.py")
-            for i in range(20)
-        }
+        nodes = {f"N{i}": Node(f"N{i}", f"sym_{i}", "function", f"m{i}.py") for i in range(20)}
         graph = Graph(nodes=nodes, edges=[])
         node_set = set(nodes)
 
@@ -103,6 +100,26 @@ class EvalTasksLoadingTest(unittest.TestCase):
 class EvalHarnessTest(unittest.TestCase):
     """The harness must be able to fail. A green number it cannot lose is a lie."""
 
+    def test_code_expectation_does_not_expand_to_same_label_concept_shadow(self) -> None:
+        from graphgraph.analysis.eval import _resolve_node_expectation_ids
+
+        graph = Graph(
+            nodes={
+                "CODE": Node("CODE", "cmd_query", "function", "src/cli.py"),
+                "SHADOW": Node("SHADOW", "cmd_query", "concept", ""),
+            }
+        )
+        node_keys = {node_id: {node.id, node.label, node.path} for node_id, node in graph.nodes.items()}
+
+        self.assertEqual(
+            _resolve_node_expectation_ids(graph, node_keys, "cmd_query"),
+            {"CODE"},
+        )
+        self.assertEqual(
+            _resolve_node_expectation_ids(graph, node_keys, "SHADOW"),
+            {"SHADOW"},
+        )
+
     def test_nonexistent_expected_symbols_score_zero(self) -> None:
         # The red test. This reported node_recall 1.0 for symbols that do not
         # exist anywhere in the graph, because `expected` was read under a
@@ -111,26 +128,71 @@ class EvalHarnessTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             graph_path = _graph_path(root)
-            tasks = load_eval_tasks(_tasks(root, [{
-                "query": "database connection pooling retry backoff",
-                "expected": ["zzz_nonexistent_alpha", "zzz_nonexistent_beta"],
-            }]))
+            tasks = load_eval_tasks(
+                _tasks(
+                    root,
+                    [
+                        {
+                            "query": "database connection pooling retry backoff",
+                            "expected": ["zzz_nonexistent_alpha", "zzz_nonexistent_beta"],
+                        }
+                    ],
+                )
+            )
             result = evaluate_graph(graph_path, tasks)[0]
 
         self.assertEqual(result.node_recall, 0.0)
         self.assertTrue(result.scored)
+        self.assertEqual(result.expected_resolved_count, 0)
+        self.assertEqual(result.expected_unresolved_count, 2)
+        self.assertEqual(
+            result.expected_unresolved,
+            ("zzz_nonexistent_alpha", "zzz_nonexistent_beta"),
+        )
+        self.assertIn("match no node", result.note)
 
     def test_real_expected_symbols_score_above_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             graph_path = _graph_path(root)
-            tasks = load_eval_tasks(_tasks(root, [{
-                "query": "what calls full_dispatch_request",
-                "expected": ["wsgi_app"],
-            }]))
+            tasks = load_eval_tasks(
+                _tasks(
+                    root,
+                    [
+                        {
+                            "query": "what calls full_dispatch_request",
+                            "expected": ["wsgi_app"],
+                        }
+                    ],
+                )
+            )
             result = evaluate_graph(graph_path, tasks)[0]
 
         self.assertGreater(result.node_recall or 0.0, 0.0)
+        self.assertEqual(result.expected_resolved_count, 1)
+        self.assertEqual(result.expected_unresolved_count, 0)
+        self.assertEqual(result.expected_unresolved, ())
+
+    def test_valid_ground_truth_miss_is_not_reported_as_unresolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = _graph_path(root)
+            tasks = load_eval_tasks(
+                _tasks(
+                    root,
+                    [
+                        {
+                            "query": "words that deliberately retrieve nothing relevant",
+                            "expected": ["do_teardown_request"],
+                        }
+                    ],
+                )
+            )
+            result = evaluate_graph(graph_path, tasks, max_nodes=1)[0]
+
+        self.assertEqual(result.expected_resolved_count, 1)
+        self.assertEqual(result.expected_unresolved_count, 0)
+        self.assertEqual(result.expected_unresolved, ())
 
     def test_missing_expectations_are_reported_unscored_not_perfect(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,10 +208,50 @@ class EvalHarnessTest(unittest.TestCase):
     def test_expected_nodes_key_still_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            tasks = load_eval_tasks(_tasks(root, [{
-                "query": "q", "expected_nodes": ["wsgi_app"],
-            }]))
+            tasks = load_eval_tasks(
+                _tasks(
+                    root,
+                    [
+                        {
+                            "query": "q",
+                            "expected_nodes": ["wsgi_app"],
+                        }
+                    ],
+                )
+            )
         self.assertEqual(tasks[0].expected_nodes, ("wsgi_app",))
+
+    def test_explicit_answerability_label_is_parsed_without_fake_nodes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks = load_eval_tasks(
+                _tasks(
+                    root,
+                    [
+                        {
+                            "query": "impossible thing",
+                            "expected_answerable": False,
+                        }
+                    ],
+                )
+            )
+        self.assertEqual(tasks[0].expected_nodes, ())
+        self.assertIs(tasks[0].expected_answerable, False)
+
+    def test_invalid_answerability_label_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = _tasks(
+                root,
+                [
+                    {
+                        "query": "bad label",
+                        "expected_answerable": "false",
+                    }
+                ],
+            )
+            with self.assertRaisesRegex(ValueError, "expected_answerable"):
+                load_eval_tasks(path)
 
     def test_query_class_is_routed_not_a_fixed_default(self) -> None:
         # Every task previously classified `blast_radius`, so a suite could not
@@ -157,10 +259,15 @@ class EvalHarnessTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             graph_path = _graph_path(root)
-            tasks = load_eval_tasks(_tasks(root, [
-                {"query": "what calls full_dispatch_request", "expected": ["wsgi_app"]},
-                {"query": "how does request teardown work overall", "expected": ["do_teardown_request"]},
-            ]))
+            tasks = load_eval_tasks(
+                _tasks(
+                    root,
+                    [
+                        {"query": "what calls full_dispatch_request", "expected": ["wsgi_app"]},
+                        {"query": "how does request teardown work overall", "expected": ["do_teardown_request"]},
+                    ],
+                )
+            )
             classes = {r.query_class for r in evaluate_graph(graph_path, tasks)}
 
         self.assertGreater(len(classes), 1, f"routing did not discriminate: {classes}")
@@ -196,6 +303,19 @@ class SelfEvalSuiteTest(unittest.TestCase):
         red = [t for t in tasks if any("zzz_nonexistent" in item for item in t.expected_nodes)]
         self.assertTrue(red, "the suite must retain a task that is designed to fail")
 
+    def test_render_query_context_oracle_covers_every_production_caller(self) -> None:
+        tasks = load_eval_tasks(self.SUITE)
+        task = next(t for t in tasks if t.query == "what calls render_query_context")
+        self.assertEqual(
+            set(task.expected_nodes),
+            {
+                "validate_queries",
+                "cmd_query",
+                "build_query_context",
+                "render_native_context",
+            },
+        )
+
     def test_red_task_scores_zero_against_the_real_graph(self) -> None:
         # Skips rather than fails when the graph has not been built, so the
         # suite never blocks a fresh checkout -- but runs for real in any
@@ -212,6 +332,5 @@ class SelfEvalSuiteTest(unittest.TestCase):
         scored = [r for r in results if "RED TEST" not in r.query]
         self.assertTrue(
             all((r.node_recall or 0.0) > 0.0 for r in scored),
-            f"hand-verified expectations regressed: "
-            f"{[(r.query, r.node_recall) for r in scored if not r.node_recall]}",
+            f"hand-verified expectations regressed: {[(r.query, r.node_recall) for r in scored if not r.node_recall]}",
         )

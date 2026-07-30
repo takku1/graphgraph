@@ -30,6 +30,7 @@ SCRIPTS = [
     "minmax_analysis.py",
     "adaptive_threshold_sweep.py",
     "mathematical_limit_search.py",
+    "global_attention_phase0.py",
     "real_project_packet_balance.py",
     "hop_frontier_benchmark.py",
     "adaptive_hop_policy_benchmark.py",

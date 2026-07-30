@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,30 @@ def test_eval_calibration_pairs_use_labeled_recall_not_runtime_absence() -> None
     ]
 
 
+def test_eval_calibration_excludes_unresolved_ground_truth() -> None:
+    invalid = replace(
+        _eval_result(confidence=0.1, node_recall=0.0, edge_recall=None),
+        expected_unresolved_count=1,
+        expected_unresolved=("missing/path",),
+    )
+    valid = _eval_result(confidence=0.9, node_recall=1.0, edge_recall=None)
+
+    assert calibration_pairs([invalid, valid]) == [(0.9, True)]
+
+    payload = json.loads(results_with_calibration_to_json([invalid, valid], bins=2))
+    assert payload["calibration"]["count"] == 1
+    assert payload["calibration"]["excluded_unresolved_expectation_tasks"] == 1
+
+
+def test_eval_calibration_uses_explicit_impossible_query_label() -> None:
+    negative = replace(
+        _eval_result(confidence=0.1, node_recall=None, edge_recall=None),
+        expected_answerable=False,
+    )
+
+    assert calibration_pairs([negative]) == [(0.1, False)]
+
+
 def test_eval_calibration_envelope_keeps_results_and_reports_label_policy() -> None:
     results = [
         _eval_result(confidence=0.9, node_recall=1.0, edge_recall=None),
@@ -138,9 +163,12 @@ def test_eval_calibration_envelope_keeps_results_and_reports_label_policy() -> N
     assert len(payload["results"]) == 2
     assert payload["calibration"]["count"] == 2
     assert payload["calibration"]["label_policy"] == {
-        "source": "declared eval expectations",
+        "source": "declared eval expectations plus explicit impossible-query labels",
         "complete_recall": 1.0,
-        "rule": "all scored node/edge recall values meet the threshold",
+        "rule": (
+            "expected_answerable=false is negative; otherwise all scored "
+            "node/edge recall values must meet the threshold"
+        ),
     }
 
 
@@ -169,6 +197,22 @@ def test_eval_parser_exposes_opt_in_calibration_receipt() -> None:
     assert args.calibration is True
     assert args.calibration_bins == 4
     assert args.complete_recall == 0.8
+
+
+def test_eval_parser_exposes_source_mode() -> None:
+    args = build_parser().parse_args(
+        [
+            "eval",
+            "--graph",
+            "graph.gg",
+            "--tasks",
+            "tasks.json",
+            "--source-mode",
+            "off",
+        ]
+    )
+
+    assert args.source_mode == "off"
 
 
 def test_eval_command_emits_calibration_envelope(

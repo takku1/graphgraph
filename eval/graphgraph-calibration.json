@@ -2,8 +2,8 @@
   "_comment": [
     "Labeled calibration set for graphgraph's answer confidence (path-to-10 #3).",
     "Hand-verified against this repository. A mix of clearly-answerable tasks",
-    "(a named symbol or a real caller relationship) and impossible tasks (symbols",
-    "that do not exist) gives the (confidence, outcome) spread an isotonic",
+    "(a named symbol or a real caller relationship) and impossible tasks",
+    "explicitly labeled expected_answerable=false gives the (confidence, outcome) spread an isotonic",
     "recalibration needs. Run:",
     "  graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-calibration.json --calibration"
   ],
@@ -24,13 +24,13 @@
     {"query": "what calls render_query_context", "query_class": "reverse_lookup", "expected": ["cmd_query"]},
     {"query": "what calls _node_recall", "query_class": "reverse_lookup", "expected": ["evaluate_graph"]},
     {"query": "what calls caller_evidence_quality", "query_class": "reverse_lookup", "expected": ["select_symbols"]},
-    {"query": "zzz_nonexistent_symbol_alpha", "query_class": "direct_lookup", "expected": ["zzz_nonexistent_symbol_alpha"]},
-    {"query": "quantum_flux_capacitor_engine", "query_class": "direct_lookup", "expected": ["quantum_flux_capacitor_engine"]},
-    {"query": "frobnicate_the_widget_manifold", "query_class": "direct_lookup", "expected": ["frobnicate_the_widget_manifold"]},
-    {"query": "hyperdrive_scheduler_heuristic", "query_class": "direct_lookup", "expected": ["hyperdrive_scheduler_heuristic"]},
-    {"query": "what calls nonexistent_teleport_function", "query_class": "reverse_lookup", "expected": ["nonexistent_teleport_function"]},
-    {"query": "banana_phone_orchestrator", "query_class": "direct_lookup", "expected": ["banana_phone_orchestrator"]},
-    {"query": "what calls imaginary_blockchain_miner", "query_class": "reverse_lookup", "expected": ["imaginary_blockchain_miner"]},
-    {"query": "wibble_wobble_transmogrifier", "query_class": "direct_lookup", "expected": ["wibble_wobble_transmogrifier"]}
+    {"query": "zzz_nonexistent_symbol_alpha", "query_class": "direct_lookup", "expected_answerable": false},
+    {"query": "quantum_flux_capacitor_engine", "query_class": "direct_lookup", "expected_answerable": false},
+    {"query": "frobnicate_the_widget_manifold", "query_class": "direct_lookup", "expected_answerable": false},
+    {"query": "hyperdrive_scheduler_heuristic", "query_class": "direct_lookup", "expected_answerable": false},
+    {"query": "what calls nonexistent_teleport_function", "query_class": "reverse_lookup", "expected_answerable": false},
+    {"query": "banana_phone_orchestrator", "query_class": "direct_lookup", "expected_answerable": false},
+    {"query": "what calls imaginary_blockchain_miner", "query_class": "reverse_lookup", "expected_answerable": false},
+    {"query": "wibble_wobble_transmogrifier", "query_class": "direct_lookup", "expected_answerable": false}
   ]
 }

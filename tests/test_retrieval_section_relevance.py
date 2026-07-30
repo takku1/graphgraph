@@ -1451,7 +1451,10 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         )
         self.assertEqual(
             affected["command_selection"]["superseded_commands"],
-            ["cargo test -p locus-engine both_contracts --lib"],
+            [
+                "cargo test -p locus-engine both_contracts --lib",
+                "cargo test -p locus-engine malformed_contract --lib",
+            ],
         )
 
     def test_zero_concept_links_are_declared_unavailable_with_threshold(self) -> None:
@@ -1490,12 +1493,27 @@ class SectionTitleInQueryBoostTest(unittest.TestCase):
 
         graph = Graph(
             nodes={
-                "sec": Node("sec", "Packet Formats", "section", "docs/architecture.md",
-                            summary="The gg and gg_lex packet formats."),
-                "fn1": Node("fn1", "render_packet", "function", "src/pkg/render.py",
-                            summary="render a packet in a chosen format"),
-                "fn2": Node("fn2", "choose_packet", "function", "src/pkg/plan.py",
-                            summary="choose the packet format for a query"),
+                "sec": Node(
+                    "sec",
+                    "Packet Formats",
+                    "section",
+                    "docs/architecture.md",
+                    summary="The gg and gg_lex packet formats.",
+                ),
+                "fn1": Node(
+                    "fn1",
+                    "render_packet",
+                    "function",
+                    "src/pkg/render.py",
+                    summary="render a packet in a chosen format",
+                ),
+                "fn2": Node(
+                    "fn2",
+                    "choose_packet",
+                    "function",
+                    "src/pkg/plan.py",
+                    summary="choose the packet format for a query",
+                ),
             },
             edges=[],
         )
@@ -1525,8 +1543,7 @@ class SectionTitleInQueryBoostTest(unittest.TestCase):
         # them. When several sections are explicitly named, all become roots.
         titles = ["Native Storage Contract", "Packet Formats", "Query Classes", "Constraint Policies"]
         nodes = {
-            f"s{i}": Node(f"s{i}", title, "section", "docs/architecture.md",
-                          summary=f"about {title.lower()}")
+            f"s{i}": Node(f"s{i}", title, "section", "docs/architecture.md", summary=f"about {title.lower()}")
             for i, title in enumerate(titles)
         }
         graph = Graph(nodes=nodes, edges=[])

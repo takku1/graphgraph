@@ -5,14 +5,14 @@
     "  graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-doc-authority-target.json",
     "",
     "Purpose: measure whether a question about the *current* architecture and",
-    "the *latest* findings surfaces the authoritative, most-recent documents",
+    "the *latest* review surfaces the authoritative, most-recent documents",
     "rather than drifting into the large truncated roadmap (planned-work.md) or",
     "code. Expectations are hand-verified against docs/architecture.md section",
-    "headings and the newest gray-box cycle document (cycle 3).",
+    "headings and the newest findings document (the 2026-07-26 read-only review).",
     "",
     "Recorded baseline (2026-07-23, before authority-aware doc anchoring/caps):",
     "  Task A current-architecture : node_recall 0.167 (1/6), mrr 0.026, status partial",
-    "  Task B latest-findings      : node_recall 1.000,        mrr 0.023, status partial",
+    "  Historical Task B baseline  : node_recall 1.000,        mrr 0.023, status partial",
     "Task A shows the drift directly (architecture.md contributes ~1 node); Task",
     "B shows the newest cycle doc is present but buried (~rank 44). Promote these",
     "tasks into eval/graphgraph-self.json only once tuning lifts recall AND rank",
@@ -31,9 +31,9 @@
       ]
     },
     {
-      "query": "what are the latest gray-box evaluation findings",
+      "query": "what are the latest codebase review findings",
       "expected": [
-        "findings/2026-07-24-graybox-multilang-retrieval-and-latency.md"
+        "findings/2026-07-26-read-only-codebase-review.md"
       ]
     }
   ]

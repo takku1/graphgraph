@@ -71,9 +71,39 @@ medians on a 14.5k-node Rust workspace.
 
 | Question shape | Tool | Cost |
 | --- | --- | --- |
-| One named symbol: callers, callees, blast radius, "how does X work" | `query_context` / `query` | 0.4s fast path, 2.4s ranked |
+| Exact named symbol, one-hop callers/callees | `query_relations` / `relations` | 1–2 ms warm; tuple IR |
+| One named symbol: blast radius, path, or "how does X work" | `query_context` / `query` | 0.4s fast path, 2.4s ranked |
 | A predicate over **many** symbols: "which functions have no production caller", counts, existence | `select` | ~0.5s |
 | Exact literal string, no relationship | `rg` / `git grep` | — |
+
+Exact one-hop MCP payloads:
+
+```json
+{"target":"Type::method","direction":"callers"}
+{"target":"Type::method","direction":"callers","sync":"git"}
+```
+
+Use the second shape when edits may make the saved graph stale or when an
+absence/count must be licensed. CLI equivalent: `graphgraph relations
+Type::method --direction callers --sync git`. The default omits all Git and
+manifest work and remains the latency floor.
+
+Micro IR v2 decodes without outside prose: `d` is direction; `tk` names target
+tuple `t`; `k` names neighbor tuples `n`; `r` contains matched/eligible/
+returned/filtered/completeness/freshness/timing receipts. Optional `a` entries
+are executable routing opcodes:
+
+- `search_nodes` / `retry_exact_id_or_path_symbol`: resolve a missing target;
+- `retry_candidate_id`: disambiguate with an emitted candidate ID;
+- `raise_limit`: rerun with a larger limit before reporting a complete list;
+- `sync_if_completeness_required`: add `sync: "git"` / `--sync git`;
+- `verify_absence_or_count`: topology extraction is partial or unknown, so
+  verify an absence/count against source before asserting it.
+- `rebuild_graph`: the saved graph uses an incompatible extractor identity;
+- `project_status`: freshness remained stale after the requested sync.
+
+`answer_complete=true` requires all three gates: no response truncation,
+complete call-topology telemetry, and checked freshness.
 
 `query` **cannot answer set predicates at all** — it anchors on named nodes. Do
 not emulate one by looping `query` over a symbol list; that is the failure this
@@ -101,9 +131,12 @@ answer is always the whole predicate.
 
 ## Decision rules
 
-1. Natural-language structural question about a named symbol: call
-   `query_context` first; do not preselect IDs unless the user supplied exact
-   files/symbols.
+1. Exact symbol plus one-hop caller/callee question: call `query_relations`
+   (or CLI `relations`) first. Its micro tuple IR is the low-latency/token lane;
+   tests are opt-in. Add `sync: "git"` / `--sync git` when freshness is needed;
+   otherwise it is explicitly unchecked. Follow any returned `a` action
+   opcodes before claiming a complete list, count, or absence. For broader or
+   natural-language structural questions, call `query_context` first.
 2. Missing graph: audit exclusions, `build_graph`/`scan`, validate, inspect the
    build receipt, then query. Do not let `context` auto-build before the audit.
 3. Exact known string with no relationship question: `rg`/`git grep` is valid.
@@ -122,6 +155,9 @@ answer is always the whole predicate.
    symbol/document truncation. CLI scans emit timed phases, document counts,
    slowest documents, and source-concept timings to stderr. MCP `build_graph`
    returns `frontend`, `exclusions`, and a machine-readable `phase_profile`.
+   `describe_frontends` reports per-language `ready_languages` and
+   `unavailable_languages`; aggregate Tree-sitter availability does not imply
+   every optional grammar is installed.
 8. For documentation answers, require grounded section/paragraph facts. Treat
    `document_warning`, zero grounded doc nodes, or unfulfilled requested phrases
    as a retrieval failure to narrow, refresh, or report—not a successful heading
@@ -135,6 +171,7 @@ answer is always the whole predicate.
 
 | Need | MCP | CLI |
 | --- | --- | --- |
+| Exact one-hop callers/callees, low-token IR | `query_relations` | `relations <symbol> --direction callers\|callees [--sync git]` |
 | Natural-language packet, optionally fresh | `query_context` | `context "<query>" [--sync git] [--json]` |
 | Build after exclusion audit | `build_graph` | `scan --depth symbols --docs --exclude <dirs...>` |
 | Exact edited/deleted splice | `query_context` with changed/deleted paths | `update --files ...` / `remove --files ...` |
@@ -189,6 +226,7 @@ you may assert, not as decoration.
 | `!  STALE GRAPH: N changed ...` (`status`, `query`) | Files moved since the scan | Refresh before trusting an absence: `context --sync git` |
 | `!  STALE: counts were measured by a full scan ...` (`status`) | Member-call telemetry was carried forward | The resolution numbers describe an older scan, not this graph |
 | `Unresolved receivers by shape: ...` (`status`) | Why receivers went untyped | Diagnostic for resolver work. Bucket **size is not addressability** — most large buckets iterate generic/stdlib types that can never name a repo symbol |
+| `a` in relation micro IR | Required next actions before a stronger claim | Execute the listed opcode: sync, raise the limit, disambiguate, search, or verify absence/count against source |
 
 Run `graphgraph status` for the current repository-specific member-call
 resolution rate and telemetry scope. A symbol reported with zero callers may

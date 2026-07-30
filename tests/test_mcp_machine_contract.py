@@ -17,6 +17,7 @@ TOOL_NAMES = (
     "full_graph",
     "query_context",
     "project_status",
+    "query_relations",
     "validate_packet",
     "source_snippets",
     "build_graph",
@@ -67,6 +68,7 @@ BASELINE_TOOL_CHARS = {
     "final_packet": 1605,
     "full_graph": 898,
     "query_context": 4217,
+    "query_relations": 900,
     "project_status": 547,
     "validate_packet": 611,
     "source_snippets": 831,
@@ -98,6 +100,7 @@ class McpMachineContractTest(unittest.TestCase):
                 "plan_context": ("query_class",),
                 "final_packet": ("query_class", "starts"),
                 "query_context": ("query",),
+                "query_relations": ("target", "direction"),
                 "update_graph_files": ("paths",),
                 "remove_graph_files": ("paths",),
                 "search_nodes": ("query",),
@@ -121,6 +124,11 @@ class McpMachineContractTest(unittest.TestCase):
                     "source_mode": ("auto", "off", "all"),
                     "depth": ("files", "symbols"),
                     "frontend": ("auto", "regex", "tree_sitter"),
+                    "sync": ("none", "git"),
+                },
+                "query_relations": {
+                    "direction": ("callers", "callees"),
+                    "format": ("micro", "detailed"),
                     "sync": ("none", "git"),
                 },
                 "build_graph": {
@@ -148,6 +156,12 @@ class McpMachineContractTest(unittest.TestCase):
             {name: contract["defaults"] for name, contract in snapshot.items() if contract["defaults"]},
             {
                 "query_context": {"query_class": "auto"},
+                "query_relations": {
+                    "limit": 20,
+                    "include_tests": False,
+                    "format": "micro",
+                    "sync": "none",
+                },
                 "compile_context": {"query_class": "auto", "packet": "gg"},
                 "repair_context": {"max_nodes": 30, "hops": 2},
                 "graph_change": {"impact_hops": 2},
@@ -161,18 +175,13 @@ class McpMachineContractTest(unittest.TestCase):
 
     def test_routing_and_safety_cues_survive_compaction(self) -> None:
         descriptions = {tool["name"]: tool["description"].lower() for tool in TOOLS}
-        self.assertTrue(
-            all(description.startswith("act:") for description in descriptions.values())
-        )
+        self.assertTrue(all(description.startswith("act:") for description in descriptions.values()))
         self.assertFalse(
-            any(
-                "description" in spec
-                for tool in TOOLS
-                for spec in tool["inputSchema"].get("properties", {}).values()
-            )
+            any("description" in spec for tool in TOOLS for spec in tool["inputSchema"].get("properties", {}).values())
         )
         cues = {
             "query_context": ("natural-language", "node ids"),
+            "query_relations": ("one-hop", "complete_within_graph"),
             "final_packet": ("starts", "packet"),
             "source_snippets": ("source", "code lines"),
             "project_status": ("status", "validity"),
@@ -191,6 +200,7 @@ class McpMachineContractTest(unittest.TestCase):
             "remove_graph_files": ("removed", "prior"),
             "build_graph": ("exclusions",),
             "select_symbols": ("caller_evidence_complete", "upper bound"),
+            "query_relations": ("call_topology_status",),
         }
         for tool, required_cues in safety.items():
             for cue in required_cues:
@@ -198,9 +208,9 @@ class McpMachineContractTest(unittest.TestCase):
 
     def test_pre_compaction_size_baseline_is_recorded_per_tool(self) -> None:
         receipt = tool_contract_size_receipt(TOOLS)
-        self.assertEqual(receipt["tools"], 22)
+        self.assertEqual(receipt["tools"], 23)
         self.assertLessEqual(receipt["aggregate_chars"], MACHINE_CONTRACT_CHAR_CEILING)
-        self.assertLessEqual(receipt["proxy_tokens"], 2_463)
+        self.assertLessEqual(receipt["proxy_tokens"], 2_600)
         for name, baseline in BASELINE_TOOL_CHARS.items():
             self.assertLessEqual(receipt["per_tool_chars"][name], baseline, name)
 

@@ -599,8 +599,7 @@ class PacketPriorityTest(unittest.TestCase):
         )
 
     def test_reverse_priority_sorts_production_callers_before_tests(self) -> None:
-        # ids are path-derived, so src_ sorts before tests_ -- the callers an
-        # agent means come first.
+        # The callers an agent means come before test-only evidence.
         graph = Graph(
             nodes={
                 "src_pkg_t": Node("src_pkg_t", "t", "function", "src/pkg/t.py"),
@@ -612,8 +611,68 @@ class PacketPriorityTest(unittest.TestCase):
                 Edge("src_pkg_caller", "src_pkg_t", "calls"),
             ],
         )
-        priority = packet_priority(("src_pkg_t",), set(graph.nodes), list(graph.edges), "reverse_lookup")
+        priority = packet_priority(
+            ("src_pkg_t",),
+            set(graph.nodes),
+            list(graph.edges),
+            "reverse_lookup",
+            graph=graph,
+        )
         self.assertEqual(priority[0], "src_pkg_caller")
+
+    def test_reverse_priority_sorts_production_callers_before_benchmarks(self) -> None:
+        # Self-eval regression: alphabetic ids put benchmarks/ before src/ and
+        # buried cmd_query beneath four timing helpers for
+        # "what calls render_query_context".
+        graph = Graph(
+            nodes={
+                "target": Node("target", "target", "function", "src/pkg/target.py"),
+                "bench": Node(
+                    "bench",
+                    "run_benchmark",
+                    "function",
+                    "benchmarks/context_graph/query_benchmark.py",
+                ),
+                "cli": Node("cli", "cmd_query", "function", "src/pkg/cli.py"),
+            },
+            edges=[
+                Edge("bench", "target", "calls"),
+                Edge("cli", "target", "calls"),
+            ],
+        )
+
+        priority = packet_priority(
+            ("target",),
+            set(graph.nodes),
+            list(graph.edges),
+            "reverse_lookup",
+            graph=graph,
+        )
+
+        self.assertEqual(priority, ("cli", "bench"))
+
+    def test_reverse_priority_sorts_direct_calls_before_import_containers(self) -> None:
+        graph = Graph(
+            nodes={
+                "target": Node("target", "target", "function", "src/z_target.py"),
+                "container": Node("container", "a_module.py", "python", "src/a_module.py"),
+                "caller": Node("caller", "real_caller", "function", "src/z_caller.py"),
+            },
+            edges=[
+                Edge("container", "target", "imports_from"),
+                Edge("caller", "target", "calls"),
+            ],
+        )
+
+        priority = packet_priority(
+            ("target",),
+            set(graph.nodes),
+            list(graph.edges),
+            "reverse_lookup",
+            graph=graph,
+        )
+
+        self.assertEqual(priority, ("caller", "container"))
 
     def test_subsystem_node_order_honors_priority(self) -> None:
         graph = sample_graph()

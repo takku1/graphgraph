@@ -65,6 +65,33 @@ analysis across 12+ languages.
 arbitrary program-analysis questions is a different goal than compact,
 pre-planned LLM context packets. **Consciously different by design.**
 
+### GitHub stack graphs — [arxiv.org/abs/2211.01224](https://arxiv.org/abs/2211.01224), [github.blog writeup](https://github.blog/open-source/introducing-stack-graphs/)
+Extends scope graphs: name binding is encoded as a graph where paths *are* valid
+bindings, so resolving a reference is a path search. The defining property is
+isolation — each file becomes a subgraph built "without any knowledge of, or
+visibility into, any other file," which is what makes it incremental at the
+scale of thousands of pushes per minute. Purely syntactic, no build required.
+
+**Verdict:** the closest prior art for **how to stay incremental**, and directly
+borrowed. It resolves *names*, not *types*, so it does not answer
+`x = obj.field; x.method()`. See
+[receiver type resolution](receiver-type-resolution.md), which applies its
+isolation principle to type facts instead of name bindings. **Adopted in
+architecture, extended in scope.**
+
+### PyCG — [arxiv.org/pdf/2103.00587](https://arxiv.org/pdf/2103.00587)
+Andersen-style points-to for Python call graphs: every definition carries a
+points-to set, assignment merges sets, and analysis iterates
+`while not has_converged()`. Reports 99.2% precision, 69.9% recall — the
+strongest published numbers for this problem.
+
+**Verdict:** the precision bar to beat, and **structurally unusable as-is**. It
+is whole-program and iterative, which a hash-diffed incremental scanner cannot
+be. Its *discipline* (single-type-or-unresolved) is worth copying; its control
+flow is not. Related: [Typify](https://arxiv.org/pdf/2604.05067) argues usage
+context alone suffices, avoiding whole-program cost — directionally aligned with
+this project's latency budget.
+
 ### Aider's repo-map — [aider.chat/2023/10/22/repomap.html](https://aider.chat/2023/10/22/repomap.html)
 The most directly comparable tool: tree-sitter parses source, builds a graph
 of definitions/references, ranks it with **PageRank**, and renders a

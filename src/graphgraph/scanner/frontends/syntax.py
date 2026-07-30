@@ -22,9 +22,18 @@ from .model import (
 )
 
 # Functions in JS/TS are usually assigned, not declared; see javascript.py.
-_JS_DEFINITION_SUFFIXES = frozenset({
-    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts",
-})
+_JS_DEFINITION_SUFFIXES = frozenset(
+    {
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".mts",
+        ".cts",
+    }
+)
 
 
 def _definition_summary(text: str, line: int) -> str:
@@ -33,21 +42,25 @@ def _definition_summary(text: str, line: int) -> str:
     excerpt = re.sub(r"\s+", " ", excerpt)[:160]
     return f"L{line} {excerpt}".rstrip()
 
+
 def _definition_impl_qualifier(definition: _TsDef) -> str:
     if definition.kind != "method" or not definition.owner:
         return ""
     trait_name, type_name = definition.extra if len(definition.extra) == 2 else ("", definition.owner)
     return f"{trait_name}_for_{type_name}" if trait_name else type_name
 
+
 def _definition_qualified_name(definition: _TsDef) -> str:
     qualifier = _definition_impl_qualifier(definition)
     return f"{qualifier}::{definition.name}" if qualifier else ""
+
 
 def _definition_node_id(source: SourceFile, definition: _TsDef) -> str:
     qualifier = _definition_impl_qualifier(definition)
     if qualifier:
         return f"{source.file_node_id}__{qualifier}__{definition.name}"
     return f"{source.file_node_id}__{definition.name}"
+
 
 _DEF_TYPES = {
     "class_definition": "class",
@@ -112,6 +125,7 @@ _PARSER_CACHE: dict[str, Any] = {}
 
 _PARSER_LOAD_ERRORS: dict[str, str] = {}
 
+
 def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     defs: list[_TsDef] = []
     stack = [root]
@@ -138,20 +152,22 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
                     else:
                         assert callback is not None
                         name, kind, js_facts = callback
-                    defs.append(_TsDef(
-                        name=name,
-                        kind=kind,
-                        start=int(node.start_byte),
-                        end=int(node.end_byte),
-                        line=int(node.start_point[0]) + 1,
-                        facts=(
-                            *_definition_facts(source, node, text),
-                            *js_facts,
-                        ),
-                        extra=(),
-                        return_type=_declared_return_type(node, text),
-                        node=node,
-                    ))
+                    defs.append(
+                        _TsDef(
+                            name=name,
+                            kind=kind,
+                            start=int(node.start_byte),
+                            end=int(node.end_byte),
+                            line=int(node.start_point[0]) + 1,
+                            facts=(
+                                *_definition_facts(source, node, text),
+                                *js_facts,
+                            ),
+                            extra=(),
+                            return_type=_declared_return_type(node, text),
+                            node=node,
+                        )
+                    )
             continue
         name_node = _name_node(node)
         if name_node is None:
@@ -159,17 +175,19 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
         name = _node_text(name_node, text)
         if not name:
             continue
-        defs.append(_TsDef(
-            name=name,
-            kind=kind,
-            start=int(node.start_byte),
-            end=int(node.end_byte),
-            line=int(node.start_point[0]) + 1,
-            facts=_definition_facts(source, node, text),
-            extra=_base_class_names(node, text),
-            return_type=_declared_return_type(node, text),
-            node=node,
-        ))
+        defs.append(
+            _TsDef(
+                name=name,
+                kind=kind,
+                start=int(node.start_byte),
+                end=int(node.end_byte),
+                line=int(node.start_point[0]) + 1,
+                facts=_definition_facts(source, node, text),
+                extra=_base_class_names(node, text),
+                return_type=_declared_return_type(node, text),
+                node=node,
+            )
+        )
     if source.path.suffix.lower() != ".rs":
         return _attach_lexical_method_owners(defs)
     impls = [d for d in defs if d.kind == "impl_block" and len(d.extra) == 2]
@@ -237,10 +255,11 @@ def _declared_return_type(node: Any, text: bytes) -> str:
     # TypeScript's type_annotation node includes its leading colon.
     return _node_text(annotation, text).strip().lstrip(":").strip()
 
+
 def _syntax_text_without_literals(node: Any, text: bytes) -> str:
     """Return a node's source with non-executable literal regions blanked."""
     start = int(node.start_byte)
-    segment = bytearray(text[start:int(node.end_byte)])
+    segment = bytearray(text[start : int(node.end_byte)])
     stack = list(getattr(node, "children", ()))
     while stack:
         child = stack.pop()
@@ -258,6 +277,7 @@ def _syntax_text_without_literals(node: Any, text: bytes) -> str:
             continue
         stack.extend(getattr(child, "children", ()))
     return bytes(segment).decode("utf-8", errors="replace")
+
 
 def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, ...]:
     """Project language attributes into small, queryable normalized-IR facts."""
@@ -297,12 +317,12 @@ def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, 
         facts.extend(("role:test", "rust_attribute:test"))
     # Keep this implementation-level contract Rust-specific until another
     # frontend has an equally narrow collection primitive.
-    if (
-        re.search(r"\b(?:BTreeSet|HashSet)\s*::\s*(?:new|default)\s*\(", snippet)
-        and re.search(r"\.insert\s*\(", snippet)
+    if re.search(r"\b(?:BTreeSet|HashSet)\s*::\s*(?:new|default)\s*\(", snippet) and re.search(
+        r"\.insert\s*\(", snippet
     ):
         facts.extend(("collection_contract:unique", "semantic_operation:deduplication"))
     return tuple(dict.fromkeys(facts))
+
 
 def _attach_lexical_method_owners(defs: list[_TsDef]) -> list[_TsDef]:
     """Mark callables directly nested in a type as owned methods."""
@@ -313,22 +333,24 @@ def _attach_lexical_method_owners(defs: list[_TsDef]) -> list[_TsDef]:
             owned.append(definition)
             continue
         enclosing = [
-            parent for parent in defs
-            if parent is not definition
-            and parent.start < definition.start
-            and definition.end <= parent.end
+            parent
+            for parent in defs
+            if parent is not definition and parent.start < definition.start and definition.end <= parent.end
         ]
         parent = min(enclosing, key=lambda item: item.end - item.start, default=None)
         if parent is None or parent.kind not in owner_kinds:
             owned.append(definition)
             continue
-        owned.append(replace(
-            definition,
-            kind="method",
-            owner=parent.name,
-            extra=("", parent.name),
-        ))
+        owned.append(
+            replace(
+                definition,
+                kind="method",
+                owner=parent.name,
+                extra=("", parent.name),
+            )
+        )
     return owned
+
 
 _NESTED_NAME_PARENT_TYPES = {
     "type_declaration",
@@ -340,6 +362,7 @@ _NESTED_NAME_PARENT_TYPES = {
     "function_definition",
     "declaration",
 }
+
 
 def _name_node(node: Any) -> Any | None:
     try:
@@ -356,11 +379,14 @@ def _name_node(node: Any) -> Any | None:
             return nested
     return None
 
+
 def _node_text(node: Any, text: bytes) -> str:
-    return text[int(node.start_byte):int(node.end_byte)].decode("utf-8", errors="replace")
+    return text[int(node.start_byte) : int(node.end_byte)].decode("utf-8", errors="replace")
+
 
 def _node_text_range(text: bytes, start: int, end: int) -> str:
     return text[start:end].decode("utf-8", errors="replace")
+
 
 def _rust_impl_def(node: Any, text: bytes) -> _TsDef | None:
     snippet = _node_text(node, text).split("{", 1)[0]
@@ -378,9 +404,11 @@ def _rust_impl_def(node: Any, text: bytes) -> _TsDef | None:
         extra=(trait, typ),
     )
 
+
 def _return_type_name(signature_or_body: str) -> str:
     names = _return_type_names(signature_or_body)
     return names[0] if names else ""
+
 
 def _return_expression_head(text: str) -> str:
     """Trim a return annotation to the annotation itself.
@@ -416,11 +444,38 @@ def _return_expression_head(text: str) -> str:
     return text
 
 
-_IGNORED_RETURN_TYPES = frozenset({
-    "Arc", "Box", "Cow", "Option", "Pin", "Rc", "Ref", "Result", "RwLock",
-    "Vec", "Weak", "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64",
-    "i128", "isize", "str", "u8", "u16", "u32", "u64", "u128", "usize",
-})
+_IGNORED_RETURN_TYPES = frozenset(
+    {
+        "Arc",
+        "Box",
+        "Cow",
+        "Option",
+        "Pin",
+        "Rc",
+        "Ref",
+        "Result",
+        "RwLock",
+        "Vec",
+        "Weak",
+        "bool",
+        "char",
+        "f32",
+        "f64",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "isize",
+        "str",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "usize",
+    }
+)
 
 
 def _named_types(expression: str) -> tuple[str, ...]:
@@ -451,11 +506,8 @@ def _return_type_names(
     match = re.search(r"->\s*(?P<types>.+)$", head, flags=re.S)
     if not match:
         return ()
-    return _named_types(
-        _return_expression_head(
-            re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]
-        )
-    )
+    return _named_types(_return_expression_head(re.split(r"\bwhere\b", match.group("types"), maxsplit=1)[0]))
+
 
 def _select_owner_type(
     owner: str,
@@ -474,6 +526,7 @@ def _select_owner_type(
     if len(candidates) == 1:
         return candidates[0]
     return None
+
 
 def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
     """Map imported symbol local name to its module/file stem source.
@@ -498,8 +551,10 @@ def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
                     sources[name] = module_name
     return sources
 
+
 def _normalized_path_part(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.casefold())
+
 
 def _resolve_path_qualified_target(
     call: _CallSite,
@@ -520,9 +575,7 @@ def _resolve_path_qualified_target(
         if target is None or target.kind not in {"function", "method"}:
             continue
         path_parts = {
-            _normalized_path_part(part)
-            for part in re.split(r"[/\\]", target.path)
-            if _normalized_path_part(part)
+            _normalized_path_part(part) for part in re.split(r"[/\\]", target.path) if _normalized_path_part(part)
         }
         context = _normalized_path_part(f"{target.path} {target.summary}")
         # The nearest module/type qualifier is mandatory. Earlier crate or
@@ -530,11 +583,7 @@ def _resolve_path_qualified_target(
         if qualifier[-1] not in path_parts and qualifier[-1] not in context:
             continue
         score = 4
-        score += sum(
-            2
-            for part in qualifier[:-1]
-            if part in path_parts or part in context
-        )
+        score += sum(2 for part in qualifier[:-1] if part in path_parts or part in context)
         scored.append((score, target_id))
     if not scored:
         return None
@@ -543,9 +592,11 @@ def _resolve_path_qualified_target(
         return None
     return scored[0][1]
 
+
 _PYTHON_BUILTIN_TYPES = frozenset(
     {"bool", "bytes", "bytearray", "dict", "float", "frozenset", "int", "list", "set", "str", "tuple"}
 )
+
 
 def _method_owner(node_id: str, nodes: dict[str, Node]) -> str:
     node = nodes.get(node_id)
@@ -578,6 +629,7 @@ def _ancestor_chain(type_name: str, base_classes: dict[str, tuple[str, ...]]) ->
         depth += 1
     return order
 
+
 def _resolve_member_call(
     *,
     source: SourceFile,
@@ -600,6 +652,13 @@ def _resolve_member_call(
         and call.receiver[:1].isupper()
     ):
         receiver_type = call.receiver
+    if source.path.suffix.lower() == ".py" and receiver_type.startswith("builtins."):
+        # Literal/constructor inference has proven that this receiver belongs
+        # to Python's runtime, not to a same-named method in the repository.
+        # Do not manufacture an edge, but also do not report the call as an
+        # internal resolution miss merely because the graph defines `get`,
+        # `append`, `add`, etc. on unrelated project classes.
+        return "external_resolved"
     all_candidates = [
         node_id
         for node_id in name_to_symbols.get(call.name, ())
@@ -624,39 +683,40 @@ def _resolve_member_call(
         # is defined on a base class. Walk the chain nearest-first so an
         # override still wins over the definition it overrides.
         for ancestor in _ancestor_chain(receiver_type, base_classes):
-            candidates = [
-                node_id for node_id in all_candidates
-                if _method_owner(node_id, nodes) == ancestor
-            ]
+            candidates = [node_id for node_id in all_candidates if _method_owner(node_id, nodes) == ancestor]
             if candidates:
                 receiver_type = ancestor
                 break
     if len(candidates) == 1:
-        edges.append(Edge(
-            source_id,
-            candidates[0],
-            "calls",
-            confidence=0.97,
-            provenance="tree_sitter_type_resolved",
-            source_location=source.rel,
-            evidence=f"receiver {call.receiver}:{receiver_type}",
-        ))
+        edges.append(
+            Edge(
+                source_id,
+                candidates[0],
+                "calls",
+                confidence=0.97,
+                provenance="tree_sitter_type_resolved",
+                source_location=source.rel,
+                evidence=f"receiver {call.receiver}:{receiver_type}",
+            )
+        )
         return "resolved"
     if candidates:
         for target in sorted(candidates)[:8]:
-            edges.append(Edge(
-                source_id,
-                target,
-                "calls_candidate",
-                confidence=0.45 if receiver_type else 0.3,
-                provenance="tree_sitter_ambiguous_call",
-                source_location=source.rel,
-                evidence=(
-                    f"receiver {call.receiver}:{receiver_type}; {len(candidates)} candidates"
-                    if receiver_type
-                    else f"receiver type unresolved; {len(candidates)} candidates"
-                ),
-            ))
+            edges.append(
+                Edge(
+                    source_id,
+                    target,
+                    "calls_candidate",
+                    confidence=0.45 if receiver_type else 0.3,
+                    provenance="tree_sitter_ambiguous_call",
+                    source_location=source.rel,
+                    evidence=(
+                        f"receiver {call.receiver}:{receiver_type}; {len(candidates)} candidates"
+                        if receiver_type
+                        else f"receiver type unresolved; {len(candidates)} candidates"
+                    ),
+                )
+            )
         return "ambiguous"
     # Receiver type is known and every candidate was filtered out. Split on
     # whether the graph owns the method name at all: if some internal symbol
@@ -665,6 +725,7 @@ def _resolve_member_call(
     # correct. Collapsing both into one bucket made the largest telemetry
     # counter unable to distinguish working from broken.
     return "unmatched" if all_candidates else "external_resolved"
+
 
 def _select_import_target(
     name: str,
@@ -677,8 +738,7 @@ def _select_import_target(
     compatible = [
         target
         for target in targets
-        if (node := nodes.get(target)) is not None
-        and (src_lang is None or _lang_family(node.path) in {None, src_lang})
+        if (node := nodes.get(target)) is not None and (src_lang is None or _lang_family(node.path) in {None, src_lang})
     ]
     if len(compatible) == 1:
         return compatible[0]
@@ -691,6 +751,7 @@ def _select_import_target(
 
     reexport = reexports.get((stem.casefold(), name))
     return reexport if reexport in compatible else None
+
 
 def _reexported_symbols(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
@@ -711,6 +772,7 @@ def _reexported_symbols(
         package = Path(source_path).parent.name.casefold()
         grouped.setdefault((package, target.label), []).append(edge.target)
     return {key: values[0] for key, values in grouped.items() if len(set(values)) == 1}
+
 
 def _imported_symbol_names(suffix: str, text: str) -> set[str]:
     names: set[str] = set()
@@ -744,20 +806,22 @@ def _imported_symbol_names(suffix: str, text: str) -> set[str]:
                     names.add(name)
     return names
 
+
 def _identifier(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value))
 
+
 _CALL_NODE_TYPES = {
-    "call_expression",           # JS/TS, Go, Rust, C/C++, Kotlin, Scala, Swift
-    "call",                      # Python, Ruby
-    "invocation_expression",     # C#
-    "method_invocation",         # Java
+    "call_expression",  # JS/TS, Go, Rust, C/C++, Kotlin, Scala, Swift
+    "call",  # Python, Ruby
+    "invocation_expression",  # C#
+    "method_invocation",  # Java
     "function_call_expression",  # PHP
-    "member_call_expression",    # PHP  (obj->method())
-    "scoped_call_expression",    # PHP  (Class::method())
-    "command",                   # Ruby (method call without parentheses)
-    "command_call",              # Ruby (receiver.method arg)
-    "method_call",               # misc grammars
+    "member_call_expression",  # PHP  (obj->method())
+    "scoped_call_expression",  # PHP  (Class::method())
+    "command",  # Ruby (method call without parentheses)
+    "command_call",  # Ruby (receiver.method arg)
+    "method_call",  # misc grammars
 }
 
 # Fields that hold the callee across the grammars above.
@@ -775,18 +839,16 @@ _CALL_NAME_FIELDS = ("function", "name", "method")
 # -- there the grammar gives no signal to split them safely, so those stay
 # qualified/unresolved.
 _PATH_QUALIFIED_CALL_TYPES = {
-    "scoped_identifier",   # Rust: Type::function(...), module::function(...)
+    "scoped_identifier",  # Rust: Type::function(...), module::function(...)
     "qualified_identifier",  # C++: Namespace::function(...), Class::static_method(...)
 }
+
 
 def _rust_qualified_type_receiver(value: str) -> bool:
     """Whether a Rust receiver explicitly names a unit-struct/type path."""
     parts = value.split("::")
-    return bool(
-        len(parts) >= 1
-        and all(_identifier(part) for part in parts)
-        and parts[-1][:1].isupper()
-    )
+    return bool(len(parts) >= 1 and all(_identifier(part) for part in parts) and parts[-1][:1].isupper())
+
 
 def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_CallSite]:
     """Return bounded call-site facts, retaining receiver text for type resolution."""
@@ -865,9 +927,7 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                         receiver = _node_text(children[0], text).strip()
                 # `self.x` (Rust/Python) and `this.x` (TS/JS) are the one field form
                 # the resolver can type, via the owner's field table.
-                rust_field_receiver = bool(
-                    re.fullmatch(r"(?:self|this)\.[A-Za-z_$][\w$]*", receiver)
-                )
+                rust_field_receiver = bool(re.fullmatch(r"(?:self|this)\.[A-Za-z_$][\w$]*", receiver))
                 # `build_report(x).render()` -- the receiver is whatever the
                 # inner call returns. Normalize it to a bare `name()` key so
                 # the frontend can bind it to that function's return type
@@ -879,6 +939,14 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                 )
                 if call_receiver is not None:
                     receiver = f"{call_receiver.group(1)}()"
+                elif re.fullmatch(
+                    r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+",
+                    receiver,
+                ):
+                    # Preserve dotted module namespaces such as
+                    # ``flask.helpers``. Resolution still requires the first
+                    # component to be a proven import alias.
+                    pass
                 elif (
                     not _identifier(receiver)
                     and receiver != "self"
@@ -886,13 +954,16 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                     and not _rust_qualified_type_receiver(receiver)
                 ):
                     receiver = ""
-            sites.add(_CallSite(
-                name=name,
-                qualified=is_qualified,
-                receiver=receiver,
-                qualifier=qualifier,
-            ))
+            sites.add(
+                _CallSite(
+                    name=name,
+                    qualified=is_qualified,
+                    receiver=receiver,
+                    qualifier=qualifier,
+                )
+            )
     return sites
+
 
 def _callback_arg_names_in_range(root: Any, text: bytes, start: int, end: int) -> set[str]:
     """Return bare-identifier names passed as call arguments in [start, end).
@@ -942,6 +1013,7 @@ def _callback_arg_names_in_range(root: Any, text: bytes, start: int, end: int) -
                 if name:
                     names.add(name)
     return names
+
 
 def _call_name(node: Any, text: bytes) -> str:
     if node.type in _NAME_NODE_TYPES:

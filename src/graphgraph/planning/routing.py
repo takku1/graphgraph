@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from .budgets import explicit_query_identifiers, plan_terms
 
-ROUTER_VERSION = "query_router_v4_grounded_documents"
+ROUTER_VERSION = "query_router_v5_path_intent_equivalence"
 
 # Broad class used both as the default prior and the low-evidence fallback.
 BROAD_FALLBACK = "subsystem_summary"
@@ -85,7 +85,7 @@ def query_class_schema(
     include_auto: bool = False,
     default: str | None = None,
 ) -> dict[str, object]:
-    names = (("auto", *QUERY_CLASS_NAMES) if include_auto else QUERY_CLASS_NAMES)
+    names = ("auto", *QUERY_CLASS_NAMES) if include_auto else QUERY_CLASS_NAMES
     schema: dict[str, object] = {
         "type": "string",
         "enum": list(names),
@@ -110,60 +110,111 @@ def query_class_markdown_table() -> str:
 
 # Primary lexical signals: (query_class, weight, reason, pattern).
 _SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
-    ("affected_tests", 7.0, "affected-test intent", re.compile(
-        r"\b(affected tests?|which tests? (?:are affected|cover|exercise|should run|to run)|"
-        r"what tests? (?:are affected|cover|exercise|should run|to run)|"
-        r"tests? (?:cover|exercise|should run|to run)|test selection|"
-        r"(?:direct|transitive|behavioral|affected) tests?|"
-        r"(?:which|what|identify|find|list|return).{0,80}\btests?\b.{0,80}"
-        r"(?:affected|cover|exercise|direct|transitive|should run|to run)|"
-        r"(?:minimal runnable )?(?:cargo )?test commands?)\b"
-    )),
-    ("recent_changes", 6.0, "recent/history intent", re.compile(
-        r"\b(recent(?:ly)? changed|change history|git history|last commits?|recent commits?|what changed|modified recently)\b"
-    )),
-    ("negative_query", 6.0, "absence/isolation intent", re.compile(
-        r"\b(unused|unreferenced|orphaned|isolated|dead code|no callers?|no references?|nothing (?:calls|uses|imports))\b"
-    )),
-    ("multi_hop_path", 6.0, "path/flow intent", re.compile(
-        r"\b(path (?:from|between)|call chain|dependency chain|data flow|control flow|how .{0,80}\b(?:reach|flow|propagate)\b|trace .{0,80}\b(?:to|through|into)\b)"
-    )),
-    ("blast_radius", 6.0, "impact intent", re.compile(
-        r"\b(blast radius|change impact|impact of|what (?:breaks|is affected)|affected by|if .{0,80}\bchanges?)\b"
-    )),
-    ("reverse_lookup", 5.0, "reverse dependency intent", re.compile(
-        r"\b(callers?|called by|references?|referenced by|used by|users of|dependents?|implements?|implementors?|implemented by|where .{0,80}\btested|what calls|who calls)\b"
-    )),
-    ("doc_summary", 5.0, "documentation intent", re.compile(
-        r"\b(readme|documentation|docs|installation|installing|usage guide|setup guide|tutorial|manual|"
-        r"roadmap|backlog|milestones?|ordered (?:execution|work)|phases?|what (?:work )?(?:comes|happens) next|"
-        r"before (?:new )?capabilit)\b"
-    )),
-    ("direct_lookup", 4.0, "definition/location intent", re.compile(
-        r"\b(where (?:is|are)|locate|find (?:the )?(?:definition|implementation)|defined in|definition of|show (?:me )?(?:the )?(?:source|definition))\b"
-    )),
-    ("subsystem_summary", 3.0, "architecture/overview intent", re.compile(
-        r"\b(architecture|overview|subsystem|how (?:does|is|are) .{0,80}\b(?:work|designed|structured)|design of|project status|what remains|unfinished|roadmap)\b"
-    )),
+    (
+        "affected_tests",
+        7.0,
+        "affected-test intent",
+        re.compile(
+            r"\b(affected tests?|which tests? (?:are affected|cover|exercise|should run|to run)|"
+            r"what tests? (?:are affected|cover|exercise|should run|to run)|"
+            r"tests? (?:cover|exercise|should run|to run)|test selection|"
+            r"(?:direct|transitive|behavioral|affected) tests?|"
+            r"(?:which|what|identify|find|list|return).{0,80}\btests?\b.{0,80}"
+            r"(?:affected|cover|exercise|direct|transitive|should run|to run)|"
+            r"(?:minimal runnable )?(?:cargo )?test commands?)\b"
+        ),
+    ),
+    (
+        "recent_changes",
+        6.0,
+        "recent/history intent",
+        re.compile(
+            r"\b(recent(?:ly)? changed|change history|git history|last commits?|recent commits?|what changed|modified recently)\b"
+        ),
+    ),
+    (
+        "negative_query",
+        6.0,
+        "absence/isolation intent",
+        re.compile(
+            r"\b(unused|unreferenced|orphaned|isolated|dead code|no callers?|no references?|nothing (?:calls|uses|imports))\b"
+        ),
+    ),
+    (
+        "multi_hop_path",
+        6.0,
+        "path/flow intent",
+        re.compile(
+            r"\b(path (?:from|between)|(?:call|invocation) chain|dependency chain|data flow|control flow|how .{0,80}\b(?:reach|flow|propagate)\b|trace .{0,80}\b(?:to|through|into)\b)"
+        ),
+    ),
+    (
+        "blast_radius",
+        6.0,
+        "impact intent",
+        re.compile(
+            r"\b(blast radius|change impact|impact of|what (?:breaks|is affected)|affected by|if .{0,80}\bchanges?)\b"
+        ),
+    ),
+    (
+        "reverse_lookup",
+        5.0,
+        "reverse dependency intent",
+        re.compile(
+            r"\b(callers?|called by|references?|referenced by|used by|users of|dependents?|implements?|implementors?|implemented by|where .{0,80}\btested|what calls|who calls)\b"
+        ),
+    ),
+    (
+        "doc_summary",
+        5.0,
+        "documentation intent",
+        re.compile(
+            r"\b(readme|documentation|docs|installation|installing|usage guide|setup guide|tutorial|manual|"
+            r"roadmap|backlog|milestones?|ordered (?:execution|work)|phases?|what (?:work )?(?:comes|happens) next|"
+            r"before (?:new )?capabilit)\b"
+        ),
+    ),
+    (
+        "direct_lookup",
+        4.0,
+        "definition/location intent",
+        re.compile(
+            r"\b(where (?:is|are)|locate|find (?:the )?(?:definition|implementation)|defined in|definition of|show (?:me )?(?:the )?(?:source|definition))\b"
+        ),
+    ),
+    (
+        "subsystem_summary",
+        3.0,
+        "architecture/overview intent",
+        re.compile(
+            r"\b(architecture|overview|subsystem|how (?:does|is|are) .{0,80}\b(?:work|designed|structured)|design of|project status|what remains|unfinished|roadmap)\b"
+        ),
+    ),
 )
 
 # Unconditional context signals, applied identically to the primary signals but
 # without the repeat-compounding bonus.
 _CONTEXT_SIGNALS: tuple[tuple[str, float, str, re.Pattern[str]], ...] = (
     ("multi_hop_path", 3.0, "trace intent", re.compile(r"\btrace\b")),
-    ("negative_query", 5.0, "existence probe",
-     re.compile(r"^\s*(?:is\s+)?(?:there\s+)?(?:a\s+)?missing\b|\bdoes .{0,80}\bexist\b")),
-    ("reverse_lookup", 8.0, "consumer/test usage intent",
-     re.compile(r"\bwhich tests? (?:uses?|consumes?|calls?|verifies?)\b")),
+    (
+        "negative_query",
+        5.0,
+        "existence probe",
+        re.compile(r"^\s*(?:is\s+)?(?:there\s+)?(?:a\s+)?missing\b|\bdoes .{0,80}\bexist\b"),
+    ),
+    (
+        "reverse_lookup",
+        8.0,
+        "consumer/test usage intent",
+        re.compile(r"\bwhich tests? (?:uses?|consumes?|calls?|verifies?)\b"),
+    ),
 )
 
 # Identifier-conditioned adjustments (weights applied only when the identifier
 # precondition also holds).
 _GENERIC_LOOKUP_RE = re.compile(r"\b(what is|where|show|find|locate)\b")
 _RELATION_BETWEEN_RE = re.compile(r"\b(depends? on|dependency between|connects? to|relationship between)\b")
-_EXPLICIT_DOC_PATH_RE = re.compile(
-    r"(?:^|[\s`\"'(])(?:[a-z]:)?[^\s`\"']+\.(?:md|mdx|rst|txt|html?)\b"
-)
+_EXPLICIT_DOC_PATH_RE = re.compile(r"(?:^|[\s`\"'(])(?:[a-z]:)?[^\s`\"']+\.(?:md|mdx|rst|txt|html?)\b")
 _DOC_REQUEST_RE = re.compile(
     r"\b(summar(?:y|ize|ise)|incomplete items?|acceptance criteria|documented behavior|"
     r"what does|what remains|claims?|unproved|roadmap|backlog)\b"
@@ -235,15 +286,8 @@ def route_query(
     if _EXPLICIT_DOC_PATH_RE.search(normalized) and _DOC_REQUEST_RE.search(normalized):
         scores["doc_summary"] += EXPLICIT_DOCUMENT_REQUEST_WEIGHT
         reasons["doc_summary"].append("explicit document path and summary intent")
-    normalized_scopes = tuple(
-        scope.replace("\\", "/").casefold().strip("/")
-        for scope in scopes
-        if scope.strip()
-    )
-    if normalized_scopes and all(
-        _DOCUMENT_SCOPE_RE.search(scope)
-        for scope in normalized_scopes
-    ):
+    normalized_scopes = tuple(scope.replace("\\", "/").casefold().strip("/") for scope in scopes if scope.strip())
+    if normalized_scopes and all(_DOCUMENT_SCOPE_RE.search(scope) for scope in normalized_scopes):
         scores["doc_summary"] += EXPLICIT_DOCUMENT_SCOPE_WEIGHT
         reasons["doc_summary"].append("explicit document scope")
 

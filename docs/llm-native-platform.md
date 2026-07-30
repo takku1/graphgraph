@@ -53,9 +53,16 @@ same bounded compiler and source planner. Relevant records from
 `.graphgraph/memory.json`, `episodes.jsonl`,
 `projects.json`, and `runtime-trace.jsonl` become ordinary nodes and edges.
 The local semantic index contributes seed node IDs only when lexical anchoring
-is weak, unless `--source-mode all` is requested. Use `--source-mode off` for
-structural-only benchmark baselines and repeat `--memory-scope` to opt into
-additional memory scopes.
+is weak, unless `--source-mode all` is requested. Interactive `auto` mode only
+consumes an index that is current for the graph and whose local embedding
+backend is already warm; it never constructs a missing/stale index or initializes
+FastEmbed during the query. The source receipt reports
+`semantic_index_state` as `not_requested`, `missing`, `stale`, `current`,
+`cold_backend`, `rebuilt`, `invalid`, or `error`. Run `platform semantic
+--rebuild` as an explicit preprocessing operation, or use `--source-mode all`
+when paying the rebuild/model-startup cost is intentional. Use `--source-mode
+off` for structural-only benchmark baselines and repeat `--memory-scope` to opt
+into additional memory scopes.
 
 ## Twelve capabilities, translated
 
@@ -133,5 +140,10 @@ graphgraph platform hooks --directory .
 - Three-repository gate (GraphGraph, Flask, Express): 100% node and relation
   recall, 520.5 ms p95 retrieval latency, 1,291 mean packet tokens, all packets
   valid.
-- GraphGraph semantic source planning: 1.54 s cached real-repository context
-  query with six semantic seed IDs and a valid packet.
+- Stale-index self query: **2.844 s** query receipt after the bounded-auto
+  change, versus the previously recorded **>184 s timeout** (at least **64x**
+  faster), with `semantic_index_state=stale` and no false semantic contribution.
+- Six-case ripgrep production-mode eval: **6/6 recall**, mean MRR **0.61868**,
+  mean NDCG@10 **0.34270** in about **14 s** with cold FastEmbed skipped. The
+  prior dense cold-process run took about **255 s** for 6/6 recall, mean MRR
+  **0.56313**, and mean NDCG@10 **0.33600**.

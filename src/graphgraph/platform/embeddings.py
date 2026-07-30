@@ -149,6 +149,11 @@ class FastEmbedBackend:
             self._model = TextEmbedding(model_name=self._model_name)
         return self._model
 
+    @property
+    def is_warm(self) -> bool:
+        """Whether querying can proceed without importing/loading the model."""
+        return self._model is not None
+
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         model = self._ensure_model()
         return [[float(component) for component in vector] for vector in model.embed(list(texts))]
@@ -216,6 +221,18 @@ def active_backend_name() -> str:
     """Name of the backend an index would be built with right now."""
     backend = resolve_backend()
     return backend.name if backend is not None else HASH_BACKEND_NAME
+
+
+def active_backend_is_warm() -> bool:
+    """Whether the active backend avoids FastEmbed's first-query setup cliff.
+
+    Hash vectors and explicitly supplied/custom backends have no implicit local
+    model construction. FastEmbed is special: merely having the optional extra
+    installed selects it, while its first embed can import ONNX, initialize a
+    session, and download model files. Auto queries must not trigger that work.
+    """
+    backend = resolve_backend()
+    return not isinstance(backend, FastEmbedBackend) or backend.is_warm
 
 
 def normalize_dense(vector: Sequence[float]) -> dict[int, float]:

@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,6 +38,48 @@ from graphgraph.services.native import (
 
 
 class CliMcpTest(unittest.TestCase):
+    def test_relations_cli_emits_micro_tuple_ir(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.cli.retrieval import cmd_relations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(
+                Graph(
+                    nodes={
+                        "TARGET": Node("TARGET", "work", "function", "src/core.py"),
+                        "CALLER": Node("CALLER", "run", "function", "src/app.py"),
+                    },
+                    edges=[Edge("CALLER", "TARGET", "calls")],
+                    metadata={
+                        "member_calls_global_resolved": "1",
+                        "member_calls_global_unknown_receiver": "0",
+                        "member_calls_global_ambiguous": "0",
+                    },
+                ),
+                graph_path,
+            )
+            args = build_parser().parse_args(
+                [
+                    "relations",
+                    "work",
+                    "--direction",
+                    "callers",
+                    "--graph",
+                    str(graph_path),
+                ]
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                cmd_relations(args)
+
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["v"], 2)
+            self.assertEqual(payload["d"], "<-calls")
+            self.assertEqual(payload["n"][0][0], "run")
+            self.assertFalse(payload["r"]["answer_complete"])
+            self.assertIn("sync_if_completeness_required", payload["a"])
+
     def test_graph_artifacts_bind_to_their_own_project_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
@@ -602,6 +646,115 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(data["anchors"][0]["id"], "N1")
             self.assertIn("[e]", data["packet"])
 
+    def test_mcp_query_relations_returns_fast_call_only_map(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            graph = Graph(
+                nodes={
+                    "TARGET": Node("TARGET", "work", "function", "src/core.py"),
+                    "CALLER": Node("CALLER", "run", "function", "src/app.py"),
+                    "DECOY": Node("DECOY", "notes", "section", "docs/design.md"),
+                },
+                edges=[
+                    Edge("CALLER", "TARGET", "calls"),
+                    Edge("DECOY", "TARGET", "references"),
+                ],
+                metadata={
+                    "member_calls_global_resolved": "1",
+                    "member_calls_global_unknown_receiver": "0",
+                    "member_calls_global_ambiguous": "0",
+                },
+            )
+            save_graph(graph, graph_path)
+
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 551,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_relations",
+                        "arguments": {
+                            "target": "work",
+                            "direction": "callers",
+                            "graph_path": str(graph_path),
+                        },
+                    },
+                }
+            )
+
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertEqual(data["s"], "ok")
+            self.assertEqual(data["v"], 2)
+            self.assertEqual(data["d"], "<-calls")
+            self.assertEqual(data["tk"], ["id", "label", "kind", "path", "line"])
+            self.assertEqual(data["k"], ["label", "kind", "path", "line", "role", "confidence"])
+            self.assertEqual([item[0] for item in data["n"]], ["run"])
+            self.assertTrue(data["r"]["graph_complete"])
+            self.assertNotIn("packet", data)
+
+    def test_mcp_query_relations_can_fuse_git_sync_and_license_freshness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            graph = Graph(
+                nodes={
+                    "TARGET": Node("TARGET", "work", "function", "src/core.py"),
+                    "CALLER": Node("CALLER", "run", "function", "src/app.py"),
+                },
+                edges=[Edge("CALLER", "TARGET", "calls")],
+                metadata={
+                    "member_calls_global_resolved": "1",
+                    "member_calls_global_unknown_receiver": "0",
+                    "member_calls_global_ambiguous": "0",
+                },
+            )
+            save_graph(graph, graph_path)
+            refreshed = GraphBuildStatus(
+                graph_path,
+                graph,
+                built=True,
+                changed_paths=("src/core.py",),
+            )
+
+            with (
+                patch(
+                    "graphgraph.mcp.retrieval_tools.refresh_saved_graph",
+                    return_value=refreshed,
+                ) as refresh,
+                patch(
+                    "graphgraph.mcp.retrieval_tools.inspect_saved_graph_freshness",
+                    return_value={"fresh": True, "extractor_compatible": True},
+                ),
+            ):
+                response = dispatch(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 552,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "query_relations",
+                            "arguments": {
+                                "target": "work",
+                                "direction": "callers",
+                                "graph_path": str(graph_path),
+                                "sync": "git",
+                            },
+                        },
+                    }
+                )
+
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertEqual(data["r"]["freshness"], "fresh")
+            self.assertTrue(data["r"]["answer_complete"])
+            self.assertEqual(
+                data["r"]["refresh"],
+                {"updated": 1, "removed": 0, "write": True, "fresh": True},
+            )
+            self.assertNotIn("sync_if_completeness_required", data.get("a", ()))
+            refresh.assert_called_once()
+
     def test_mcp_query_context_auto_routes_when_class_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"
@@ -624,7 +777,7 @@ class CliMcpTest(unittest.TestCase):
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["query_class"], "reverse_lookup")
-            self.assertEqual(data["routing"]["version"], "query_router_v4_grounded_documents")
+            self.assertEqual(data["routing"]["version"], "query_router_v5_path_intent_equivalence")
             self.assertEqual(
                 data["actionable"]["status"],
                 data["retrieval"]["answerability"]["status"],
@@ -2294,9 +2447,7 @@ class CliMcpTest(unittest.TestCase):
             self.assertIn("gates=fresh:+", payload["control"])
             self.assertTrue(payload["workflow"]["freshness"]["repository_fresh"])
             self.assertTrue(payload["workflow"]["freshness"]["requested_scope_fresh"])
-            self.assertTrue(
-                payload["workflow"]["freshness"]["extractor_compatible"]
-            )
+            self.assertTrue(payload["workflow"]["freshness"]["extractor_compatible"])
             self.assertNotEqual(
                 payload["workflow"]["freshness"]["measured_at"],
                 "unknown",
@@ -2327,9 +2478,7 @@ class CliMcpTest(unittest.TestCase):
                 depth="symbols",
             )
 
-            manifest = json.loads(
-                (graph_store / "saved.gg.manifest.json").read_text(encoding="utf-8")
-            )
+            manifest = json.loads((graph_store / "saved.gg.manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(Path(manifest["source_root"]), source_root.resolve())
 
             args = build_parser().parse_args(

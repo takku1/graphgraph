@@ -65,6 +65,9 @@ from .retrieval_tools import (
     handle_project_status as handle_project_status,
 )
 from .retrieval_tools import (
+    handle_query_relations as handle_query_relations,
+)
+from .retrieval_tools import (
     handle_search_nodes as handle_search_nodes,
 )
 from .retrieval_tools import (

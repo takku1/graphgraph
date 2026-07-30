@@ -19,6 +19,7 @@ from graphgraph.concepts.doccode import summarize_doc_code_components, summarize
 from graphgraph.io import (
     save_graph,
 )
+from graphgraph.planning import route_query
 from graphgraph.retrieval import (
     retrieve_context,
     search_nodes,
@@ -33,10 +34,7 @@ class ExactOverloadReceiptTest(unittest.TestCase):
 
     def _graph(self) -> Graph:
         # Three functions all literally named `avg`, in different files.
-        nodes = {
-            f"m{i}": Node(f"m{i}", "avg", "function", f"pkg/mod{i}.py", summary="mean")
-            for i in range(3)
-        }
+        nodes = {f"m{i}": Node(f"m{i}", "avg", "function", f"pkg/mod{i}.py", summary="mean") for i in range(3)}
         nodes["unique"] = Node("unique", "compute_total", "function", "pkg/total.py")
         return Graph(nodes=nodes, edges=[])
 
@@ -102,9 +100,7 @@ class DocumentTruncationPartialResultTest(unittest.TestCase):
 
     def test_truncated_requested_document_downgrades_to_partial(self) -> None:
         graph = self._graph(truncated="docs/big.md")
-        result = retrieve_context(
-            graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",)
-        )
+        result = retrieve_context(graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",))
         truncation = result.metadata.get("document_truncation")
         self.assertIsNotNone(truncation)
         self.assertTrue(truncation["truncated"])
@@ -117,9 +113,7 @@ class DocumentTruncationPartialResultTest(unittest.TestCase):
 
     def test_untruncated_document_is_not_flagged_partial(self) -> None:
         graph = self._graph(truncated=None)
-        result = retrieve_context(
-            graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",)
-        )
+        result = retrieve_context(graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",))
         self.assertIsNone(result.metadata.get("document_truncation"))
         self.assertNotEqual(result.metadata["answerability"]["status"], "partial")
 
@@ -127,9 +121,7 @@ class DocumentTruncationPartialResultTest(unittest.TestCase):
         # Only the *requested* document being truncated makes this result
         # partial; an unrelated truncated doc must not taint the receipt.
         graph = self._graph(truncated="docs/other.md")
-        result = retrieve_context(
-            graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",)
-        )
+        result = retrieve_context(graph, "widget_configuration", "doc_summary", 1, anchor_paths=("docs/big.md",))
         self.assertIsNone(result.metadata.get("document_truncation"))
 
     def test_path_matching_is_segment_aware(self) -> None:
@@ -139,16 +131,12 @@ class DocumentTruncationPartialResultTest(unittest.TestCase):
         graph.metadata["docs_truncated_files"] = "docs/foo.md"
         # Exact and repo-prefixed forms hit; a longer basename that merely ends
         # in the same characters (barfoo.md) must not.
-        self.assertEqual(
-            _truncated_requested_documents(graph, ("docs/foo.md",)), ["docs/foo.md"]
-        )
+        self.assertEqual(_truncated_requested_documents(graph, ("docs/foo.md",)), ["docs/foo.md"])
         self.assertEqual(
             _truncated_requested_documents(graph, ("repo/docs/foo.md",)),
             ["repo/docs/foo.md"],
         )
-        self.assertEqual(
-            _truncated_requested_documents(graph, ("docs/barfoo.md",)), []
-        )
+        self.assertEqual(_truncated_requested_documents(graph, ("docs/barfoo.md",)), [])
         # No truncation metadata -> no hits, whatever was requested.
         self.assertEqual(_truncated_requested_documents(Graph(nodes={}, edges=[]), ("docs/foo.md",)), [])
 
@@ -198,6 +186,86 @@ class AnswerabilityFacetCalibrationTest(unittest.TestCase):
         self.assertFalse(_facet_is_required(("method",), kinds, index, count))
         # A specific content term the graph does not ubiquitously contain.
         self.assertTrue(_facet_is_required(("entanglement", "scheduler"), kinds, index, count))
+
+    def test_auto_routed_semantic_novelty_rejects_irrelevant_anchor_collisions(self) -> None:
+        graph = Graph(
+            nodes={
+                "FLASK": Node("FLASK", "Flask", "class", "src/flask/app.py"),
+                "TX": Node(
+                    "TX",
+                    "session_transaction",
+                    "method",
+                    "src/flask/testing.py",
+                    summary="Open a session transaction for a Flask test client.",
+                ),
+                "CALLER": Node("CALLER", "open_session", "method", "src/flask/sessions.py"),
+                # A kind name alone is not trusted interpretation evidence.
+                # Only IDs from the closed interpretation registry may satisfy
+                # the preflight; otherwise a fabricated semantic hub can turn
+                # a complete miss into a misleading partial answer.
+                "FAKE": Node(
+                    "FAKE",
+                    "quantum_blockchain_consensus",
+                    "semantic_operator",
+                    "",
+                ),
+            },
+            edges=[Edge("CALLER", "TX", "calls")],
+        )
+        query = "How does Flask implement quantum blockchain consensus and GPU transaction rollback?"
+        route = route_query(query)
+        self.assertEqual(route.query_class, "reverse_lookup")
+
+        with (
+            patch.object(graph, "expand", wraps=graph.expand) as expand,
+            patch(
+                "graphgraph.retrieval.context.search.search_nodes",
+                wraps=search_nodes,
+            ) as ranked_search,
+        ):
+            result = retrieve_context(graph, query, route.query_class, hops=2)
+
+        self.assertEqual(result.metadata["answerability"]["status"], "unanswerable")
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertLessEqual(result.metadata["answerability"]["confidence"], 0.1)
+        self.assertEqual(result.nodes, set())
+        self.assertEqual(result.metadata["facet_coverage"]["coverage_ratio"], 0.0)
+        self.assertEqual(
+            set(result.metadata["facet_coverage"]["unfulfilled_required"]),
+            {"flask quantum blockchain consensus", "gpu transaction rollback"},
+        )
+        expand.assert_not_called()
+        ranked_search.assert_not_called()
+
+    def test_semantic_novelty_gate_preserves_valid_and_partial_reverse_queries(self) -> None:
+        graph = Graph(
+            nodes={
+                "FLASK": Node("FLASK", "Flask", "class", "src/flask/app.py"),
+                "DISPATCH": Node(
+                    "DISPATCH",
+                    "dispatch_request",
+                    "method",
+                    "src/flask/app.py",
+                    summary="Dispatch one Flask request.",
+                    parent="FLASK",
+                ),
+                "CALLER": Node("CALLER", "full_dispatch_request", "method", "src/flask/app.py"),
+            },
+            edges=[
+                Edge("FLASK", "DISPATCH", "contains"),
+                Edge("CALLER", "DISPATCH", "calls"),
+            ],
+        )
+
+        valid_query = "How does Flask implement request dispatch?"
+        valid = retrieve_context(graph, valid_query, route_query(valid_query).query_class, hops=2)
+        self.assertEqual(valid.metadata["answerability"]["status"], "answerable")
+        self.assertIn("DISPATCH", valid.nodes)
+
+        partial_query = "How does Flask implement request dispatch and quantum consensus?"
+        partial = retrieve_context(graph, partial_query, route_query(partial_query).query_class, hops=2)
+        self.assertEqual(partial.metadata["answerability"]["status"], "incomplete")
+        self.assertNotEqual(partial.nodes, set())
 
 
 class RetrievalConfidenceTest(unittest.TestCase):
@@ -956,6 +1024,64 @@ class RetrievalTest(unittest.TestCase):
         matches = search_nodes(graph, "resolve modified node ids", limit=2)
         self.assertEqual(matches[0].node.id, "GOOD")
 
+    def test_search_nodes_bridges_printed_intent_to_write_code_vocabulary(self) -> None:
+        # Ripgrep oracle: "how are search results printed" missed
+        # crates/printer/src/standard.rs even though its implementation is a
+        # dense family of `write_*` methods. The offline lexical path needs a
+        # bounded, auditable bridge from user vocabulary to code vocabulary.
+        graph = Graph(
+            nodes={
+                "TARGET": Node(
+                    "TARGET",
+                    "write_colored_matches",
+                    "method",
+                    "crates/printer/src/standard.rs",
+                ),
+                "DISTRACTOR": Node(
+                    "DISTRACTOR",
+                    "searches",
+                    "method",
+                    "crates/printer/src/stats.rs",
+                ),
+            }
+        )
+
+        matches = search_nodes(graph, "how are search results printed", limit=5)
+
+        target = next(match for match in matches if match.node.id == "TARGET")
+        self.assertIn("label_alias:printed", target.reasons)
+
+    def test_search_nodes_bridges_arguments_to_command_flags(self) -> None:
+        # Ripgrep oracle: "command line arguments parsed" was captured by the
+        # literal word "line" and anchored on line-buffer internals. Ripgrep's
+        # maintained argument parser is organized under core/flags, so the
+        # directional user-vocabulary -> code-vocabulary bridge is precise.
+        graph = Graph(
+            nodes={
+                "TARGET": Node(
+                    "TARGET",
+                    "parse_low_args",
+                    "function",
+                    "crates/core/flags/parse.rs",
+                ),
+                "DISTRACTOR": Node(
+                    "DISTRACTOR",
+                    "line_buffer",
+                    "field",
+                    "crates/searcher/src/line_buffer.rs",
+                ),
+            }
+        )
+
+        matches = search_nodes(
+            graph,
+            "how are command line arguments parsed",
+            limit=5,
+        )
+
+        self.assertEqual(matches[0].node.id, "TARGET")
+        self.assertIn("path_alias:arguments", matches[0].reasons)
+
     def test_search_nodes_exact_phrase_bonus_fires_through_stopwords(self) -> None:
         # Regression: the query side tokenizes with stopwords removed
         # (tokenize(query)), but label_term_sequence/label_exact_sequence
@@ -1300,6 +1426,183 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn(("START", "MID", "calls"), edge_keys)
         self.assertIn(("MID", "TARGET", "calls"), edge_keys)
         self.assertLessEqual(len(nodes), 20)
+
+    def test_qualified_multi_hop_path_is_a_monotone_proof_prefix(self) -> None:
+        """Exact endpoints pin one call proof before optional lookalikes.
+
+        This is the small, source-independent form of the Flask gray-box
+        control.  A one-shot knapsack may replace prior nodes when the budget
+        changes; a context packet is an anytime result, so every larger budget
+        must extend the same proof-carrying prefix instead.
+        """
+        graph = Graph(
+            nodes={
+                "FLASK": Node("FLASK", "Flask", "class", "src/flask/app.py"),
+                "CALL": Node(
+                    "CALL",
+                    "__call__",
+                    "method",
+                    "src/flask/app.py",
+                    parent="FLASK",
+                ),
+                "WSGI": Node(
+                    "WSGI",
+                    "wsgi_app",
+                    "method",
+                    "src/flask/app.py",
+                    parent="FLASK",
+                ),
+                "FULL": Node(
+                    "FULL",
+                    "full_dispatch_request",
+                    "method",
+                    "src/flask/app.py",
+                    parent="FLASK",
+                ),
+                "DISPATCH": Node(
+                    "DISPATCH",
+                    "dispatch_request",
+                    "method",
+                    "src/flask/app.py",
+                    parent="FLASK",
+                ),
+                "VIEW": Node("VIEW", "View", "class", "src/flask/views.py"),
+                "VIEW_DISPATCH": Node(
+                    "VIEW_DISPATCH",
+                    "dispatch_request",
+                    "method",
+                    "src/flask/views.py",
+                    parent="VIEW",
+                ),
+                "METHOD_VIEW": Node("METHOD_VIEW", "MethodView", "class", "src/flask/views.py"),
+                "METHOD_DISPATCH": Node(
+                    "METHOD_DISPATCH",
+                    "dispatch_request",
+                    "method",
+                    "src/flask/views.py",
+                    parent="METHOD_VIEW",
+                ),
+                "TASK": Node("TASK", "FlaskTask", "class", "examples/task.py"),
+                "TASK_CALL": Node(
+                    "TASK_CALL",
+                    "__call__",
+                    "method",
+                    "examples/task.py",
+                    parent="TASK",
+                ),
+                **{
+                    f"NOISE_{index}": Node(
+                        f"NOISE_{index}",
+                        f"dispatch_request_helper_{index}",
+                        "function",
+                        f"src/noise_{index}.py",
+                    )
+                    for index in range(12)
+                },
+            },
+            edges=[
+                Edge("FLASK", "CALL", "contains"),
+                Edge("FLASK", "WSGI", "contains"),
+                Edge("FLASK", "FULL", "contains"),
+                Edge("FLASK", "DISPATCH", "contains"),
+                Edge("VIEW", "VIEW_DISPATCH", "contains"),
+                Edge("METHOD_VIEW", "METHOD_DISPATCH", "contains"),
+                Edge("TASK", "TASK_CALL", "contains"),
+                Edge("CALL", "WSGI", "calls"),
+                Edge("WSGI", "FULL", "calls"),
+                Edge("FULL", "DISPATCH", "calls"),
+                *(Edge("FLASK", f"NOISE_{index}", "contains") for index in range(12)),
+            ],
+        )
+        query = "Trace the call path from Flask::__call__ to Flask::dispatch_request."
+        results = [retrieve_context(graph, query, "multi_hop_path", hops=2, max_nodes=budget) for budget in (6, 12, 20)]
+        required_path = {"CALL", "WSGI", "FULL", "DISPATCH"}
+
+        for result in results:
+            self.assertEqual(result.starts, ("CALL", "DISPATCH"))
+            self.assertLessEqual(required_path, result.nodes)
+            self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+            self.assertGreaterEqual(result.metadata["answerability"]["confidence"], 0.9)
+            self.assertEqual(
+                result.metadata["obligation_closure"],
+                {
+                    "required": 3,
+                    "proven": 3,
+                    "ratio": 1.0,
+                    "obligations": [
+                        {"kind": "entity", "target": "CALL", "status": "proven"},
+                        {"kind": "entity", "target": "DISPATCH", "status": "proven"},
+                        {
+                            "kind": "path",
+                            "relation": "calls",
+                            "source": "CALL",
+                            "target": "DISPATCH",
+                            "status": "proven",
+                        },
+                    ],
+                },
+            )
+        self.assertLessEqual(results[0].nodes, results[1].nodes)
+        self.assertLessEqual(results[1].nodes, results[2].nodes)
+        edge_sets = [{(edge.source, edge.type, edge.target) for edge in result.edges} for result in results]
+        self.assertLessEqual(edge_sets[0], edge_sets[1])
+        self.assertLessEqual(edge_sets[1], edge_sets[2])
+
+    def test_path_paraphrase_preserves_route_and_evidence_based_answerability(self) -> None:
+        graph = Graph(
+            nodes={
+                "FLASK": Node("FLASK", "Flask", "class", "src/flask/app.py"),
+                "CALL": Node("CALL", "__call__", "method", "src/flask/app.py", parent="FLASK"),
+                "WSGI": Node("WSGI", "wsgi_app", "method", "src/flask/app.py", parent="FLASK"),
+                "FULL": Node(
+                    "FULL",
+                    "full_dispatch_request",
+                    "method",
+                    "src/flask/app.py",
+                    parent="FLASK",
+                ),
+                "DISPATCH": Node(
+                    "DISPATCH",
+                    "dispatch_request",
+                    "method",
+                    "src/flask/app.py",
+                    parent="FLASK",
+                ),
+            },
+            edges=[
+                Edge("FLASK", "CALL", "contains"),
+                Edge("FLASK", "WSGI", "contains"),
+                Edge("FLASK", "FULL", "contains"),
+                Edge("FLASK", "DISPATCH", "contains"),
+                Edge("CALL", "WSGI", "calls"),
+                Edge("WSGI", "FULL", "calls"),
+                Edge("FULL", "DISPATCH", "calls"),
+            ],
+        )
+        canonical_query = "Trace the call path from Flask::__call__ to Flask::dispatch_request."
+        paraphrase = (
+            "Show the invocation chain that carries a WSGI request through Flask, "
+            "starting at Flask::__call__ and ending at Flask::dispatch_request."
+        )
+
+        self.assertEqual(route_query(paraphrase).query_class, "multi_hop_path")
+        canonical = retrieve_context(graph, canonical_query, "multi_hop_path", hops=2, max_nodes=10)
+        equivalent = retrieve_context(graph, paraphrase, "multi_hop_path", hops=2, max_nodes=10)
+
+        self.assertEqual(canonical.starts, equivalent.starts)
+        self.assertEqual(canonical.nodes, equivalent.nodes)
+        self.assertEqual(
+            {(edge.source, edge.target, edge.type) for edge in canonical.edges},
+            {(edge.source, edge.target, edge.type) for edge in equivalent.edges},
+        )
+        self.assertEqual(canonical.metadata["obligation_closure"], equivalent.metadata["obligation_closure"])
+        self.assertEqual(canonical.metadata["obligation_closure"]["ratio"], 1.0)
+        self.assertEqual(canonical.metadata["answerability"]["status"], "answerable")
+        self.assertEqual(equivalent.metadata["answerability"]["status"], "answerable")
+        self.assertLess(
+            abs(canonical.metadata["answerability"]["confidence"] - equivalent.metadata["answerability"]["confidence"]),
+            0.01,
+        )
 
     def test_multi_hop_path_beam_reserves_strongest_equal_length_path(self) -> None:
         # Two equally short START->TARGET routes: a weak one (low-confidence
@@ -1665,6 +1968,35 @@ class RetrievalTest(unittest.TestCase):
                     query_class="direct_lookup",
                     graph_path=graph_path,
                     cache_namespace="versioned_query_cache",
+                )
+
+            self.assertEqual(cache.stats()["hits"], 0)
+            self.assertEqual(cache.stats()["misses"], 2)
+
+    def test_render_final_packet_cache_contract_invalidates_old_semantics(self) -> None:
+        from graphgraph.runtime.cache import TopologicalKVCache
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            cache = TopologicalKVCache(root / "cache.json")
+            with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
+                with patch(
+                    "graphgraph.services.context.FINAL_RESPONSE_CACHE_VERSION",
+                    "legacy_final_contract",
+                ):
+                    render_final_packet(
+                        starts=["N1"],
+                        query_class="multi_hop_path",
+                        graph_path=graph_path,
+                        cache_namespace="versioned_final_cache",
+                    )
+                render_final_packet(
+                    starts=["N1"],
+                    query_class="multi_hop_path",
+                    graph_path=graph_path,
+                    cache_namespace="versioned_final_cache",
                 )
 
             self.assertEqual(cache.stats()["hits"], 0)

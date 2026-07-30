@@ -305,7 +305,9 @@ class Graph:
     _pagerank_cache: tuple[tuple[object, ...], dict[str, float]] | None = field(default=None, init=False, repr=False)
     _search_index_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
     _search_token_cache: tuple[tuple[object, ...], object] | None = field(default=None, init=False, repr=False)
-    _search_index_by_id_cache: tuple[tuple[object, ...], dict[str, object]] | None = field(default=None, init=False, repr=False)
+    _search_index_by_id_cache: tuple[tuple[object, ...], dict[str, object]] | None = field(
+        default=None, init=False, repr=False
+    )
     _exact_lookup_cache: tuple[int, dict[str, tuple[str, ...]]] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -329,6 +331,17 @@ class Graph:
     @property
     def edge_revision(self) -> int:
         return getattr(self.edges, "revision", 0)
+
+    def stable_node_order(self) -> dict[str, int]:
+        """Insertion/source order with O(1) revision-aware cache validation."""
+        cache = getattr(self, "_stable_node_order_cache", None)
+        if cache is not None:
+            cache_revision, order = cache
+            if cache_revision == self.node_revision:
+                return order
+        order = {node_id: index for index, node_id in enumerate(self.nodes)}
+        self._stable_node_order_cache = (self.node_revision, order)
+        return order
 
     def _edges_by_key(self, key_fn: Callable[[Edge], str]) -> dict[str, list[Edge]]:
         grouped: dict[str, list[Edge]] = {}
@@ -390,7 +403,7 @@ class Graph:
 
         # Initialize PageRank equally
         pr = {nid: 1.0 / N for nid in active_nodes}
-        
+
         # Pre-calculate active adjacency once. Search uses PageRank as a light
         # centrality prior, so this path needs to stay cheap on large graphs.
         outgoing = self.outgoing()
@@ -483,7 +496,7 @@ class Graph:
 
         outgoing = self.outgoing()
         incoming = self.incoming()
-        
+
         sum_out_arr = [0.0] * N
         for i, nid in enumerate(active_nodes):
             s = 0.0
@@ -557,9 +570,7 @@ class Graph:
             return self.pagerank()
 
         if tolerance is None or max_nodes is None or max_pushes is None:
-            auto_tol, auto_nodes, auto_pushes = adaptive_local_ppr_params(
-                len(self.nodes), len(active_seeds)
-            )
+            auto_tol, auto_nodes, auto_pushes = adaptive_local_ppr_params(len(self.nodes), len(active_seeds))
             tolerance = auto_tol if tolerance is None else tolerance
             max_nodes = auto_nodes if max_nodes is None else max_nodes
             max_pushes = auto_pushes if max_pushes is None else max_pushes
@@ -726,9 +737,11 @@ class Graph:
         if direction not in {"both", "out", "in"}:
             raise ValueError(f"unknown traversal direction: {direction}")
         import math
+
         outgoing = self.outgoing()
         incoming = self.incoming()
         degrees = self.degree()
+        stable_order = self.stable_node_order()
 
         # Pre-normalize scopes
         normalized_scopes = []
@@ -737,7 +750,8 @@ class Graph:
             normalized_scopes.append((norm, norm + "/"))
 
         included: set[str] = {
-            s for s in starts
+            s
+            for s in starts
             if s in self.nodes and self.nodes[s].active and _node_in_scope(self.nodes[s], normalized_scopes)
         }
         seen_edges: set[tuple[str, str, str]] = set()
@@ -763,9 +777,7 @@ class Graph:
                         seen_edges.add(ekey)
                         edge_list.append(edge)
         frontier = set(included)
-        node_energies: dict[str, float] = {
-            node_id: EXPANSION_INITIAL_ENERGY for node_id in included
-        }
+        node_energies: dict[str, float] = {node_id: EXPANSION_INITIAL_ENERGY for node_id in included}
 
         for _ in range(hops):
             new_edges: list[Edge] = []
@@ -813,11 +825,8 @@ class Graph:
                             new_energy = current_energy - decay
                             if new_energy > 0:
                                 next_energies[neighbor] = max(next_energies.get(neighbor, 0.0), new_energy)
-                                scores[neighbor] = (
-                                    scores.get(neighbor, 0.0)
-                                    + edge.traversal_val
-                                    * deg_penalty
-                                    * (new_energy / EXPANSION_INITIAL_ENERGY)
+                                scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty * (
+                                    new_energy / EXPANSION_INITIAL_ENERGY
                                 )
                         else:
                             scores[neighbor] = scores.get(neighbor, 0.0) + edge.traversal_val * deg_penalty
@@ -837,11 +846,21 @@ class Graph:
             if priority_bias:
                 ranked = sorted(
                     scores,
-                    key=lambda nid: scores[nid] * (1.0 + priority_bias.get(nid, 0.0)),
-                    reverse=True,
+                    key=lambda nid: (
+                        -scores[nid] * (1.0 + priority_bias.get(nid, 0.0)),
+                        stable_order.get(nid, len(stable_order)),
+                        nid,
+                    ),
                 )
             else:
-                ranked = sorted(scores, key=scores.__getitem__, reverse=True)
+                ranked = sorted(
+                    scores,
+                    key=lambda nid: (
+                        -scores[nid],
+                        stable_order.get(nid, len(stable_order)),
+                        nid,
+                    ),
+                )
             if max_nodes is not None:
                 available = max_nodes - len(included)
                 if available <= 0:

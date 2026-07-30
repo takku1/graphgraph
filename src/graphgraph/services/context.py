@@ -21,21 +21,29 @@ from ..planning.policies import render_policy_packet, select_policies
 from ..platform.compiler import GraphProgram
 from ..platform.runtime import create_graph_runtime
 from ..platform.source_planner import source_state_signature
+from ..representation import (
+    HybridRepresentationConfig,
+    accept_representation,
+    compile_hybrid_representation,
+)
 from ..retrieval import apply_shape_budget, expand_context, packet_priority, retrieve_context  # noqa: F401
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
-QUERY_RESPONSE_CACHE_VERSION = "request_v10_subsystem_map_actionable"
+QUERY_RESPONSE_CACHE_VERSION = "request_v19_affected_test_witness_attribution"
+FINAL_RESPONSE_CACHE_VERSION = "final_v8_registry_aware_facet_preflight"
 
-_DOCUMENT_EVIDENCE_KINDS = frozenset({
-    "concept",
-    "section",
-    "paragraph",
-    "markdown",
-    "rst",
-    "html",
-    "text",
-})
+_DOCUMENT_EVIDENCE_KINDS = frozenset(
+    {
+        "concept",
+        "section",
+        "paragraph",
+        "markdown",
+        "rst",
+        "html",
+        "text",
+    }
+)
 
 
 def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100, packet: str = "gg") -> str:
@@ -109,14 +117,12 @@ def render_final_packet(
     max_nodes: int | None = None,
     cache_namespace: str = "final",
     packet: str | None = None,
+    representation: str = "flat",
+    representation_budget: int | None = None,
 ) -> str:
     resolved_graph_path = graph_path or find_graph_path()
     project_root = project_root_for_graph(resolved_graph_path)
-    resolved_policies_path = (
-        policies_path
-        if policies_path is not None
-        else find_policies_path(project_root)
-    )
+    resolved_policies_path = policies_path if policies_path is not None else find_policies_path(project_root)
 
     plan = plan_context(query_class, query_text, max_nodes=max_nodes, packet=packet)
     lessons_path = find_lessons_path(project_root)
@@ -132,7 +138,9 @@ def render_final_packet(
         query_class,
         plan.hops,
         (
-            f"request_v2|{resolved_graph_path.resolve()}|{packet or 'auto'}|{plan.packet}|"
+            f"{FINAL_RESPONSE_CACHE_VERSION}|{resolved_graph_path.resolve()}|"
+            f"{packet or 'auto'}|{plan.packet}|"
+            f"{representation}|{representation_budget}|"
             f"{cache_namespace}|{plan.planner_version}|{query_text}|{paths}|{tags}|"
             f"{plan.node_budget}|{plan.direction}|{tuple(starts)}|"
             f"{_session_signature(project_root)}|"
@@ -180,10 +188,39 @@ def render_final_packet(
 
     selected = select_policies(policies, query)
     policy_packet = render_policy_packet(selected, compact=True)
+    priority = packet_priority(tuple(resolved_starts), nodes, edges, query_class, graph=graph)
     graph_packet = render_packet(
-        graph, nodes, edges, plan.packet,
-        priority=packet_priority(tuple(resolved_starts), nodes, edges, query_class),
+        graph,
+        nodes,
+        edges,
+        plan.packet,
+        priority=priority,
     )
+    representation_receipt: dict[str, object] = {}
+    if representation == "hybrid":
+        try:
+            hybrid = compile_hybrid_representation(
+                graph,
+                {node_id: 1.0 for node_id in resolved_starts},
+                packet_format=plan.packet,
+                priority=priority,
+                config=HybridRepresentationConfig(
+                    token_budget=representation_budget or 4096,
+                ),
+            )
+        except ValueError as exc:
+            representation_receipt = {
+                "policy": "hybrid",
+                "status": "fallback_flat",
+                "reason": str(exc),
+                "token_budget": representation_budget or 4096,
+            }
+        else:
+            hybrid_packet, representation_receipt = accept_representation(hybrid)
+            if hybrid_packet is not None:
+                graph_packet = hybrid_packet
+    elif representation != "flat":
+        raise ValueError(f"unknown representation policy: {representation}")
     _raise_if_invalid(graph_packet)
 
     out_lines: list[str] = []
@@ -199,6 +236,11 @@ def render_final_packet(
         out_lines.extend(["CONSTRAINTS:", policy_packet, "\nGRAPH:"])
     else:
         out_lines.append("GRAPH:")
+    if representation_receipt:
+        out_lines.append(
+            "REPRESENTATION:"
+            + json.dumps(representation_receipt, separators=(",", ":"), ensure_ascii=False)
+        )
     out_lines.append(graph_packet)
     final_output = "\n".join(out_lines)
     cache.set(
@@ -321,6 +363,8 @@ def render_query_context(
     snippet_limit: int = 3,
     snippet_context_lines: int = 2,
     snippet_max_lines: int = 24,
+    representation: str = "flat",
+    representation_budget: int | None = None,
 ) -> str:
     requested_query_class = query_class
     route = route_query(query, query_class, scopes=scopes)
@@ -359,6 +403,7 @@ def render_query_context(
             f"{_session_signature(project_root)}"
             f"|{anchor_paths}|{include_snippets}|{snippet_limit}|"
             f"{snippet_context_lines}|{snippet_max_lines}"
+            f"|{representation}|{representation_budget}"
         ),
     )
     # A caller-provided graph is the result of an in-process refresh. Query it
@@ -400,6 +445,8 @@ def render_query_context(
             anchor_limit=anchor_limit,
             scope_mode=scope_mode,
             anchor_paths=anchor_paths,
+            representation=representation,
+            representation_budget=representation_budget,
         )
     )
     graph = compiled.graph
@@ -544,6 +591,7 @@ def _cache_metadata_signature(
     response_metadata: dict[str, object] | None,
 ) -> object:
     """Keep only response state that can change answer/control correctness."""
+
     def stable(value: object) -> object:
         if isinstance(value, dict):
             return tuple(
@@ -561,19 +609,17 @@ def _cache_metadata_signature(
     if not isinstance(workflow, dict):
         return ()
     graph_validation = workflow.get("graph_validation", {})
-    validation_ok = (
-        graph_validation.get("ok")
-        if isinstance(graph_validation, dict)
-        else None
-    )
+    validation_ok = graph_validation.get("ok") if isinstance(graph_validation, dict) else None
     # Refresh/build telemetry describes how the already-hash-validated graph
     # was obtained. It must not split cache keys (`built=True` on call one,
     # `built=False` on call two). Freshness and graph validity can alter the
     # control gates, so they remain part of the key.
-    return stable({
-        "freshness": workflow.get("freshness", {}),
-        "graph_validation_ok": validation_ok,
-    })
+    return stable(
+        {
+            "freshness": workflow.get("freshness", {}),
+            "graph_validation_ok": validation_ok,
+        }
+    )
 
 
 def _with_cache_receipt(
@@ -645,18 +691,8 @@ def _compiled_control_receipt(
         "route": route_ok,
         "anchor": bool(result.starts),
         "evidence": state == "answerable" and not truncated,
-        "semantic": (
-            False
-            if compiled.receipt.semantic_validation == "fail"
-            else True
-            if semantic_seeds > 0
-            else None
-        ),
-        "packet": (
-            compiled.receipt.structural_validation == "pass"
-            if packet
-            else None
-        ),
+        "semantic": (False if compiled.receipt.semantic_validation == "fail" else True if semantic_seeds > 0 else None),
+        "packet": (compiled.receipt.structural_validation == "pass" if packet else None),
     }
     receipt = ControlReceipt(
         operation=str(compiled.route.query_class),
@@ -721,7 +757,8 @@ def _actionable_receipt(
             for edge in getattr(result, "edges", ())
             if edge.target in start_ids
             and edge.source not in start_ids
-            and edge.type in {
+            and edge.type
+            in {
                 "calls",
                 "references",
                 "imports_from",
@@ -740,25 +777,14 @@ def _actionable_receipt(
         for facet in coverage.get("fulfilled", ()):
             if not isinstance(facet, dict):
                 continue
-            priority_ids.extend(
-                str(node_id)
-                for node_id in facet.get("evidence", ())
-                if node_id
-            )
+            priority_ids.extend(str(node_id) for node_id in facet.get("evidence", ()) if node_id)
     document_status = metadata.get("document_status_evidence", {})
     if isinstance(document_status, dict):
-        priority_ids[0:0] = [
-            str(node_id)
-            for node_id in document_status.get("evidence", ())
-            if node_id
-        ]
+        priority_ids[0:0] = [str(node_id) for node_id in document_status.get("evidence", ()) if node_id]
     priority_ids = list(dict.fromkeys(priority_ids))
     if query_class not in {"doc_summary", "negative_query"}:
         priority_ids.sort(key=lambda node_id: node_id in start_ids)
-    priority_rank = {
-        node_id: rank
-        for rank, node_id in enumerate(priority_ids)
-    }
+    priority_rank = {node_id: rank for rank, node_id in enumerate(priority_ids)}
     ranked_matches = sorted(
         enumerate(getattr(result, "matches", ())),
         key=lambda item: (
@@ -792,11 +818,7 @@ def _actionable_receipt(
     change_points = (
         []
         if query_class in {"doc_summary", "negative_query"}
-        else [
-            point
-            for point in evidence_points
-            if str(point["kind"]) not in _DOCUMENT_EVIDENCE_KINDS
-        ]
+        else [point for point in evidence_points if str(point["kind"]) not in _DOCUMENT_EVIDENCE_KINDS]
     )
     evidence_role = (
         "document_status"
@@ -853,17 +875,19 @@ def _node_paths(graph: Graph, node_ids: set[str]) -> tuple[str, ...]:
 
 #: Basenames GraphGraph itself writes beside a graph. They are outputs of a
 #: query, never inputs to one, so they must never enter the cache key.
-_TOOL_ARTIFACT_NAMES = frozenset({
-    "kv_cache.json",
-    "semantic.json",
-    "activation_state.json",
-    "memory.json",
-    "episodes.jsonl",
-    "projects.json",
-    "runtime-trace.jsonl",
-    "traces.jsonl",
-    "trace.jsonl",
-})
+_TOOL_ARTIFACT_NAMES = frozenset(
+    {
+        "kv_cache.json",
+        "semantic.json",
+        "activation_state.json",
+        "memory.json",
+        "episodes.jsonl",
+        "projects.json",
+        "runtime-trace.jsonl",
+        "traces.jsonl",
+        "trace.jsonl",
+    }
+)
 
 
 def _is_tool_artifact(path: str) -> bool:

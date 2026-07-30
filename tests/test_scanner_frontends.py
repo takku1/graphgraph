@@ -14,6 +14,7 @@ from graphgraph.scanner.frontends import (
     SourceFile,
     TreeSitterExtractor,
     available_frontends,
+    parser_for_suffix,
     select_extractor,
     tree_sitter_available,
 )
@@ -81,11 +82,7 @@ class FrontendsScannerTest(unittest.TestCase):
     def test_javascript_anonymous_test_callback_becomes_a_grounded_node(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
-        source = (
-            "it('sends a response', function(done) {\n"
-            "  done();\n"
-            "});\n"
-        )
+        source = "it('sends a response', function(done) {\n  done();\n});\n"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "response.test.js"
             path.write_text(source, encoding="utf-8")
@@ -94,11 +91,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 max_total_symbols=100,
             )
 
-        callbacks = [
-            node
-            for node in result.nodes.values()
-            if "javascript_definition:callback" in node.facts
-        ]
+        callbacks = [node for node in result.nodes.values() if "javascript_definition:callback" in node.facts]
         self.assertEqual(len(callbacks), 1)
         self.assertTrue(callbacks[0].label.startswith("it_callback_L1C"))
         self.assertIn("callback_registered_by:it", callbacks[0].facts)
@@ -200,13 +193,11 @@ class FrontendsScannerTest(unittest.TestCase):
 
         self.assertGreaterEqual(result.resolved_member_calls, 3)
         resolved = {
-            (result.nodes[e.source].label, result.nodes[e.target].label)
-            for e in result.edges
-            if e.type == "calls"
+            (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
         }
         self.assertIn(("Run", "Persist"), resolved)  # new-expression local
-        self.assertIn(("Run", "Load"), resolved)      # typed parameter
-        self.assertIn(("Run", "Helper"), resolved)    # this.Method()
+        self.assertIn(("Run", "Load"), resolved)  # typed parameter
+        self.assertIn(("Run", "Helper"), resolved)  # this.Method()
 
     def test_module_qualified_calls_resolve_via_imports(self) -> None:
         # F3 (graybox 2026-07-22): `module.func()` where `module` is imported
@@ -243,13 +234,99 @@ class FrontendsScannerTest(unittest.TestCase):
             if e.type == "calls"
         }
         # Module-qualified call resolved through the import join.
-        self.assertEqual(
-            by_provenance.get(("run", "load_metadata")), "tree_sitter_module_qualified"
-        )
+        self.assertEqual(by_provenance.get(("run", "load_metadata")), "tree_sitter_module_qualified")
         # Class-instance call still resolves via the receiver-type path.
+        self.assertEqual(by_provenance.get(("run", "persist")), "tree_sitter_type_resolved")
+
+    def test_python_package_reexports_and_nested_modules_resolve_calls(self) -> None:
+        """Resolve Flask-shaped package APIs without leaf-name guessing."""
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "flask/helpers.py": "def make_response(value=None):\n    return value\n",
+            "flask/__init__.py": (
+                "from . import helpers as helpers\nfrom .helpers import make_response as make_response\n"
+            ),
+            "tests/test_basic.py": (
+                "import flask.views\n"
+                "def test_public_api():\n"
+                "    flask.make_response('public')\n"
+                "def test_nested_api():\n"
+                "    flask.helpers.make_response('nested')\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for rel, text in sources.items():
+                path = Path(tmp) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+        targets = {
+            result.nodes[edge.source].label: result.nodes[edge.target].path
+            for edge in result.edges
+            if edge.type == "calls"
+            and edge.source in result.nodes
+            and edge.target in result.nodes
+            and result.nodes[edge.source].label in {"test_public_api", "test_nested_api"}
+            and result.nodes[edge.target].label == "make_response"
+        }
         self.assertEqual(
-            by_provenance.get(("run", "persist")), "tree_sitter_type_resolved"
+            targets,
+            {
+                "test_public_api": "flask/helpers.py",
+                "test_nested_api": "flask/helpers.py",
+            },
         )
+
+    def test_python_test_attribute_reads_and_writes_are_structural_evidence(self) -> None:
+        """A field wrapper is affected-test evidence, but is not a call."""
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "src/flask/app.py": ("class Flask:\n    def wsgi_app(self, environ, start_response):\n        return []\n"),
+            # Same-name non-fixture functions must not poison pytest's fixture
+            # binding. Flask has exactly this shape in src/flask/cli.py.
+            "src/flask/cli.py": "def app() -> Iterable:\n    return ()\n",
+            "tests/conftest.py": (
+                "import pytest\n"
+                "from flask import Flask\n"
+                "@pytest.fixture\n"
+                "def app():\n"
+                "    app = Flask('test')\n"
+                "    return app\n"
+            ),
+            "tests/test_basic.py": (
+                "def test_session_using_application_root(app):\n"
+                "    app.wsgi_app = PrefixPathMiddleware(app.wsgi_app, '/bar')\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for rel, text in sources.items():
+                path = Path(tmp) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+        evidence = {
+            edge.type
+            for edge in result.edges
+            if edge.source in result.nodes
+            and edge.target in result.nodes
+            and result.nodes[edge.source].label == "test_session_using_application_root"
+            and result.nodes[edge.target].label == "wsgi_app"
+        }
+        self.assertEqual(evidence, {"reads", "writes"})
 
     def test_module_qualified_resolution_is_unit_testable(self) -> None:
         from graphgraph.scanner.frontends.module_calls import (
@@ -259,9 +336,13 @@ class FrontendsScannerTest(unittest.TestCase):
 
         aliases = module_alias_targets(
             ".py",
-            "import model_io\nfrom pkg import model_io as mio\nimport os.path as osp\n",
+            "import model_io\nimport pkg.tools\nfrom pkg import model_io as mio\nimport os.path as osp\n",
         )
         self.assertEqual(aliases.get("model_io"), "model_io")
+        # Python binds both the top-level package name and makes the imported
+        # dotted module addressable through that package.
+        self.assertEqual(aliases.get("pkg"), "pkg")
+        self.assertEqual(aliases.get("pkg.tools"), "pkg.tools")
         self.assertEqual(aliases.get("mio"), "pkg.model_io")
         self.assertEqual(aliases.get("osp"), "os.path")
 
@@ -293,9 +374,7 @@ class FrontendsScannerTest(unittest.TestCase):
         )
         # An unimported receiver is never a module call.
         self.assertIsNone(
-            resolve_module_qualified_call(
-                "self", "load_metadata", {}, name_to_symbols, nodes, "caller", lang
-            )
+            resolve_module_qualified_call("self", "load_metadata", {}, name_to_symbols, nodes, "caller", lang)
         )
 
     def test_js_module_alias_targets_from_require_and_import(self) -> None:
@@ -313,7 +392,7 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertEqual(aliases.get("fmt"), "lib.format")
         self.assertEqual(aliases.get("util"), "util")
         self.assertEqual(aliases.get("cfg"), "config")  # trailing index dropped
-        self.assertNotIn("named", aliases)              # destructured export, not a module
+        self.assertNotIn("named", aliases)  # destructured export, not a module
 
     def test_js_named_local_from_factory_return_type_resolves(self) -> None:
         # `const s = createStore()` where `createStore` returns `new Store()`:
@@ -339,9 +418,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 [SourceFile(path, "app.js", "app_js", source)], max_total_symbols=100
             )
         resolved = {
-            (result.nodes[e.source].label, result.nodes[e.target].label)
-            for e in result.edges
-            if e.type == "calls"
+            (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
         }
         self.assertIn(("run", "save"), resolved)
 
@@ -352,10 +429,7 @@ class FrontendsScannerTest(unittest.TestCase):
             self.skipTest("tree_sitter is not installed")
         sources = {
             "store.js": "function persist(x){return x;}\nmodule.exports = { persist };\n",
-            "app.js": (
-                "const store = require('./store');\n"
-                "function run(){ return store.persist(1); }\n"
-            ),
+            "app.js": ("const store = require('./store');\nfunction run(){ return store.persist(1); }\n"),
         }
         with tempfile.TemporaryDirectory() as tmp:
             files = []
@@ -369,9 +443,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for e in result.edges
             if e.type == "calls"
         }
-        self.assertEqual(
-            by_provenance.get(("run", "persist")), "tree_sitter_module_qualified"
-        )
+        self.assertEqual(by_provenance.get(("run", "persist")), "tree_sitter_module_qualified")
 
     def test_java_member_calls_resolve(self) -> None:
         # Java was worse than C#'s 0/6,454: its `method_invocation` carries the
@@ -406,9 +478,7 @@ class FrontendsScannerTest(unittest.TestCase):
 
         self.assertGreaterEqual(result.resolved_member_calls, 3)
         resolved = {
-            (result.nodes[e.source].label, result.nodes[e.target].label)
-            for e in result.edges
-            if e.type == "calls"
+            (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
         }
         self.assertIn(("run", "persist"), resolved)
         self.assertIn(("run", "load"), resolved)
@@ -445,9 +515,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 max_total_symbols=100,
             )
         resolved = {
-            (result.nodes[e.source].label, result.nodes[e.target].label)
-            for e in result.edges
-            if e.type == "calls"
+            (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
         }
         self.assertIn(("Run", "Save"), resolved)
 
@@ -477,9 +545,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 max_total_symbols=100,
             )
         resolved = {
-            (result.nodes[e.source].label, result.nodes[e.target].label)
-            for e in result.edges
-            if e.type == "calls"
+            (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
         }
         self.assertIn(("run", "save"), resolved)
 
@@ -514,9 +580,7 @@ class FrontendsScannerTest(unittest.TestCase):
             {"Repo", "Service"},
         )
         resolved = {
-            (result.nodes[e.source].label, result.nodes[e.target].label)
-            for e in result.edges
-            if e.type == "calls"
+            (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
         }
         self.assertIn(("run", "save"), resolved)
 
@@ -524,12 +588,7 @@ class FrontendsScannerTest(unittest.TestCase):
         from graphgraph.scanner.frontends.cpp import cpp_class_field_types
 
         types = cpp_class_field_types(
-            "class Service {\n"
-            "  Repo repo_;\n"
-            "  Store* store;\n"
-            "  int count;\n"
-            "  void run() { Local local; }\n"
-            "};"
+            "class Service {\n  Repo repo_;\n  Store* store;\n  int count;\n  void run() { Local local; }\n};"
         )
         self.assertEqual(types.get(("Service", "repo_")), "Repo")
         self.assertEqual(types.get(("Service", "store")), "Store")
@@ -547,9 +606,9 @@ class FrontendsScannerTest(unittest.TestCase):
             "  public void Run() { Local l = new Local(); }\n"
             "}"
         )
-        self.assertEqual(types.get(("Service", "_repo")), "Repo")   # field
+        self.assertEqual(types.get(("Service", "_repo")), "Repo")  # field
         self.assertEqual(types.get(("Service", "Cache")), "Cache")  # auto-property
-        self.assertNotIn(("Service", "_count"), types)              # primitive field
+        self.assertNotIn(("Service", "_count"), types)  # primitive field
         # A method-body local has no access modifier, so the field scan -- which
         # requires one -- must not mistake it for a class field.
         self.assertNotIn(("Service", "l"), types)
@@ -564,11 +623,11 @@ class FrontendsScannerTest(unittest.TestCase):
             "  var ignored = 3;\n"
             "}"
         )
-        self.assertEqual(types.get("injected"), "Store")   # parameter
-        self.assertEqual(types.get("local"), "Store")       # new-expression
-        self.assertEqual(types.get("w"), "Widget")          # declared type
-        self.assertNotIn("count", types)                    # primitive param
-        self.assertNotIn("ignored", types)                  # untyped var
+        self.assertEqual(types.get("injected"), "Store")  # parameter
+        self.assertEqual(types.get("local"), "Store")  # new-expression
+        self.assertEqual(types.get("w"), "Widget")  # declared type
+        self.assertNotIn("count", types)  # primitive param
+        self.assertNotIn("ignored", types)  # untyped var
 
     def test_cpg_is_advertised_as_planned_not_usable(self) -> None:
         # cpg has no extractor and select_extractor would fall back to regex.
@@ -588,11 +647,7 @@ class FrontendsScannerTest(unittest.TestCase):
             "graphgraph.scanner.frontends.languages._language_available",
             side_effect=lambda name: name == "python",
         ):
-            tree_sitter = next(
-                capability
-                for capability in available_frontends()
-                if capability.name == "tree_sitter"
-            )
+            tree_sitter = next(capability for capability in available_frontends() if capability.name == "tree_sitter")
 
         self.assertEqual(tree_sitter.ready_languages, ("python",))
         self.assertIn("typescript", tree_sitter.unavailable_languages)
@@ -785,8 +840,7 @@ class FrontendsScannerTest(unittest.TestCase):
             impl_path.parent.mkdir(parents=True)
             trait_text = "pub trait DiscoveryPipeline { fn search_candidates(&self); }\n"
             impl_text = (
-                "pub struct LocusEngine;\n"
-                "impl DiscoveryPipeline for LocusEngine { fn search_candidates(&self) {} }\n"
+                "pub struct LocusEngine;\nimpl DiscoveryPipeline for LocusEngine { fn search_candidates(&self) {} }\n"
             )
             trait_path.write_text(trait_text, encoding="utf-8")
             impl_path.write_text(impl_text, encoding="utf-8")
@@ -828,9 +882,7 @@ class FrontendsScannerTest(unittest.TestCase):
             point_id = next(nid for nid, node in result.nodes.items() if node.label == "Point")
             make_id = next(nid for nid, node in result.nodes.items() if node.label == "make")
             timed_id = next(nid for nid, node in result.nodes.items() if node.label == "optimize_timed")
-            timings_id = next(
-                nid for nid, node in result.nodes.items() if node.label == "EgraphStageTimingsMs"
-            )
+            timings_id = next(nid for nid, node in result.nodes.items() if node.label == "EgraphStageTimingsMs")
             self.assertTrue(any(edge.type == "field_of" and edge.target == point_id for edge in result.edges))
             self.assertTrue(
                 any(
@@ -869,7 +921,9 @@ class FrontendsScannerTest(unittest.TestCase):
             )
             by_label = {node.label: node for node in result.nodes.values()}
             self.assertIn("RecipeResolver", by_label)
-            self.assertTrue(any(node.label == "RecipeResolver" and node.kind == "class" for node in result.nodes.values()))
+            self.assertTrue(
+                any(node.label == "RecipeResolver" and node.kind == "class" for node in result.nodes.values())
+            )
             self.assertEqual(by_label["Resolve"].kind, "method")
             self.assertEqual(by_label["RecipeRecord"].kind, "struct")
             self.assertEqual(by_label["RecipeKind"].kind, "enum")
@@ -988,10 +1042,9 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertEqual(set(methods), {"run", "process"})
         self.assertEqual(result.nodes[methods["run"].parent].label, "Worker")
         calls = [
-            edge for edge in result.edges
-            if edge.type == "calls"
-            and edge.source == methods["run"].id
-            and edge.target == methods["process"].id
+            edge
+            for edge in result.edges
+            if edge.type == "calls" and edge.source == methods["run"].id and edge.target == methods["process"].id
         ]
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0].provenance, "tree_sitter_type_resolved")
@@ -1130,9 +1183,7 @@ class FrontendsScannerTest(unittest.TestCase):
         )
         self.assertTrue(any("SourceYieldBaseline::evaluate" in node.summary for node in methods))
         call_targets = {
-            edge.target
-            for edge in result.edges
-            if edge.type == "calls" and result.nodes[edge.source].label == "check"
+            edge.target for edge in result.edges if edge.type == "calls" and result.nodes[edge.source].label == "check"
         }
         self.assertEqual(call_targets, {node.id for node in methods})
 
@@ -1165,15 +1216,9 @@ class FrontendsScannerTest(unittest.TestCase):
                 files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
-        calls = [
-            edge
-            for edge in result.edges
-            if edge.type == "calls" and result.nodes[edge.source].label == "run"
-        ]
+        calls = [edge for edge in result.edges if edge.type == "calls" and result.nodes[edge.source].label == "run"]
         owners = {
-            result.nodes[result.nodes[edge.target].parent].label
-            for edge in calls
-            if result.nodes[edge.target].parent
+            result.nodes[result.nodes[edge.target].parent].label for edge in calls if result.nodes[edge.target].parent
         }
         self.assertEqual(owners, {"IdentityDiscoveryAdvisor", "SimplerFormAdvisor"})
         self.assertTrue(all(edge.provenance == "tree_sitter_type_resolved" for edge in calls))
@@ -1225,7 +1270,7 @@ class FrontendsScannerTest(unittest.TestCase):
             "    def compile(self):\n"
             "        return self.graph.outgoing()\n"
             "\n"
-            "def from_annotation(graph: \"Graph | None\"):\n"
+            'def from_annotation(graph: "Graph | None"):\n'
             "    return graph.outgoing()\n"
             "\n"
             "def from_constructor():\n"
@@ -1292,14 +1337,14 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertFalse(any(edge.type == "calls_candidate" for edge in result.edges))
         self.assertFalse(
             any(
-                edge.type == "calls"
-                and result.nodes.get(edge.target)
-                and result.nodes[edge.target].label == "append"
+                edge.type == "calls" and result.nodes.get(edge.target) and result.nodes[edge.target].label == "append"
                 for edge in result.edges
             )
         )
         self.assertEqual(result.unknown_receiver_member_calls, 2)
         self.assertEqual(result.unresolved_member_calls, 1)
+        self.assertEqual(result.external_resolved_member_calls, 1)
+        self.assertEqual(result.unmatched_member_calls, 0)
 
     def test_tree_sitter_resolves_rust_self_field_receiver_type(self) -> None:
         if not tree_sitter_available():
@@ -1358,8 +1403,7 @@ class FrontendsScannerTest(unittest.TestCase):
         references = [
             edge
             for edge in result.edges
-            if edge.type == "references"
-            and result.nodes[edge.source].label == "validates_report"
+            if edge.type == "references" and result.nodes[edge.source].label == "validates_report"
         ]
         test_node = next(node for node in result.nodes.values() if node.label == "validates_report")
         self.assertEqual(test_node.facts, ("role:test", "rust_attribute:test"))
@@ -1367,9 +1411,7 @@ class FrontendsScannerTest(unittest.TestCase):
             {result.nodes[edge.target].label for edge in references},
             {"timings_ms", "candidate_generation", "extraction_only"},
         )
-        self.assertTrue(
-            all(edge.provenance == "tree_sitter_type_resolved_field_assertion" for edge in references)
-        )
+        self.assertTrue(all(edge.provenance == "tree_sitter_type_resolved_field_assertion" for edge in references))
         self.assertTrue(all(edge.confidence == 0.94 for edge in references))
 
     def test_tree_sitter_projects_rust_operators_into_semantic_ir_facts(self) -> None:
@@ -1411,12 +1453,7 @@ class FrontendsScannerTest(unittest.TestCase):
         # actively-used function read as isolated/dead. Verified via a
         # direct tree-sitter parse (not assumed) that C's call_expression
         # exposes its argument list via child_by_field_name("arguments").
-        c_text = (
-            "void CB2_InitBattle(void) {}\n"
-            "void MainLoop(void) {\n"
-            "    SetMainCallback2(CB2_InitBattle);\n"
-            "}\n"
-        )
+        c_text = "void CB2_InitBattle(void) {}\nvoid MainLoop(void) {\n    SetMainCallback2(CB2_InitBattle);\n}\n"
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "battle_main.c"
             f.write_text(c_text, encoding="utf-8")
@@ -1580,7 +1617,11 @@ class FrontendsScannerTest(unittest.TestCase):
                 "resolve",
             ),
         }
+        tested = 0
         for fname, (text, type_name, member) in cases.items():
+            if parser_for_suffix(Path(fname).suffix) is None:
+                continue
+            tested += 1
             with tempfile.TemporaryDirectory() as tmp:
                 f = Path(tmp) / fname
                 f.write_text(text, encoding="utf-8")
@@ -1591,6 +1632,8 @@ class FrontendsScannerTest(unittest.TestCase):
                 labels = {node.label for node in result.nodes.values()}
                 self.assertIn(type_name, labels, f"{fname}: missing type node")
                 self.assertIn(member, labels, f"{fname}: missing member node")
+        if tested == 0:
+            self.skipTest("no additional-language Tree-sitter grammar is installed")
 
     def test_regex_extractor_reports_symbol_truncation(self) -> None:
         # Same silent-truncation bug class, at the symbol-extraction layer:
@@ -1895,9 +1938,7 @@ class FrontendsScannerTest(unittest.TestCase):
             "crates/locus-frontends/src/formula.rs": "pub fn parse(input: &str) -> i32 { 1 }\n",
             "crates/other/src/parser.rs": "pub fn parse(input: &str) -> i32 { 2 }\n",
             "crates/locus-pipeline/src/lib.rs": (
-                "pub fn parse_to_ir(input: &str) -> i32 {\n"
-                "    locus_frontends::formula::parse(input)\n"
-                "}\n"
+                "pub fn parse_to_ir(input: &str) -> i32 {\n    locus_frontends::formula::parse(input)\n}\n"
             ),
         }
         with tempfile.TemporaryDirectory() as tmp:
@@ -1911,19 +1952,15 @@ class FrontendsScannerTest(unittest.TestCase):
 
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
-        parse_to_ir = next(
-            node.id for node in result.nodes.values()
-            if node.label == "parse_to_ir"
-        )
+        parse_to_ir = next(node.id for node in result.nodes.values() if node.label == "parse_to_ir")
         formula_parse = next(
-            node.id for node in result.nodes.values()
+            node.id
+            for node in result.nodes.values()
             if node.label == "parse" and node.path.endswith("locus-frontends/src/formula.rs")
         )
         self.assertTrue(
             any(
-                edge.source == parse_to_ir
-                and edge.target == formula_parse
-                and edge.type == "calls"
+                edge.source == parse_to_ir and edge.target == formula_parse and edge.type == "calls"
                 for edge in result.edges
             )
         )
@@ -1932,9 +1969,7 @@ class FrontendsScannerTest(unittest.TestCase):
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
         sources = {
-            "crates/locus-engine/src/expression.rs": (
-                "pub enum Expr { Constant(i32), Add(Box<Expr>, Box<Expr>) }\n"
-            ),
+            "crates/locus-engine/src/expression.rs": ("pub enum Expr { Constant(i32), Add(Box<Expr>, Box<Expr>) }\n"),
             "crates/locus-engine/tests/expression_test.rs": (
                 "#[test]\n"
                 "fn simplifies_expr() {\n"
@@ -1958,10 +1993,7 @@ class FrontendsScannerTest(unittest.TestCase):
         expr_id = next(node.id for node in result.nodes.values() if node.label == "Expr")
         self.assertTrue(
             any(
-                edge.source == test_id
-                and edge.target == expr_id
-                and edge.type == "references"
-                for edge in result.edges
+                edge.source == test_id and edge.target == expr_id and edge.type == "references" for edge in result.edges
             )
         )
 
@@ -1996,10 +2028,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
-        target = next(
-            node.id for node in result.nodes.values()
-            if node.label == "count_ops" and node.kind == "method"
-        )
+        target = next(node.id for node in result.nodes.values() if node.label == "count_ops" and node.kind == "method")
         callers = {
             result.nodes[edge.source].label
             for edge in result.edges
@@ -2049,10 +2078,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
-        target = next(
-            node.id for node in result.nodes.values()
-            if node.label == "count_ops" and node.kind == "method"
-        )
+        target = next(node.id for node in result.nodes.values() if node.label == "count_ops" and node.kind == "method")
         callers = {
             result.nodes[edge.source].label
             for edge in result.edges
@@ -2086,7 +2112,8 @@ class FrontendsScannerTest(unittest.TestCase):
 
         go_id = next(node.id for node in result.nodes.values() if node.label == "go")
         run_targets = {
-            edge.target for edge in result.edges
+            edge.target
+            for edge in result.edges
             if edge.type == "calls"
             and edge.source == go_id
             and result.nodes.get(edge.target)
@@ -2147,11 +2174,7 @@ class FrontendsScannerTest(unittest.TestCase):
             self.skipTest("tree_sitter is not installed")
         sources = {
             # Owner defines `persist`; nothing internal defines `dumps`.
-            "src/store.py": (
-                "class Store:\n"
-                "    def persist(self, item):\n"
-                "        return item\n"
-            ),
+            "src/store.py": ("class Store:\n    def persist(self, item):\n        return item\n"),
             # `other` is typed to Store, but `missing` is defined on no
             # internal symbol at all -> external. `helper` IS defined
             # internally (on Store, as persist's sibling) but not on the
@@ -2196,8 +2219,7 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertGreater(
             result.unmatched_member_calls,
             0,
-            "a typed receiver whose method exists internally but not on that "
-            "type is a real miss, not an external call",
+            "a typed receiver whose method exists internally but not on that type is a real miss, not an external call",
         )
 
     def test_unknown_receiver_histogram_partitions_the_total(self) -> None:
@@ -2355,10 +2377,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 [SourceFile(path, "a.ts", "a_ts", text)], max_total_symbols=60
             )
 
-        target = next(
-            node.id for node in result.nodes.values()
-            if node.label == "save" and node.kind == "method"
-        )
+        target = next(node.id for node in result.nodes.values() if node.label == "save" and node.kind == "method")
         callers = {
             result.nodes[edge.source].label
             for edge in result.edges
@@ -2443,8 +2462,7 @@ class FrontendsScannerTest(unittest.TestCase):
         owners = {
             result.nodes[edge.target].id.split("__")[-2]
             for edge in result.edges
-            if edge.type == "calls" and result.nodes.get(edge.target)
-            and result.nodes[edge.target].label == "hit"
+            if edge.type == "calls" and result.nodes.get(edge.target) and result.nodes[edge.target].label == "hit"
         }
         self.assertEqual(owners, {"Report"}, f"comment/string leaked a type: {owners}")
 
@@ -2502,9 +2520,7 @@ class PythonConstructorParameterTypesTest(unittest.TestCase):
         from graphgraph.scanner.frontends.python import _python_class_field_types
 
         types = _python_class_field_types(
-            "class C:\n"
-            "    def __init__(self, dep: Base) -> None:\n"
-            "        self.dep: Derived = dep\n"
+            "class C:\n    def __init__(self, dep: Base) -> None:\n        self.dep: Derived = dep\n"
         )
         self.assertEqual(types.get(("C", "dep")), "Derived")
 

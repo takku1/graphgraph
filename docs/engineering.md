@@ -124,7 +124,11 @@ every alternative.
   `plan_context`. Natural-language query → auto-discovered anchors → bounded
   packet. No hand-rolled Python loader needed.
 - **Token-efficient serialization** — `packets/renderers.py`, the whole reason
-  the project exists (40–60% fewer tokens than verbose graph dumps).
+  the project exists (40–60% fewer tokens than verbose graph dumps). That range
+  predates the 2026-07-30 token-proxy recalibration; the direction holds but the
+  magnitude was measured with a ruler carrying a 47% cross-format spread, so
+  re-measure before repeating it. See
+  [the recalibration finding](findings/2026-07-30-token-proxy-recalibration.md).
 - **Query-class-aware retrieval depth** — `planning/` routes `blast_radius`,
   `subsystem_summary`, `direct_lookup`, etc. to different expansion depths. This
   is the "pull the right dependencies" idea, already calibrated.

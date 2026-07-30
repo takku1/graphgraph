@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from ..io import (
@@ -16,7 +17,12 @@ from ..io import (
 from ..packets import render_packet
 from ..packets.validation import validate_any
 from ..planning import compute_subgraph_stats, plan_context, refine_plan_for_subgraph
-from ..retrieval import apply_shape_budget, packet_priority
+from ..retrieval import (
+    apply_shape_budget,
+    encode_relation_micro,
+    packet_priority,
+    query_relations,
+)
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from ..services import (
     FullGraphTooLargeError,
@@ -32,6 +38,7 @@ from ..services.freshness import (
     scope_freshness,
     source_root_for_saved_graph,
 )
+from ..services.lifecycle import refresh_saved_graph
 from ..services.native_context import render_native_context
 from ..services.project_status import graph_shape
 from .output import emit_json
@@ -64,19 +71,18 @@ def cmd_render(args: argparse.Namespace) -> None:
         return
 
     packet = render_packet(
-        graph, nodes, edges, plan.packet,
-        priority=packet_priority(tuple(starts), nodes, edges, args.query_class),
+        graph,
+        nodes,
+        edges,
+        plan.packet,
+        priority=packet_priority(tuple(starts), nodes, edges, args.query_class, graph=graph),
     )
     cache.set(
         graph_path,
         cache_key,
         packet,
         node_ids=nodes,
-        paths=[
-            graph.nodes[node_id].path
-            for node_id in nodes
-            if node_id in graph.nodes and graph.nodes[node_id].path
-        ],
+        paths=[graph.nodes[node_id].path for node_id in nodes if node_id in graph.nodes and graph.nodes[node_id].path],
     )
     print(packet)
 
@@ -136,6 +142,8 @@ def cmd_final(args: argparse.Namespace) -> None:
             max_nodes=args.max_nodes,
             cache_namespace="cli_final",
             packet=getattr(args, "packet", None),
+            representation=args.representation,
+            representation_budget=args.representation_budget,
         )
     )
 
@@ -189,6 +197,8 @@ def cmd_query(args: argparse.Namespace) -> None:
         source_mode=args.source_mode,
         memory_scopes=tuple(args.memory_scope) or ("project", "session"),
         response_metadata={"workflow": {"freshness": freshness}},
+        representation=args.representation,
+        representation_budget=args.representation_budget,
     )
     if show_stats or as_json:
         payload = json.loads(output)
@@ -225,12 +235,57 @@ def cmd_snippets(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_relations(args: argparse.Namespace) -> None:
+    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    started = time.perf_counter()
+    sync_git = getattr(args, "sync", "none") == "git"
+    refresh_summary = None
+    freshness = "unchecked"
+    if sync_git:
+        source_root = source_root_for_saved_graph(graph_path)
+        status = refresh_saved_graph(
+            directory=source_root,
+            output_path=graph_path,
+            sync_git=True,
+        )
+        graph = status.graph
+        checked = inspect_saved_graph_freshness(
+            directory=source_root,
+            output_path=graph_path,
+        )
+        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
+        refresh_summary = {
+            "updated": len(status.changed_paths),
+            "removed": len(status.deleted_paths),
+            "write": status.built,
+            "fresh": freshness == "fresh",
+        }
+    else:
+        graph = load_any(graph_path)
+    result = query_relations(
+        graph,
+        args.target,
+        direction=args.direction,
+        limit=args.limit,
+        include_tests=args.include_tests,
+        include_external=args.include_external,
+        details=args.detailed,
+        freshness=freshness,
+    )
+    if refresh_summary is not None and result.get("status") == "ok":
+        result["refresh"] = refresh_summary
+    if result.get("status") == "ok":
+        result["milliseconds"] = round((time.perf_counter() - started) * 1000, 3)
+    payload = result if args.detailed else encode_relation_micro(result)
+    if result.get("status") == "ok" and isinstance(payload.get("r"), dict):
+        payload["r"]["ms"] = result["milliseconds"]
+    emit_json(payload, args.pretty)
+
+
 def cmd_context(args: argparse.Namespace) -> None:
     skip_dirs: list[str] = list(args.skip_dirs or [])
     exclude_dirs: list[str] = list(getattr(args, "exclude_dirs", None) or [])
-    all_skip = tuple(
-        skip_dirs + [item for item in exclude_dirs if item not in skip_dirs]
-    )
+    all_skip = tuple(skip_dirs + [item for item in exclude_dirs if item not in skip_dirs])
     include_dirs: list[str] = list(getattr(args, "include", None) or [])
     graph_path = Path(args.graph) if args.graph else None
     directory = (
@@ -268,16 +323,12 @@ def cmd_context(args: argparse.Namespace) -> None:
         json_details=args.details,
         source_mode=args.source_mode,
         memory_scopes=tuple(args.memory_scope) or ("project", "session"),
+        representation=args.representation,
+        representation_budget=args.representation_budget,
     )
     if args.show_stats:
         shape = graph_shape(status.graph)
-        action = (
-            "refreshed"
-            if status.changed_paths or status.deleted_paths
-            else "built"
-            if status.built
-            else "loaded"
-        )
+        action = "refreshed" if status.changed_paths or status.deleted_paths else "built" if status.built else "loaded"
         print(
             (
                 f"GraphGraph context {action}: {status.path} "
@@ -289,8 +340,7 @@ def cmd_context(args: argparse.Namespace) -> None:
         )
         if status.changed_paths or status.deleted_paths:
             print(
-                f"GraphGraph sync changed={len(status.changed_paths)} "
-                f"deleted={len(status.deleted_paths)}",
+                f"GraphGraph sync changed={len(status.changed_paths)} deleted={len(status.deleted_paths)}",
                 file=sys.stderr,
             )
     if args.validate and not args.json:

@@ -1,0 +1,946 @@
+{
+  "version": "1.0",
+  "governance": "docs/context_system_research_tournament.md",
+  "claims": [
+    {
+      "claim_id": "GPA-DEF-001",
+      "source": "docs/global_project_attention_research_proposal.md#operational-definition",
+      "status": "normative",
+      "mechanism": "Every project entity is source-addressable and belongs to exactly one query-conditioned exact or aggregate representation; effective omitted influence is bounded rather than declared merely nonzero.",
+      "operating_regime": "all project sizes and model boundaries",
+      "baseline": "binary retrieved-set semantics",
+      "primary_metric": "valid total cover plus effective-influence receipt",
+      "guardrails": [
+        "no duplicate coverage",
+        "no unaddressable entity"
+      ],
+      "minimum_effect": "not applicable",
+      "experiment_ids": [],
+      "evidence": [],
+      "decision": "governing definition"
+    },
+    {
+      "claim_id": "GPA-COVER-001",
+      "source": "docs/global_project_attention_research_proposal.md#coverage-invariant",
+      "status": "measured",
+      "mechanism": "A hierarchy antichain plus disjoint residual exceptions represents every leaf exactly once.",
+      "operating_regime": "finite rooted forests",
+      "baseline": "top-k omitted-set representation",
+      "primary_metric": "Global Representation Coverage",
+      "guardrails": [
+        "duplicate coverage equals zero",
+        "unknown coverage equals zero"
+      ],
+      "minimum_effect": "GRC equals 1 mechanically",
+      "experiment_ids": [
+        "EXP-GPA-P0-ORACLE"
+      ],
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase0.py"
+      ],
+      "decision": "retain as an invariant; do not interpret as usefulness"
+    },
+    {
+      "claim_id": "GPA-REFINE-001",
+      "source": "docs/global_project_attention_research_proposal.md#phase-0-formal-simulator",
+      "status": "measured",
+      "mechanism": "Exact budgeted tree dynamic programming using oracle cell mass gives the minimum squared field error available under a representation-unit budget.",
+      "operating_regime": "small oracle-sized hierarchies with uniform-within-cell reconstruction",
+      "baseline": "coarsest root cover and greedy refinement",
+      "primary_metric": "squared field error",
+      "guardrails": [
+        "mass conservation",
+        "complete coverage",
+        "greedy cannot beat exhaustive optimum"
+      ],
+      "minimum_effect": "error is nonincreasing with budget and reaches zero at leaf resolution",
+      "experiment_ids": [
+        "EXP-GPA-P0-ORACLE"
+      ],
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase0.py"
+      ],
+      "decision": "retain as a mathematical ceiling, not a deployable retriever"
+    },
+    {
+      "claim_id": "GPA-GREEDY-LIMIT-001",
+      "source": "docs/global_project_attention_research_proposal.md#adaptive-refinement",
+      "status": "measured",
+      "mechanism": "Immediate value-of-refinement ignores discrete child costs and complementary future refinements, so it need not minimize field error under a unit budget.",
+      "operating_regime": "finite hierarchy covers with nonuniform oracle mass",
+      "baseline": "exhaustive budgeted dynamic program",
+      "primary_metric": "relative squared-error regret",
+      "guardrails": [
+        "same hierarchy",
+        "same unit budget",
+        "same reconstruction rule"
+      ],
+      "minimum_effect": "one deterministic strict counterexample falsifies universal optimality",
+      "experiment_ids": [
+        "EXP-GPA-P0-ORACLE"
+      ],
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase0.py"
+      ],
+      "decision": "reject one-step greedy optimality; retain it only as a speed baseline"
+    },
+    {
+      "claim_id": "GPA-METRIC-LIMIT-001",
+      "source": "docs/global_project_attention_research_proposal.md#metamorphic-and-invariant-tests",
+      "status": "measured",
+      "mechanism": "A cover selected to minimize uniform-cell L2 error need not improve L1 error after the budget increases.",
+      "operating_regime": "finite hierarchy covers with objective-specific optimization",
+      "baseline": "universal monotone-refinement claim",
+      "primary_metric": "L1 delta under an L2-optimal budget increase",
+      "guardrails": [
+        "L2 strictly decreases",
+        "same field and hierarchy"
+      ],
+      "minimum_effect": "one deterministic strict counterexample falsifies metric-independent monotonicity",
+      "experiment_ids": [
+        "EXP-GPA-P0-ORACLE"
+      ],
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase0.py"
+      ],
+      "decision": "require one preregistered objective and report all non-optimized metrics separately"
+    },
+    {
+      "claim_id": "GPA-C1-PATH-001",
+      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "status": "rejected",
+      "mechanism": "A bounded-arity path hierarchy optimized greedily for L2 reconstruction plus 0.01 times unresolved influence mass transfers an equal-token resolution-recall gain across projects.",
+      "operating_regime": "GraphGraph development plus frozen Chess, Express, and Requests project graphs; 16, 32, and 64 representation units",
+      "baseline": "score-ranked exact nodes serialized with the same renderer at no greater token cost",
+      "primary_metric": "per-project resolution-recall gain",
+      "guardrails": [
+        "exact recall loss at most 0.02",
+        "complete cover",
+        "mass conservation",
+        "flat tokens no greater than candidate tokens"
+      ],
+      "minimum_effect": "resolution-recall gain at least 0.02 on every frozen transfer project",
+      "experiment_ids": [
+        "EXP-GPA-C1-P1"
+      ],
+      "evidence": [
+        "tests/test_static_cover_research.py",
+        "benchmarks/context_graph/global_attention_phase1.py"
+      ],
+      "decision": "no champion: GraphGraph and Requests passed, Chess and Express failed"
+    },
+    {
+      "claim_id": "GPA-MASS-PENALTY-LIMIT-001",
+      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "status": "measured",
+      "mechanism": "A penalty proportional only to unresolved aggregate mass cancels when one internal cell is replaced entirely by internal children, so its coefficient cannot guide early hierarchy refinement.",
+      "operating_regime": "mass-conserving hierarchy partitions",
+      "baseline": "coefficient-sensitive internal refinement",
+      "primary_metric": "objective delta contributed by the mass term",
+      "guardrails": [
+        "same total child mass",
+        "no leaf exposed by the split"
+      ],
+      "minimum_effect": "exact algebraic cancellation plus deterministic plan test",
+      "experiment_ids": [
+        "EXP-GPA-C1-FORMULA-SWEEPS"
+      ],
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase1_formula_sweep.py"
+      ],
+      "decision": "reject coefficient tuning of a mass-only penalty as a remedy for early routing"
+    },
+    {
+      "claim_id": "GPA-LOGRES-TRANSFER-001",
+      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "status": "rejected",
+      "mechanism": "Penalizing aggregate mass by normalized log cell size rewards every internal refinement and transfers useful resolution across projects.",
+      "operating_regime": "GraphGraph, Chess, Express, and Requests development/validation graphs; weights 0.001 through 1.0; 32 and 64 units",
+      "baseline": "equal-token score-ranked exact nodes",
+      "primary_metric": "worst-project resolution-recall gain",
+      "guardrails": [
+        "maximum exact-recall loss 0.02",
+        "complete cover",
+        "mass conservation"
+      ],
+      "minimum_effect": "worst-project resolution gain at least 0.02",
+      "experiment_ids": [
+        "EXP-GPA-C1-FORMULA-SWEEPS"
+      ],
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase1_resolution_sweep.py"
+      ],
+      "decision": "no formula champion; stop coefficient tuning and add a hard exact-frontier reserve"
+    },
+    {
+      "claim_id": "GPA-H1",
+      "source": "docs/global_project_attention_research_proposal.md#rq1-approximation",
+      "status": "specified",
+      "mechanism": "Exact-near and hierarchical-far representation allocates a fixed budget more effectively than flat retrieval.",
+      "operating_regime": "oracle-sized and held-out software graphs",
+      "baseline": "BM25, embedding top-k, BFS, flat PPR, production GraphGraph",
+      "primary_metric": "held-out oracle regret at equal serialized token cost",
+      "guardrails": [
+        "worst-decile recall",
+        "catastrophic misses",
+        "packet validity"
+      ],
+      "minimum_effect": "preregistered before Phase 1",
+      "experiment_ids": [
+        "EXP-GPA-H1"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H2",
+      "source": "docs/global_project_attention_research_proposal.md#rq2-scaling",
+      "status": "specified",
+      "mechanism": "Hierarchy degrades resolution gradually as project size grows under fixed context budget.",
+      "operating_regime": "synthetic and real graphs across project-size strata",
+      "baseline": "flat top-k and fixed-radius expansion",
+      "primary_metric": "quality slope against log node count",
+      "guardrails": [
+        "breakpoint reporting",
+        "fixed model and budget"
+      ],
+      "minimum_effect": "shallower negative slope than incumbent",
+      "experiment_ids": [
+        "EXP-GPA-H2"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H3",
+      "source": "docs/global_project_attention_research_proposal.md#rq3-dynamic-updates",
+      "status": "specified",
+      "mechanism": "Residual propagation and hierarchy invalidation confine ordinary edit work to the affected region.",
+      "operating_regime": "non-hub edits, hub edits, moves, deletions, and refactors",
+      "baseline": "full rebuild and exact file splice",
+      "primary_metric": "dynamic work factor at bounded field error",
+      "guardrails": [
+        "zero stale exposure",
+        "p95 update latency",
+        "rebuild debt calibration"
+      ],
+      "minimum_effect": "materially below rebuild work for ordinary edits",
+      "experiment_ids": [
+        "EXP-GPA-H3"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H4",
+      "source": "docs/global_project_attention_research_proposal.md#rq4-rare-but-decisive-evidence",
+      "status": "specified",
+      "mechanism": "Bridge, exception, and uncertainty reserves protect rare decisive evidence from aggregate smoothing.",
+      "operating_regime": "bridge, policy, security, rare-test, and lexical-adversary tasks",
+      "baseline": "smooth diffusion and centroid-only summaries",
+      "primary_metric": "worst-decile evidence recall",
+      "guardrails": [
+        "median token premium",
+        "irrelevant evidence ratio"
+      ],
+      "minimum_effect": "fewer catastrophic misses at small token premium",
+      "experiment_ids": [
+        "EXP-GPA-H4"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H5",
+      "source": "docs/global_project_attention_research_proposal.md#rq5-downstream-model-utility",
+      "status": "specified",
+      "mechanism": "Better evidence approximation improves frozen-agent task outcomes when interpretation is controlled.",
+      "operating_regime": "repository completion and issue repair finalists",
+      "baseline": "production GraphGraph and strong lexical/vector baselines",
+      "primary_metric": "paired patch or test success",
+      "guardrails": [
+        "total cost",
+        "unnecessary edits",
+        "abstention quality"
+      ],
+      "minimum_effect": "statistically credible gain or equivalent quality at materially lower cost",
+      "experiment_ids": [
+        "EXP-GPA-H5"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H6",
+      "source": "docs/global_project_attention_research_proposal.md#rq6-calibration",
+      "status": "specified",
+      "mechanism": "Omitted-mass, distortion, and facet-gap receipts predict insufficient context.",
+      "operating_regime": "held-out retrieval and frozen-model tasks",
+      "baseline": "raw retrieval score and packet size",
+      "primary_metric": "Brier score and expected calibration error",
+      "guardrails": [
+        "repository-held-out calibration",
+        "unscored tasks excluded"
+      ],
+      "minimum_effect": "better calibration than both baselines",
+      "experiment_ids": [
+        "EXP-GPA-H6"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H7",
+      "source": "docs/global_project_attention_research_proposal.md#rq7-query-adaptivity",
+      "status": "specified",
+      "mechanism": "Value-of-refinement allocates computation better than fixed hop or node budgets.",
+      "operating_regime": "direct, path, blast-radius, summary, change, and negative queries",
+      "baseline": "fixed hop and fixed node budgets",
+      "primary_metric": "quality-cost Pareto dominance",
+      "guardrails": [
+        "catastrophic misses",
+        "latency ceiling",
+        "deterministic stopping receipt"
+      ],
+      "minimum_effect": "non-dominated in multiple query classes without guardrail regression",
+      "experiment_ids": [
+        "EXP-GPA-H7"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-H8",
+      "source": "docs/global_project_attention_research_proposal.md#downstream-agent-evaluation",
+      "status": "specified",
+      "mechanism": "A model-agnostic core cover and receipt with thin protocol adapters transfers context-policy gains across unrelated model families.",
+      "operating_regime": "closed and open-weight model families, multiple context regimes, prompt and tool protocols, and multiple tokenizers",
+      "baseline": "per-provider tuned retrieval and I0",
+      "primary_metric": "cross-model quality-cost effect with per-family guardrails",
+      "guardrails": [
+        "no family-specific catastrophic regression",
+        "adapter-independent deterministic receipts",
+        "per-model reporting"
+      ],
+      "minimum_effect": "positive held-out effect not attributable to one provider, or equivalent quality at materially lower total cost",
+      "experiment_ids": [
+        "EXP-GPA-H8"
+      ],
+      "evidence": [],
+      "decision": "pending"
+    },
+    {
+      "claim_id": "GPA-FIELD-COUPLING-001",
+      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "status": "measured",
+      "mechanism": "Personalized PageRank over call/import direction reaches only the forward cone of a seed. Because 62.9% of active entities are directed sinks, the far field receives zero mass, so no multiresolution cover has anything to encode. Treating an edge as coupling both endpoints restores a graded field over the whole project.",
+      "operating_regime": "GraphGraph, Chess, Express, and Requests frozen Phase 1 graphs; the six Phase 1 tasks per project; damping 0.85, max_iter 30, tol 1e-7",
+      "baseline": "directed personalized PageRank (the incumbent field used by Phase 0 and Phase 1)",
+      "primary_metric": "median per-task support fraction of the influence field",
+      "guardrails": [
+        "mass conservation",
+        "field non-negativity",
+        "seed set unchanged",
+        "hierarchy, tasks, budgets, and metrics held fixed"
+      ],
+      "minimum_effect": "median support fraction at or above 0.10 on every project",
+      "experiment_ids": [
+        "EXP-GPA-COUPLING"
+      ],
+      "evidence": [
+        "benchmarks/context_graph/global_attention_phase2_coupling.py",
+        "tests/test_attention_field_coupling.py",
+        "docs/findings/2026-07-29-influence-field-coupling.md"
+      ],
+      "decision": "Directed coupling is degenerate on 3 of 4 projects (median support 0.0107%-0.0291%, zero mass outside the top 64 entities). Symmetric coupling is non-degenerate on 4 of 4 (median support 98.46%-99.95%, 62.5% of mass outside the top 64). Phase 1 therefore compared cover formulas over an empty far field on most projects; its formula-level conclusions do not isolate the formula. Re-run C1 and C1-HYBRID-RESERVE-003 under symmetric coupling before treating any cover verdict as final."
+    },
+    {
+      "claim_id": "GPA-COUPLING-RANKING-001",
+      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "status": "measured",
+      "mechanism": "Symmetric coupling lets influence reach entities that are directed sinks, so field-ranked selection can surface a relevant callee, doc, or concept that forward-only diffusion never assigns any mass.",
+      "operating_regime": "GraphGraph, Chess, Express, and Requests frozen Phase 1 graphs; six tasks per project; token budgets 1024/2048/4096; pure field-ranked selection, not production search_nodes",
+      "baseline": "the same equal-token flat selection ranked by the directed field",
+      "primary_metric": "mean exact recall of the equal-token flat baseline",
+      "guardrails": [
+        "equal token budget",
+        "identical seeds and tasks",
+        "paired comparison"
+      ],
+      "minimum_effect": "mean exact-recall gain at least 0.02 with more improved than regressed tasks",
+      "experiment_ids": [
+        "EXP-GPA-RECOUPLED"
+      ],
+      "evidence": [
+        "benchmarks/context_graph/global_attention_phase3_recoupled.py",
+        "docs/findings/2026-07-30-recoupled-cover-verdicts.md"
+      ],
+      "decision": "Symmetric coupling improved the flat baseline from mean exact recall 0.5035 to 0.5694 (median 0.2667 to 0.5000); paired across 72 cases 32 improved and 3 regressed. The reserve's own exact recall rose 0.4319 to 0.5206. Promising as a RETRIEVAL field, but measured on a pure field-ranked baseline, not on production search_nodes, which combines PPR with lexical, semantic, and kind signals and uses localized PPR on large graphs. Do not promote until measured on the production eval."
+    },
+    {
+      "claim_id": "GPA-FIELD-LEVERAGE-001",
+      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "status": "measured",
+      "mechanism": "Production search_nodes combines PPR with lexical scoring, a degree boost, and kind priors. On queries that name their target symbol the lexical term determines the head of the ranking, and PPR only reorders the tail below the first hit.",
+      "operating_regime": "21 resolvable labelled tasks across graphgraph-self, graphgraph-calibration, and graphgraph-doc-authority-target, scored on the live graph at limit 20",
+      "baseline": "personalization disabled (global PageRank)",
+      "primary_metric": "mean recall and MRR through production search_nodes",
+      "guardrails": [
+        "ranked lists must actually differ between arms",
+        "the directed arm must score identically to itself"
+      ],
+      "minimum_effect": "any change in recall or first-hit MRR",
+      "experiment_ids": [
+        "EXP-GPA-COUPLING-PROD"
+      ],
+      "evidence": [
+        "benchmarks/context_graph/coupling_production_ranking.py",
+        "docs/findings/2026-07-30-coupling-has-no-production-leverage.md"
+      ],
+      "decision": "Disabling PPR entirely scores identically to every coupling: recall 0.6905, MRR 0.6905. All 21 ranked lists do change, so the term is wired and active -- it reorders the tail, not the head. Field-stage work has no measurable leverage on the tasks this project gates against. Do not tune the field further until a paraphrase/conceptual task set exists that can detect its contribution."
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "I0",
+      "status": "implemented",
+      "stage": "assembled incumbent",
+      "algorithm": "Current GraphGraph anchors, routing, expansion, selection, and packet rendering.",
+      "fallback": "not applicable",
+      "complexity": "production baseline"
+    },
+    {
+      "candidate_id": "P0-OPT",
+      "status": "prototype",
+      "stage": "represent",
+      "algorithm": "Exhaustive dynamic program minimizing uniform-cell squared error over hierarchy antichains.",
+      "fallback": "coarsest root cover",
+      "complexity": "oracle-only exact tree dynamic program, pseudo-polynomial in the integer representation budget"
+    },
+    {
+      "candidate_id": "C1",
+      "status": "specified",
+      "stage": "represent",
+      "algorithm": "Exact local frontier plus deterministic containment hierarchy and explicit exception reserve.",
+      "fallback": "I0",
+      "complexity": "moderate; no learned controller"
+    },
+    {
+      "candidate_id": "C1-PATH-L2MASS-001",
+      "status": "rejected",
+      "stage": "represent",
+      "algorithm": "Deterministic bounded-arity path hierarchy with one-step greedy minimization of cell L2 reconstruction error plus 0.01 times unresolved aggregate mass.",
+      "fallback": "equal-token score-ranked exact nodes",
+      "complexity": "linear-size hierarchy; warm self-project compilation approximately 0.2-0.6 seconds by budget",
+      "evidence": [
+        "tests/test_static_cover_research.py",
+        "benchmarks/context_graph/global_attention_phase1.py"
+      ],
+      "decision": "rejected as cross-project champion; retain hierarchy and renderer as reusable experimental components"
+    },
+    {
+      "candidate_id": "C1-PATH-LOGRES-002",
+      "status": "rejected",
+      "stage": "represent",
+      "algorithm": "Bounded-arity path hierarchy minimizing L2 plus a swept coefficient times aggregate mass times normalized log cell size.",
+      "fallback": "equal-token score-ranked exact nodes",
+      "complexity": "offline four-weight sweep took approximately 530 seconds; one frozen configuration remains subsecond warm",
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase1_resolution_sweep.py"
+      ],
+      "decision": "rejected: every swept configuration had negative worst-project gain and failed exact-recall guardrails"
+    },
+    {
+      "candidate_id": "C1-HYBRID-RESERVE-003",
+      "status": "implemented",
+      "stage": "represent",
+      "algorithm": "Reserve a hard token fraction for score-ranked exact entities, represent the remaining project with aggregate cells that explicitly subtract those sparse exceptions, then optimize only the residual budget.",
+      "fallback": "equal-token exact-node baseline",
+      "complexity": "moderate; requires exception-aware cover receipts and token-budget rather than unit-budget compilation",
+      "implementation": "src/graphgraph/representation/hybrid.py (hybrid_reserve_v1)",
+      "exposure": "opt-in --representation hybrid on context/query/final; default remains flat; absent from the MCP surface",
+      "gate_status": "EXP-GPA-HYBRID-RESERVE ran and FAILED under both couplings: worst-project median resolution gain +0.0000 against a required +0.02. Aggregate cells buy a mean resolution credit of only +0.028 (directed) / +0.012 (symmetric). Not promotable.",
+      "observed": "Symmetric coupling makes the far field real (aggregate mass 0.0 -> 0.43-0.61, refinements 0 -> 5-7) but does not make the representation win: it raises the equal-token flat baseline faster than it raises the reserve."
+    },
+    {
+      "candidate_id": "C2",
+      "status": "specified",
+      "stage": "propagate",
+      "algorithm": "Localized residual Personalized PageRank under the C1 cover.",
+      "fallback": "C1 exact PPR",
+      "complexity": "moderate residual queue"
+    },
+    {
+      "candidate_id": "C3",
+      "status": "specified",
+      "stage": "propagate",
+      "algorithm": "Heat-kernel diffusion with preregistered diffusion-time sweep under the C1 cover.",
+      "fallback": "C1 typed PPR",
+      "complexity": "moderate kernel approximation"
+    },
+    {
+      "candidate_id": "C4",
+      "status": "deferred",
+      "stage": "anchor and represent",
+      "algorithm": "Diverse semantic landmarks with explicit approximation residual.",
+      "fallback": "best C1-C3 candidate",
+      "complexity": "high; embedding and landmark dependencies"
+    },
+    {
+      "candidate_id": "C5",
+      "status": "deferred",
+      "stage": "select and iterate",
+      "algorithm": "Analytic value-of-refinement controller and iterative cell expansion.",
+      "fallback": "best fixed-threshold candidate",
+      "complexity": "high; uncertainty and stopping calibration"
+    },
+    {
+      "candidate_id": "C5-ONE-STEP",
+      "status": "rejected",
+      "stage": "select",
+      "algorithm": "Repeatedly expand the currently feasible cell with maximum immediate L2 reduction per representation unit.",
+      "fallback": "exact dynamic program on oracle graphs; fixed threshold or bounded search in production research",
+      "complexity": "low, but no universal optimality guarantee",
+      "evidence": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase0.py"
+      ],
+      "decision": "rejected as an optimal controller; retained as a runtime baseline"
+    },
+    {
+      "candidate_id": "F1-SYMMETRIC-COUPLING",
+      "status": "rejected",
+      "stage": "field",
+      "algorithm": "Diffuse the query-conditioned field over the symmetrized edge set: every active edge contributes both its own orientation and its reverse, preserving weight, confidence, and provenance. All downstream stages consume the field unchanged.",
+      "fallback": "directed personalized PageRank",
+      "complexity": "low; one pure field-construction stage with no downstream change. Costs one extra edge list per compile and leaves preprocessing, hierarchy, and packet syntax untouched.",
+      "observed": "Clears the substrate gate on 4/4 projects and improves field-ranked retrieval (+0.066 mean exact recall, 32 better / 3 worse paired). Costs one cached edge-list rebuild plus ~6x PPR time. Not yet measured on production search_nodes.",
+      "gate_status": "Clears the substrate gate and improves a bare field-ranked baseline, but EXP-GPA-COUPLING-PROD found no recall or MRR change through production search_nodes at 11.9x latency. Not promotable."
+    },
+    {
+      "candidate_id": "F2-REVERSE-COUPLING",
+      "status": "rejected",
+      "stage": "field",
+      "algorithm": "Diffuse the field over reversed edges only, spreading influence to dependents rather than dependencies.",
+      "fallback": "directed personalized PageRank",
+      "complexity": "low; same stage as F1-SYMMETRIC-COUPLING with a different orientation",
+      "gate_status": "no production leverage; same verdict as F1 at lower cost"
+    }
+  ],
+  "experiments": [
+    {
+      "experiment_id": "EXP-GPA-P0-ORACLE",
+      "status": "passing",
+      "claim_ids": [
+        "GPA-COVER-001",
+        "GPA-REFINE-001",
+        "GPA-GREEDY-LIMIT-001",
+        "GPA-METRIC-LIMIT-001"
+      ],
+      "candidate_ids": [
+        "P0-OPT",
+        "C5-ONE-STEP"
+      ],
+      "primary_metric": "squared field error under representation-unit budget",
+      "budgets": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "baselines": [
+        "coarsest root cover",
+        "greedy refinement",
+        "top-k omitted set"
+      ],
+      "stop_condition": "all invariants pass and leaf-resolution error is zero",
+      "artifacts": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase0.py"
+      ]
+    },
+    {
+      "experiment_id": "EXP-GPA-C1-P1",
+      "status": "failing",
+      "claim_ids": [
+        "GPA-C1-PATH-001"
+      ],
+      "candidate_ids": [
+        "C1-PATH-L2MASS-001"
+      ],
+      "primary_metric": "per-project resolution-recall gain over equal-token exact-node baseline",
+      "budgets": [
+        16,
+        32,
+        64
+      ],
+      "baselines": [
+        "score-ranked exact nodes at no greater serialized token cost"
+      ],
+      "stop_condition": "every frozen transfer project gains at least 0.02 resolution recall with at most 0.02 exact-recall loss, otherwise no champion",
+      "artifacts": [
+        "tests/test_static_cover_research.py",
+        "benchmarks/context_graph/global_attention_phase1.py"
+      ]
+    },
+    {
+      "experiment_id": "EXP-GPA-C1-FORMULA-SWEEPS",
+      "status": "failing",
+      "claim_ids": [
+        "GPA-MASS-PENALTY-LIMIT-001",
+        "GPA-LOGRES-TRANSFER-001"
+      ],
+      "candidate_ids": [
+        "C1-PATH-L2MASS-001",
+        "C1-PATH-LOGRES-002"
+      ],
+      "primary_metric": "worst-project resolution-recall gain subject to exact-recall guardrail",
+      "budgets": [
+        32,
+        64
+      ],
+      "baselines": [
+        "equal-token score-ranked exact nodes"
+      ],
+      "stop_condition": "select only if every development/validation project gains at least 0.02 resolution recall and maximum exact-recall loss is at most 0.02",
+      "artifacts": [
+        "tests/test_attention_field_research.py",
+        "benchmarks/context_graph/global_attention_phase1_formula_sweep.py",
+        "benchmarks/context_graph/global_attention_phase1_resolution_sweep.py"
+      ]
+    },
+    {
+      "experiment_id": "EXP-GPA-H1",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H1"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "primary_metric": "held-out oracle regret at equal serialized token cost",
+      "budgets": [
+        256,
+        512,
+        1024,
+        2048
+      ],
+      "baselines": [
+        "BM25",
+        "embedding top-k",
+        "BFS",
+        "flat PPR",
+        "I0"
+      ],
+      "stop_condition": "preregistered minimum effect or no champion",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H2",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H2"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1"
+      ],
+      "primary_metric": "quality elasticity over log project size",
+      "budgets": [
+        512,
+        1024,
+        2048
+      ],
+      "baselines": [
+        "top-k",
+        "fixed one-hop",
+        "fixed two-hop",
+        "I0"
+      ],
+      "stop_condition": "size curve and breakpoint confidence intervals are stable",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H3",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H3"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C2"
+      ],
+      "primary_metric": "dynamic work factor at bounded field error",
+      "budgets": [
+        "leaf edit",
+        "hub edit",
+        "move",
+        "deletion",
+        "refactor"
+      ],
+      "baselines": [
+        "full rebuild",
+        "exact path splice"
+      ],
+      "stop_condition": "commit replay complete with zero deterministic stale exposure",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H4",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H4"
+      ],
+      "candidate_ids": [
+        "C1",
+        "C4"
+      ],
+      "primary_metric": "worst-decile rare-evidence recall",
+      "budgets": [
+        256,
+        512,
+        1024
+      ],
+      "baselines": [
+        "centroid-only hierarchy",
+        "flat PPR"
+      ],
+      "stop_condition": "rare-evidence strata have sufficient paired samples",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H5",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H5"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5"
+      ],
+      "primary_metric": "paired downstream patch and test success",
+      "budgets": [
+        "fixed model tokens",
+        "fixed turns",
+        "fixed wall clock"
+      ],
+      "baselines": [
+        "no context",
+        "full corpus",
+        "BM25",
+        "embedding top-k",
+        "I0"
+      ],
+      "stop_condition": "only deterministic-round finalists receive model calls",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H6",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H6"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1",
+        "C5"
+      ],
+      "primary_metric": "Brier score and expected calibration error",
+      "budgets": [
+        256,
+        512,
+        1024,
+        2048
+      ],
+      "baselines": [
+        "raw retrieval score",
+        "packet size"
+      ],
+      "stop_condition": "held-out calibration bins satisfy minimum support",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H7",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H7"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C5"
+      ],
+      "primary_metric": "quality-cost Pareto dominance by query class",
+      "budgets": [
+        256,
+        512,
+        1024,
+        2048
+      ],
+      "baselines": [
+        "fixed hop",
+        "fixed node budget",
+        "fixed refinement threshold"
+      ],
+      "stop_condition": "no candidate advances with a guardrail regression",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-H8",
+      "status": "pending",
+      "claim_ids": [
+        "GPA-H8"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5"
+      ],
+      "primary_metric": "hierarchical cross-model quality-cost effect with per-family guardrails",
+      "budgets": [
+        "equal semantic evidence plan",
+        "equal per-model context fraction",
+        "fixed turns",
+        "fixed wall clock"
+      ],
+      "baselines": [
+        "I0",
+        "per-provider tuned retrieval",
+        "no project context",
+        "full corpus where feasible"
+      ],
+      "stop_condition": "all preregistered model families report scored results or explicit unscored reasons; no global promotion from one-family gains",
+      "artifacts": []
+    },
+    {
+      "experiment_id": "EXP-GPA-COUPLING",
+      "status": "passing",
+      "claim_ids": [
+        "GPA-DEF-001",
+        "GPA-FIELD-COUPLING-001"
+      ],
+      "candidate_ids": [
+        "I0",
+        "F1-SYMMETRIC-COUPLING",
+        "F2-REVERSE-COUPLING"
+      ],
+      "primary_metric": "median per-task support fraction of the influence field",
+      "budgets": [
+        64
+      ],
+      "baselines": [
+        "directed personalized PageRank",
+        "reverse coupling",
+        "top-64 mass concentration"
+      ],
+      "stop_condition": "a coupling is non-degenerate (median support fraction at or above 0.10) on every project, or all couplings are degenerate on at least one project",
+      "artifacts": [
+        "benchmarks/context_graph/global_attention_phase2_coupling.py",
+        "tests/test_attention_field_coupling.py",
+        "docs/findings/2026-07-29-influence-field-coupling.md"
+      ]
+    },
+    {
+      "experiment_id": "EXP-GPA-HYBRID-RESERVE",
+      "status": "failing",
+      "claim_ids": [
+        "GPA-LOGRES-TRANSFER-001"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1-HYBRID-RESERVE-003",
+        "F1-SYMMETRIC-COUPLING"
+      ],
+      "primary_metric": "worst-project resolution-recall gain at equal token budget",
+      "budgets": [
+        1024,
+        2048,
+        4096
+      ],
+      "baselines": [
+        "equal-token flat exact-node packet",
+        "C1-PATH-LOGRES-002",
+        "directed-coupling variant of the same reserve"
+      ],
+      "stop_condition": "worst-project gain at least 0.02 with no exact-recall loss above 0.02, or the candidate is rejected",
+      "artifacts": [
+        "benchmarks/context_graph/global_attention_phase3_recoupled.py",
+        "docs/findings/2026-07-30-recoupled-cover-verdicts.md"
+      ]
+    },
+    {
+      "experiment_id": "EXP-GPA-RECOUPLED",
+      "status": "passing",
+      "claim_ids": [
+        "GPA-FIELD-COUPLING-001",
+        "GPA-COUPLING-RANKING-001"
+      ],
+      "candidate_ids": [
+        "I0",
+        "C1",
+        "C1-HYBRID-RESERVE-003",
+        "F1-SYMMETRIC-COUPLING"
+      ],
+      "primary_metric": "mean exact recall of the equal-token flat baseline ranked by the field",
+      "budgets": [
+        1024,
+        2048,
+        4096
+      ],
+      "baselines": [
+        "equal-token flat exact-node packet under directed coupling"
+      ],
+      "stop_condition": "paired per-task comparison across four projects at three budgets",
+      "artifacts": [
+        "benchmarks/context_graph/global_attention_phase3_recoupled.py",
+        "docs/findings/2026-07-30-recoupled-cover-verdicts.md"
+      ]
+    },
+    {
+      "experiment_id": "EXP-GPA-COUPLING-PROD",
+      "status": "failing",
+      "claim_ids": [
+        "GPA-COUPLING-RANKING-001",
+        "GPA-FIELD-LEVERAGE-001"
+      ],
+      "candidate_ids": [
+        "I0",
+        "F1-SYMMETRIC-COUPLING",
+        "F2-REVERSE-COUPLING"
+      ],
+      "primary_metric": "paired NDCG@10 delta through production search_nodes",
+      "budgets": [
+        20
+      ],
+      "baselines": [
+        "directed coupling through production search_nodes",
+        "personalization disabled (global PageRank)"
+      ],
+      "stop_condition": "paired comparison over all resolvable labelled tasks",
+      "artifacts": [
+        "benchmarks/context_graph/coupling_production_ranking.py",
+        "docs/findings/2026-07-30-coupling-has-no-production-leverage.md"
+      ]
+    }
+  ]
+}

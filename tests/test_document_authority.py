@@ -4,7 +4,6 @@ import unittest
 
 from graphgraph.analysis.document_authority import (
     authority_rank,
-    authority_sort_key,
     document_authority,
     document_recency,
     parse_authority_map,
@@ -70,11 +69,7 @@ class DocumentAuthorityTest(unittest.TestCase):
         # End-to-end against the shipped docs/README.md (the single source).
         self.assertEqual(document_authority("architecture.md"), "current")
         self.assertEqual(
-            document_authority("findings/2026-07-22-graybox-cycle2-vision.md"), "historical"
-        )
-        self.assertGreater(
-            authority_sort_key("architecture.md"),
-            authority_sort_key("findings/2026-07-22-graybox-cycle2-vision.md"),
+            document_authority("findings/2026-07-27-graybox-comprehensive.md"), "current"
         )
 
 

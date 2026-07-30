@@ -47,6 +47,8 @@ def render_native_context(
     json_details: bool = True,
     source_mode: str = "auto",
     memory_scopes: tuple[str, ...] = ("project", "session"),
+    representation: str = "flat",
+    representation_budget: int | None = None,
 ) -> tuple[str, GraphBuildStatus]:
     started = time.monotonic()
     if graph_path is not None and directory == Path("."):
@@ -148,6 +150,8 @@ def render_native_context(
         source_mode=source_mode,
         memory_scopes=memory_scopes,
         anchor_paths=requested_anchor_paths,
+        representation=representation,
+        representation_budget=representation_budget,
     )
     if json_output:
         payload = json.loads(packet_text)

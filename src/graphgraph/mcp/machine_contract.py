@@ -9,8 +9,9 @@ from typing import Any, Iterable
 MACHINE_TOOL_DESCRIPTIONS = {
     "plan_context": "ACT:plan retrieval by query_class; OUT:hops,packet,reason.",
     "final_packet": "ACT:render bounded graph packet; IN:starts=node IDs/paths; OUT:packet.",
-    "full_graph": "ACT:render every active node/edge; USE:complete offline snapshot, not the default; SAFE:refuse above max_tokens.",
-    "query_context": "ACT:retrieve from natural-language when node IDs are unknown; OUT:anchors,packet,receipts; MAY:refresh changed/deleted paths first.",
+    "full_graph": "ACT:every active node/edge; USE:offline snapshot,not the default; SAFE:max_tokens.",
+    "query_context": "ACT:natural-language when node IDs unknown; OUT:anchors,packet,receipts; MAY:refresh.",
+    "query_relations": "ACT:one-hop callers/callees; OUT:micro IR; SAFE:complete_within_graph,call_topology_status; MAY:sync=git; tests opt-in.",
     "project_status": "ACT:report project graph status; OUT:validity,shape,freshness,packages,runtime probes.",
     "validate_packet": "ACT:validate packet or saved graph; OUT:ok,format,node_count,edge_count,errors.",
     "source_snippets": "ACT:read bounded source/code lines for node IDs,labels,or paths; USE:after retrieval when exact text is needed.",
@@ -31,7 +32,7 @@ MACHINE_TOOL_DESCRIPTIONS = {
     "graph_at_time": "ACT:materialize graph at ISO timestamp using validity windows; OUT:compact status.",
 }
 
-MACHINE_CONTRACT_CHAR_CEILING = 9_850
+MACHINE_CONTRACT_CHAR_CEILING = 10_400
 
 
 def serialize_tool_contract(value: object) -> str:

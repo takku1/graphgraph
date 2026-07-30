@@ -35,6 +35,7 @@ _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{1,}")
 _INDEX_CACHE_LIMIT = 4
 _INDEX_CACHE: OrderedDict[Path, tuple[int, int, "SemanticIndex"]] = OrderedDict()
 _INDEX_CACHE_LOCK = RLock()
+_INDEX_METADATA_PREFIX_CHARS = 16_384
 _VECTOR_RECORD = struct.Struct("<If")
 _VECTOR_ENCODING = "base85-u32-f32-le"
 
@@ -172,6 +173,43 @@ class SemanticIndex:
             }
         _remember_index(resolved, index)
         return index
+
+    @classmethod
+    def state_for_graph(cls, path: Path, graph: Graph) -> str:
+        """Classify an on-disk index without decoding its vector payload.
+
+        A dense semantic sidecar can be tens of megabytes. The query planner
+        only needs the signature and backend to decide whether that sidecar is
+        usable; loading every vector merely to discover staleness turns a cheap
+        guard into another cold-start cost. ``save`` writes metadata before the
+        final ``vectors`` field, so reading a bounded prefix is sufficient for
+        every index version GraphGraph has emitted.
+        """
+        if not path.exists():
+            return "missing"
+        try:
+            metadata = cls._load_metadata(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return "invalid"
+        current = (
+            bool(metadata.get("signature"))
+            and str(metadata["signature"]) == _graph_signature(graph)
+            and str(metadata.get("backend", HASH_BACKEND_NAME))
+            == active_backend_name()
+        )
+        return "current" if current else "stale"
+
+    @staticmethod
+    def _load_metadata(path: Path) -> dict[str, object]:
+        with path.open("r", encoding="utf-8") as stream:
+            prefix = stream.read(_INDEX_METADATA_PREFIX_CHARS)
+        marker = re.search(r'"vectors"\s*:', prefix)
+        if marker is None:
+            raise ValueError("semantic index metadata exceeds bounded prefix")
+        # ``vectors`` is the final field in every emitted format. Replace its
+        # omitted payload with an empty object to parse metadata with the JSON
+        # decoder instead of maintaining a second, escape-sensitive parser.
+        return json.loads(prefix[: marker.end()] + "{}}")
 
     def is_current(self, graph: Graph) -> bool:
         # Stale if the graph changed OR the active backend differs from the one

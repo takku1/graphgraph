@@ -33,8 +33,9 @@ validate-graph → snippets.**
 Everything not in the six commands above — alternate packet formats
 (`render`/`final` with non-default renderers), the benchmark suite, the
 planner's per-query-class policy tuning, git-history ingestion, cross-language
-frontend selection — is there for people extending or evaluating the system,
-not for getting a packet into an agent's context window. Use the [command
+frontend selection, the ungated `--representation hybrid` research candidate —
+is there for people extending or evaluating the system, not for getting a
+packet into an agent's context window. Use the [command
 reference](../README.md#command-reference) and the docs index below once
 you've outgrown the six commands.
 

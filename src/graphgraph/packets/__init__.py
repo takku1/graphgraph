@@ -6,7 +6,7 @@ from .formats import (
     packet_format_markdown_table,
     packet_format_schema,
 )
-from .metrics import estimate_tokens
+from .metrics import estimate_tokens, token_units
 from .renderers import (
     DEFAULT_RELATION_ORDER,
     render_doc_summary,
@@ -42,6 +42,7 @@ __all__ = [
     "PacketFormatSpec",
     "ValidationResult",
     "estimate_tokens",
+    "token_units",
     "looks_like_graph_json",
     "packet_format_markdown_table",
     "packet_format_schema",

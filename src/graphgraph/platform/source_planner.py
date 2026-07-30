@@ -10,6 +10,7 @@ from ..io import load_any_cached
 from ..planning.budgets import plan_terms
 from ..retrieval import search_nodes
 from ..retrieval.anchors import explicit_query_identifiers
+from .embeddings import active_backend_is_warm
 from .federation import ProjectRegistry
 from .memory import MemoryRecord, MemoryStore
 from .semantic import SemanticIndex
@@ -28,6 +29,7 @@ class SourcePlannerReceipt:
     exact_fast_path: bool = False
     semantic_seeds: int = 0
     semantic_rebuilt: bool = False
+    semantic_index_state: str = "not_requested"
     memories: int = 0
     episodes: int = 0
     federated_projects: int = 0
@@ -145,6 +147,7 @@ class QuerySourcePlanner:
         warnings: list[str] = []
         semantic_count = 0
         semantic_rebuilt = False
+        semantic_index_state = "not_requested"
         memory_count = 0
         episode_count = 0
         federated_projects = 0
@@ -155,20 +158,42 @@ class QuerySourcePlanner:
         semantic_path = self._sidecar_dir() / "semantic.json"
         if mode == "all" or weak_lexical:
             try:
-                semantic = SemanticIndex.load(semantic_path) if semantic_path.exists() else SemanticIndex(semantic_path)
-                if not semantic.is_current(graph):
-                    semantic.build(graph)
-                    semantic_rebuilt = True
-                semantic_ids = _balanced_semantic_seeds(
-                    semantic.query(query, limit=max_semantic * 4),
-                    current,
-                    max_semantic,
+                semantic_index_state = SemanticIndex.state_for_graph(
+                    semantic_path,
+                    graph,
                 )
-                seeds.extend(semantic_ids)
-                semantic_count = len(semantic_ids)
-                if semantic_ids:
-                    sources.append("semantic")
+                semantic = None
+                if (
+                    semantic_index_state == "current"
+                    and (mode == "all" or active_backend_is_warm())
+                ):
+                    semantic = SemanticIndex.load(semantic_path)
+                elif semantic_index_state == "current":
+                    semantic_index_state = "cold_backend"
+                    warnings.append("semantic:index_cold_backend")
+                elif mode == "all":
+                    # ``all`` is an explicit request to materialize every
+                    # source. Normal ``auto`` queries must never hide the
+                    # O(|V|*d) embedding build (and possible model download)
+                    # in their latency; users warm it explicitly with
+                    # ``graphgraph platform semantic --rebuild``.
+                    semantic = SemanticIndex(semantic_path).build(graph)
+                    semantic_rebuilt = True
+                    semantic_index_state = "rebuilt"
+                else:
+                    warnings.append(f"semantic:index_{semantic_index_state}")
+                if semantic is not None:
+                    semantic_ids = _balanced_semantic_seeds(
+                        semantic.query(query, limit=max_semantic * 4),
+                        current,
+                        max_semantic,
+                    )
+                    seeds.extend(semantic_ids)
+                    semantic_count = len(semantic_ids)
+                    if semantic_ids:
+                        sources.append("semantic")
             except (OSError, ValueError, KeyError) as exc:
+                semantic_index_state = "error"
                 warnings.append(f"semantic:{type(exc).__name__}")
 
         memory_path = self.directory / "memory.json"
@@ -241,6 +266,7 @@ class QuerySourcePlanner:
             lexical_strength=round(lexical_strength, 4),
             semantic_seeds=semantic_count,
             semantic_rebuilt=semantic_rebuilt,
+            semantic_index_state=semantic_index_state,
             memories=memory_count,
             episodes=episode_count,
             federated_projects=federated_projects,

@@ -971,9 +971,13 @@ class SemanticEmbeddingBackendTest(unittest.TestCase):
 
     def test_offline_hash_misses_token_disjoint_paraphrase(self) -> None:
         # This is the reviewer's 0/4 in miniature: no shared tokens, no hit.
-        from graphgraph.platform import SemanticIndex, reset_backend_cache
+        from graphgraph.platform import SemanticIndex, set_backend
 
-        reset_backend_cache()
+        # Pin the offline hash rather than inferring it from the environment:
+        # `reset_backend_cache` only clears the cache, so resolution would pick
+        # up FastEmbed wherever `graphgraph[semantic]` happens to be installed
+        # and this test would assert against the wrong backend.
+        set_backend(None)
         index = SemanticIndex().build(self._graph())
         self.assertEqual(index.backend_name, "hash")
         self.assertEqual(index.query("erase somebody's profile", limit=1), [])
@@ -1154,7 +1158,7 @@ class EmbeddingBackendHttpIntegrationTest(unittest.TestCase):
         reset_backend_cache()
 
     def test_env_configured_backend_recovers_paraphrase_over_http(self) -> None:
-        from graphgraph.platform import SemanticIndex, reset_backend_cache
+        from graphgraph.platform import SemanticIndex, reset_backend_cache, set_backend
 
         graph = Graph(
             nodes={
@@ -1166,8 +1170,9 @@ class EmbeddingBackendHttpIntegrationTest(unittest.TestCase):
             edges=[],
         )
 
-        # Offline: the token-disjoint paraphrase does not resolve.
-        reset_backend_cache()
+        # Offline: the token-disjoint paraphrase does not resolve. Pinned, not
+        # inferred, so an installed FastEmbed cannot satisfy this baseline.
+        set_backend(None)
         self.assertEqual(SemanticIndex().build(graph).query("erase a person", limit=1), [])
 
         # Env-configured HTTP backend: same paraphrase now resolves to A, and

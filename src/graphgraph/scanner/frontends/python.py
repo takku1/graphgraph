@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast as py_ast
 import re
 import textwrap
+from typing import Mapping
 
 from .syntax import (
     _PYTHON_BUILTIN_TYPES,
@@ -22,9 +23,7 @@ def _python_type_name(annotation: py_ast.AST | None) -> str:
             parsed = py_ast.parse(annotation.value, mode="eval").body
         except (SyntaxError, ValueError, RecursionError):
             parsed = None
-        if parsed is not None and not (
-            isinstance(parsed, py_ast.Constant) and parsed.value == annotation.value
-        ):
+        if parsed is not None and not (isinstance(parsed, py_ast.Constant) and parsed.value == annotation.value):
             return _python_type_name(parsed)
         match = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*$", annotation.value)
         name = match.group(1) if match else ""
@@ -52,7 +51,40 @@ def _python_type_name(annotation: py_ast.AST | None) -> str:
         return ""
     return f"builtins.{name}" if name in _PYTHON_BUILTIN_TYPES else name
 
-def _python_value_type(value: py_ast.AST | None) -> str:
+
+def _python_attribute_type(
+    value: py_ast.AST | None,
+    known_types: Mapping[str, str],
+    field_types: Mapping[tuple[str, str], str],
+) -> str:
+    """Type of `recv.field` when the receiver's type and that field are known.
+
+    This is the join that `self.`-only resolution was missing. `app = ctx.app`
+    carries the type of `AppContext.app` whenever `ctx` is typed and that field
+    is declared, but the receiver type and the field-type map lived in separate
+    passes and were never consulted together.
+
+    Deliberately one hop and receiver-must-be-a-plain-name: chains like
+    `ctx.app.config` need a fixpoint over deferred obligations, which is a
+    different design (see `docs/receiver-type-resolution.md`) and must not be
+    faked by guessing here.
+    """
+    if not isinstance(value, py_ast.Attribute) or not isinstance(value.value, py_ast.Name):
+        return ""
+    receiver_type = known_types.get(value.value.id, "")
+    if not receiver_type:
+        return ""
+    return field_types.get((receiver_type, value.attr), "")
+
+
+def _python_value_type(
+    value: py_ast.AST | None,
+    known_types: Mapping[str, str] | None = None,
+    field_types: Mapping[tuple[str, str], str] | None = None,
+) -> str:
+    if known_types is not None and field_types:
+        if attribute_type := _python_attribute_type(value, known_types, field_types):
+            return attribute_type
     if isinstance(value, py_ast.Call):
         type_name = _python_type_name(value.func)
         # A call is constructor evidence only when the callee is syntactically
@@ -79,6 +111,7 @@ def _python_value_type(value: py_ast.AST | None) -> str:
         return f"builtins.{type(value.value).__name__}"
     return ""
 
+
 def _python_body_nodes(function: py_ast.FunctionDef | py_ast.AsyncFunctionDef) -> list[py_ast.AST]:
     """Walk one function body without borrowing bindings from nested scopes."""
     nodes: list[py_ast.AST] = []
@@ -91,6 +124,112 @@ def _python_body_nodes(function: py_ast.FunctionDef | py_ast.AsyncFunctionDef) -
         stack.extend(reversed(list(py_ast.iter_child_nodes(node))))
     return nodes
 
+
+def _python_function_return_type(body: str) -> str:
+    """Infer one stable concrete return type from a Python callable body."""
+    try:
+        module = py_ast.parse(textwrap.dedent(body))
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return ""
+    function = next(
+        (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
+        None,
+    )
+    if function is None:
+        return ""
+    if annotated := _python_type_name(function.returns):
+        return annotated
+
+    local_types = _python_local_types(body)
+    returns: set[str] = set()
+    for node in _python_body_nodes(function):
+        if not isinstance(node, py_ast.Return) or node.value is None:
+            continue
+        if isinstance(node.value, py_ast.Name):
+            type_name = local_types.get(node.value.id, "")
+        else:
+            type_name = _python_value_type(node.value)
+        if not type_name:
+            return ""
+        returns.add(type_name)
+    return next(iter(returns)) if len(returns) == 1 else ""
+
+
+def _python_parameter_names(body: str) -> set[str]:
+    """Return parameter bindings for the outer callable in *body*."""
+    try:
+        module = py_ast.parse(textwrap.dedent(body))
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return set()
+    function = next(
+        (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
+        None,
+    )
+    if function is None:
+        return set()
+    args = function.args
+    return {
+        arg.arg
+        for arg in (
+            *args.posonlyargs,
+            *args.args,
+            *args.kwonlyargs,
+            *([args.vararg] if args.vararg else []),
+            *([args.kwarg] if args.kwarg else []),
+        )
+    }
+
+
+def _python_fixture_return_types(source: str) -> dict[str, str]:
+    """Return concrete types for functions explicitly decorated as fixtures."""
+    try:
+        module = py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return {}
+
+    def decorator_name(node: py_ast.AST) -> str:
+        if isinstance(node, py_ast.Call):
+            return decorator_name(node.func)
+        if isinstance(node, py_ast.Attribute):
+            return node.attr
+        if isinstance(node, py_ast.Name):
+            return node.id
+        return ""
+
+    result: dict[str, str] = {}
+    for function in (
+        node
+        for node in py_ast.walk(module)
+        if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))
+        and any(decorator_name(item) == "fixture" for item in node.decorator_list)
+    ):
+        snippet = py_ast.get_source_segment(source, function) or ""
+        if type_name := _python_function_return_type(snippet):
+            result[function.name] = type_name
+    return result
+
+
+def _python_attribute_uses(body: str) -> set[tuple[str, str, str, int]]:
+    """Return simple receiver attribute reads/writes from one callable."""
+    try:
+        module = py_ast.parse(textwrap.dedent(body))
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return set()
+    function = next(
+        (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
+        None,
+    )
+    if function is None:
+        return set()
+    uses: set[tuple[str, str, str, int]] = set()
+    for node in _python_body_nodes(function):
+        if not isinstance(node, py_ast.Attribute) or not isinstance(node.value, py_ast.Name):
+            continue
+        relation = "writes" if isinstance(node.ctx, (py_ast.Store, py_ast.Del)) else "reads"
+        uses.add((node.value.id, node.attr, relation, int(getattr(node, "lineno", 0))))
+    return uses
+
+
 def _python_assignment_names(target: py_ast.AST | None) -> set[str]:
     if isinstance(target, py_ast.Name):
         return {target.id}
@@ -101,8 +240,20 @@ def _python_assignment_names(target: py_ast.AST | None) -> set[str]:
         return names
     return set()
 
-def _python_local_types(body: str) -> dict[str, str]:
-    """Infer Python receiver types only from explicit, stable local evidence."""
+
+def _python_local_types(
+    body: str,
+    *,
+    field_types: Mapping[tuple[str, str], str] | None = None,
+    owner: str = "",
+) -> dict[str, str]:
+    """Infer Python receiver types only from explicit, stable local evidence.
+
+    ``field_types`` and ``owner`` are optional so an attribute-valued assignment
+    (`app = ctx.app`, `handler = self.registry`) can carry the declared type of
+    the field it reads. Without them this degrades to the previous
+    annotation-and-constructor-only behaviour rather than guessing.
+    """
     try:
         module = py_ast.parse(textwrap.dedent(body))
     except (IndentationError, SyntaxError, ValueError, RecursionError):
@@ -131,18 +282,39 @@ def _python_local_types(body: str) -> dict[str, str]:
         if type_name := _python_type_name(argument.annotation):
             annotated[argument.arg] = type_name
 
+    fields = dict(field_types or {})
+    # Receivers an attribute read may be resolved against: annotated parameters
+    # and locals, plus the enclosing instance. Bindings established by earlier
+    # statements join as the walk proceeds, so `ctx = get_ctx()` then
+    # `app = ctx.app` resolves in one pass without a second traversal.
+    known: dict[str, str] = dict(annotated)
+    if owner:
+        known.setdefault("self", owner)
+        known.setdefault("cls", owner)
+
+    def value_type(value: py_ast.AST | None) -> str:
+        return _python_value_type(value, known, fields)
+
+    def remember(name: str, type_name: str) -> None:
+        if type_name and name not in known:
+            known[name] = type_name
+
     for node in _python_body_nodes(function):
         if isinstance(node, py_ast.AnnAssign):
             if isinstance(node.target, py_ast.Name):
                 if type_name := _python_type_name(node.annotation):
                     annotated[node.target.id] = type_name
-                writes.setdefault(node.target.id, []).append(_python_value_type(node.value))
+                    remember(node.target.id, type_name)
+                assigned = value_type(node.value)
+                writes.setdefault(node.target.id, []).append(assigned)
+                remember(node.target.id, assigned)
         elif isinstance(node, (py_ast.Assign, py_ast.NamedExpr)):
             targets = node.targets if isinstance(node, py_ast.Assign) else [node.target]
-            value_type = _python_value_type(node.value)
+            assigned = value_type(node.value)
             for target in targets:
                 for name in _python_assignment_names(target):
-                    writes.setdefault(name, []).append(value_type)
+                    writes.setdefault(name, []).append(assigned)
+                    remember(name, assigned)
         elif isinstance(node, py_ast.AugAssign):
             for name in _python_assignment_names(node.target):
                 writes.setdefault(name, []).append("")
@@ -160,6 +332,7 @@ def _python_local_types(body: str) -> dict[str, str]:
         if name not in annotated and len(stable_types) == 1 and "" not in stable_types:
             result[name] = assigned_types[0]
     return result
+
 
 def _python_parameter_types(
     function: py_ast.FunctionDef | py_ast.AsyncFunctionDef,
