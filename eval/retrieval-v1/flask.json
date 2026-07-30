@@ -1,0 +1,82 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "flask",
+    "repository": "pallets/flask",
+    "commit": "954f5684e4841aad84a8eec7ace7b81a0d3f6831",
+    "language": "python",
+    "split": "calibration"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_python_enclosing_definitions",
+    "refs": ["src/flask/app.py:865-1625", "src/flask/sessions.py:249-349"]
+  },
+  "tasks": [
+    {
+      "id": "FLASK-CAL-001",
+      "query": "What calls Flask.full_dispatch_request?",
+      "query_class": "reverse_lookup",
+      "strata": ["receiver_oracle", "reverse_lookup", "qualified_member"],
+      "expected": ["wsgi_app"],
+      "oracle_refs": ["src/flask/app.py:1597 inside Flask.wsgi_app"]
+    },
+    {
+      "id": "FLASK-CAL-002",
+      "query": "What does Flask.full_dispatch_request call?",
+      "query_class": "direct_lookup",
+      "strata": ["receiver_oracle", "direct_lookup", "qualified_member", "compound"],
+      "expected_facets": {
+        "preprocessing": ["preprocess_request"],
+        "dispatch": ["dispatch_request", "handle_user_exception"],
+        "finalization": ["finalize_request"]
+      },
+      "oracle_refs": ["src/flask/app.py:992-1019"]
+    },
+    {
+      "id": "FLASK-CAL-003",
+      "query": "Which stages prepare an inbound transaction, execute application logic, and complete outgoing data?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "receiver_oracle"],
+      "expected_facets": {
+        "entry": ["wsgi_app"],
+        "preparation": ["preprocess_request"],
+        "execution": ["dispatch_request"],
+        "completion": ["finalize_request", "process_response"]
+      },
+      "oracle_refs": ["src/flask/app.py:992-1041", "src/flask/app.py:1366-1418", "src/flask/app.py:1566-1611"]
+    },
+    {
+      "id": "FLASK-CAL-004",
+      "query": "Where is Flask.full_dispatch_request defined?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "path_oracle"],
+      "expected": ["src/flask/app.py"],
+      "oracle_refs": ["src/flask/app.py:992"]
+    },
+    {
+      "id": "FLASK-CAL-005",
+      "query": "Where does the session get loaded and saved?",
+      "query_class": "subsystem_summary",
+      "strata": ["ambiguous_name", "compound"],
+      "expected_facets": {
+        "load": ["open_session"],
+        "save": ["save_session"]
+      },
+      "oracle_refs": ["src/flask/sessions.py:249-349"]
+    },
+    {
+      "id": "FLASK-CAL-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: subsystem absent at pinned commit"]
+    }
+  ]
+}

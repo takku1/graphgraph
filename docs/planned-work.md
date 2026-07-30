@@ -130,18 +130,32 @@ distribution; no warm samples were mixed into either median.
 
 ### P01 — Freeze evaluation before changing more policy
 
-- [ ] Build paraphrase and conceptual tasks whose queries share no identifier
+- [x] Build paraphrase and conceptual tasks whose queries share no identifier
   tokens with their expected evidence.
-- [ ] Add compound/multi-facet queries, ambiguous names, negatives, and
+- [x] Add compound/multi-facet queries, ambiguous names, negatives, and
   cross-language receiver oracles. Expected answers must come from source or an
   independent analyzer, never GraphGraph output.
-- [ ] Freeze repository-held-out train/calibration/test splits and version the
+- [x] Freeze repository-held-out train/calibration/test splits and version the
   task resolver, tokenizer, token proxy, and expected-evidence schema.
-- [ ] Report per-query-class recall, first-hit MRR, NDCG, facet completeness,
+- [x] Report per-query-class recall, first-hit MRR, NDCG, facet completeness,
   Brier/ECE, tokens, cold/warm latency, and abstention utility. Never hide a
   failing stratum inside one aggregate.
-- [ ] Add a paired-comparison harness with bootstrap confidence intervals and a
+- [x] Add a paired-comparison harness with bootstrap confidence intervals and a
   minimum practical effect, not merely a positive mean delta.
+
+Progress receipt (2026-07-30): `eval/retrieval-v1` freezes 24 tasks across
+repository-held-out GraphGraph train, Flask calibration, and Express/ripgrep
+test splits. All qrels carry direct source receipts at pinned commits; the
+loader enforces split isolation, protocol versions, oracle independence, stable
+task IDs, and zero identifier overlap for `lexical_disjoint` tasks. Structural
+mode repeated twice with identical non-latency results: overall node recall
+`0.695833`, MRR `0.424954`, NDCG@10 `0.299862`, facet completeness `0.489583`,
+Brier `0.160045`, and ECE `0.152075`. Exact reverse lookup remains strong
+(`1.0` recall), while lexical-disjoint recall is only `0.152778` with zero
+NDCG@10; the frozen suite therefore exposes the intended conceptual gap. The
+report includes complete token/latency distributions and failing task IDs.
+Paired comparisons use stable IDs, deterministic percentile bootstrap samples,
+confidence intervals, and an explicit minimum practical effect.
 
 ### P02 — Replace receiver heuristics with bounded constraint propagation
 
@@ -260,6 +274,10 @@ distribution; no warm samples were mixed into either median.
 - [ ] Choose optional semantic/memory/trace/federated sources by expected value
   of information per latency/token cost. Explicit opt-in and warmup remain hard
   operational gates.
+- [ ] Remove cross-process nondeterminism from automatic source planning before
+  treating production-mode eval deltas as promotable. Two pinned P01 runs moved
+  overall MRR from `0.418467` to `0.418358` and token p95 from `1447.2` to
+  `1501.55`; structural mode repeated exactly.
 - [ ] Report calibration by query class and language stratum; never infer trust
   from retrieval recall alone.
 

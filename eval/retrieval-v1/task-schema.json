@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://graphgraph.dev/schemas/eval-task-v1.json",
+  "title": "GraphGraph independently-oracled evaluation project",
+  "type": "object",
+  "required": ["schema_version", "versions", "project", "oracle", "tasks"],
+  "properties": {
+    "schema_version": {"const": "graphgraph.eval.v1"},
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_resolver", "reference_tokenizers", "token_proxy", "expected_evidence"],
+      "properties": {
+        "task_resolver": {"const": "node-qrel-v3-facets"},
+        "reference_tokenizers": {"const": "cl100k_base+o200k_base@tiktoken-0.13.0"},
+        "token_proxy": {"const": "piece-punctuation-ls-v1"},
+        "expected_evidence": {"const": "independent-source-receipt-v1"}
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "commit", "language", "split"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "commit": {"type": "string", "minLength": 7},
+        "language": {"type": "string", "minLength": 1},
+        "split": {"enum": ["train", "calibration", "test"]}
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "refs"],
+      "properties": {
+        "method": {"type": "string", "minLength": 1},
+        "refs": {"$ref": "#/$defs/nonEmptyStrings"}
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/task"}
+    }
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "task": {
+      "type": "object",
+      "required": ["id", "query", "query_class", "strata", "oracle_refs"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "query": {"type": "string", "minLength": 1},
+        "query_class": {"type": "string", "minLength": 1},
+        "strata": {"$ref": "#/$defs/nonEmptyStrings"},
+        "expected": {"$ref": "#/$defs/nonEmptyStrings"},
+        "expected_nodes": {"$ref": "#/$defs/nonEmptyStrings"},
+        "expected_edges": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "array", "minItems": 2, "items": {"type": "string"}}
+        },
+        "expected_facets": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"$ref": "#/$defs/nonEmptyStrings"}
+        },
+        "expected_answerable": {"type": "boolean"},
+        "oracle_refs": {"$ref": "#/$defs/nonEmptyStrings"}
+      },
+      "anyOf": [
+        {"required": ["expected"]},
+        {"required": ["expected_nodes"]},
+        {"required": ["expected_edges"]},
+        {"required": ["expected_facets"]},
+        {"properties": {"expected_answerable": {"const": false}}, "required": ["expected_answerable"]}
+      ]
+    }
+  }
+}

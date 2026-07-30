@@ -595,6 +595,29 @@ def _add_eval_command(sub) -> None:
         default=1.0,
         help="Minimum recall in every declared dimension for a complete answer (default: 1.0).",
     )
+    eval_cmd.add_argument(
+        "--report",
+        action="store_true",
+        help="Emit results plus overall and per-class/split/stratum metrics.",
+    )
+    eval_cmd.add_argument(
+        "--abstain-threshold",
+        type=float,
+        default=0.5,
+        help="Confidence below which stratified reporting treats a result as abstained (default: 0.5).",
+    )
+    eval_cmd.add_argument(
+        "--baseline-results",
+        help="Saved result JSON to compare with the current run by stable task id.",
+    )
+    eval_cmd.add_argument(
+        "--compare-metric",
+        choices=("node_recall", "edge_recall", "mrr", "ndcg_at_5", "ndcg_at_10", "facet_completeness"),
+        default="ndcg_at_10",
+    )
+    eval_cmd.add_argument("--minimum-effect", type=float, default=0.02)
+    eval_cmd.add_argument("--bootstrap-samples", type=int, default=10_000)
+    eval_cmd.add_argument("--bootstrap-seed", type=int, default=1337)
     eval_cmd.set_defaults(func=_lazy_cmd("evaluation", "cmd_eval"))
 
 

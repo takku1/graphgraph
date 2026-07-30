@@ -1,0 +1,93 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "graphgraph",
+    "repository": "takku1/graphgraph",
+    "commit": "44a84ed17cd800aa51ddae263a558e01c5fec04a",
+    "language": "python",
+    "split": "train"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_python_definition_boundaries",
+    "refs": [
+      "src/graphgraph/planning/routing.py:257",
+      "src/graphgraph/planning/context.py:9",
+      "src/graphgraph/retrieval/context.py:554",
+      "src/graphgraph/packets/renderers.py:402"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "GG-TRAIN-001",
+      "query": "How is user intent transformed into a size-limited structural answer?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound"],
+      "expected_facets": {
+        "routing": ["route_query"],
+        "planning": ["plan_context"],
+        "retrieval": ["retrieve_context"],
+        "serialization": ["render_packet"]
+      },
+      "oracle_refs": [
+        "src/graphgraph/platform/compiler.py:154",
+        "src/graphgraph/planning/routing.py:257",
+        "src/graphgraph/planning/context.py:9",
+        "src/graphgraph/retrieval/context.py:554",
+        "src/graphgraph/packets/renderers.py:402"
+      ]
+    },
+    {
+      "id": "GG-TRAIN-002",
+      "query": "what calls _resolve_node_expectation_ids",
+      "query_class": "reverse_lookup",
+      "strata": ["exact", "reverse_lookup"],
+      "expected": ["evaluate_graph"],
+      "oracle_refs": ["src/graphgraph/analysis/eval.py:194"]
+    },
+    {
+      "id": "GG-TRAIN-003",
+      "query": "Where is status implemented?",
+      "query_class": "direct_lookup",
+      "strata": ["ambiguous_name", "direct_lookup"],
+      "expected": ["cmd_status"],
+      "oracle_refs": ["src/graphgraph/cli/diagnostics.py"]
+    },
+    {
+      "id": "GG-TRAIN-004",
+      "query": "How are generated deliverables checked and repaired?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound"],
+      "expected_facets": {
+        "inspection": ["distribution_artifact_status"],
+        "repair": ["sync_distribution_artifacts"]
+      },
+      "oracle_refs": ["src/graphgraph/distribution.py:116", "src/graphgraph/distribution.py:125"]
+    },
+    {
+      "id": "GG-TRAIN-005",
+      "query": "Which executable boundary reads evaluation cases and emits scores?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound"],
+      "expected_facets": {
+        "entrypoint": ["cmd_eval"],
+        "loading": ["load_eval_tasks"],
+        "scoring": ["evaluate_graph"]
+      },
+      "oracle_refs": ["src/graphgraph/cli/evaluation.py:17", "src/graphgraph/analysis/eval.py:67"]
+    },
+    {
+      "id": "GG-TRAIN-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: no Kubernetes, gRPC, service-mesh, or retry coordinator subsystem"]
+    }
+  ]
+}

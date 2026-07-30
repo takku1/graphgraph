@@ -5,6 +5,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from time import perf_counter
 
 from ..concepts.doccode import is_code_like
 from ..graph.core import Edge, Graph
@@ -22,6 +23,12 @@ class EvalTask:
     expected_nodes: tuple[str, ...] = ()
     expected_edges: tuple[tuple[str, ...], ...] = ()
     expected_answerable: bool | None = None
+    task_id: str = ""
+    project: str = ""
+    split: str = ""
+    strata: tuple[str, ...] = ()
+    expected_facets: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    oracle_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,13 @@ class EvalResult:
     returned_nodes: int
     returned_edges: int
     token_estimate: int
+    task_id: str = ""
+    project: str = ""
+    split: str = ""
+    strata: tuple[str, ...] = ()
+    facet_completeness: float | None = None
+    latency_ms: float | None = None
+    latency_state: str = ""
     mrr: float = 0.0
     ndcg_at_5: float = 0.0
     ndcg_at_10: float = 0.0
@@ -66,6 +80,11 @@ def load_eval_tasks(path: Path) -> list[EvalTask]:
         # then scored as vacuously perfect. A harness that mis-reads its own
         # task file must not report a green number for it.
         expected_nodes = task.get("expected_nodes", task.get("expected", []))
+        expected_facets = _parse_expected_facets(task, query=str(query))
+        if not expected_nodes and expected_facets:
+            expected_nodes = list(
+                dict.fromkeys(expectation for _facet, expectations in expected_facets for expectation in expectations)
+            )
         expected_edges = task.get("expected_edges", task.get("edges", []))
         expected_answerable = task.get("expected_answerable")
         if expected_answerable is not None and not isinstance(expected_answerable, bool):
@@ -79,6 +98,12 @@ def load_eval_tasks(path: Path) -> list[EvalTask]:
                 expected_nodes=tuple(str(item) for item in expected_nodes),
                 expected_edges=tuple(tuple(str(part) for part in edge) for edge in expected_edges),
                 expected_answerable=expected_answerable,
+                task_id=str(task.get("id", "")),
+                project=str(task.get("project", "")),
+                split=str(task.get("split", "")),
+                strata=tuple(str(item) for item in task.get("strata", [])),
+                expected_facets=expected_facets,
+                oracle_refs=tuple(str(item) for item in task.get("oracle_refs", [])),
             )
         )
     if not out:
@@ -113,6 +138,26 @@ def _iter_task_records(data: object) -> list[dict[str, object]]:
     return []
 
 
+def _parse_expected_facets(
+    task: dict[str, object],
+    *,
+    query: str,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    raw = task.get("expected_facets")
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise EvalTasksError(f"invalid expected_facets for query {query!r}: expected an object")
+    facets: list[tuple[str, tuple[str, ...]]] = []
+    for name, expectations in raw.items():
+        if not isinstance(expectations, list) or not expectations:
+            raise EvalTasksError(
+                f"invalid expected_facets for query {query!r}: facet {name!r} must contain a non-empty list"
+            )
+        facets.append((str(name), tuple(str(item) for item in expectations)))
+    return tuple(facets)
+
+
 def evaluate_graph(
     graph_path: Path,
     tasks: list[EvalTask],
@@ -140,7 +185,8 @@ def evaluate_graph(
         memory_scopes=(),
     )
     results: list[EvalResult] = []
-    for task in tasks:
+    for task_index, task in enumerate(tasks):
+        started = perf_counter()
         compiled = runtime.compile(
             GraphProgram(
                 query=task.query,
@@ -149,6 +195,7 @@ def evaluate_graph(
                 max_nodes=max_nodes,
             )
         )
+        latency_ms = (perf_counter() - started) * 1000.0
         graph = compiled.graph
         retrieved = compiled.retrieval
         task = replace(task, query_class=compiled.route.query_class)
@@ -199,6 +246,12 @@ def evaluate_graph(
             if not task.expected_nodes
             else sum(bool(group & retrieved.nodes) for group in expected_groups) / len(task.expected_nodes)
         )
+        facet_completeness = _facet_completeness(
+            graph,
+            node_keys_by_id,
+            retrieved.nodes,
+            task.expected_facets,
+        )
         edge_recall = _edge_recall(task.expected_edges, returned_edges)
         scored = node_recall is not None or edge_recall is not None
         results.append(
@@ -216,6 +269,13 @@ def evaluate_graph(
                 returned_nodes=len(retrieved.nodes),
                 returned_edges=len(retrieved.edges),
                 token_estimate=estimate_tokens(packet),
+                task_id=task.task_id,
+                project=task.project,
+                split=task.split,
+                strata=task.strata,
+                facet_completeness=facet_completeness,
+                latency_ms=round(latency_ms, 4),
+                latency_state="cold_runtime" if task_index == 0 else "warm_runtime",
                 mrr=round(mrr_val, 4),
                 ndcg_at_5=round(ndcg_5, 4),
                 ndcg_at_10=round(ndcg_10, 4),
@@ -228,6 +288,25 @@ def evaluate_graph(
             )
         )
     return results
+
+
+def _facet_completeness(
+    graph: Graph,
+    node_keys_by_id: dict[str, set[str]],
+    retrieved_nodes: set[str],
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+) -> float | None:
+    if not facets:
+        return None
+    complete = 0
+    for _name, expectations in facets:
+        groups = [
+            _resolve_node_expectation_ids(graph, node_keys_by_id, expectation)
+            for expectation in expectations
+        ]
+        if groups and all(group & retrieved_nodes for group in groups):
+            complete += 1
+    return complete / len(facets)
 
 
 def reciprocal_rank(ranked_list: list[str], expected_nodes: set[str]) -> float:

@@ -28,6 +28,17 @@ from graphgraph.benchmark.bench_utils import estimate_token_size
 from graphgraph.graph.core import Edge, Graph, Node
 from graphgraph.scanner.ast import extract_symbols
 
+NON_ENGINE_SOURCE_PREFIXES = (
+    "graphgraph/acceptance/",
+    "graphgraph/research/",
+)
+NON_ENGINE_SOURCE_FILES = frozenset(
+    {
+        "graphgraph/analysis/eval_protocol.py",
+        "graphgraph/live_validation.py",
+    }
+)
+
 
 class BenchmarkExtractionTest(unittest.TestCase):
     def test_runtime_pins_the_offline_ready_tree_sitter_language_pack(self):
@@ -155,11 +166,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
             }:
                 continue
             rel = path.relative_to(src_dir).as_posix()
-            if (
-                rel.startswith("graphgraph/acceptance/")
-                or rel.startswith("graphgraph/research/")
-                or rel == "graphgraph/live_validation.py"
-            ):
+            if rel.startswith(NON_ENGINE_SOURCE_PREFIXES) or rel in NON_ENGINE_SOURCE_FILES:
                 continue  # release/eval harnesses are not the engine this ceiling guards
             file_node_id = f"file_{rel}"  # deterministic id
             text = path.read_text(encoding="utf-8", errors="ignore")

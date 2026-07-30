@@ -1,0 +1,65 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "express",
+    "repository": "expressjs/express",
+    "commit": "18e5985b8a9d5e8423db0a9121f22bdaecd5b120",
+    "language": "javascript",
+    "split": "test"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_javascript_function_boundaries",
+    "refs": ["lib/application.js:26-181", "lib/express.js:19-71", "test/Route.js:13-271"]
+  },
+  "tasks": [
+    {
+      "id": "EXPRESS-TEST-001",
+      "query": "Which modules connect the framework factory to its routing dependency?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "path_oracle"],
+      "expected": ["lib/application.js", "lib/express.js"],
+      "oracle_refs": ["lib/application.js:26", "lib/express.js:19"]
+    },
+    {
+      "id": "EXPRESS-TEST-002",
+      "query": "Which test file directly invokes route.dispatch?",
+      "query_class": "reverse_lookup",
+      "strata": ["receiver_oracle", "reverse_lookup", "path_oracle"],
+      "expected": ["test/Route.js"],
+      "oracle_refs": ["test/Route.js:13-271"]
+    },
+    {
+      "id": "EXPRESS-TEST-003",
+      "query": "Trace an incoming request from application.handle through the router to a route handler.",
+      "query_class": "multi_hop_path",
+      "strata": ["compound", "multi_hop", "receiver_oracle"],
+      "expected_facets": {
+        "entry": ["handle"],
+        "application": ["lib/application.js"]
+      },
+      "oracle_refs": ["lib/express.js:36-40", "lib/application.js:152-178"]
+    },
+    {
+      "id": "EXPRESS-TEST-004",
+      "query": "Where is createApplication defined?",
+      "query_class": "direct_lookup",
+      "strata": ["direct_lookup", "path_oracle"],
+      "expected": ["lib/express.js"],
+      "oracle_refs": ["lib/express.js:36"]
+    },
+    {
+      "id": "EXPRESS-TEST-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: subsystem absent at pinned commit"]
+    }
+  ]
+}

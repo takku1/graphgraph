@@ -1,0 +1,82 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "ripgrep",
+    "repository": "BurntSushi/ripgrep",
+    "commit": "227381db0ee83dfa4341f1e27ff9617c0f5ad992",
+    "language": "rust",
+    "split": "test"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_rust_function_boundaries",
+    "refs": ["crates/core/main.rs:111-295", "crates/core/flags/hiargs.rs:368-896", "crates/core/search.rs:193-405"]
+  },
+  "tasks": [
+    {
+      "id": "RIPGREP-TEST-001",
+      "query": "What calls HiArgs.walk_builder?",
+      "query_class": "reverse_lookup",
+      "strata": ["receiver_oracle", "reverse_lookup", "qualified_member", "path_oracle"],
+      "expected": ["crates/core/main.rs"],
+      "oracle_refs": ["crates/core/main.rs:111", "crates/core/main.rs:175", "crates/core/main.rs:238", "crates/core/main.rs:295"]
+    },
+    {
+      "id": "RIPGREP-TEST-002",
+      "query": "Where is WalkBuilder.build_parallel used by the ripgrep executable?",
+      "query_class": "reverse_lookup",
+      "strata": ["receiver_oracle", "reverse_lookup", "qualified_member", "path_oracle"],
+      "expected": ["crates/core/main.rs"],
+      "oracle_refs": ["crates/core/main.rs:175", "crates/core/main.rs:295"]
+    },
+    {
+      "id": "RIPGREP-TEST-003",
+      "query": "How does user input become compiled logic and drive filesystem traversal?",
+      "query_class": "multi_hop_path",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "multi_hop", "receiver_oracle"],
+      "expected_facets": {
+        "construction": ["matcher", "matcher_rust", "build_many"],
+        "representation": ["PatternMatcher"],
+        "execution": ["search_path"]
+      },
+      "oracle_refs": ["crates/core/flags/hiargs.rs:368-513", "crates/core/search.rs:193-405"]
+    },
+    {
+      "id": "RIPGREP-TEST-004",
+      "query": "Where is RegexMatcherBuilder.build_many defined?",
+      "query_class": "direct_lookup",
+      "strata": ["ambiguous_name", "qualified_member", "path_oracle"],
+      "expected": ["crates/regex/src/matcher.rs"],
+      "oracle_refs": ["crates/regex/src/matcher.rs:53"]
+    },
+    {
+      "id": "RIPGREP-TEST-005",
+      "query": "What calls Searcher.search_path?",
+      "query_class": "reverse_lookup",
+      "strata": ["receiver_oracle", "reverse_lookup", "qualified_member", "path_oracle"],
+      "expected": ["crates/core/search.rs"],
+      "oracle_refs": ["crates/core/search.rs:380-405"]
+    },
+    {
+      "id": "RIPGREP-TEST-006",
+      "query": "According to GUIDE.md, how does ripgrep decide which files to search?",
+      "query_class": "doc_summary",
+      "strata": ["documentation", "compound"],
+      "expected": ["GUIDE.md"],
+      "oracle_refs": ["GUIDE.md:177-262", "GUIDE.md:714-743"]
+    },
+    {
+      "id": "RIPGREP-TEST-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: subsystem absent at pinned commit"]
+    }
+  ]
+}
