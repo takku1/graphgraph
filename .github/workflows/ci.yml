@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install project (with dev deps)
-        run: uv sync --dev
+        run: uv sync --locked --dev
 
       - name: Lint (ruff)
         run: uv run ruff check src tests
@@ -49,7 +49,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install project (with dev deps)
-        run: uv sync --dev
+        run: uv sync --locked --dev
 
       - name: Build the self-graph
         run: uv run graphgraph scan --depth symbols --docs --no-incremental

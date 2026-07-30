@@ -85,6 +85,15 @@ def _asset_text(name: str) -> str:
     return (Path(__file__).resolve().parent / "assets" / name).read_text(encoding="utf-8")
 
 
+def _normalized_artifact_bytes(content: bytes) -> bytes:
+    """Compare tracked text artifacts independently of checkout newlines."""
+    return content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
+def _artifact_matches(target: Path, expected: bytes) -> bool:
+    return target.exists() and _normalized_artifact_bytes(target.read_bytes()) == _normalized_artifact_bytes(expected)
+
+
 def distribution_artifacts() -> dict[Path, _Artifact]:
     skill = _asset_text("graphgraph_skill.md")
     validator = _asset_text("validate_live.py")
@@ -108,7 +117,7 @@ def distribution_artifact_status(root: Path) -> tuple[DistributionArtifactStatus
     rows = []
     for path, artifact in distribution_artifacts().items():
         target = root / path
-        current = target.exists() and target.read_bytes() == artifact.content.encode("utf-8")
+        current = _artifact_matches(target, artifact.content.encode("utf-8"))
         rows.append(DistributionArtifactStatus(path, artifact.source, current))
     return tuple(rows)
 
@@ -118,7 +127,7 @@ def sync_distribution_artifacts(root: Path) -> tuple[Path, ...]:
     for path, artifact in distribution_artifacts().items():
         target = root / path
         encoded = artifact.content.encode("utf-8")
-        if target.exists() and target.read_bytes() == encoded:
+        if _artifact_matches(target, encoded):
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(encoded)

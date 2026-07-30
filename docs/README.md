@@ -23,7 +23,7 @@ How to run, evaluate, and extend the tool.
 
 - [Start Here](start-here.md)
 - [Welcome](welcome.md)
-- [Execution Plan](planned-work.md)
+- [Execution Plan — active P-series first](planned-work.md)
 - [Empirical Findings](empirical-findings.md)
 - [Acceptance Harness](acceptance-harness.md)
 - [Engineering](engineering.md)

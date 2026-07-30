@@ -59,6 +59,29 @@ class DistributionArtifactTest(unittest.TestCase):
             sync_distribution_artifacts(root)
             self.assertTrue(all(item.current for item in distribution_artifact_status(root)))
 
+    def test_checkout_newlines_are_not_semantic_artifact_drift(self) -> None:
+        from graphgraph.distribution import (
+            distribution_artifact_status,
+            sync_distribution_artifacts,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sync_distribution_artifacts(root)
+
+            for item in distribution_artifact_status(root):
+                target = root / item.path
+                target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+
+            status = distribution_artifact_status(root)
+            self.assertTrue(all(item.current for item in status), status)
+            self.assertEqual(sync_distribution_artifacts(root), ())
+
+            target = root / "plugins" / "graphgraph" / ".mcp.json"
+            target.write_bytes(target.read_bytes() + b"semantic drift\r\n")
+            drift = [item for item in distribution_artifact_status(root) if not item.current]
+            self.assertEqual([item.path.as_posix() for item in drift], ["plugins/graphgraph/.mcp.json"])
+
     def test_artifacts_cli_supports_check_and_sync(self) -> None:
         parser = build_parser()
         check = parser.parse_args(["artifacts", "--check"])
