@@ -438,6 +438,18 @@ def _rust_local_types(body: str) -> dict[str, str]:
     ):
         result.setdefault(match.group(1), match.group(2).split("::")[-1])
 
+    # `let e = Engine;` -- a unit struct is instantiated by naming it, with no
+    # `{}` or `::new()` for the pattern above to key on. SCREAMING_CASE is
+    # excluded because that spelling is a constant by Rust convention, and a
+    # constant's name is not its type.
+    for match in re.finditer(
+        r"\blet\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*&?\s*([A-Z][A-Za-z0-9_]*)\s*;",
+        body,
+    ):
+        type_name = match.group(2)
+        if not type_name.isupper():
+            result.setdefault(match.group(1), type_name)
+
     # `let a = b` and `let a = b.clone()` carry b's type unchanged.
     identity = "|".join(_RUST_IDENTITY_METHODS)
     for match in re.finditer(

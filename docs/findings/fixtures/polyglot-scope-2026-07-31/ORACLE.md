@@ -58,19 +58,38 @@ prescribes (Neron/Tolmach/Visser/Wachsmuth 2015; GitHub's stack graphs).
 Ties at any level still return no edge, which preserves the extractor's
 never-fabricate property.
 
+A fourth layer was added with receiver typing, so a member call binds to the
+method owned by the receiver's own type:
+
+| Scope layer | Rule |
+|---|---|
+| Receiver type | `e.Run()` binds to the class the receiver was built from, same file first |
+
 Counted by enumerating callee edges per language, not inferred from edge totals:
 
-| | At freezing | After fix |
-|---|---:|---:|
-| Call edges recovered | 34/63 | **52/63** |
-| ... excluding deliberate self-recursion | 34/56 | **52/56** |
-| Inbound edges to any `helper::Middle` | 0/7 | **0/7** |
+| | At freezing | After scope fixes | After receiver typing |
+|---|---:|---:|---:|
+| Call edges recovered | 34/63 | 52/63 | **56/63** |
+| ... excluding deliberate self-recursion | 34/56 | 52/56 | **56/56** |
+| Inbound edges to any `helper::Middle` | 0/7 | 0/7 | **0/7** |
 
-Per language (of 9): C# 8, Java 8, Python 8, JavaScript 7, TypeScript 7, Go 7,
-Rust 7. The four non-recursion misses are all `Root -> Engine.Run`, a member
-call on an instance in Go/Rust/JS/TS, which needs receiver type inference rather
-than scope resolution -- and the scan telemetry predicts them exactly
-(`member_calls=9/2/2/0`).
+Every language now resolves 8 of its 8 achievable edges, and member-call
+telemetry reads `13/0/0/0` -- every member call resolved, none ambiguous, none
+lacking receiver evidence. Three separate causes were behind the original four
+misses:
+
+- **JS/TS** inferred the receiver type correctly but two files each declaring
+  `class Engine` made the owner ambiguous, so both lost the edge. Same-file
+  preference resolves it.
+- **Go** attaches methods to a receiver instead of nesting them in the type, so
+  every Go method was recorded ownerless and could never match a typed
+  receiver. Receiver extraction plus a containment link fixes it, and Go gained
+  local type inference (`e := Engine{}`), which it had none of.
+- **Rust** instantiates a unit struct by naming it (`let e = Engine;`), which
+  matched no existing pattern. SCREAMING_CASE is excluded so a constant is not
+  mistaken for a type.
+
+The only remaining gap is edge 7 in each language, below.
 
 Gate 1 verified on real Flask: adding a duplicate `helpers.py` moved inbound
 call edges 151 -> 152. The same measurement on the previous commit gave

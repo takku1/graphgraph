@@ -127,6 +127,27 @@ _PARSER_CACHE: dict[str, Any] = {}
 _PARSER_LOAD_ERRORS: dict[str, str] = {}
 
 
+def _go_receiver_owner(node: Any, text: bytes) -> str:
+    """Owner type of a Go method: ``func (e *Engine[T]) Run()`` -> ``Engine``.
+
+    Pointer receivers and type parameters are stripped because the owner is a
+    nominal key matched against a receiver's inferred type, and `Engine`,
+    `*Engine` and `Engine[T]` all name the same type for that purpose.
+    """
+    receiver = node.child_by_field_name("receiver")
+    if receiver is None:
+        return ""
+    for child in getattr(receiver, "named_children", ()):
+        type_node = child.child_by_field_name("type") if hasattr(child, "child_by_field_name") else None
+        if type_node is None:
+            continue
+        name = _node_text(type_node, text).strip().lstrip("*").strip()
+        name = name.split("[", 1)[0].strip()
+        if name:
+            return name
+    return ""
+
+
 def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     defs: list[_TsDef] = []
     stack = [root]
@@ -177,6 +198,16 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
         name = _node_text(name_node, text)
         if not name:
             continue
+        # Go attaches methods to a receiver rather than nesting them inside the
+        # type, so the lexical owner pass below cannot see them and every Go
+        # method was recorded ownerless. An ownerless method cannot be matched
+        # against a typed receiver, which made `e.Run()` unresolvable even with
+        # the receiver's type in hand.
+        owner = (
+            _go_receiver_owner(node, text)
+            if node.type == "method_declaration" and source.path.suffix.lower() == ".go"
+            else ""
+        )
         defs.append(
             _TsDef(
                 name=name,
@@ -186,6 +217,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
                 line=int(node.start_point[0]) + 1,
                 facts=_definition_facts(source, node, text),
                 extra=_base_class_names(node, text),
+                owner=owner,
                 return_type=_declared_return_type(node, text),
                 node=node,
             )
@@ -719,6 +751,19 @@ def _resolve_member_call(
             if candidates:
                 receiver_type = ancestor
                 break
+    if len(candidates) > 1:
+        # Nearest scope again, one level down: two files can each declare a
+        # class of the same name with the same method, and a receiver built in
+        # this file means this file's class. Without this, `class Engine` in
+        # core.js and an unrelated `class Engine` in core.ts made every
+        # `e.Run()` in both files ambiguous, and each lost its edge. Ties still
+        # fall through to the candidate path rather than picking arbitrarily.
+        source_path = source.rel.replace("\\", "/")
+        same_file = [
+            node_id for node_id in candidates if nodes[node_id].path.replace("\\", "/") == source_path
+        ]
+        if len(same_file) == 1:
+            candidates = same_file
     if len(candidates) == 1:
         edges.append(
             Edge(

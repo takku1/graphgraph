@@ -10,6 +10,7 @@ from ...graph.core import Edge, Node
 from ..ast import _lang_family
 from .cpp import cpp_class_field_types, cpp_local_types
 from .csharp import csharp_class_field_types, csharp_local_types
+from .go import go_local_types
 from .languages import _SUFFIX_LANGUAGE
 from .model import (
     SourceFile,
@@ -178,6 +179,19 @@ def _add_nested_contains(
                 for parent in materialized
                 if parent.kind in owner_kinds and parent.start < child.start and child.end <= parent.end
             ]
+            if not parents and child.kind == "method" and child.owner:
+                # Go declares a method beside its type, not inside it, so
+                # containment cannot be read off the byte ranges. The receiver
+                # names the owner explicitly; bind to it when the file declares
+                # exactly one type of that name. Ownership drives receiver
+                # matching, so an ambiguous name must not be guessed.
+                named = [
+                    parent
+                    for parent in materialized
+                    if parent.name == child.owner and parent.kind in owner_kinds | {"type"}
+                ]
+                if len(named) == 1:
+                    parents = named
             if not parents:
                 continue
             parent = min(parents, key=lambda d: d.end - d.start)
@@ -668,6 +682,8 @@ def _add_tree_sitter_calls(
                 local_types = csharp_local_types(body)
             elif suffix in _CPP_SUFFIXES:
                 local_types = cpp_local_types(body)
+            elif suffix == ".go":
+                local_types = go_local_types(body)
             else:
                 local_types = {}
             if d.owner:
