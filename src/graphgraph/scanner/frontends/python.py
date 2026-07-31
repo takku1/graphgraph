@@ -10,6 +10,14 @@ from typing import Mapping
 from .syntax import (
     _PYTHON_BUILTIN_TYPES,
 )
+from .type_facts import (
+    Evidence,
+    TypeObligation,
+    TypeSolution,
+    solve_type_obligations,
+)
+
+DEFAULT_PYTHON_ATTRIBUTE_DEPTH = 3
 
 
 def _python_type_name(annotation: py_ast.AST | None) -> str:
@@ -241,36 +249,52 @@ def _python_assignment_names(target: py_ast.AST | None) -> set[str]:
     return set()
 
 
-def _python_local_types(
+def _python_attribute_path(value: py_ast.AST | None) -> tuple[str, tuple[str, ...]] | None:
+    fields: list[str] = []
+    cursor = value
+    while isinstance(cursor, py_ast.Attribute):
+        fields.append(cursor.attr)
+        cursor = cursor.value
+    if not isinstance(cursor, py_ast.Name) or not fields:
+        return None
+    return cursor.id, tuple(reversed(fields))
+
+
+def _python_type_solution(
     body: str,
     *,
     field_types: Mapping[tuple[str, str], str] | None = None,
     owner: str = "",
-) -> dict[str, str]:
-    """Infer Python receiver types only from explicit, stable local evidence.
-
-    ``field_types`` and ``owner`` are optional so an attribute-valued assignment
-    (`app = ctx.app`, `handler = self.registry`) can carry the declared type of
-    the field it reads. Without them this degrades to the previous
-    annotation-and-constructor-only behaviour rather than guessing.
-    """
+    initial_types: Mapping[str, str] | None = None,
+    max_attribute_depth: int = DEFAULT_PYTHON_ATTRIBUTE_DEPTH,
+) -> TypeSolution:
+    """Solve local Python type facts with a bounded monotone worklist."""
     try:
         module = py_ast.parse(textwrap.dedent(body))
     except (IndentationError, SyntaxError, ValueError, RecursionError):
-        # RecursionError: ast construction blows the recursion limit on
-        # pathologically nested/chained source (generated or minified code).
-        # One such file must degrade to "no inference" like a syntax error,
-        # not abort the whole repository scan.
-        return {}
+        return TypeSolution({}, ())
     function = next(
         (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
         None,
     )
     if function is None:
-        return {}
+        return TypeSolution({}, ())
 
-    annotated: dict[str, str] = {}
-    writes: dict[str, list[str]] = {}
+    seeds: list[tuple[str, str, Evidence]] = []
+    obligations: list[TypeObligation] = []
+    fields = dict(field_types or {})
+
+    for name, type_name in sorted((initial_types or {}).items()):
+        if type_name:
+            seeds.append((name, type_name, Evidence("module_or_import", name)))
+    if owner:
+        seeds.extend(
+            (
+                ("self", owner, Evidence("enclosing_owner", owner)),
+                ("cls", owner, Evidence("enclosing_owner", owner)),
+            )
+        )
+
     arguments = (
         list(function.args.posonlyargs)
         + list(function.args.args)
@@ -280,57 +304,98 @@ def _python_local_types(
     )
     for argument in arguments:
         if type_name := _python_type_name(argument.annotation):
-            annotated[argument.arg] = type_name
+            seeds.append((argument.arg, type_name, Evidence("annotation", argument.arg)))
 
-    fields = dict(field_types or {})
-    # Receivers an attribute read may be resolved against: annotated parameters
-    # and locals, plus the enclosing instance. Bindings established by earlier
-    # statements join as the walk proceeds, so `ctx = get_ctx()` then
-    # `app = ctx.app` resolves in one pass without a second traversal.
-    known: dict[str, str] = dict(annotated)
-    if owner:
-        known.setdefault("self", owner)
-        known.setdefault("cls", owner)
-
-    def value_type(value: py_ast.AST | None) -> str:
-        return _python_value_type(value, known, fields)
-
-    def remember(name: str, type_name: str) -> None:
-        if type_name and name not in known:
-            known[name] = type_name
+    def add_value(target: str, value: py_ast.AST | None, provenance: str) -> None:
+        if not target or value is None:
+            return
+        if isinstance(value, py_ast.Name):
+            obligations.append(TypeObligation(target, value.id, (), provenance))
+            return
+        if path := _python_attribute_path(value):
+            obligations.append(TypeObligation(target, path[0], path[1], provenance))
+            return
+        if type_name := _python_value_type(value):
+            seeds.append((target, type_name, Evidence(provenance, target)))
 
     for node in _python_body_nodes(function):
-        if isinstance(node, py_ast.AnnAssign):
-            if isinstance(node.target, py_ast.Name):
-                if type_name := _python_type_name(node.annotation):
-                    annotated[node.target.id] = type_name
-                    remember(node.target.id, type_name)
-                assigned = value_type(node.value)
-                writes.setdefault(node.target.id, []).append(assigned)
-                remember(node.target.id, assigned)
+        if isinstance(node, py_ast.Attribute) and (path := _python_attribute_path(node)):
+            expression = ".".join((path[0], *path[1]))
+            obligations.append(TypeObligation(expression, path[0], path[1], "attribute_expression"))
+        if isinstance(node, py_ast.AnnAssign) and isinstance(node.target, py_ast.Name):
+            if type_name := _python_type_name(node.annotation):
+                seeds.append((node.target.id, type_name, Evidence("annotation", node.target.id)))
+            add_value(node.target.id, node.value, "annotated_assignment")
         elif isinstance(node, (py_ast.Assign, py_ast.NamedExpr)):
             targets = node.targets if isinstance(node, py_ast.Assign) else [node.target]
-            assigned = value_type(node.value)
             for target in targets:
                 for name in _python_assignment_names(target):
-                    writes.setdefault(name, []).append(assigned)
-                    remember(name, assigned)
-        elif isinstance(node, py_ast.AugAssign):
-            for name in _python_assignment_names(node.target):
-                writes.setdefault(name, []).append("")
-        elif isinstance(node, (py_ast.For, py_ast.AsyncFor)):
-            for name in _python_assignment_names(node.target):
-                writes.setdefault(name, []).append("")
-        elif isinstance(node, (py_ast.With, py_ast.AsyncWith)):
-            for item in node.items:
-                for name in _python_assignment_names(item.optional_vars):
-                    writes.setdefault(name, []).append("")
+                    add_value(name, node.value, "assignment")
 
-    result = dict(annotated)
-    for name, assigned_types in writes.items():
-        stable_types = set(assigned_types)
-        if name not in annotated and len(stable_types) == 1 and "" not in stable_types:
-            result[name] = assigned_types[0]
+    return solve_type_obligations(
+        seeds,
+        obligations,
+        fields,
+        max_attribute_depth=max_attribute_depth,
+    )
+
+
+def _python_local_types(
+    body: str,
+    *,
+    field_types: Mapping[tuple[str, str], str] | None = None,
+    owner: str = "",
+    initial_types: Mapping[str, str] | None = None,
+    max_attribute_depth: int = DEFAULT_PYTHON_ATTRIBUTE_DEPTH,
+) -> dict[str, str]:
+    """Project concrete local receiver types from the bounded fact solution.
+
+    Unknown and ambiguous facts are deliberately omitted. Callers that need
+    diagnostics can inspect :func:`_python_type_solution`.
+    """
+    return _python_type_solution(
+        body,
+        field_types=field_types,
+        owner=owner,
+        initial_types=initial_types,
+        max_attribute_depth=max_attribute_depth,
+    ).concrete_types
+
+
+def _python_module_global_types(source: str) -> dict[str, str]:
+    """Return stable, explicitly annotated module-level bindings."""
+    try:
+        module = py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return {}
+    result: dict[str, str] = {}
+    for node in module.body:
+        if (
+            isinstance(node, py_ast.AnnAssign)
+            and isinstance(node.target, py_ast.Name)
+            and (type_name := _python_type_name(node.annotation))
+        ):
+            result[node.target.id] = type_name
+    return result
+
+
+def _python_imported_global_types(
+    source: str,
+    project_globals: Mapping[tuple[str, str], str],
+) -> dict[str, str]:
+    """Map local import bindings to unambiguous project-global type facts."""
+    try:
+        module = py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return {}
+    result: dict[str, str] = {}
+    for node in module.body:
+        if not isinstance(node, py_ast.ImportFrom) or not node.module:
+            continue
+        module_stem = node.module.rsplit(".", 1)[-1]
+        for alias in node.names:
+            if type_name := project_globals.get((module_stem, alias.name), ""):
+                result[alias.asname or alias.name] = type_name
     return result
 
 

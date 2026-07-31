@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 
+from graphgraph.scanner.frontends import SourceFile, select_extractor
 from graphgraph.scanner.frontends.module_calls import whole_module_binding_names
 from graphgraph.scanner.frontends.python import (
     _python_class_field_types,
+    _python_imported_global_types,
     _python_local_types,
+    _python_module_global_types,
+    _python_type_solution,
+)
+from graphgraph.scanner.frontends.type_facts import (
+    Evidence,
+    TypeFact,
+    TypeState,
 )
 
 
@@ -88,15 +98,170 @@ def handler(ctx: AppContext, flag):
         types = _python_local_types(body, field_types={("AppContext", "app"): "Flask"})
         self.assertNotIn("app", types)
 
-    def test_chains_are_not_resolved(self) -> None:
-        # Multi-hop needs the deferred-obligation design (stage 4). Guessing
-        # here would trade the precision the design is built to protect.
+    def test_attribute_chains_resolve_within_the_explicit_depth_bound(self) -> None:
         body = """
 def handler(ctx: AppContext):
     cfg = ctx.app.config
 """
         fields = {("AppContext", "app"): "Flask", ("Flask", "config"): "Config"}
-        self.assertNotIn("cfg", _python_local_types(body, field_types=fields))
+        types = _python_local_types(body, field_types=fields, max_attribute_depth=2)
+        self.assertEqual(types.get("ctx.app"), "Flask")
+        self.assertEqual(types.get("ctx.app.config"), "Config")
+        self.assertEqual(types.get("cfg"), "Config")
+
+    def test_attribute_chain_beyond_the_bound_has_an_unresolved_receipt(self) -> None:
+        body = """
+def handler(ctx: AppContext):
+    cfg = ctx.app.config
+"""
+        fields = {("AppContext", "app"): "Flask", ("Flask", "config"): "Config"}
+        solution = _python_type_solution(body, field_types=fields, max_attribute_depth=1)
+        self.assertNotIn("cfg", solution.concrete_types)
+        self.assertTrue(
+            any(
+                item.target == "cfg" and item.reason == "depth_limit"
+                for item in solution.unresolved
+            )
+        )
+
+    def test_alias_obligations_are_discharged_when_evidence_arrives_later(self) -> None:
+        body = """
+def handler():
+    app = context
+    context: AppContext = make_context()
+"""
+        solution = _python_type_solution(body)
+        self.assertEqual(solution.concrete_types.get("context"), "AppContext")
+        self.assertEqual(solution.concrete_types.get("app"), "AppContext")
+        self.assertEqual(
+            {item.kind for item in solution.facts["app"].evidence},
+            {"annotation", "assignment"},
+        )
+
+
+class TypeFactLatticeTest(unittest.TestCase):
+    def test_unknown_is_below_concrete_and_provenance_is_retained(self) -> None:
+        unknown = TypeFact()
+        direct = TypeFact.from_evidence("Flask", Evidence("annotation", "app"))
+        joined = unknown.join(direct)
+        self.assertEqual(joined.state, TypeState.CONCRETE)
+        self.assertEqual(joined.concrete, "Flask")
+        self.assertEqual(joined.evidence, direct.evidence)
+
+    def test_conflicting_concrete_facts_join_to_ambiguous(self) -> None:
+        flask = TypeFact.from_evidence("Flask", Evidence("annotation", "app"))
+        django = TypeFact.from_evidence("Django", Evidence("assignment", "app"))
+        joined = flask.join(django)
+        self.assertEqual(joined.state, TypeState.AMBIGUOUS)
+        self.assertIsNone(joined.concrete)
+        self.assertEqual(joined.types, frozenset({"Django", "Flask"}))
+
+
+class ModuleGlobalTypeTest(unittest.TestCase):
+    def test_annotated_module_proxy_is_a_typed_fact(self) -> None:
+        source = """
+if TYPE_CHECKING:
+    class FlaskProxy(Flask):
+        pass
+
+current_app: FlaskProxy = LocalProxy(_cv_app, "app")
+"""
+        self.assertEqual(_python_module_global_types(source).get("current_app"), "FlaskProxy")
+
+    def test_imported_global_type_seeds_callable_receiver_resolution(self) -> None:
+        body = """
+def dispatch():
+    current_app.ensure_sync(handler)
+"""
+        types = _python_local_types(body, initial_types={"current_app": "FlaskProxy"})
+        self.assertEqual(types.get("current_app"), "FlaskProxy")
+
+    def test_imported_global_join_requires_matching_module_provenance(self) -> None:
+        project = {("globals", "current_app"): "FlaskProxy"}
+        self.assertEqual(
+            _python_imported_global_types(
+                "from .globals import current_app as app\n",
+                project,
+            ),
+            {"app": "FlaskProxy"},
+        )
+        self.assertEqual(
+            _python_imported_global_types(
+                "from unrelated import current_app\n",
+                project,
+            ),
+            {},
+        )
+
+    def _extract(self, sources: dict[str, str]):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, text in sources.items():
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace("/", "_"), text))
+            return select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+    def test_two_hop_receiver_expression_resolves_a_call_edge(self) -> None:
+        result = self._extract(
+            {
+                "ctx.py": """
+class Flask:
+    def ensure_sync(self, func):
+        return func
+
+class AppContext:
+    def __init__(self, app: Flask):
+        self.app = app
+""",
+                "use.py": """
+def wrapper(ctx: AppContext, func):
+    return ctx.app.ensure_sync(func)
+""",
+            }
+        )
+        labels = {node_id: node.label for node_id, node in result.nodes.items()}
+        calls = {
+            (labels[edge.source], labels[edge.target])
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("wrapper", "ensure_sync"), calls)
+
+    def test_imported_annotated_proxy_resolves_through_its_base_class(self) -> None:
+        result = self._extract(
+            {
+                "globals.py": """
+if TYPE_CHECKING:
+    class Flask:
+        def ensure_sync(self, func):
+            return func
+
+    class FlaskProxy(Flask):
+        pass
+
+current_app: FlaskProxy = LocalProxy()
+""",
+                "views.py": """
+from .globals import current_app
+
+def dispatch(handler):
+    return current_app.ensure_sync(handler)
+""",
+            }
+        )
+        labels = {node_id: node.label for node_id, node in result.nodes.items()}
+        calls = {
+            (labels[edge.source], labels[edge.target])
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("dispatch", "ensure_sync"), calls)
 
 
 class ProjectFieldTypeTest(unittest.TestCase):

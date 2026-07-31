@@ -38,6 +38,11 @@ NON_ENGINE_SOURCE_FILES = frozenset(
         "graphgraph/live_validation.py",
     }
 )
+# Measured after the P02 typed-fact solver landed (2026-07-30). This is a
+# versioned growth guard, not a packet budget: two percent permits small
+# maintenance changes while forcing intentional remeasurement for expansion.
+SOURCE_GRAPH_TOKEN_BASELINE = 147_075
+SOURCE_GRAPH_TOKEN_HEADROOM_RATIO = 0.02
 
 
 class BenchmarkExtractionTest(unittest.TestCase):
@@ -187,10 +192,12 @@ class BenchmarkExtractionTest(unittest.TestCase):
 
         token_est = estimate_token_size(g)
         # Soft sanity ceiling on the full source-graph size (naive JSON word
-        # count), not a packet budget. Bumped as the codebase grows; raise it
-        # again if a legitimate expansion trips it rather than treating it as a
-        # regression.
-        self.assertLess(token_est, 145000, f"Token estimate too high: {token_est}")
+        # count), derived from a dated measured baseline rather than an
+        # unexplained absolute cap.
+        token_ceiling = int(
+            SOURCE_GRAPH_TOKEN_BASELINE * (1 + SOURCE_GRAPH_TOKEN_HEADROOM_RATIO)
+        )
+        self.assertLess(token_est, token_ceiling, f"Token estimate too high: {token_est}")
 
         # Extraction-quality floor (path-to-10 "adopt first" gate).
         # calls_per_symbol -- resolved call edges per callable symbol -- is the

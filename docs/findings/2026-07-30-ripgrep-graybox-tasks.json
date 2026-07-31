@@ -1,0 +1,30 @@
+[
+  {
+    "query": "What calls HiArgs.walk_builder?",
+    "expected_nodes": ["crates/core/main.rs"]
+  },
+  {
+    "query": "Where is WalkBuilder.build_parallel used by the ripgrep executable?",
+    "expected_nodes": ["crates/core/main.rs"]
+  },
+  {
+    "query": "Trace how command-line patterns become a regex matcher and drive a path search.",
+    "expected_nodes": ["matcher", "matcher_rust", "build_many", "PatternMatcher", "search_path"]
+  },
+  {
+    "query": "Where is RegexMatcherBuilder.build_many defined?",
+    "expected_nodes": ["crates/regex/src/matcher.rs"]
+  },
+  {
+    "query": "What calls Searcher.search_path?",
+    "expected_nodes": ["crates/core/search.rs"]
+  },
+  {
+    "query": "According to GUIDE.md, how does ripgrep decide which files to search?",
+    "expected_nodes": ["GUIDE.md"]
+  },
+  {
+    "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+    "expected_answerable": false
+  }
+]

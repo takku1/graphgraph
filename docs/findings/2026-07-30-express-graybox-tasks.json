@@ -1,0 +1,22 @@
+[
+  {
+    "query": "Where is Router imported into Express?",
+    "expected_nodes": ["lib/application.js", "lib/express.js"]
+  },
+  {
+    "query": "Which test file directly invokes route.dispatch?",
+    "expected_nodes": ["test/Route.js"]
+  },
+  {
+    "query": "What calls Route.dispatch?",
+    "expected_nodes": ["test/Route.js"]
+  },
+  {
+    "query": "Trace an incoming request from application.handle through the router to a route handler.",
+    "expected_nodes": ["handle", "lib/application.js"]
+  },
+  {
+    "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+    "expected_answerable": false
+  }
+]

@@ -128,8 +128,8 @@ type project-wide, it stays unresolved. Recall rises; precision does not move.
 | --- | --- | --- | --- |
 | 1 | `Attribute` case in value typing | intra-file `x = obj.field` | **done** |
 | 2 | promote field-type maps to project scope | cross-file attribute types | **done** |
-| 3 | module-level global binding types | proxy receivers (`current_app`) | open |
-| 4 | bounded k-hop obligation discharge | chains (`ctx.app.method()`) | open |
+| 3 | module-level global binding types | proxy receivers (`current_app`) | **done** |
+| 4 | bounded k-hop obligation discharge | chains (`ctx.app.method()`) | **done** |
 | 5 | import-shadowing guard | the one observed false positive | **done** |
 
 ### Measured outcome of stages 1, 2, and 5
@@ -167,6 +167,35 @@ Stages 1 and 2 are language-agnostic in shape. C#, C++, TypeScript, and Rust
 already have field-type maps under the same per-file confinement, so one join
 lifts every language at once. That leverage — not Python specifically — is the
 reason to do this.
+
+### Measured outcome of stages 3 and 4
+
+The implementation is now a bounded monotone constraint system rather than a
+second assignment-order heuristic. Each binding holds a finite set of
+source-backed type names. Join is set union:
+
+```text
+unknown = {}
+concrete(T) = {T}
+ambiguous(T, U, ...) = {T, U, ...}
+join(A, B) = A union B
+```
+
+Only singleton sets project into receiver resolution. A dependency-indexed
+worklist re-evaluates obligations when their root gains evidence, and attribute
+paths longer than the configured bound remain unresolved with a receipt.
+Module-global joins are keyed by both import-module provenance and symbol name,
+preventing an unrelated same-named global from becoming receiver evidence.
+
+A fresh scan of the pinned Flask fixture was compared directly with the
+independent critical gray-box graph. It retained every old edge and added 20
+`calls` edges: receiver telemetry moved from `850 resolved / 534 unknown` to
+`871 resolved / 484 unknown`, and `ensure_sync` gained the three
+source-visible callers using `current_app` (`9 -> 12`). The direct diff was
+then checked against the fixture source; the additions were supported by
+annotated globals, proxy inheritance, declared fields, or annotated locals.
+This does not establish cross-project precision, so generalization remains
+gated on held-out Python repositories.
 
 ## Limits worth stating before implementing
 

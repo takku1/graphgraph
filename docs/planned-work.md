@@ -46,6 +46,14 @@ Only one behavior-changing policy task may be active at a time.
   lexically easy. A broad improvement query routed at confidence `0.147` and
   abstained after emphasizing the wrong subsystem. Conceptual and compound
   task coverage is therefore the first retrieval-evaluation gap.
+- Independent critical gray-box evaluation now supplies a second baseline:
+  mean positive-task recall `0.779`, complete recall on `10/14`, false
+  incompleteness on `6/10` complete-recall tasks, no-op incremental
+  equivalence `0/3`, Express receiver resolution `2.24%`, and only `6/10`
+  packet formats validated end to end. Treat these as externally generated
+  hypotheses until each active slice is reproduced against source and direct
+  graph diffs; the report and its three task fixtures are indexed under
+  operational findings.
 
 ### Decision policy: use the right abstraction
 
@@ -161,10 +169,10 @@ confidence intervals, and an explicit minimum practical effect.
 
 - [ ] Represent local types, field types, imports, assignments, returns, and
   deferred attribute obligations as typed facts with provenance.
-- [ ] Define a small type lattice: `unknown < concrete`, conflicting concrete
+- [x] Define a small type lattice: `unknown < concrete`, conflicting concrete
   facts join to `ambiguous`, and no pass may guess through ambiguity.
-- [ ] Implement module/global proxy bindings (receiver-resolution stage 3).
-- [ ] Implement bounded `k`-hop obligation discharge (stage 4) with explicit
+- [x] Implement module/global proxy bindings (receiver-resolution stage 3).
+- [x] Implement bounded `k`-hop obligation discharge (stage 4) with explicit
   depth, unresolved, and ambiguity receipts rather than whole-program fixpoint
   convergence.
 - [ ] Generalize only after Python oracle gains survive held-out repositories;
@@ -172,6 +180,25 @@ confidence intervals, and an explicit minimum practical effect.
 - [ ] Complexity target: re-emit facts for changed files and re-join affected
   keys, approaching `O(delta facts + affected obligations)` rather than a
   whole-corpus analysis.
+
+Progress receipt (2026-07-30): Python local evidence now joins in a finite
+powerset lattice, where set union is monotone and only singleton facts project
+to receiver types. A dependency-indexed worklist revisits obligations only
+when their root binding changes; attribute traversal has an explicit default
+depth of three and emits `depth_limit`, `unknown_root`, `unknown_field`,
+`ambiguous_root`, or `ambiguous_target` receipts. Module globals require an
+explicit annotation, and imported facts join on `(module provenance, symbol)`
+rather than symbol name alone.
+
+Against the independent Flask gray-box graph, a fresh full scan kept all
+`16,086` prior edges and added `20` call edges. Resolved receivers moved
+`850 -> 871`, unknown receivers `534 -> 484`, and exact `ensure_sync` callers
+`9 -> 12`; the three recovered callers are the source-visible
+`current_app.ensure_sync` sites in `views.py`. All 20 additions were inspected
+as a direct old/new graph diff and matched source-visible declared field,
+proxy-base, or annotated-local evidence. This is a calibrated-repository gain,
+not yet a cross-repository promotion: the remaining typed-fact classes,
+incremental fact persistence, and held-out Python scan stay open.
 
 ### P03 — Calibrate routing and facet decomposition
 

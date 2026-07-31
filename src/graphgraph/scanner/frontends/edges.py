@@ -26,7 +26,9 @@ from .python import (
     _python_attribute_uses,
     _python_class_field_types,
     _python_fixture_return_types,
+    _python_imported_global_types,
     _python_local_types,
+    _python_module_global_types,
     _python_parameter_names,
 )
 from .rust import (
@@ -275,6 +277,20 @@ def _project_field_types(
     return {key: next(iter(types)) for key, types in seen.items() if len(types) == 1}
 
 
+def _project_python_global_types(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+) -> dict[tuple[str, str], str]:
+    """Repo-wide annotated module globals keyed by module provenance."""
+    seen: dict[tuple[str, str], set[str]] = {}
+    for source, _defs, _root in defs_by_file:
+        if source.path.suffix.lower() != ".py":
+            continue
+        module_stem = source.path.stem
+        for name, type_name in _python_module_global_types(source.text).items():
+            seen.setdefault((module_stem, name), set()).add(type_name)
+    return {key: next(iter(types)) for key, types in seen.items() if len(types) == 1}
+
+
 def _add_tree_sitter_calls(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
     nodes: dict[str, Node],
@@ -300,6 +316,7 @@ def _add_tree_sitter_calls(
                 base_classes.setdefault(definition.name, tuple(definition.extra))
 
     project_field_types = _project_field_types(defs_by_file)
+    project_python_globals = _project_python_global_types(defs_by_file)
 
     # Repo-wide map of function name -> its single concrete return type, used
     # to type inline call receivers (`parse_ir(src).lower()`, normalized to
@@ -432,10 +449,15 @@ def _add_tree_sitter_calls(
                 # carry the declared type of the field it reads. Without them a
                 # receiver bound this way stayed untyped even when both its
                 # receiver's type and that field were already known.
+                initial_types = _python_module_global_types(source.text)
+                initial_types.update(
+                    _python_imported_global_types(source.text, project_python_globals)
+                )
                 local_types = _python_local_types(
                     body,
                     field_types=project_field_types,
                     owner=d.owner or "",
+                    initial_types=initial_types,
                 )
                 normalized_path = "/" + source.rel.replace("\\", "/").casefold()
                 if "/tests/" in normalized_path or Path(source.rel).name.casefold().startswith("test_"):

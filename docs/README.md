@@ -69,6 +69,7 @@ self-contained and supersedes the removed cycle drafts.
 - [Fixing the field did not rescue the cover — it raised the baseline](findings/2026-07-30-recoupled-cover-verdicts.md)
 - [The field has no measurable leverage on production ranking](findings/2026-07-30-coupling-has-no-production-leverage.md)
 - [Gray-box evaluation across six external repositories](findings/2026-07-30-graybox-multilang-critical.md)
+- [Critical gray-box ceiling evaluation and reproducible task fixtures](findings/2026-07-30-critical-graybox-graph-tool-ceiling.md)
 - [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons

@@ -1,0 +1,22 @@
+[
+  {
+    "query": "What calls Flask.full_dispatch_request?",
+    "expected_nodes": ["wsgi_app"]
+  },
+  {
+    "query": "What does Flask.full_dispatch_request call?",
+    "expected_nodes": ["preprocess_request", "dispatch_request", "handle_user_exception", "finalize_request"]
+  },
+  {
+    "query": "Trace Flask request dispatch from wsgi_app through view execution and response processing.",
+    "expected_nodes": ["wsgi_app", "full_dispatch_request", "preprocess_request", "dispatch_request", "finalize_request", "process_response"]
+  },
+  {
+    "query": "Where is Flask.full_dispatch_request defined?",
+    "expected_nodes": ["src/flask/app.py"]
+  },
+  {
+    "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+    "expected_answerable": false
+  }
+]
