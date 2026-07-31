@@ -250,10 +250,13 @@ def _add_tree_sitter_callback_references(
 
     for source, defs, root in defs_by_file:
         src_lang = _lang_family(source.rel)
-        unique_callables = unique_by_language.setdefault(
-            src_lang,
-            _unique_callables_for_language(name_to_symbols, nodes, src_lang),
-        )
+        # `setdefault` evaluates its default eagerly, so passing the call
+        # directly recomputed this repository-wide table once per *file*
+        # rather than once per language, making resolution O(files x symbols).
+        unique_callables = unique_by_language.get(src_lang)
+        if unique_callables is None:
+            unique_callables = _unique_callables_for_language(name_to_symbols, nodes, src_lang)
+            unique_by_language[src_lang] = unique_callables
         if not unique_callables:
             continue
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
@@ -506,10 +509,12 @@ def _add_tree_sitter_calls(
         # resolvable.
         import_bound_names = whole_module_binding_names(suffix, source.text)
         src_lang = _lang_family(source.rel)
-        unique_callables = unique_by_language.setdefault(
-            src_lang,
-            _unique_callables_for_language(name_to_symbols, nodes, src_lang),
-        )
+        # See the note in the pass above: `setdefault` evaluated its default on
+        # every iteration, so this repository-wide table was rebuilt per file.
+        unique_callables = unique_by_language.get(src_lang)
+        if unique_callables is None:
+            unique_callables = _unique_callables_for_language(name_to_symbols, nodes, src_lang)
+            unique_by_language[src_lang] = unique_callables
         python_initial_facts: dict[str, TypeFact] = {}
         python_call_return_facts: dict[str, TypeFact] = {}
         if suffix == ".py":
@@ -543,14 +548,30 @@ def _add_tree_sitter_calls(
             )
             if target:
                 local_resolutions[name] = target
+        # 3. File-local definitions bind tighter than any repository-wide guess.
+        # A bare call to `N` inside a file that also defines `N` means *that*
+        # `N`. Without this layer the name has to be globally unique within its
+        # language to resolve at all, so merely *adding* an unrelated file that
+        # defines the same name deleted a correct same-file edge elsewhere in
+        # the repository (measured: -19 edges on Flask from one added copy).
+        # Only plain functions are bound: a bare call cannot reach a method.
+        # An explicit import of the same name is a real rebinding, so it wins.
+        for local_def in defs:
+            if local_def.kind != "function" or local_def.name in all_imported:
+                continue
+            local_id = _definition_node_id(source, local_def)
+            if local_id in nodes:
+                local_resolutions[local_def.name] = local_id
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
+        # One encode per file. This was previously re-run for every callable in
+        # the file, re-encoding the whole source once per definition.
+        text_bytes = source.text.encode("utf-8", errors="replace")
         rust_field_types: dict[tuple[str, str], str] = {}
         python_field_types: dict[tuple[str, str], str] = {}
         ts_field_types: dict[tuple[str, str], str] = {}
         csharp_field_types: dict[tuple[str, str], str] = {}
         cpp_field_types: dict[tuple[str, str], str] = {}
         if suffix == ".rs":
-            text_bytes = source.text.encode("utf-8", errors="replace")
             for struct in (item for item in defs if item.kind == "struct"):
                 for field_name, field_type, _line in _rust_fields_in_range(
                     root,
@@ -572,7 +593,6 @@ def _add_tree_sitter_calls(
             src_id = _definition_node_id(source, d)
             if src_id not in nodes:
                 continue
-            text_bytes = source.text.encode("utf-8", errors="replace")
             # Blank comments and string literals before pattern-matching the
             # body. Commented-out code and code inside strings otherwise read
             # as real declarations: `// let fake: Wrong = x` typed a local

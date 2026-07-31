@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from ..graph.core import Edge, Node
@@ -365,6 +366,7 @@ _NOISE_NAMES = frozenset({
 _CALLABLE_KINDS = frozenset({"function", "method"})
 
 
+@lru_cache(maxsize=8192)
 def _lang_family(path: str) -> str | None:
     """Coarse language grouping derived from the file suffix's extractor.
 
@@ -374,6 +376,11 @@ def _lang_family(path: str) -> str | None:
     the repo). C/C++ header/source variants and JS/TS variants intentionally
     share a family since they extractor-share and do legitimately call across
     each other.
+
+    Cached: edge resolution calls this once per candidate id per name, which
+    measured at ~506k calls (each building a ``Path``) on a 364-file scan
+    against only a few hundred distinct paths. The result depends solely on
+    the suffix, so the cache is a pure memo.
     """
     extractor = _EXTRACTORS.get(Path(path).suffix.lower())
     return extractor.__name__ if extractor else None
