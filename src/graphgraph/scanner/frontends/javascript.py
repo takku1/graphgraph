@@ -106,17 +106,57 @@ def js_definition_facts(node: Any) -> tuple[str, ...]:
         "subscript_expression",
     }:
         return ("javascript_definition:variable_callable",)
+    owner = js_definition_owner(node)
     binding = _text(left)
     if ".prototype." in binding:
         return (
             "javascript_definition:prototype_assignment",
-            f"javascript_owner:{binding.split('.prototype.', 1)[0]}",
+            f"javascript_owner:{owner}",
+            *(
+                ("javascript_this:assigned_owner",)
+                if js_definition_binds_this(node)
+                else ()
+            ),
         )
-    owner = binding.rsplit(".", 1)[0]
     return (
         "javascript_definition:property_assignment",
         f"javascript_owner:{owner}",
+        *(
+            ("javascript_this:assigned_owner",)
+            if js_definition_binds_this(node)
+            else ()
+        ),
     )
+
+
+def js_definition_owner(node: Any) -> str:
+    """Structural owner of a function-valued member assignment.
+
+    ``res.send = function`` and ``Store.prototype.save = function`` define
+    methods on concrete object namespaces even in annotation-free JavaScript.
+    The owner comes from the assignment target itself; no name-only inference
+    is involved.
+    """
+    if node.type != "assignment_expression":
+        return ""
+    left = node.child_by_field_name("left")
+    if left is None or left.type not in {
+        "member_expression",
+        "subscript_expression",
+    }:
+        return ""
+    binding = _text(left)
+    if ".prototype." in binding:
+        return binding.split(".prototype.", 1)[0]
+    return binding.rsplit(".", 1)[0] if "." in binding else ""
+
+
+def js_definition_binds_this(node: Any) -> bool:
+    """Whether invocation through the assigned member binds ``this`` to it."""
+    if node.type != "assignment_expression":
+        return False
+    value = node.child_by_field_name("right")
+    return value is not None and value.type != "arrow_function"
 
 
 def js_callback_definition(

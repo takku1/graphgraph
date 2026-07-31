@@ -422,6 +422,90 @@ class FrontendsScannerTest(unittest.TestCase):
         }
         self.assertIn(("run", "save"), resolved)
 
+    def test_js_property_assignment_owner_resolves_this_calls(self) -> None:
+        # Annotation-free prototype objects still carry exact structural
+        # ownership: both methods are assigned to `res`, and `this` inside
+        # `res.send` therefore denotes the same owner.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var res = {}\n"
+            "res.send = function send(value) { return this.json(value) }\n"
+            "res.json = function json(value) { return value }\n"
+            "res.render = function render(value) { var self = this; return self.json(value) }\n"
+            "res.unproven = function unproven(self, value) { return self.json(value) }\n"
+            "res.arrow = (value) => this.json(value)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "response.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "response.js", "response_js", source)],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("send", "json"), calls)
+        self.assertIn(("render", "json"), calls)
+        self.assertNotIn(("unproven", "json"), calls)
+        self.assertNotIn(("arrow", "json"), calls)
+        send = next(node for node in result.nodes.values() if node.label == "send")
+        self.assertIn("javascript_owner:res", send.facts)
+        self.assertIn("__res__send", send.id)
+
+    def test_js_structural_owner_does_not_cross_module_by_spelling(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "first.js": "var res = {}\nres.send = function send(value) { return this.json(value) }\n",
+            "second.js": "var res = {}\nres.json = function json(value) { return value }\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for name, source in sources.items():
+                path = Path(tmp) / name
+                path.write_text(source, encoding="utf-8")
+                files.append(SourceFile(path, name, name.replace(".", "_"), source))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertNotIn(("send", "json"), calls)
+        self.assertEqual(result.unmatched_member_calls, 1)
+
+    def test_js_prototype_assignment_owner_resolves_this_calls(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "function Store() {}\n"
+            "Store.prototype.save = function save(value) { return this.load(value) }\n"
+            "Store.prototype.load = function load(value) { return value }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "store.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "store.js", "store_js", source)],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("save", "load"), calls)
+
     def test_js_module_qualified_calls_resolve_via_require(self) -> None:
         # A CommonJS/ESM module receiver (`store.persist()` where `store` is a
         # required/imported module) must resolve like Python's `module.func()`.

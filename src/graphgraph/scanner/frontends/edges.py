@@ -61,10 +61,28 @@ from .typescript import (
     _ts_local_call_return_types,
     _ts_local_types,
     _ts_return_type_from_body,
+    _ts_this_aliases,
 )
 
 _TS_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"})
 _CPP_SUFFIXES = frozenset({".cpp", ".cxx", ".cc", ".h", ".hh", ".hpp"})
+
+
+def _callable_receiver_owner(source: SourceFile, definition: _TsDef) -> str:
+    """Owner key used only for member-call matching.
+
+    Class names are project-visible nominal types. JavaScript property objects
+    such as ``res`` and ``app`` are module-local structural namespaces unless
+    an import proves otherwise, so include their file provenance. This keeps
+    two unrelated ``res.send`` objects in different modules from linking by
+    spelling alone.
+    """
+    if any(
+        fact.startswith("javascript_owner:")
+        for fact in definition.facts
+    ):
+        return f"{source.rel}::{definition.owner}"
+    return definition.owner
 
 
 def _add_tree_sitter_implements(
@@ -592,14 +610,34 @@ def _add_tree_sitter_calls(
             else:
                 local_types = {}
             if d.owner:
-                local_types["self"] = d.owner
+                receiver_owner = _callable_receiver_owner(source, d)
+                structural_owner = any(
+                    fact.startswith("javascript_owner:")
+                    for fact in d.facts
+                )
+                binds_structural_this = (
+                    "javascript_this:assigned_owner" in d.facts
+                )
+                if suffix in {".py", ".rs"}:
+                    local_types["self"] = receiver_owner
                 if suffix == ".py":
-                    local_types["cls"] = d.owner
+                    local_types["cls"] = receiver_owner
                 # C#/Java/TS/C++ spell the enclosing-instance receiver `this`,
                 # not `self`; without this a `this.Method()` / `this->Method()`
                 # call never resolved to its own class.
-                if suffix in _TS_SUFFIXES or suffix in {".cs", ".java"} or suffix in _CPP_SUFFIXES:
-                    local_types["this"] = d.owner
+                if (
+                    (suffix in _TS_SUFFIXES and (
+                        not structural_owner or binds_structural_this
+                    ))
+                    or suffix in {".cs", ".java"}
+                    or suffix in _CPP_SUFFIXES
+                ):
+                    local_types["this"] = receiver_owner
+                if suffix in _TS_SUFFIXES and (
+                    not structural_owner or binds_structural_this
+                ):
+                    for alias in _ts_this_aliases(body):
+                        local_types.setdefault(alias, receiver_owner)
                 field_types = (
                     ts_field_types
                     if suffix in _TS_SUFFIXES

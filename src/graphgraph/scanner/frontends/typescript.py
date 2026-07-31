@@ -62,6 +62,9 @@ _JS_RETURN_NEW = re.compile(r"\breturn\s+new\s+([A-Z][\w$]*)")
 _JS_LOCAL_CALL = re.compile(
     r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\("
 )
+_THIS_ALIAS = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b"
+)
 
 
 def _ts_return_type_from_body(body: str) -> str | None:
@@ -91,6 +94,11 @@ def _ts_local_call_return_types(body: str, return_types: dict[str, str]) -> dict
         if return_type:
             inferred.setdefault(match.group(1), return_type)
     return inferred
+
+
+def _ts_this_aliases(body: str) -> frozenset[str]:
+    """Bindings proven to alias the current structural/class instance."""
+    return frozenset(_THIS_ALIAS.findall(body))
 
 
 def _ts_local_types(body: str) -> dict[str, str]:

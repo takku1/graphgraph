@@ -258,6 +258,20 @@ equations, reproduction command, equivalence gates, and limits.
 Queue position: Q02-D language generalization is next. Q07 still owns
 universal incremental/no-op equivalence; Q02-C does not close those failures.
 
+Q02-D JavaScript receipt (2026-07-31): function-valued property and prototype
+assignments now retain module-scoped structural owners. On pinned, clean
+Express the receiver ratio moved `143/6389 (2.24%) -> 180/6362 (2.83%)`;
+33 logical calls were added and zero removed. The frozen `send`, `location`,
+and `status` oracle moved `0/7 -> 7/7`, with every addition checked against
+source. Pinned Mem0 was topology-neutral. `Route.dispatch` remains an explicit
+external-package abstention rather than a synthetic edge. Cross-module
+same-spelling and unproven-alias red controls stay edge-free. The indexed
+finding records the algorithm, clean-worktree protocol, and limits.
+
+Queue position: remeasure the remaining Rust, C#/Java, and C++ receiver
+histograms on pinned repositories, then take the largest addressable bucket.
+Q02-D is not complete until each language improves or explicitly abstains.
+
 ### P03 — Calibrate routing and facet decomposition
 
 - [ ] Keep semantic query-class gates explicit, but replace hand-set routing

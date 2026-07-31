@@ -72,6 +72,7 @@ self-contained and supersedes the removed cycle drafts.
 - [Critical gray-box ceiling evaluation and reproducible task fixtures](findings/2026-07-30-critical-graybox-graph-tool-ceiling.md)
 - [P02 typed-fact held-out receiver comparison](findings/2026-07-31-p02-typed-fact-heldout.md)
 - [Q02-C persistent type facts and affected-key re-join](findings/2026-07-31-q02c-persistent-type-facts.md)
+- [Q02-D JavaScript structural receiver owners](findings/2026-07-31-q02d-js-structural-owners.md)
 - [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons

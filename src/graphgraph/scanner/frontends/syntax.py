@@ -13,6 +13,7 @@ from ..ast import _lang_family
 from .javascript import (
     js_callback_definition,
     js_definition_facts,
+    js_definition_owner,
     js_function_definition,
 )
 from .model import (
@@ -164,6 +165,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
                                 *js_facts,
                             ),
                             extra=(),
+                            owner=js_definition_owner(node),
                             return_type=_declared_return_type(node, text),
                             node=node,
                         )
@@ -600,10 +602,16 @@ _PYTHON_BUILTIN_TYPES = frozenset(
 
 def _method_owner(node_id: str, nodes: dict[str, Node]) -> str:
     node = nodes.get(node_id)
-    if not node or not node.parent:
+    if not node:
         return ""
-    parent = nodes.get(node.parent)
-    return parent.label if parent else ""
+    if node.parent:
+        parent = nodes.get(node.parent)
+        if parent:
+            return parent.label
+    for fact in node.facts:
+        if fact.startswith("javascript_owner:"):
+            return f"{node.path}::{fact.split(':', 1)[1]}"
+    return ""
 
 
 def _ancestor_chain(type_name: str, base_classes: dict[str, tuple[str, ...]]) -> list[str]:
