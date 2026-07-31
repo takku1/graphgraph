@@ -572,6 +572,37 @@ _JS_DESTRUCTURED_REQUIRE = re.compile(
 )
 
 
+def _imported_symbol_modules(suffix: str, text: str) -> dict[str, str]:
+    """Map an imported name to its *full* module specifier.
+
+    ``_imported_symbol_sources`` keeps only the final component, which is all a
+    basename match needs and strictly less than the source states: `pkg.sub.
+    helpers` and `other.helpers` both reduce to `helpers`. Retaining the whole
+    specifier lets an import be resolved to the file it names.
+    """
+    modules: dict[str, str] = {}
+    if suffix == ".py":
+        pattern = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(?:\(([^)]+)\)|([^\n#]+))", re.MULTILINE)
+        for match in pattern.finditer(text):
+            specifier = match.group(1)
+            for part in (match.group(2) or match.group(3) or "").split(","):
+                name = part.strip().split(" as ", 1)[0].strip()
+                if _identifier(name):
+                    modules[name] = specifier
+    elif suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        for match in re.finditer(r"import\s+\{([^}]+)\}\s+from\s+['\"]([^'\"]+)['\"]", text):
+            for part in match.group(1).split(","):
+                name = part.strip().split(" as ", 1)[0].strip()
+                if _identifier(name):
+                    modules[name] = match.group(2)
+        for match in _JS_DESTRUCTURED_REQUIRE.finditer(text):
+            for part in match.group(1).split(","):
+                name = part.strip().split(":", 1)[-1].strip()
+                if _identifier(name):
+                    modules[name] = match.group(2)
+    return modules
+
+
 def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
     """Map imported symbol local name to its module/file stem source.
     e.g. 'from helper import transform' -> {'transform': 'helper'}
@@ -804,6 +835,79 @@ def _resolve_member_call(
     return "unmatched" if all_candidates else "external_resolved"
 
 
+def _module_extensionless(path: str) -> str:
+    normalised = path.replace("\\", "/")
+    dot = normalised.rfind(".")
+    return normalised[:dot] if dot > normalised.rfind("/") else normalised
+
+
+def _resolve_module_specifier(specifier: str, source_rel: str, suffix: str) -> tuple[str, bool] | None:
+    """Path an import specifier names, plus whether it was relative.
+
+    Returns an extension-less repository path such as ``pkg/sub/helpers``. A
+    bare JS/TS specifier (``lodash``) names a package rather than a path in this
+    repository and yields ``None``, which leaves the existing heuristics to
+    decide. This is the difference between knowing where an import points and
+    guessing from its last component.
+    """
+    normalised_source = source_rel.replace("\\", "/")
+    source_dir = normalised_source.rsplit("/", 1)[0] if "/" in normalised_source else ""
+    directory = source_dir.split("/") if source_dir else []
+
+    if suffix == ".py":
+        if specifier.startswith("."):
+            level = len(specifier) - len(specifier.lstrip("."))
+            remainder = specifier[level:]
+            # One dot is the current package; each extra dot climbs one level.
+            ascend = level - 1
+            if ascend > len(directory):
+                return None
+            base = directory[: len(directory) - ascend] if ascend else list(directory)
+            tail = [part for part in remainder.split(".") if part]
+            resolved = "/".join([*base, *tail])
+            return (resolved, True) if resolved else None
+        resolved = specifier.replace(".", "/")
+        return (resolved, False) if resolved else None
+
+    if specifier.startswith("."):
+        parts = list(directory)
+        for segment in specifier.split("/"):
+            if segment in {"", "."}:
+                continue
+            if segment == "..":
+                if parts:
+                    parts.pop()
+            else:
+                parts.append(segment)
+        resolved = "/".join(parts)
+        return (resolved, True) if resolved else None
+    return None
+
+
+def _module_specifier_candidates(
+    specifier: str,
+    source_rel: str,
+    suffix: str,
+    candidates: list[str],
+    nodes: dict[str, Node],
+) -> list[str]:
+    """Candidates whose file is the module the specifier actually names."""
+    resolved = _resolve_module_specifier(specifier, source_rel, suffix)
+    if resolved is None:
+        return []
+    target, relative = resolved
+    matched: list[str] = []
+    for candidate in candidates:
+        path = _module_extensionless(nodes[candidate].path)
+        if path == target or path == f"{target}/__init__":
+            matched.append(candidate)
+        elif not relative and (path.endswith(f"/{target}") or path.endswith(f"/{target}/__init__")):
+            # An absolute dotted module is written from the import root, which
+            # may itself sit under `src/` or another source directory.
+            matched.append(candidate)
+    return matched
+
+
 def _directory_parts(path: str) -> list[str]:
     """Directory components of a file path, nearest-last."""
     return [part for part in re.split(r"[/\\]", path) if part][:-1]
@@ -856,6 +960,8 @@ def _select_import_target(
     src_lang: str | None,
     reexports: dict[tuple[str, str], str],
     source_rel: str = "",
+    specifier: str = "",
+    suffix: str = "",
 ) -> str | None:
     compatible = [
         target
@@ -864,6 +970,14 @@ def _select_import_target(
     ]
     if len(compatible) == 1:
         return compatible[0]
+    # Strongest evidence first: an import specifier usually names its module
+    # outright, and resolving it is a lookup rather than a guess. `from
+    # pkg.sub.helpers import Widget` is fully determined even when four other
+    # files are also called `helpers.py`.
+    if specifier and source_rel:
+        located = _module_specifier_candidates(specifier, source_rel, suffix, compatible, nodes)
+        if len(located) == 1:
+            return located[0]
     if not stem:
         return None
 

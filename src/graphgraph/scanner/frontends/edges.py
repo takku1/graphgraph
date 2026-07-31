@@ -45,6 +45,7 @@ from .syntax import (
     _call_sites_in_range,
     _callback_arg_names_in_range,
     _definition_node_id,
+    _imported_symbol_modules,
     _imported_symbol_names,
     _imported_symbol_sources,
     _node_text_range,
@@ -516,6 +517,7 @@ def _add_tree_sitter_calls(
         suffix = source.path.suffix.lower()
         language = _SUFFIX_LANGUAGE.get(suffix, suffix.lstrip(".") or "unknown")
         imported_sources = _imported_symbol_sources(suffix, source.text)
+        imported_modules = _imported_symbol_modules(suffix, source.text)
         module_aliases = module_alias_targets(suffix, source.text)
         # Names bound to an entire imported module. A bare call to one of these
         # invokes the module, never a same-named method defined nearby. Member
@@ -560,6 +562,8 @@ def _add_tree_sitter_calls(
                 src_lang,
                 reexports,
                 source.rel,
+                imported_modules.get(name, ""),
+                suffix,
             )
             if target:
                 local_resolutions[name] = target
@@ -915,17 +919,21 @@ def _add_imports_from(
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
 ) -> None:
-    unresolved: list[tuple[SourceFile, str, list[str], str | None, str | None]] = []
+    unresolved: list[tuple[SourceFile, str, list[str], str | None, str | None, str, str]] = []
     for source, _defs, _root in defs_by_file:
         suffix = source.path.suffix.lower()
         src_lang = _lang_family(source.rel)
         imported_names = _imported_symbol_names(suffix, source.text)
         imported_sources = _imported_symbol_sources(suffix, source.text)
+        imported_modules = _imported_symbol_modules(suffix, source.text)
 
         for name in imported_names:
             targets = name_to_symbols.get(name, [])
             stem = imported_sources.get(name)
-            target = _select_import_target(name, targets, stem, nodes, src_lang, {}, source.rel)
+            specifier = imported_modules.get(name, "")
+            target = _select_import_target(
+                name, targets, stem, nodes, src_lang, {}, source.rel, specifier, suffix
+            )
 
             if target and not target.startswith(source.file_node_id + "__"):
                 edges.append(
@@ -939,11 +947,13 @@ def _add_imports_from(
                     )
                 )
             elif targets:
-                unresolved.append((source, name, targets, stem, src_lang))
+                unresolved.append((source, name, targets, stem, src_lang, specifier, suffix))
 
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
-    for source, name, targets, stem, src_lang in unresolved:
-        target = _select_import_target(name, targets, stem, nodes, src_lang, reexports, source.rel)
+    for source, name, targets, stem, src_lang, specifier, suffix in unresolved:
+        target = _select_import_target(
+            name, targets, stem, nodes, src_lang, reexports, source.rel, specifier, suffix
+        )
         if target and not target.startswith(source.file_node_id + "__"):
             edges.append(
                 Edge(
