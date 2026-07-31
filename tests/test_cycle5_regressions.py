@@ -180,6 +180,7 @@ class CycleFiveRegressionTest(unittest.TestCase):
             False,
             ["A"],
             [("A", "B", "calls")],
+            {"returns": [["a", "build", {"types": ["A"], "evidence": []}]]},
         )
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "graph.gg.manifest.json"
@@ -197,6 +198,7 @@ class CycleFiveRegressionTest(unittest.TestCase):
             [tuple(edge) for edge in loaded_info["edges"]],
             expected_info["edges"],
         )
+        self.assertEqual(loaded_info["type_facts"], expected_info["type_facts"])
 
     def test_rust_variants_do_not_reference_unrelated_cross_crate_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

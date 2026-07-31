@@ -71,6 +71,7 @@ self-contained and supersedes the removed cycle drafts.
 - [Gray-box evaluation across six external repositories](findings/2026-07-30-graybox-multilang-critical.md)
 - [Critical gray-box ceiling evaluation and reproducible task fixtures](findings/2026-07-30-critical-graybox-graph-tool-ceiling.md)
 - [P02 typed-fact held-out receiver comparison](findings/2026-07-31-p02-typed-fact-heldout.md)
+- [Q02-C persistent type facts and affected-key re-join](findings/2026-07-31-q02c-persistent-type-facts.md)
 - [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons

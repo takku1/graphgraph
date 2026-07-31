@@ -26,6 +26,12 @@ from .files import (
     node_id,
 )
 from .frontends import SourceFile, select_extractor
+from .frontends.persistent_facts import (
+    AffectedTypeFactFiles,
+    PersistentPythonTypeIndex,
+    PythonProjectTypeFacts,
+    python_file_type_snapshot,
+)
 from .history import extract_commit_history
 from .imports import add_file_edges
 from .rust_references import filter_rust_reference_edges
@@ -224,6 +230,21 @@ def scan_directory(
                 skipped_files = [entry for entry in skipped_files if entry[1] not in rebind_rels]
                 dirty_files.extend(promoted)
 
+    (
+        dirty_files,
+        skipped_files,
+        python_fact_snapshots,
+        type_fact_update,
+        python_type_context,
+        type_index_data,
+    ) = _promote_type_fact_dependents(
+        root,
+        manifest,
+        dirty_files,
+        skipped_files,
+        active_rels,
+        enabled=depth == "symbols",
+    )
     _emit_progress(progress, "hash", f"dirty={len(dirty_files)} restored={len(skipped_files)}")
 
     # Git status is gathered before collection for priority ordering, but only
@@ -258,6 +279,10 @@ def scan_directory(
         ignored_by_rules=collected.ignored_by_rules,
         rule_pruned_dirs=collected.rule_pruned_dirs,
         default_pruned_dirs=collected.default_pruned_dirs,
+        python_fact_snapshots=python_fact_snapshots,
+        type_fact_update=type_fact_update,
+        python_type_context=python_type_context,
+        type_index_data=type_index_data,
         progress=progress,
     )
 
@@ -320,6 +345,116 @@ def _referrer_rels(root: Path, previous_graph, removed_rels: set[str]) -> set[st
         and rel not in removed_rels
         and (root / rel).exists()
     }
+
+
+def _manifest_type_fact_snapshots(
+    manifest,
+    rels: set[str],
+) -> dict[str, dict]:
+    if manifest is None:
+        return {}
+    result: dict[str, dict] = {}
+    for rel in rels:
+        info = manifest.get_file_info(rel)
+        snapshot = info.get("type_facts", {}) if info else {}
+        if isinstance(snapshot, dict) and snapshot:
+            result[rel] = snapshot
+    return result
+
+
+def _promote_type_fact_dependents(
+    root: Path,
+    manifest,
+    dirty_files: list[tuple[Path, str, str]],
+    skipped_files: list[tuple[Path, str, str]],
+    active_rels: set[str],
+    *,
+    enabled: bool,
+) -> tuple[
+    list[tuple[Path, str, str]],
+    list[tuple[Path, str, str]],
+    dict[str, dict],
+    AffectedTypeFactFiles,
+    PythonProjectTypeFacts,
+    dict,
+]:
+    """Promote unchanged consumers selected by the project fact delta.
+
+    Work is one parse per explicitly dirty Python file, a finite join over the
+    forward-reachable re-export delta, then reverse-index membership over
+    obligations.
+    No unchanged source file is opened merely to decide whether it is affected.
+    """
+    if not enabled:
+        return (
+            dirty_files,
+            skipped_files,
+            {},
+            AffectedTypeFactFiles(),
+            PythonProjectTypeFacts({}, {}, {}),
+            {},
+        )
+    dirty_rels = {rel for _path, rel, _hash in dirty_files}
+    manifest_rels = set(manifest.files) if manifest is not None else set()
+    removed_rels = manifest_rels - active_rels
+    changed_rels = dirty_rels | removed_rels
+    old_snapshots = _manifest_type_fact_snapshots(manifest, changed_rels)
+    new_snapshots: dict[str, dict] = {}
+    for path, rel, _file_hash in dirty_files:
+        if path.suffix.casefold() != ".py":
+            new_snapshots.pop(rel, None)
+            continue
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            source = ""
+        new_snapshots[rel] = python_file_type_snapshot(source, rel)
+
+    index_data = getattr(manifest, "type_index", {}) if manifest is not None else {}
+    index = PersistentPythonTypeIndex.from_data(index_data)
+    if (
+        manifest_rels
+        and (
+            not isinstance(index_data, dict)
+            or "project" not in index_data
+        )
+    ):
+        index = PersistentPythonTypeIndex.from_snapshots(
+            _manifest_type_fact_snapshots(manifest, manifest_rels)
+        )
+    changed_keys = index.update(
+        old_snapshots,
+        new_snapshots,
+        changed_rels,
+    )
+    affected = index.affected_files(
+        changed_keys,
+        excluded_files=changed_rels,
+    )
+    if affected.files:
+        promoted = [entry for entry in skipped_files if entry[1] in affected.files]
+        promoted_rels = {entry[1] for entry in promoted}
+        if promoted:
+            dirty_files = [*dirty_files, *promoted]
+            skipped_files = [
+                entry for entry in skipped_files if entry[1] not in promoted_rels
+            ]
+    selected_snapshots = {
+        **new_snapshots,
+        **_manifest_type_fact_snapshots(manifest, set(affected.files)),
+    }
+    context = index.context_for_files(
+        selected_snapshots,
+        dirty_rels | set(affected.files),
+    )
+    return (
+        dirty_files,
+        skipped_files,
+        selected_snapshots,
+        affected,
+        context,
+        index.to_data(),
+    )
 
 
 def update_paths(
@@ -388,6 +523,21 @@ def update_paths(
         file_hash = info.get("hash", "") if info else ""
         skipped_files.append((root / rel, rel, file_hash))
 
+    (
+        dirty_files,
+        skipped_files,
+        python_fact_snapshots,
+        type_fact_update,
+        python_type_context,
+        type_index_data,
+    ) = _promote_type_fact_dependents(
+        root,
+        manifest,
+        dirty_files,
+        skipped_files,
+        active_rels,
+        enabled=depth == "symbols",
+    )
     file_map = {rel: node_id(root / rel, root) for rel in active_rels}
     dirty_git, churn_git = _get_git_metadata(root)
 
@@ -411,6 +561,10 @@ def update_paths(
         history=history,
         max_history_commits=max_history_commits,
         scope_concepts_to_dirty=True,
+        python_fact_snapshots=python_fact_snapshots,
+        type_fact_update=type_fact_update,
+        python_type_context=python_type_context,
+        type_index_data=type_index_data,
     )
 
 
@@ -452,12 +606,27 @@ def remove_paths(
         file_hash = info.get("hash", "") if info else ""
         skipped_files.append((root / rel, rel, file_hash))
 
+    (
+        dirty_files,
+        skipped_files,
+        python_fact_snapshots,
+        type_fact_update,
+        python_type_context,
+        type_index_data,
+    ) = _promote_type_fact_dependents(
+        root,
+        manifest,
+        [],
+        skipped_files,
+        active_rels,
+        enabled=depth == "symbols",
+    )
     file_map = {rel: node_id(root / rel, root) for rel in active_rels}
 
     return _build_graph_from_split(
         root=root,
         file_map=file_map,
-        dirty_files=[],
+        dirty_files=dirty_files,
         skipped_files=skipped_files,
         active_rels=active_rels,
         dirty_git=set(),
@@ -474,6 +643,10 @@ def remove_paths(
         history=history,
         max_history_commits=max_history_commits,
         scope_concepts_to_dirty=True,
+        python_fact_snapshots=python_fact_snapshots,
+        type_fact_update=type_fact_update,
+        python_type_context=python_type_context,
+        type_index_data=type_index_data,
     )
 
 
@@ -736,6 +909,8 @@ def _persist_scan_manifest(
     frontend: str,
     docs: bool,
     root: Path,
+    python_fact_snapshots: dict[str, dict],
+    type_index_data: dict,
     manifest_path: Path | None,
     manifest_sink: list | None,
     progress: ScanProgress | None,
@@ -793,7 +968,9 @@ def _persist_scan_manifest(
             docs=docs,
             nodes=file_nodes,
             edges=file_edges,
+            type_facts=python_fact_snapshots.get(rel, {}),
         )
+    manifest.type_index = type_index_data
     if manifest_path is not None:
         manifest.source_root = str(root)
         if manifest_sink is not None:
@@ -831,6 +1008,10 @@ def _build_graph_from_split(
     ignored_by_rules: int = 0,
     rule_pruned_dirs: tuple[str, ...] = (),
     default_pruned_dirs: tuple[str, ...] = (),
+    python_fact_snapshots: dict[str, dict] | None = None,
+    type_fact_update: AffectedTypeFactFiles = AffectedTypeFactFiles(),
+    python_type_context: PythonProjectTypeFacts = PythonProjectTypeFacts({}, {}, {}),
+    type_index_data: dict | None = None,
     progress: ScanProgress | None = None,
     manifest_sink: list | None = None,
 ) -> Graph:
@@ -967,6 +1148,11 @@ def _build_graph_from_split(
         "ignore_pruned_dirs": ",".join(rule_pruned_dirs[:20]),
         "default_pruned_dir_count": str(len(default_pruned_dirs)),
         "default_pruned_dirs": ",".join(default_pruned_dirs[:20]),
+        "incremental_type_facts_changed": str(type_fact_update.changed_facts),
+        "incremental_type_obligations_affected": str(
+            type_fact_update.affected_obligations
+        ),
+        "incremental_type_files_promoted": str(len(type_fact_update.files)),
     }
     if previous_graph is not None:
         for name in _MEMBER_CALL_TELEMETRY_FIELDS:
@@ -1004,6 +1190,7 @@ def _build_graph_from_split(
         metadata["files_total_matched"] = str(files_total_matched)
         metadata["files_scanned"] = str(len(active_rels))
 
+    python_fact_snapshots = dict(python_fact_snapshots or {})
     if depth == "symbols" and dirty_files:
         source_files: list[SourceFile] = []
         for f, rel, fhash in dirty_files:
@@ -1016,6 +1203,8 @@ def _build_graph_from_split(
             except Exception:
                 continue
             source_files.append(SourceFile(f, rel, file_nid, text))
+            if suffix == ".py" and rel not in python_fact_snapshots:
+                python_fact_snapshots[rel] = python_file_type_snapshot(text, rel)
 
         if source_files:
             # Raised from *5 (10,000 symbols at the old max_nodes=2000 default)
@@ -1026,11 +1215,15 @@ def _build_graph_from_split(
             # repos, but now the truncation itself is never silent (below).
             max_syms = max(500, max_nodes * 20)
             _emit_progress(progress, "symbols", f"files={len(source_files)} cap={max_syms} frontend={frontend}")
-            extraction = select_extractor(frontend).extract_symbols(
-                source_files,
-                max_total_symbols=max_syms,
-                context_nodes=context_symbol_nodes,
-            )
+            extractor = select_extractor(frontend)
+            extraction_kwargs = {
+                "files": source_files,
+                "max_total_symbols": max_syms,
+                "context_nodes": context_symbol_nodes,
+            }
+            if getattr(extractor, "accepts_type_fact_context", False):
+                extraction_kwargs["type_fact_context"] = python_type_context
+            extraction = extractor.extract_symbols(**extraction_kwargs)
             metadata.update(
                 _symbol_extraction_metadata(
                     extraction,
@@ -1221,6 +1414,8 @@ def _build_graph_from_split(
             frontend=frontend,
             docs=docs,
             root=root,
+            python_fact_snapshots=python_fact_snapshots,
+            type_index_data=type_index_data or {},
             manifest_path=manifest_path,
             manifest_sink=manifest_sink,
             progress=progress,

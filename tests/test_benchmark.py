@@ -38,10 +38,10 @@ NON_ENGINE_SOURCE_FILES = frozenset(
         "graphgraph/live_validation.py",
     }
 )
-# Measured after the P02 typed-fact solver landed (2026-07-30). This is a
+# Measured after the Q02-C persistent fact index landed (2026-07-31). This is a
 # versioned growth guard, not a packet budget: two percent permits small
 # maintenance changes while forcing intentional remeasurement for expansion.
-SOURCE_GRAPH_TOKEN_BASELINE = 147_075
+SOURCE_GRAPH_TOKEN_BASELINE = 151_006
 SOURCE_GRAPH_TOKEN_HEADROOM_RATIO = 0.02
 
 

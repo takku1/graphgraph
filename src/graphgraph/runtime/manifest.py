@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-MANIFEST_VERSION = 3
+MANIFEST_VERSION = 4
 
 
 @lru_cache(maxsize=1)
@@ -39,7 +39,8 @@ def compute_file_hash(path: Path) -> str:
 
 class Manifest:
     def __init__(self, data: dict[str, Any] | None = None):
-        # files: rel_path -> {hash, depth, frontend, docs, nodes: list[str], edges: list[tuple[str, str, str]]}
+        # files: rel_path -> {hash, depth, frontend, docs, nodes, edges,
+        #                     type_facts: finite per-file fact contribution}
         self.files = data.get("files", {}) if data else {}
         self.version = int(data.get("version", 0)) if data is not None else MANIFEST_VERSION
         self.source_root = str(data.get("source_root", "")) if data else ""
@@ -48,6 +49,7 @@ class Manifest:
             else extractor_fingerprint()
         )
         self.updated_at = str(data.get("updated_at", "")) if data else ""
+        self.type_index = data.get("type_index", {}) if data else {}
 
     @property
     def compatible(self) -> bool:
@@ -77,6 +79,7 @@ class Manifest:
             "source_root": self.source_root,
             "extractor_fingerprint": self.extractor_fingerprint,
             "updated_at": self.updated_at,
+            "type_index": self.type_index,
             "files": self.files,
         }
         # Atomic write: a manifest half-written by an interrupted save used to
@@ -105,6 +108,7 @@ class Manifest:
         docs: bool,
         nodes: list[str],
         edges: list[tuple[str, str, str]],
+        type_facts: dict[str, Any] | None = None,
     ) -> None:
         self.files[rel_path] = {
             "hash": file_hash,
@@ -113,6 +117,7 @@ class Manifest:
             "docs": docs,
             "nodes": nodes,
             "edges": edges,
+            "type_facts": type_facts or {},
         }
 
     def get_file_info(self, rel_path: str) -> dict[str, Any] | None:

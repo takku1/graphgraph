@@ -28,6 +28,7 @@ from .model import (
     SourceFile,
     _TsDef,
 )
+from .persistent_facts import PythonProjectTypeFacts
 from .rust import (
     _add_rust_fields,
     _add_rust_method_owners,
@@ -45,12 +46,14 @@ from .syntax import (
 class RegexExtractor:
     name = "regex"
     confidence = 0.75
+    accepts_type_fact_context = True
 
     def extract_symbols(
         self,
         files: list[SourceFile],
         max_total_symbols: int,
         context_nodes: dict[str, Node] | None = None,
+        type_fact_context: PythonProjectTypeFacts | None = None,
     ) -> ExtractionResult:
         tuples = [(f.path, f.rel, f.file_node_id, f.text) for f in files]
         nodes, edges, truncated = extract_symbols(tuples, max_total_symbols=max_total_symbols, context_nodes=context_nodes)
@@ -59,6 +62,7 @@ class RegexExtractor:
 class TreeSitterExtractor:
     name = "tree_sitter"
     confidence = 0.95
+    accepts_type_fact_context = True
 
     def __init__(self, *, fallback_on_error: bool = False, parse_timeout_micros: int = 2_000_000) -> None:
         self.fallback_on_error = fallback_on_error
@@ -69,6 +73,7 @@ class TreeSitterExtractor:
         files: list[SourceFile],
         max_total_symbols: int,
         context_nodes: dict[str, Node] | None = None,
+        type_fact_context: PythonProjectTypeFacts | None = None,
     ) -> ExtractionResult:
         context_ids = set((context_nodes or {}).keys())
         nodes: dict[str, Node] = dict(context_nodes or {})
@@ -166,7 +171,13 @@ class TreeSitterExtractor:
         _add_rust_fields(defs_by_file, nodes, edges)
         _add_returns(defs_by_file, nodes, name_to_symbols, edges)
         _add_imports_from(defs_by_file, nodes, name_to_symbols, edges)
-        member_call_stats = _add_tree_sitter_calls(defs_by_file, nodes, name_to_symbols, edges)
+        member_call_stats = _add_tree_sitter_calls(
+            defs_by_file,
+            nodes,
+            name_to_symbols,
+            edges,
+            python_project_facts=type_fact_context,
+        )
         _add_rust_type_references(defs_by_file, nodes, name_to_symbols, edges)
         _add_rust_test_field_references(defs_by_file, nodes, edges)
         _add_tree_sitter_callback_references(defs_by_file, nodes, name_to_symbols, edges)
@@ -177,6 +188,7 @@ class TreeSitterExtractor:
                 fallback_sources,
                 max_total_symbols=remaining,
                 context_nodes=nodes,
+                type_fact_context=type_fact_context,
             )
             nodes.update(fallback.nodes)
             edges.extend(fallback.edges)

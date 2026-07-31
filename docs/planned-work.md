@@ -210,7 +210,7 @@ confidence intervals, and an explicit minimum practical effect.
   convergence.
 - [ ] Generalize only after Python oracle gains survive held-out repositories;
   then attack addressable JS/TS, C#, Rust, and C++ buckets by measured volume.
-- [ ] Complexity target: re-emit facts for changed files and re-join affected
+- [x] Complexity target: re-emit facts for changed files and re-join affected
   keys, approaching `O(delta facts + affected obligations)` rather than a
   whole-corpus analysis.
 
@@ -245,9 +245,18 @@ module reparse regression was caught by the comparison, removed, and locked by
 a file-bounded extraction-count test. Detailed commands, revisions, edge
 classes, and limits are in the indexed P02 held-out finding.
 
-Queue position: Q02-A and the Python portion of Q02-B are green. Q02-C
-(persistent per-file facts and affected-key rejoin) is next; Q02-D language
-generalization remains gated behind it.
+Q02-C receipt (2026-07-31): persistent per-file facts and affected-key rejoin
+are green for Python.
+Manifest v4 stores finite contributions, reverse obligations, and re-export
+adjacency; incremental return, field, and provider-deletion fixtures equal
+clean full rebuilds. With one changed fact and one affected consumer, loaded
+re-join p95 remained `0.1387 ms` with 10,000 unrelated fact/re-export rows;
+with 1,000 affected consumers median was `0.3294 ms`. Serialization and graph
+load are excluded and remain in Q07-B. The indexed finding contains the state
+equations, reproduction command, equivalence gates, and limits.
+
+Queue position: Q02-D language generalization is next. Q07 still owns
+universal incremental/no-op equivalence; Q02-C does not close those failures.
 
 ### P03 — Calibrate routing and facet decomposition
 

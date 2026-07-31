@@ -22,6 +22,7 @@ from .module_calls import (
     resolve_module_qualified_call,
     whole_module_binding_names,
 )
+from .persistent_facts import PythonProjectTypeFacts
 from .python import (
     _python_attribute_uses,
     _python_class_field_types,
@@ -386,6 +387,8 @@ def _add_tree_sitter_calls(
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
+    *,
+    python_project_facts: PythonProjectTypeFacts | None = None,
 ) -> _MemberCallStats:
     # 1. Identify globally unique callables
     unique_callables = {
@@ -408,6 +411,16 @@ def _add_tree_sitter_calls(
     project_field_types = _project_field_type_facts(defs_by_file)
     project_python_globals = _project_python_global_type_facts(defs_by_file)
     project_python_returns = _project_python_return_facts(defs_by_file)
+    if python_project_facts is not None:
+        # Fresh and restored contributions use the same idempotent join.  The
+        # fresh subset is retained above for direct extractor use in tests and
+        # for non-Python field facts; duplicate Python evidence is harmless.
+        for key, fact in python_project_facts.fields.items():
+            project_field_types[key] = project_field_types.get(key, TypeFact()).join(fact)
+        for key, fact in python_project_facts.globals.items():
+            project_python_globals[key] = project_python_globals.get(key, TypeFact()).join(fact)
+        for key, fact in python_project_facts.returns.items():
+            project_python_returns[key] = project_python_returns.get(key, TypeFact()).join(fact)
 
     # Repo-wide map of function name -> its single concrete return type, used
     # to type inline call receivers (`parse_ir(src).lower()`, normalized to
