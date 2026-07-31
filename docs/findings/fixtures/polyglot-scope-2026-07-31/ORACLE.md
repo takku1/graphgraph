@@ -67,11 +67,13 @@ method owned by the receiver's own type:
 
 Counted by enumerating callee edges per language, not inferred from edge totals:
 
-| | At freezing | After scope fixes | After receiver typing |
-|---|---:|---:|---:|
-| Call edges recovered | 34/63 | 52/63 | **56/63** |
-| ... excluding deliberate self-recursion | 34/56 | 52/56 | **56/56** |
-| Inbound edges to any `helper::Middle` | 0/7 | 0/7 | **0/7** |
+| | At freezing | After scope fixes | After receiver typing | After recursion |
+|---|---:|---:|---:|---:|
+| Call edges recovered | 34/63 | 52/63 | 56/63 | **63/63** |
+| Inbound edges to any `helper::Middle` | 0/7 | 0/7 | 0/7 | **0/7** |
+
+**All nine edge classes now resolve in all seven languages, with no false
+edges.** Counts use `--include-tests`, since edge 9 crosses from a test file.
 
 Every language now resolves 8 of its 8 achievable edges, and member-call
 telemetry reads `13/0/0/0` -- every member call resolved, none ambiguous, none
@@ -95,9 +97,21 @@ Gate 1 verified on real Flask: adding a duplicate `helpers.py` moved inbound
 call edges 151 -> 152. The same measurement on the previous commit gave
 151 -> 140, independently reproducing the reported -11.
 
-Gate 4 (self-recursion) still fails **by construction**: `tgt_id == src_id` is
-an explicit guard in the resolver, not an oversight, so edge 7 requires a
-deliberate decision about self-loops rather than a fix.
+Gate 4 (self-recursion) now passes. The `tgt_id == src_id` guard was removed
+only after auditing the consumers that a self-loop could mislead:
+
+- **Dead code.** `caller_counts` already skips `source == target`, so a
+  function that calls only itself still reports zero production callers and is
+  still reported as dead. Verified directly: a `DeadRecursive` calling only
+  itself stays at `production_callers = 0`, while a `LiveRecursive` called once
+  externally reads 1, not 2.
+- **Traversal.** Expansion seeds its visited set with the start nodes, so a
+  self-loop is skipped rather than revisited.
+- **Relations.** `callers` now includes the function itself, which is what this
+  oracle asks for: `Fact` has 2 callers, itself and `Caller`.
+
+A self-call is the only evidence that a function is recursive, so it is
+recorded; the consumers that must not count it exclude it themselves.
 
 ## Minimal repros
 

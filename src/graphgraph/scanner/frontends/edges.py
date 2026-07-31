@@ -840,8 +840,13 @@ def _add_tree_sitter_calls(
                     if name_to_symbols.get(call.name):
                         stats = stats.add_bare_unmatched()
                     continue
-                if tgt_id == src_id:
-                    continue
+                # A self-call is a real edge and the only evidence that a
+                # function is recursive, so it is recorded rather than dropped.
+                # Consumers that must not count it already exclude it:
+                # `caller_counts` skips `source == target` so a dead recursive
+                # function still reports zero production callers, and traversal
+                # seeds its visited set with the start nodes so a self-loop
+                # cannot revisit.
                 tgt_node = nodes.get(tgt_id)
                 # A bare call cannot reach a method: methods are invoked through
                 # a receiver, and that form is `call.qualified`, handled above.
