@@ -272,6 +272,22 @@ Queue position: remeasure the remaining Rust, C#/Java, and C++ receiver
 histograms on pinned repositories, then take the largest addressable bucket.
 Q02-D is not complete until each language improves or explicitly abstains.
 
+Q02-D language-volume receipt (2026-07-31): fresh pinned scans measured Rust
+at `1210/(1210+2328) = 34.20%`, held-out C# at
+`486/(486+5271) = 8.44%`, Z3's Java stratum at `54.53%`, and Z3's C++ stratum
+at `14/(14+31053) = 0.045%`. A parser-structural C++ out-of-line-owner
+experiment recovered 10,280 omitted definitions and moved resolved C++ sites
+`14 -> 936`, but it also changed `1,800` normalized logical calls and removed
+`1,834`. Source inspection exposed namespace/owner collisions, malformed
+macro/header callable identities, and project-global bare-call rewiring. The
+implementation was therefore reverted and the C++ slice is held behind a
+qualified identity, overload, and translation-unit prerequisite.
+
+Queue position: sample UniGetUI's `3,665 named_local` and `872 field_chain`
+sites, separate external types from repository-owned targets, then take the
+largest syntactically provable C# join. The indexed C++ hold finding preserves
+the failed candidate, source counterexamples, and prerequisite algorithm.
+
 ### P03 — Calibrate routing and facet decomposition
 
 - [ ] Keep semantic query-class gates explicit, but replace hand-set routing
