@@ -77,6 +77,7 @@ self-contained and supersedes the removed cycle drafts.
 - [Critical gray-box universal-limit evaluation](findings/2026-07-31-critical-graybox-universal-limit.md)
 - [Critical gray-box post-fix delta evaluation](findings/2026-07-31-critical-graybox-fix-delta.md)
 - [Critical gray-box scope resolution, scale, and fluidity](findings/2026-07-31-critical-graybox-scope-resolution.md)
+- [Caching and compression prototypes: three candidates, two falsified](findings/2026-07-31-caching-and-compression-prototypes.md)
 - [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons

@@ -20,6 +20,49 @@ They are compatibility inputs, not default runtime sources. Installing
 GraphGraph and running normal scan/query/context commands does not invoke or
 read Graphify, code-review-graph, or other graph-tool outputs.
 
+## Execution Model and Latency
+
+GraphGraph runs the same retrieval core behind two transports, and the choice of
+transport dominates latency by three orders of magnitude. This is a property of
+process lifetime, not of the graph or the algorithms.
+
+```text
+CLI          new interpreter -> import -> load graph -> answer -> exit
+MCP server   long-lived process -> [ load graph once ] -> answer -> answer -> ...
+```
+
+Measured on Flask (460 nodes / 1,311 edges), one-hop `relations`:
+
+| Stage | Cost |
+|---|---:|
+| Python interpreter start (before any GraphGraph code) | ~126 ms |
+| GraphGraph import and dispatch | ~3 ms |
+| `load_any`, first call in a process | ~6 ms |
+| `load_any`, later calls (process graph cache) | ~0.2 ms |
+| `query_relations` on a resident graph | ~0.02 ms |
+| **End to end, CLI subprocess** | **~252 ms** |
+| **End to end, resident process** | **~0.26 ms** |
+
+Two consequences worth stating plainly, because both are easy to get wrong:
+
+**The floor for a one-shot CLI call is the interpreter, not GraphGraph.** About
+126 ms is spent before any GraphGraph code executes, and GraphGraph's own share
+of a cold invocation is single-digit milliseconds. A resident *service* fronted
+by a CLI client cannot recover this, because the client is itself a Python
+process paying the same 126 ms. Only a caller that is already long-lived, or a
+non-Python client, can.
+
+**That caller already exists.** The MCP server is long-lived and `load_any`
+memoizes per process against a store fingerprint (`remember_loaded_graph`,
+`graph_store_fingerprint`), so a graph is parsed once and reused until its bytes
+change. Residency is therefore a property the system already has on the MCP
+path; it is not a missing component.
+
+Practical rule: use the MCP tools for interactive and repeated retrieval, and
+the CLI for one-shot or scripted use where a ~250 ms fixed cost is irrelevant.
+Benchmarks that time repeated CLI invocations are measuring process spawn, and
+will understate retrieval performance by roughly 1000x.
+
 ## Native Storage Contract
 
 The only automatically discovered native store is
