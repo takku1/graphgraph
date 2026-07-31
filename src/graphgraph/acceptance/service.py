@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from ..services.freshness import inspect_saved_graph_freshness
 from .runner import graph_identity, run_case
 from .scoreboard import summarize, to_json, to_markdown
 from .tasks import CANONICAL_TASKS
@@ -64,8 +65,12 @@ def execute_acceptance(
             if count_tokens("x").precise
             else "proxy"
         ),
+        "freshness": inspect_saved_graph_freshness(
+            directory=repo,
+            output_path=graph_path,
+        ),
     }
-    summary = summarize(cases)
+    summary = summarize(cases, environment=environment)
     report = (
         json.dumps(to_json(cases, environment=environment), indent=2)
         if as_json

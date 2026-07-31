@@ -221,6 +221,33 @@ class ScoreboardTest(unittest.TestCase):
         self.assertIn("live_execution", markdown)
         self.assertIn("not run", markdown)
 
+    def test_stale_or_incompatible_graph_blocks_release(self) -> None:
+        task = Task(id="T", title="t", dimension="D1", severity="P1", query="q")
+        case = CaseResult(
+            task=task,
+            probe=None,
+            gates=[GateResult("retrieval", PASS, "complete")],
+        )
+        environment = {
+            "freshness": {"fresh": False, "extractor_compatible": False},
+        }
+        summary = summarize([case], environment=environment)
+        self.assertFalse(summary["release_ready"])
+        self.assertTrue(summary["release_blocked"])
+        self.assertEqual(summary["environment_blockers"], ["graph_freshness"])
+        self.assertIn("graph freshness: BLOCKED", to_markdown([case], environment=environment))
+
+    def test_fresh_graph_does_not_block_passing_board(self) -> None:
+        task = Task(id="T", title="t", dimension="D1", severity="P1", query="q")
+        case = CaseResult(
+            task=task,
+            probe=None,
+            gates=[GateResult("retrieval", PASS, "complete")],
+        )
+        summary = summarize([case], environment={"freshness": {"fresh": True}})
+        self.assertTrue(summary["release_ready"])
+        self.assertEqual(summary["environment_blockers"], [])
+
 
 class AcceptanceCliTest(unittest.TestCase):
     def test_native_platform_parser_exposes_acceptance(self) -> None:

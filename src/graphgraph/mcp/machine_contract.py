@@ -32,7 +32,9 @@ MACHINE_TOOL_DESCRIPTIONS = {
     "graph_at_time": "ACT:materialize graph at ISO timestamp using validity windows; OUT:compact status.",
 }
 
-MACHINE_CONTRACT_CHAR_CEILING = 10_400
+# The compact/detailed query response selector costs 73 recurring schema
+# characters and removes thousands of response characters on the default path.
+MACHINE_CONTRACT_CHAR_CEILING = 10_500
 
 
 def serialize_tool_contract(value: object) -> str:

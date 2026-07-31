@@ -27,7 +27,7 @@ from ..representation import (
     compile_hybrid_representation,
 )
 from ..retrieval import apply_shape_budget, expand_context, packet_priority, retrieve_context  # noqa: F401
-from ..runtime.cache import TopologicalKVCache, compute_cache_key
+from ..runtime.cache import TopologicalKVCache, compute_cache_key, runtime_cache_fingerprint
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
 QUERY_RESPONSE_CACHE_VERSION = "request_v19_affected_test_witness_attribution"
@@ -139,6 +139,7 @@ def render_final_packet(
         plan.hops,
         (
             f"{FINAL_RESPONSE_CACHE_VERSION}|{resolved_graph_path.resolve()}|"
+            f"runtime={runtime_cache_fingerprint()}|"
             f"{packet or 'auto'}|{plan.packet}|"
             f"{representation}|{representation_budget}|"
             f"{cache_namespace}|{plan.planner_version}|{query_text}|{paths}|{tags}|"
@@ -395,6 +396,7 @@ def render_query_context(
         plan.hops,
         (
             f"{QUERY_RESPONSE_CACHE_VERSION}|{resolved_graph_path.resolve()}|"
+            f"runtime={runtime_cache_fingerprint()}|"
             f"{cache_namespace}|{plan.planner_version}|"
             f"{anchor_limit}|{max_nodes}|{plan.node_budget}|{plan.direction}|{scopes}|{scope_mode}|"
             f"{packet or 'auto'}|{plan.packet}|{show_anchors}|{json_anchors}|"

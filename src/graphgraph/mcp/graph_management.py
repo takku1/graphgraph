@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -209,6 +210,7 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     exclude_dirs = [str(value) for value in args.get("exclude_dirs") or []]
     all_skip = skip_dirs + [value for value in exclude_dirs if value not in skip_dirs]
     include_dirs = [str(value) for value in args.get("include_dirs") or []]
+    build_started = time.perf_counter()
     status = scan_validated_graph(
         directory=directory,
         output_path=output_path,
@@ -225,6 +227,29 @@ def handle_build_graph(args: dict[str, Any]) -> str:
     graph = status.graph
     validation = status.validation
     assert validation is not None
+    wall_ms = (time.perf_counter() - build_started) * 1000.0
+
+    def profile_ms(name: str) -> float:
+        return float(graph.metadata.get(f"scan_profile_{name}_ms", "0") or 0.0)
+
+    build_total_ms = profile_ms("build_total")
+    inner_phases = {
+        "file_graph": profile_ms("file_graph"),
+        "symbols": profile_ms("symbols"),
+        "docs": profile_ms("docs"),
+        "history": profile_ms("history"),
+        "concepts": profile_ms("concepts"),
+        "finalize": profile_ms("finalize"),
+    }
+    phases = {
+        "discover": profile_ms("discover"),
+        "hash": profile_ms("hash"),
+        **inner_phases,
+        "build_overhead": max(0.0, build_total_ms - sum(inner_phases.values())),
+        "validate_save": max(0.0, wall_ms - profile_ms("total")),
+    }
+    attributed_ms = sum(phases.values())
+    unattributed_ms = max(0.0, wall_ms - attributed_ms)
     result = {
         "action": "scanned",
         "directory": str(directory.resolve()),
@@ -233,6 +258,11 @@ def handle_build_graph(args: dict[str, Any]) -> str:
         "edges": len(graph.edges),
         "frontend": graph.metadata.get("frontend", "files"),
         "phase_profile": {
+            "wall_ms": round(wall_ms, 3),
+            "attributed_ms": round(attributed_ms, 3),
+            "unattributed_ms": round(unattributed_ms, 3),
+            "attributed_ratio": round(attributed_ms / max(wall_ms, 0.001), 4),
+            "phases": {name: round(elapsed, 3) for name, elapsed in phases.items()},
             "docs_ms": float(graph.metadata.get("docs_profile_ms", "0")),
             "docs_files": int(graph.metadata.get("docs_profile_files", "0")),
             "doc_nodes": graph_shape(graph)["doc_nodes"],

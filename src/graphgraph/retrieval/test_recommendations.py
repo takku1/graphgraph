@@ -133,6 +133,41 @@ def _cargo_inline_rust_module_command(source: str) -> str:
     return f"cargo test -p {package}{suffix} {cargo_target}"
 
 
+def _dotnet_test_project(path: str, source: str) -> str:
+    """Find the nearest C# test project and express it relative to the scan root."""
+    relative = Path(path.replace("\\", "/"))
+    source_path = Path(source)
+    if relative.suffix.casefold() != ".cs" or not source_path.is_file():
+        return ""
+    try:
+        resolved = source_path.resolve()
+        root = resolved
+        for _part in relative.parts:
+            root = root.parent
+        if tuple(part.casefold() for part in resolved.parts[-len(relative.parts) :]) != tuple(
+            part.casefold() for part in relative.parts
+        ):
+            return ""
+        directory = resolved.parent
+        while directory != root.parent:
+            projects = sorted(directory.glob("*.csproj"))
+            if projects:
+                project = min(
+                    projects,
+                    key=lambda candidate: (
+                        "test" not in candidate.stem.casefold(),
+                        candidate.name.casefold(),
+                    ),
+                )
+                return project.relative_to(root).as_posix()
+            if directory == root:
+                break
+            directory = directory.parent
+    except (OSError, ValueError):
+        return ""
+    return ""
+
+
 @lru_cache(maxsize=2048)
 def _rust_test_module_calls_symbol(source: str, label: str) -> bool:
     """Verify a missing graph edge against the bounded inline test module."""
@@ -183,6 +218,12 @@ def _test_command(
         return f"python -m pytest {normalized}"
     if normalized.endswith((".ts", ".tsx", ".js", ".jsx")):
         return f"npm test -- {normalized}"
+    if normalized.endswith(".cs"):
+        project = _dotnet_test_project(normalized, source)
+        if project:
+            test_filter = re.sub(r"[^A-Za-z0-9_.+]", "", test_label)
+            suffix = f" --filter FullyQualifiedName~{test_filter}" if test_filter else ""
+            return f'dotnet test "{project}"{suffix}'
     return ""
 
 

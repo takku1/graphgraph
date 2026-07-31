@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import OrderedDict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,30 @@ from .manifest import compute_file_hash
 from .state import STATE_VERSION, atomic_write_json, file_lock
 
 PLATFORM_STATE_VERSION = STATE_VERSION
+
+
+def _source_tree_fingerprint(root: Path) -> str:
+    """Content identity for code that can change a cached derived packet."""
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*.py")):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(root).as_posix().encode("utf-8")
+            content = path.read_bytes()
+        except (OSError, ValueError):
+            continue
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()[:16]
+
+
+@lru_cache(maxsize=1)
+def runtime_cache_fingerprint() -> str:
+    """Invalidate packet caches automatically when GraphGraph code changes."""
+    return _source_tree_fingerprint(Path(__file__).resolve().parents[1])
 
 
 def compute_cache_key(anchors: list[str] | set[str], query_class: str, hops: int, packet_format: str) -> str:

@@ -692,6 +692,19 @@ class IOTest(unittest.TestCase):
         edge_keys = {(e.source, e.target, e.type) for e in merged.edges}
         self.assertEqual(edge_keys, {("A", "B", "reads"), ("A", "B", "writes")})
 
+    def test_runtime_cache_fingerprint_tracks_source_content(self) -> None:
+        from graphgraph.runtime.cache import _source_tree_fingerprint
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "retrieval.py"
+            source.write_text("POLICY = 1\n", encoding="utf-8")
+            before = _source_tree_fingerprint(root)
+            source.write_text("POLICY = 2\n", encoding="utf-8")
+            after = _source_tree_fingerprint(root)
+
+        self.assertNotEqual(before, after)
+
     def test_kv_cache(self) -> None:
         import time
 

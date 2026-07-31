@@ -627,7 +627,10 @@ def retrieve_context(
         "negative_query",
         "doc_summary",
         "reverse_lookup",
-    } or (query_class == "direct_lookup" and bool(identifiers))
+    } or (query_class == "direct_lookup" and bool(identifiers)) or (
+        query_class == "subsystem_summary"
+        and bool(re.search(r"\barchitectur(?:e|al)\b", query, re.I))
+    )
     facets = facet_stage.query_facets(query) if facet_aware else ()
     if status_constrained:
         # The typed status-row matcher owns this predicate. Leaving the same

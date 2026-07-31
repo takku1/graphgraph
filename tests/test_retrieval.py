@@ -209,6 +209,33 @@ class ExactOverloadReceiptTest(unittest.TestCase):
         self.assertEqual(set(covered.metadata["project_coverage"]["represented"]), {"flask", "fixture"})
 
 
+class ArchitectureFacetCoverageTest(unittest.TestCase):
+    def test_named_dimensions_are_individually_covered_or_reported_missing(self) -> None:
+        graph = Graph(
+            nodes={
+                "ROUTE": Node("ROUTE", "routing", "module", "src/routing.py"),
+                "SESSION": Node("SESSION", "sessions", "module", "src/sessions.py"),
+            },
+            edges=[],
+        )
+        result = retrieve_context(
+            graph,
+            "Explain the architecture across routing, sessions, templating, and error handling.",
+            "subsystem_summary",
+            hops=1,
+            max_nodes=2,
+            seed_ids=("ROUTE", "SESSION"),
+        )
+
+        coverage = result.metadata["facet_coverage"]
+        self.assertEqual(
+            {item["facet"] for item in coverage["fulfilled"]},
+            {"routing", "sessions"},
+        )
+        self.assertEqual(set(coverage["unfulfilled"]), {"templating", "error handling"})
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+
+
 class DocumentTruncationPartialResultTest(unittest.TestCase):
     """T10: a requested document the scanner truncated is a partial result."""
 

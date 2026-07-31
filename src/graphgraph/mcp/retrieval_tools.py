@@ -252,6 +252,11 @@ TOOLS = [
                     "enum": ["none", "git"],
                     "description": "Optional work-loop sync before querying. 'git' hashes only Git-changed candidates against the manifest and refreshes stale paths. Default: none.",
                 },
+                "format": {
+                    "type": "string",
+                    "enum": ["compact", "detailed"],
+                    "default": "compact",
+                },
             },
             "required": ["query"],
         },
@@ -626,7 +631,7 @@ def build_query_context(args: dict[str, Any]) -> str:
     }
     if refresh_metadata is not None:
         metadata["refresh"] = refresh_metadata
-    return render_query_context(
+    rendered = render_query_context(
         query=str(args["query"]),
         query_class=str(args.get("query_class") or "auto"),
         graph_path=graph_path,
@@ -636,7 +641,10 @@ def build_query_context(args: dict[str, Any]) -> str:
         max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
         scopes=tuple(str(scope) for scope in args.get("scopes") or []),
         scope_mode=str(args.get("scope_mode") or "strict"),
-        show_anchors=bool(args.get("show_anchors")),
+        # MCP always needs the structured receipt internally. Compact mode
+        # removes anchors after proof construction; explicit show_anchors
+        # below still controls whether the caller receives the detailed form.
+        show_anchors=True,
         cache_namespace="mcp_query",
         json_anchors=True,
         graph=refreshed_graph,
@@ -650,6 +658,37 @@ def build_query_context(args: dict[str, Any]) -> str:
             int(args["snippet_context_lines"]) if args.get("snippet_context_lines") is not None else 2
         ),
         snippet_max_lines=(int(args["snippet_max_lines"]) if args.get("snippet_max_lines") is not None else 24),
+    )
+    if (
+        str(args.get("format") or "compact") == "detailed"
+        or bool(args.get("show_anchors"))
+        or bool(args.get("include_snippets"))
+    ):
+        return rendered
+    payload = json.loads(rendered)
+    actionable = payload.get("actionable", {}) or {}
+    workflow = payload.get("workflow", {}) or {}
+    freshness = payload.get("freshness", {}) or workflow.get("freshness", {}) or {}
+    tests = actionable.get("tests", {}) or {}
+    proof: dict[str, object] = {
+        "status": actionable.get("status", "unknown"),
+        "missing": actionable.get("missing_evidence", []),
+        "fresh": freshness.get("fresh", freshness.get("repository_fresh")),
+        "validation": (workflow.get("packet_validation", {}) or {}).get("ok"),
+        "cache": (workflow.get("cache", {}) or {}).get("state", ""),
+    }
+    if tests.get("commands") or tests.get("direct") or tests.get("transitive"):
+        proof["tests"] = tests
+    if actionable.get("subsystem_map"):
+        proof["subsystem_map"] = actionable["subsystem_map"]
+    if payload.get("source_snippets"):
+        proof["source_snippets"] = payload["source_snippets"]
+    return _json(
+        {
+            "packet": payload.get("packet", ""),
+            "control": payload.get("control", ""),
+            "proof": proof,
+        }
     )
 
 

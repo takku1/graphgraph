@@ -130,6 +130,11 @@ def _is_test_path(path: str) -> bool:
     directories, name = parts[:-1], parts[-1]
     if set(directories) & {"test", "tests", "__tests__"}:
         return True
+    if name.endswith(".cs") and (
+        any(part.endswith((".test", ".tests")) for part in directories)
+        or name.endswith(("test.cs", "tests.cs"))
+    ):
+        return True
     if re.search(
         r"\.(?:test|spec)\.(?:py|js|jsx|ts|tsx|mjs|cjs)$",
         name,

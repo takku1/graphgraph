@@ -421,6 +421,41 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertFalse(affected["direct"][0]["in_packet"])
         self.assertEqual(affected["direct"][0]["evidence"][0]["provenance"], "tree_sitter_type_resolved")
 
+    def test_affected_tests_emits_focused_dotnet_command_for_csharp_test_project(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            test_dir = root / "src" / "Acme.Tests"
+            test_dir.mkdir(parents=True)
+            source = test_dir / "WidgetTests.cs"
+            source.write_text("class WidgetTests {}\n", encoding="utf-8")
+            (test_dir / "Acme.Tests.csproj").write_text("<Project />\n", encoding="utf-8")
+            graph = Graph(
+                nodes={
+                    "TARGET": Node("TARGET", "InstallWidget", "method", "src/Acme/Widget.cs"),
+                    "TEST": Node(
+                        "TEST",
+                        "InstallWidget_SendsPayload",
+                        "method",
+                        "src/Acme.Tests/WidgetTests.cs",
+                        source=str(source),
+                    ),
+                },
+                edges=[Edge("TEST", "TARGET", "calls", confidence=0.97, provenance="tree_sitter")],
+            )
+
+            affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET", "TEST"})
+
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertEqual(
+            affected["commands"],
+            [
+                'dotnet test "src/Acme.Tests/Acme.Tests.csproj" '
+                "--filter FullyQualifiedName~InstallWidget_SendsPayload"
+            ],
+        )
+
     def test_reverse_lookup_reports_known_callers_omitted_by_node_budget(self) -> None:
         nodes = {
             "TARGET": Node("TARGET", "normalize_rust", "function", "src/normalize.rs"),

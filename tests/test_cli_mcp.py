@@ -646,6 +646,32 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(data["anchors"][0]["id"], "N1")
             self.assertIn("[e]", data["packet"])
 
+    def test_mcp_query_context_default_has_bounded_compact_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 551,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_context",
+                        "arguments": {
+                            "query": "auth service",
+                            "query_class": "blast_radius",
+                            "graph_path": str(graph_path),
+                        },
+                    },
+                }
+            )
+
+        assert response is not None
+        data = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(set(data), {"packet", "control", "proof"})
+        self.assertTrue(data["packet"])
+        self.assertLessEqual(len(json.dumps(data["proof"], separators=(",", ":"))) // 4, 100)
+
     def test_mcp_query_relations_returns_fast_call_only_map(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"

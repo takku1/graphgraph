@@ -153,6 +153,7 @@ def scan_directory(
     below skip that discovery entirely and are much cheaper on large repos.
     """
     root = root.resolve()
+    scan_started = time.perf_counter()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
     include_set = frozenset(include) if include else frozenset()
     excluded_rels = frozenset(_normalize_rels(root, exclude_paths or []))
@@ -195,6 +196,9 @@ def scan_directory(
         manifest = Manifest()
         previous_graph = None
     from ..runtime.manifest import compute_file_hash
+
+    discover_ms = (time.perf_counter() - scan_started) * 1000.0
+    hash_started = time.perf_counter()
 
     skipped_files: list[tuple[Path, str, str]] = []
     dirty_files: list[tuple[Path, str, str]] = []
@@ -257,7 +261,9 @@ def scan_directory(
     dirty_git.intersection_update(active_rels)
     churn_git = {rel: count for rel, count in churn_git.items() if rel in active_rels}
 
-    return _build_graph_from_split(
+    hash_ms = (time.perf_counter() - hash_started) * 1000.0
+    build_started = time.perf_counter()
+    graph = _build_graph_from_split(
         root=root,
         file_map=file_map,
         dirty_files=dirty_files,
@@ -288,6 +294,17 @@ def scan_directory(
         type_index_data=type_index_data,
         progress=progress,
     )
+    build_ms = (time.perf_counter() - build_started) * 1000.0
+    total_ms = (time.perf_counter() - scan_started) * 1000.0
+    graph.metadata.update(
+        {
+            "scan_profile_discover_ms": f"{discover_ms:.3f}",
+            "scan_profile_hash_ms": f"{hash_ms:.3f}",
+            "scan_profile_build_ms": f"{build_ms:.3f}",
+            "scan_profile_total_ms": f"{total_ms:.3f}",
+        }
+    )
+    return graph
 
 
 def _normalize_rels(root: Path, paths: list[str] | list[Path]) -> set[str]:
@@ -1100,6 +1117,7 @@ def _build_graph_from_split(
     build the resulting Graph. Used by both the full-discovery
     ``scan_directory`` and the targeted ``update_paths``/``remove_paths``.
     """
+    build_started = time.perf_counter()
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
     seen: set[tuple[str, str]] = set()
@@ -1209,6 +1227,7 @@ def _build_graph_from_split(
         seen=seen,
         generic_mentions=generic_mentions,
     )
+    file_graph_ms = (time.perf_counter() - build_started) * 1000.0
 
     metadata = {
         "scan_depth": depth,
@@ -1274,6 +1293,7 @@ def _build_graph_from_split(
         metadata["files_scanned"] = str(len(active_rels))
 
     python_fact_snapshots = dict(python_fact_snapshots or {})
+    symbols_started = time.perf_counter()
     if depth == "symbols" and dirty_files:
         source_files: list[SourceFile] = []
         for f, rel, fhash in dirty_files:
@@ -1334,7 +1354,9 @@ def _build_graph_from_split(
                 # unless surfaced here.
                 metadata["symbols_truncated"] = "true"
                 metadata["symbols_cap"] = str(max_syms)
+    symbols_ms = (time.perf_counter() - symbols_started) * 1000.0
 
+    docs_phase_started = time.perf_counter()
     if docs and dirty_files:
         doc_inputs: list[DocumentInput] = []
         for f, rel, fhash in dirty_files:
@@ -1386,7 +1408,9 @@ def _build_graph_from_split(
                 f"truncated={len(truncated_docs)} slowest="
                 + ",".join(f"{rel}:{elapsed:.1f}ms" for rel, elapsed, *_rest in slowest[:3]),
             )
+    docs_phase_ms = (time.perf_counter() - docs_phase_started) * 1000.0
 
+    history_started = time.perf_counter()
     if history:
         _emit_progress(progress, "history", f"max_commits={max_history_commits}")
         history_nodes, history_edges = extract_commit_history(root, file_map, max_commits=max_history_commits)
@@ -1397,6 +1421,7 @@ def _build_graph_from_split(
         if history_nodes or history_edges:
             nodes.update(history_nodes)
             _merge_new_edges(edges, history_edges)
+    history_ms = (time.perf_counter() - history_started) * 1000.0
 
     # Interpretation-concept linking is a pure function of a node's own
     # fields (label/kind/path/facts) -- deterministic and independent of
@@ -1448,6 +1473,7 @@ def _build_graph_from_split(
         f"completed_ms={concepts_ms:.1f} links={len(interpretation_edges)}",
     )
 
+    finalize_started = time.perf_counter()
     existing_edges = {(e.source, e.target, e.type) for e in edges}
     for src, tgt, etype, matching_edge in skipped_edges:
         if src not in nodes or tgt not in nodes:
@@ -1515,6 +1541,19 @@ def _build_graph_from_split(
     # ranking and preserve the frontend/provenance calibration in the graph.
     metadata.update(
         _global_source_concept_metadata(nodes, edges, excluded_concept_kinds)
+    )
+    finalize_ms = (time.perf_counter() - finalize_started) * 1000.0
+    build_total_ms = (time.perf_counter() - build_started) * 1000.0
+    metadata.update(
+        {
+            "scan_profile_file_graph_ms": f"{file_graph_ms:.3f}",
+            "scan_profile_symbols_ms": f"{symbols_ms:.3f}",
+            "scan_profile_docs_ms": f"{docs_phase_ms:.3f}",
+            "scan_profile_history_ms": f"{history_ms:.3f}",
+            "scan_profile_concepts_ms": f"{concepts_ms:.3f}",
+            "scan_profile_finalize_ms": f"{finalize_ms:.3f}",
+            "scan_profile_build_total_ms": f"{build_total_ms:.3f}",
+        }
     )
     _emit_progress(progress, "complete", f"nodes={len(nodes)} edges={len(edges)}")
     return Graph(nodes=nodes, edges=edges, metadata=metadata)

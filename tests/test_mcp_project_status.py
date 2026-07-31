@@ -51,6 +51,11 @@ class McpProjectStatusTest(unittest.TestCase):
             profile = receipt["phase_profile"]
             self.assertIn("doc_nodes", profile)
             self.assertGreater(profile["doc_nodes"], 0)  # the README landed
+            self.assertGreater(profile["wall_ms"], 0)
+            self.assertGreaterEqual(profile["attributed_ratio"], 0.9)
+            self.assertLessEqual(profile["unattributed_ms"], profile["wall_ms"] * 0.1)
+            self.assertIn("symbols", profile["phases"])
+            self.assertIn("validate_save", profile["phases"])
             status = build_project_status(directory=root, graph_path=out_path)
             self.assertEqual(profile["doc_nodes"], status["graph"]["shape"]["doc_nodes"])
 

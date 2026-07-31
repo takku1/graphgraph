@@ -125,6 +125,7 @@ class McpMachineContractTest(unittest.TestCase):
                     "depth": ("files", "symbols"),
                     "frontend": ("auto", "regex", "tree_sitter"),
                     "sync": ("none", "git"),
+                    "format": ("compact", "detailed"),
                 },
                 "query_relations": {
                     "direction": ("callers", "callees"),
@@ -155,7 +156,7 @@ class McpMachineContractTest(unittest.TestCase):
         self.assertEqual(
             {name: contract["defaults"] for name, contract in snapshot.items() if contract["defaults"]},
             {
-                "query_context": {"query_class": "auto"},
+                "query_context": {"query_class": "auto", "format": "compact"},
                 "query_relations": {
                     "limit": 20,
                     "include_tests": False,
@@ -210,7 +211,10 @@ class McpMachineContractTest(unittest.TestCase):
         receipt = tool_contract_size_receipt(TOOLS)
         self.assertEqual(receipt["tools"], 23)
         self.assertLessEqual(receipt["aggregate_chars"], MACHINE_CONTRACT_CHAR_CEILING)
-        self.assertLessEqual(receipt["proxy_tokens"], 2_600)
+        self.assertLessEqual(
+            receipt["proxy_tokens"],
+            (MACHINE_CONTRACT_CHAR_CEILING + 3) // 4,
+        )
         for name, baseline in BASELINE_TOOL_CHARS.items():
             self.assertLessEqual(receipt["per_tool_chars"][name], baseline, name)
 

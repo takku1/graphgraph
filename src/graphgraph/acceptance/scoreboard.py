@@ -12,7 +12,7 @@ _STATUS_MARK = {PASS: "PASS", FAIL: "FAIL", PENDING: "PENDING", "na": "NA"}
 _BLOCKING = {"P0", "P1"}
 
 
-def summarize(cases: list[CaseResult]) -> dict:
+def summarize(cases: list[CaseResult], *, environment: dict | None = None) -> dict:
     graded = [c for c in cases if c.status in (PASS, FAIL)]
     passed = [c for c in graded if c.status == PASS]
     blocking_failures = [
@@ -21,9 +21,12 @@ def summarize(cases: list[CaseResult]) -> dict:
     blocking_pending = [
         c for c in cases if c.status == PENDING and c.task.severity in _BLOCKING
     ]
+    freshness = (environment or {}).get("freshness") or {}
+    freshness_blocked = bool(freshness) and freshness.get("fresh") is not True
+    environment_blockers = ["graph_freshness"] if freshness_blocked else []
     release_floor = (
         "blocked"
-        if blocking_failures
+        if blocking_failures or environment_blockers
         else "pending"
         if blocking_pending
         else "clear"
@@ -35,16 +38,17 @@ def summarize(cases: list[CaseResult]) -> dict:
         "passed": len(passed),
         "failed": len(graded) - len(passed),
         "pass_rate": round(len(passed) / len(graded), 4) if graded else None,
-        "release_blocked": bool(blocking_failures),
+        "release_blocked": bool(blocking_failures or environment_blockers),
         "release_ready": release_floor == "clear",
         "release_floor": release_floor,
         "blocking_failures": [c.task.id for c in blocking_failures],
         "blocking_pending": [c.task.id for c in blocking_pending],
+        "environment_blockers": environment_blockers,
     }
 
 
 def to_markdown(cases: list[CaseResult], *, environment: dict | None = None) -> str:
-    s = summarize(cases)
+    s = summarize(cases, environment=environment)
     lines = ["# GraphGraph acceptance scoreboard", ""]
     if environment:
         lines += [
@@ -52,6 +56,8 @@ def to_markdown(cases: list[CaseResult], *, environment: dict | None = None) -> 
             f"- graph: `{environment.get('graph_hash', 'n/a')}` "
             f"({environment.get('graph_files', '?')} files)",
             f"- tokens: {environment.get('token_mode')}",
+            f"- graph freshness: "
+            f"{'fresh' if (environment.get('freshness') or {}).get('fresh') is True else 'BLOCKED'}",
             "",
         ]
     verdict = {
@@ -103,7 +109,7 @@ def to_markdown(cases: list[CaseResult], *, environment: dict | None = None) -> 
 def to_json(cases: list[CaseResult], *, environment: dict | None = None) -> dict:
     return {
         "environment": environment or {},
-        "summary": summarize(cases),
+        "summary": summarize(cases, environment=environment),
         "cases": [
             {
                 "id": c.task.id,
