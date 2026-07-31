@@ -530,6 +530,16 @@ def _select_owner_type(
     return None
 
 
+# `const { Assist } = require('./helper')` -- CommonJS destructuring. Unlike
+# `const send = require('send')`, which binds the whole module and is handled as
+# a module binding, each destructured name is a real exported symbol and must
+# resolve like an ESM named import. Without this, CommonJS files resolved their
+# same-file calls but lost every cross-file import edge.
+_JS_DESTRUCTURED_REQUIRE = re.compile(
+    r"\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)"
+)
+
+
 def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
     """Map imported symbol local name to its module/file stem source.
     e.g. 'from helper import transform' -> {'transform': 'helper'}
@@ -549,6 +559,12 @@ def _imported_symbol_sources(suffix: str, text: str) -> dict[str, str]:
             module_name = Path(m.group(2)).stem
             for part in m.group(1).split(","):
                 name = part.strip().split(" as ", 1)[0].strip()
+                if _identifier(name):
+                    sources[name] = module_name
+        for m in _JS_DESTRUCTURED_REQUIRE.finditer(text):
+            module_name = Path(m.group(2)).stem
+            for part in m.group(1).split(","):
+                name = part.strip().split(":", 1)[-1].strip()
                 if _identifier(name):
                     sources[name] = module_name
     return sources
@@ -743,6 +759,50 @@ def _resolve_member_call(
     return "unmatched" if all_candidates else "external_resolved"
 
 
+def _directory_parts(path: str) -> list[str]:
+    """Directory components of a file path, nearest-last."""
+    return [part for part in re.split(r"[/\\]", path) if part][:-1]
+
+
+def _nearest_import_candidate(
+    candidates: list[str],
+    nodes: dict[str, Node],
+    source_rel: str,
+) -> str | None:
+    """Pick the candidate whose directory is closest to the importing file.
+
+    Module basenames repeat constantly in real trees (`helpers.py`, `utils.py`,
+    `index.ts`), so matching an import by basename alone leaves several
+    candidates and previously discarded all of them. Name resolution theory
+    treats this as a visibility question rather than a naming one: a reference
+    resolves along the shortest path to a declaration, and a nearer declaration
+    shadows a farther one. Directory distance is the available approximation of
+    that path, so a sibling module beats a same-named module elsewhere.
+
+    Ties still return ``None``. Two candidates equally near are genuinely
+    ambiguous, and dropping the edge keeps the extractor's precision property
+    that it never fabricates a call it cannot justify.
+    """
+    source_dir = _directory_parts(source_rel)
+    scored: list[tuple[int, int, str]] = []
+    for candidate in candidates:
+        candidate_dir = _directory_parts(nodes[candidate].path)
+        shared = 0
+        for left, right in zip(source_dir, candidate_dir):
+            if left.casefold() != right.casefold():
+                break
+            shared += 1
+        # A sibling module -- same directory, not merely a shared prefix -- is
+        # the strongest evidence available without a real module graph.
+        sibling = 1 if shared == len(source_dir) == len(candidate_dir) else 0
+        scored.append((sibling, shared, candidate))
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    best = scored[0]
+    if len(scored) > 1 and (scored[1][0], scored[1][1]) == (best[0], best[1]):
+        return None
+    return best[2]
+
+
 def _select_import_target(
     name: str,
     targets: list[str],
@@ -750,6 +810,7 @@ def _select_import_target(
     nodes: dict[str, Node],
     src_lang: str | None,
     reexports: dict[tuple[str, str], str],
+    source_rel: str = "",
 ) -> str | None:
     compatible = [
         target
@@ -764,6 +825,8 @@ def _select_import_target(
     matching = [target for target in compatible if Path(nodes[target].path).stem.casefold() == stem.casefold()]
     if len(matching) == 1:
         return matching[0]
+    if len(matching) > 1 and source_rel and (nearest := _nearest_import_candidate(matching, nodes, source_rel)):
+        return nearest
 
     reexport = reexports.get((stem.casefold(), name))
     return reexport if reexport in compatible else None
@@ -818,6 +881,11 @@ def _imported_symbol_names(suffix: str, text: str) -> set[str]:
         for group in re.findall(r"import\s+\{([^}]+)\}", text):
             for part in group.split(","):
                 name = part.strip().split(" as ", 1)[0].strip()
+                if _identifier(name):
+                    names.add(name)
+        for m in _JS_DESTRUCTURED_REQUIRE.finditer(text):
+            for part in m.group(1).split(","):
+                name = part.strip().split(":", 1)[-1].strip()
                 if _identifier(name):
                     names.add(name)
     return names

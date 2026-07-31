@@ -42,20 +42,43 @@ Recall **34/63 (54%)**. Precision **7/7 (100%)** — no false edges.
 | JavaScript | 0/9 | all — collapses when TS twin present; **7/9 in isolation** |
 | TypeScript | 0/9 | all — same; **7/9 in isolation** |
 
-## Result after the file-local scope fix
+## Result after the nearest-scope fixes
 
-File-local definitions now bind before repository-wide uniqueness
-(`scanner/frontends/edges.py`, resolution step 3). Re-measured on this fixture:
+Resolution now applies one rule at three levels -- **the nearest binding scope
+wins** -- which is the visibility ordering that scope-graph name resolution
+prescribes (Neron/Tolmach/Visser/Wachsmuth 2015; GitHub's stack graphs).
+
+| Scope layer | Rule |
+|---|---|
+| Enclosing class | An unqualified call binds to a sibling member (C#/Java/C++ only) |
+| File | A bare call binds to a definition in its own file |
+| Module | An import binds to the *nearest* same-basename module, not "any" |
+| Repository | Fall back to a globally unique name |
+
+Ties at any level still return no edge, which preserves the extractor's
+never-fabricate property.
+
+Counted by enumerating callee edges per language, not inferred from edge totals:
 
 | | At freezing | After fix |
 |---|---:|---:|
-| Symbol-pass call edges | 157 | **171** (+14) |
-| Inbound edges to any `helper::Middle` | 0 | **0** (all 7 languages) |
+| Call edges recovered | 34/63 | **52/63** |
+| ... excluding deliberate self-recursion | 34/56 | **52/56** |
+| Inbound edges to any `helper::Middle` | 0/7 | **0/7** |
 
-Recall moves 34/63 -> 48/63 as predicted; precision is unchanged at 7/7. Gates 1
-and 2 below now pass. Gate 4 (self-recursion) still fails **by construction**:
-`tgt_id == src_id` is an explicit guard in the resolver, not an oversight, so
-edge 7 requires a deliberate decision about self-loops rather than a fix.
+Per language (of 9): C# 8, Java 8, Python 8, JavaScript 7, TypeScript 7, Go 7,
+Rust 7. The four non-recursion misses are all `Root -> Engine.Run`, a member
+call on an instance in Go/Rust/JS/TS, which needs receiver type inference rather
+than scope resolution -- and the scan telemetry predicts them exactly
+(`member_calls=9/2/2/0`).
+
+Gate 1 verified on real Flask: adding a duplicate `helpers.py` moved inbound
+call edges 151 -> 152. The same measurement on the previous commit gave
+151 -> 140, independently reproducing the reported -11.
+
+Gate 4 (self-recursion) still fails **by construction**: `tgt_id == src_id` is
+an explicit guard in the resolver, not an oversight, so edge 7 requires a
+deliberate decision about self-loops rather than a fix.
 
 ## Minimal repros
 

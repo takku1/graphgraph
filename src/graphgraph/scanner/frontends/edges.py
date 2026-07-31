@@ -545,6 +545,7 @@ def _add_tree_sitter_calls(
                 nodes,
                 src_lang,
                 reexports,
+                source.rel,
             )
             if target:
                 local_resolutions[name] = target
@@ -563,6 +564,19 @@ def _add_tree_sitter_calls(
             if local_id in nodes:
                 local_resolutions[local_def.name] = local_id
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
+        # Enclosing-class scope. In C#, Java and C++ an unqualified call reaches
+        # a sibling member of the same class, so the class is a real binding
+        # scope sitting between the file and the repository. Python, JS/TS and
+        # Rust require an explicit receiver (`self.`, `this.`, `Self::`), so
+        # adding them here would invent calls the language cannot express.
+        same_class_methods: dict[str, dict[str, str]] = {}
+        if suffix in {".cs", ".java"} or suffix in _CPP_SUFFIXES:
+            for method_def in defs:
+                if method_def.kind != "method" or not method_def.owner:
+                    continue
+                method_id = _definition_node_id(source, method_def)
+                if method_id in nodes:
+                    same_class_methods.setdefault(method_def.owner, {})[method_def.name] = method_id
         # One encode per file. This was previously re-run for every callable in
         # the file, re-encoding the whole source once per definition.
         text_bytes = source.text.encode("utf-8", errors="replace")
@@ -791,6 +805,12 @@ def _add_tree_sitter_calls(
                     continue
                 tgt_id = (
                     _resolve_path_qualified_target(call, name_to_symbols, nodes) if call.qualifier else None
+                ) or (
+                    # Nearest scope first: the caller's own class, then the
+                    # file, then the repository-wide unique name.
+                    same_class_methods.get(d.owner, {}).get(call.name)
+                    if not call.qualifier and d.owner
+                    else None
                 ) or local_resolutions.get(call.name)
                 if not tgt_id or tgt_id == src_id:
                     continue
@@ -881,7 +901,7 @@ def _add_imports_from(
         for name in imported_names:
             targets = name_to_symbols.get(name, [])
             stem = imported_sources.get(name)
-            target = _select_import_target(name, targets, stem, nodes, src_lang, {})
+            target = _select_import_target(name, targets, stem, nodes, src_lang, {}, source.rel)
 
             if target and not target.startswith(source.file_node_id + "__"):
                 edges.append(
@@ -899,7 +919,7 @@ def _add_imports_from(
 
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
     for source, name, targets, stem, src_lang in unresolved:
-        target = _select_import_target(name, targets, stem, nodes, src_lang, reexports)
+        target = _select_import_target(name, targets, stem, nodes, src_lang, reexports, source.rel)
         if target and not target.startswith(source.file_node_id + "__"):
             edges.append(
                 Edge(
