@@ -14,7 +14,7 @@ from ..io import (
     save_validated_graph,
     validate_graph_file,
 )
-from ..packets.validation import ValidationResult
+from ..packets.validation import ValidationResult, validate_graph_object
 from ..retrieval.git_utils import (
     get_git_ignored_paths,
     get_git_worktree_paths,
@@ -285,11 +285,18 @@ def update_paths_validated_graph(
         # The scanner returns the supplied graph object itself only when its
         # manifest-backed path partition proves the request is an exact no-op.
         if graph is previous_graph:
+            validation = validate_graph_object(graph, format_name="graph.gg")
+            if not validation.ok:
+                raise ValueError(
+                    "Existing graph failed validation during no-op refresh: "
+                    + "; ".join(validation.errors[:5])
+                )
             return GraphBuildStatus(
                 output_path,
                 graph,
                 built=False,
                 repaired=False,
+                validation=validation,
                 changed_paths=(),
                 deleted_paths=(),
             )

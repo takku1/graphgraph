@@ -125,6 +125,8 @@ class IncrementalScannerTest(unittest.TestCase):
             )
 
             self.assertFalse(status.built)
+            self.assertIsNotNone(status.validation)
+            self.assertTrue(status.validation.ok)
             self.assertEqual(status.changed_paths, ())
             self.assertEqual(status.deleted_paths, ())
             self.assertEqual(status.graph.nodes, baseline.graph.nodes)

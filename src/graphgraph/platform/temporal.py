@@ -96,6 +96,19 @@ class TemporalStore:
 
 def graph_as_of(graph: Graph, timestamp: str) -> Graph:
     """Return the graph state valid at an ISO-8601 timestamp."""
+    history_valid_from = str(graph.metadata.get("history_valid_from", ""))
+    if history_valid_from and not _at_or_before(history_valid_from, timestamp):
+        metadata = dict(graph.metadata)
+        metadata.update(
+            {
+                "as_of": timestamp,
+                "temporal_status": "before_recorded_history",
+                "temporal_reason": (
+                    f"requested time precedes repository history start {history_valid_from}"
+                ),
+            }
+        )
+        return Graph(nodes={}, edges=[], metadata=metadata)
     nodes = {
         node_id: replace(node, active=True)
         for node_id, node in graph.nodes.items()
@@ -112,6 +125,15 @@ def graph_as_of(graph: Graph, timestamp: str) -> Graph:
     ]
     metadata = dict(graph.metadata)
     metadata["as_of"] = timestamp
+    has_unbounded_state = any(not node.created_at for node in graph.nodes.values()) or any(
+        not edge.valid_from for edge in graph.edges
+    )
+    metadata["temporal_status"] = "partial_current_snapshot" if has_unbounded_state else "bounded"
+    if has_unbounded_state:
+        metadata["temporal_reason"] = (
+            "some graph elements have no validity window; this view is bounded at repository creation "
+            "but is not a reconstructed historical source snapshot"
+        )
     return Graph(nodes=nodes, edges=edges, metadata=metadata)
 
 

@@ -255,7 +255,14 @@ def cmd_platform(args: argparse.Namespace) -> None:
     if action == "federate":
         graph = ProjectRegistry(Path(args.registry)).build(names=tuple(args.project))
         validation = save_validated_graph(graph, Path(args.output))
-        print(json.dumps({"output": args.output, "nodes": len(graph.nodes), "edges": len(graph.edges), "valid": validation.ok}, indent=2))
+        print(json.dumps({
+            "output": args.output,
+            "status": graph.metadata.get("temporal_status", "unknown"),
+            "reason": graph.metadata.get("temporal_reason", ""),
+            "nodes": len(graph.nodes),
+            "edges": len(graph.edges),
+            "valid": validation.ok,
+        }, indent=2))
         return
     if action == "semantic":
         index_path = Path(args.index)

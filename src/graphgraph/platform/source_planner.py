@@ -71,6 +71,12 @@ class QuerySourcePlanner:
             return self.graph_path.parent
         return self.directory
 
+    def _state_path(self, name: str) -> Path:
+        """Resolve graph-local state first, with a project-root legacy fallback."""
+        current = self._sidecar_dir() / name
+        legacy = self.directory / name
+        return current if current.exists() or current == legacy else legacy
+
     def plan(
         self,
         graph: Graph,
@@ -125,25 +131,15 @@ class QuerySourcePlanner:
                 receipt=SourcePlannerReceipt(mode, lexical_strength),
                 preferred_paths=preferred_paths,
             )
-        if (
+        exact_fast_path = (
             mode == "auto"
             and len(base_matches) == 1
             and "exact_fast_path" in base_matches[0].reasons
-        ):
-            return SourcePlan(
-                graph,
-                receipt=SourcePlannerReceipt(
-                    mode="exact_fast_path",
-                    lexical_strength=lexical_strength,
-                    exact_fast_path=True,
-                    sources=("exact_lexical",),
-                ),
-                preferred_paths=preferred_paths,
-            )
+        )
 
         current = graph
         seeds: list[str] = []
-        sources: list[str] = []
+        sources: list[str] = ["exact_lexical"] if exact_fast_path else []
         warnings: list[str] = []
         semantic_count = 0
         semantic_rebuilt = False
@@ -153,7 +149,7 @@ class QuerySourcePlanner:
         federated_projects = 0
         federated_nodes = 0
         trace_edges = 0
-        weak_lexical = _weak_lexical(base_matches, query)
+        weak_lexical = False if exact_fast_path else _weak_lexical(base_matches, query)
 
         semantic_path = self._sidecar_dir() / "semantic.json"
         if mode == "all" or weak_lexical:
@@ -196,7 +192,7 @@ class QuerySourcePlanner:
                 semantic_index_state = "error"
                 warnings.append(f"semantic:{type(exc).__name__}")
 
-        memory_path = self.directory / "memory.json"
+        memory_path = self._state_path("memory.json")
         if memory_path.exists():
             try:
                 memories = MemoryStore(memory_path).search(
@@ -212,7 +208,7 @@ class QuerySourcePlanner:
             except (OSError, ValueError, KeyError) as exc:
                 warnings.append(f"memory:{type(exc).__name__}")
 
-        episode_path = self.directory / "episodes.jsonl"
+        episode_path = self._state_path("episodes.jsonl")
         if episode_path.exists():
             try:
                 episodes = _search_episodes(
@@ -229,7 +225,7 @@ class QuerySourcePlanner:
                 warnings.append(f"temporal:{type(exc).__name__}")
 
         query_terms = set(_tokens(query))
-        registry_path = self.directory / "projects.json"
+        registry_path = self._state_path("projects.json")
         if registry_path.exists() and (mode == "all" or weak_lexical or query_terms & _FEDERATION_TERMS):
             try:
                 current, foreign_ids, project_count = _project_federation(
@@ -262,8 +258,9 @@ class QuerySourcePlanner:
 
         unique_seeds = tuple(dict.fromkeys(node_id for node_id in seeds if node_id in current.nodes))[:12]
         receipt = SourcePlannerReceipt(
-            mode=mode,
+            mode="exact_fast_path" if exact_fast_path else mode,
             lexical_strength=round(lexical_strength, 4),
+            exact_fast_path=exact_fast_path,
             semantic_seeds=semantic_count,
             semantic_rebuilt=semantic_rebuilt,
             semantic_index_state=semantic_index_state,
@@ -286,15 +283,13 @@ class QuerySourcePlanner:
 
 def source_state_signature(directory: Path, *, graph_dir: Path | None = None) -> str:
     digest = hashlib.sha256()
-    # semantic.json now lives next to the graph (see _sidecar_dir); fall back
-    # to the project root for repos whose index predates the move.
-    semantic_dir = graph_dir if graph_dir is not None else directory
+    # Platform state lives next to the graph (normally `.graphgraph/`). Keep
+    # project-root paths in the signature for stores created before that
+    # contract was unified.
+    state_dir = graph_dir if graph_dir is not None else directory
     paths = [
-        semantic_dir / "semantic.json",
-        directory / "semantic.json",
-        directory / "memory.json",
-        directory / "episodes.jsonl",
-        directory / "projects.json",
+        *(state_dir / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
+        *(directory / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
         *[directory / name for name in ("runtime-trace.jsonl", "traces.jsonl", "trace.jsonl")],
     ]
     seen: set[Path] = set()
@@ -303,7 +298,8 @@ def source_state_signature(directory: Path, *, graph_dir: Path | None = None) ->
         if path.exists():
             stat = path.stat()
             digest.update(f"{path.name}\0{stat.st_mtime_ns}\0{stat.st_size}\n".encode("utf-8"))
-    registry_path = directory / "projects.json"
+    graph_local_registry = state_dir / "projects.json"
+    registry_path = graph_local_registry if graph_local_registry.exists() else directory / "projects.json"
     if registry_path.exists():
         try:
             for entry in ProjectRegistry(registry_path).list():

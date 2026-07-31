@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from ..graph.core import Edge, Node
@@ -39,6 +40,30 @@ class CommitRecord:
 
 def _is_bugfix_commit(subject: str) -> bool:
     return bool(BUGFIX_COMMIT_RE.search(subject)) and not MAINTENANCE_COMMIT_RE.search(subject)
+
+
+def repository_history_start(root: Path) -> str:
+    """Return the earliest root-commit timestamp, or ``""`` when unavailable."""
+    if not (root / ".git").exists():
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "log", "--max-parents=0", "--format=%cI"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    timestamps = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    try:
+        return min(timestamps, key=datetime.fromisoformat) if timestamps else ""
+    except ValueError:
+        return ""
 
 
 def _parse_commit_log_output(raw: str) -> list[CommitRecord]:

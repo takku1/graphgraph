@@ -1075,6 +1075,102 @@ class FrontendsScannerTest(unittest.TestCase):
             }
             self.assertNotIn(("examine", "count"), calls, f"found Rust->C cross-language call edge: {calls}")
 
+    def test_tree_sitter_resolves_same_named_direct_calls_per_language(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        cases = {
+            "python/flow.py": (
+                "def leaf(): return 1\n"
+                "def middle(): return leaf()\n"
+                "def root(): return middle()\n"
+            ),
+            "python/test_flow.py": (
+                "from flow import root\n"
+                "def test_root(): assert root() == 1\n"
+            ),
+            "javascript/flow.js": (
+                "function leaf() { return 1; }\n"
+                "function middle() { return leaf(); }\n"
+                "function root() { return middle(); }\n"
+            ),
+            "javascript/flow.test.js": (
+                "const { root } = require('./flow');\n"
+                "function testRoot() { return root() === 1; }\n"
+            ),
+            "rust/flow.rs": (
+                "fn leaf() -> i32 { 1 }\n"
+                "fn middle() -> i32 { leaf() }\n"
+                "fn root() -> i32 { middle() }\n"
+                "#[cfg(test)] mod tests {\n"
+                "  use super::*;\n"
+                "  #[test] fn test_root() { assert_eq!(root(), 1); }\n"
+                "}\n"
+            ),
+            "go/flow.go": (
+                "package flow\n"
+                "func Leaf() int { return 1 }\n"
+                "func Middle() int { return Leaf() }\n"
+                "func Root() int { return Middle() }\n"
+            ),
+            "go/flow_test.go": (
+                "package flow\n"
+                "import \"testing\"\n"
+                "func TestRoot(t *testing.T) {\n"
+                "  if Root() != 1 { t.Fatal(\"unexpected result\") }\n"
+                "}\n"
+            ),
+            "csharp/Flow.cs": (
+                "class Flow {\n"
+                "  public static int Leaf() => 1;\n"
+                "  public static int Middle() => Leaf();\n"
+                "  public static int Root() => Middle();\n"
+                "}\n"
+                "class FlowTests {\n"
+                "  public int TestRoot() => Flow.Root();\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = []
+            for rel, source_text in cases.items():
+                path = Path(tmp) / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(source_text, encoding="utf-8")
+                sources.append(
+                    SourceFile(
+                        path,
+                        rel,
+                        rel.replace("/", "_").replace(".", "_"),
+                        source_text,
+                    )
+                )
+            result = select_extractor("tree_sitter").extract_symbols(
+                sources,
+                max_total_symbols=100,
+            )
+
+        calls_by_language: dict[str, set[tuple[str, str]]] = {}
+        for edge in result.edges:
+            if edge.type != "calls":
+                continue
+            source = result.nodes.get(edge.source)
+            target = result.nodes.get(edge.target)
+            if source is None or target is None:
+                continue
+            language = source.path.split("/", 1)[0]
+            if target.path.startswith(f"{language}/"):
+                calls_by_language.setdefault(language, set()).add(
+                    (
+                        source.label.casefold().replace("_", ""),
+                        target.label.casefold().replace("_", ""),
+                    )
+                )
+
+        for language in ("python", "javascript", "rust", "go", "csharp"):
+            self.assertIn(("middle", "leaf"), calls_by_language.get(language, set()))
+            self.assertIn(("root", "middle"), calls_by_language.get(language, set()))
+            self.assertIn(("testroot", "root"), calls_by_language.get(language, set()))
+
     def test_tree_sitter_resolves_calls_through_python_package_reexports(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")

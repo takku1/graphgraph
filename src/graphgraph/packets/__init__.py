@@ -28,10 +28,12 @@ from .validation import (
     validate_gg_max,
     validate_graph_json,
     validate_graph_object,
+    validate_hybrid,
     validate_lowlevel,
     validate_packet,
     validate_semantic_arrow,
     validate_sql,
+    validate_svo,
 )
 
 __all__ = [
@@ -61,8 +63,10 @@ __all__ = [
     "validate_gg_max",
     "validate_graph_json",
     "validate_graph_object",
+    "validate_hybrid",
     "validate_lowlevel",
     "validate_packet",
     "validate_semantic_arrow",
     "validate_sql",
+    "validate_svo",
 ]

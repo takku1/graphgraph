@@ -68,6 +68,33 @@ _TS_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", 
 _CPP_SUFFIXES = frozenset({".cpp", ".cxx", ".cc", ".h", ".hh", ".hpp"})
 
 
+def _unique_callables_for_language(
+    name_to_symbols: Mapping[str, list[str]],
+    nodes: Mapping[str, Node],
+    language: str | None,
+) -> dict[str, str]:
+    """Return names with one callable candidate in the source language.
+
+    Symbol labels are not globally unique across a polyglot repository. A
+    Python ``middle`` must not make a same-named Rust or JavaScript function
+    ambiguous; cross-language call edges are already forbidden. Partitioning
+    the candidate relation by the same language-family invariant preserves
+    soundness while recovering direct calls in every stratum.
+    """
+    result: dict[str, str] = {}
+    for name, ids in name_to_symbols.items():
+        compatible = [
+            node_id
+            for node_id in ids
+            if (node := nodes.get(node_id)) is not None
+            and node.kind in {"function", "method"}
+            and _lang_family(node.path) == language
+        ]
+        if len(compatible) == 1:
+            result[name] = compatible[0]
+    return result
+
+
 def _callable_receiver_owner(source: SourceFile, definition: _TsDef) -> str:
     """Owner key used only for member-call matching.
 
@@ -219,16 +246,16 @@ def _add_tree_sitter_callback_references(
     is genuinely misleading for codebases that lean on function-pointer
     dispatch (common in C, and callback-heavy JS).
     """
-    unique_callables = {
-        name: ids[0]
-        for name, ids in name_to_symbols.items()
-        if len(ids) == 1 and nodes[ids[0]].kind in {"function", "method"}
-    }
-    if not unique_callables:
-        return
+    unique_by_language: dict[str | None, dict[str, str]] = {}
 
     for source, defs, root in defs_by_file:
         src_lang = _lang_family(source.rel)
+        unique_callables = unique_by_language.setdefault(
+            src_lang,
+            _unique_callables_for_language(name_to_symbols, nodes, src_lang),
+        )
+        if not unique_callables:
+            continue
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
         for d in callable_defs:
             src_id = _definition_node_id(source, d)
@@ -408,12 +435,8 @@ def _add_tree_sitter_calls(
     *,
     python_project_facts: PythonProjectTypeFacts | None = None,
 ) -> _MemberCallStats:
-    # 1. Identify globally unique callables
-    unique_callables = {
-        name: ids[0]
-        for name, ids in name_to_symbols.items()
-        if len(ids) == 1 and nodes[ids[0]].kind in {"function", "method"}
-    }
+    # 1. Identify callables unique within each compatible language stratum.
+    unique_by_language: dict[str | None, dict[str, str]] = {}
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
 
     # Class name -> declared base names, so a call on a typed receiver can find
@@ -483,6 +506,10 @@ def _add_tree_sitter_calls(
         # resolvable.
         import_bound_names = whole_module_binding_names(suffix, source.text)
         src_lang = _lang_family(source.rel)
+        unique_callables = unique_by_language.setdefault(
+            src_lang,
+            _unique_callables_for_language(name_to_symbols, nodes, src_lang),
+        )
         python_initial_facts: dict[str, TypeFact] = {}
         python_call_return_facts: dict[str, TypeFact] = {}
         if suffix == ".py":

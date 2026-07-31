@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -38,6 +39,46 @@ _OVERLOAD_DEF_KINDS = frozenset(
         "type",
     }
 )
+
+
+def _named_project_coverage(graph: Graph, query: str, nodes: set[str]) -> dict[str, object] | None:
+    """Measure evidence coverage for repositories explicitly named in a query."""
+    project_names = {
+        node.scope or node.label
+        for node in graph.nodes.values()
+        if node.active and node.kind == "project" and (node.scope or node.label)
+    }
+    project_names.update(
+        name.strip()
+        for name in str(graph.metadata.get("projects", "")).split(",")
+        if name.strip()
+    )
+    if len(project_names) < 2:
+        return None
+    named = sorted(
+        name
+        for name in project_names
+        if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", query, flags=re.I)
+    )
+    if not named:
+        return None
+    represented = sorted(
+        name
+        for name in named
+        if any(
+            node_id in graph.nodes
+            and graph.nodes[node_id].kind != "project"
+            and graph.nodes[node_id].scope.casefold() == name.casefold()
+            for node_id in nodes
+        )
+    )
+    missing = [name for name in named if name not in represented]
+    return {
+        "required": named,
+        "represented": represented,
+        "missing": missing,
+        "coverage_ratio": round(len(represented) / len(named), 4),
+    }
 
 
 def _exact_overload_disambiguation(
@@ -1052,6 +1093,61 @@ def retrieve_context(
                     f"required structural obligations are unresolved: {closure['proven']}/{closure['required']} proven"
                 ),
                 "confidence": closure_confidence,
+            }
+    relationship_obligation = obligations.relationship_obligation_coverage(
+        query_class,
+        starts,
+        edges,
+        plan_terms(query),
+        query,
+    )
+    if relationship_obligation is not None:
+        metadata["relationship_obligation"] = relationship_obligation
+        if (
+            relationship_obligation["status"] != "proven"
+            and metadata["answerability"].get("status") == "answerable"
+        ):
+            current_confidence = float(metadata["answerability"].get("confidence", 0.49))
+            metadata["answerability"] = {
+                "status": "incomplete",
+                "abstained": True,
+                "reason": (
+                    "the query requires "
+                    f"{relationship_obligation['family']} evidence, but the selected packet "
+                    "contains zero matching relationship edges"
+                ),
+                "confidence": round(min(current_confidence, 0.49), 4),
+            }
+    if query_class == "recent_changes":
+        commit_nodes = sorted(node_id for node_id in nodes if graph.nodes[node_id].kind == "commit")
+        change_edges = [edge for edge in edges if edge.active and edge.type in {"fixes", "changes"}]
+        has_change_evidence = bool(commit_nodes or change_edges)
+        metadata["change_evidence"] = {
+            "required": True,
+            "proven": has_change_evidence,
+            "commit_nodes": commit_nodes,
+            "change_edges": len(change_edges),
+        }
+        if not has_change_evidence:
+            metadata["answerability"] = {
+                "status": "incomplete",
+                "abstained": True,
+                "reason": "recent-change queries require commit or change-edge evidence; none was retrieved",
+                "confidence": 0.15,
+            }
+    project_coverage = _named_project_coverage(graph, query, nodes)
+    if project_coverage is not None:
+        metadata["project_coverage"] = project_coverage
+        if project_coverage["missing"]:
+            current_confidence = float(metadata["answerability"].get("confidence", 0.49))
+            metadata["answerability"] = {
+                "status": "incomplete",
+                "abstained": True,
+                "reason": (
+                    "named repositories lack selected evidence: "
+                    + ", ".join(str(name) for name in project_coverage["missing"])
+                ),
+                "confidence": round(min(current_confidence, 0.49), 4),
             }
     _document_status_answerability(
         metadata,

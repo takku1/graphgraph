@@ -254,10 +254,16 @@ def cmd_update(args: argparse.Namespace) -> None:
     graph = status.graph
     validation = status.validation
     assert validation is not None
-    print(
-        f"Updated {len(args.files)} file(s), graph now {len(graph.nodes)} nodes, "
-        f"{len(graph.edges)} edges  ->  {output_path}"
-    )
+    if status.built:
+        print(
+            f"Updated {len(status.changed_paths)} file(s), graph now {len(graph.nodes)} nodes, "
+            f"{len(graph.edges)} edges  ->  {output_path}"
+        )
+    else:
+        print(
+            f"No changes detected in {len(args.files)} file(s); graph unchanged at "
+            f"{len(graph.nodes)} nodes, {len(graph.edges)} edges  ->  {output_path}"
+        )
     print(
         f"  Structural validation: PASS {validation.format} "
         f"nodes={validation.node_count} edges={validation.edge_count}"

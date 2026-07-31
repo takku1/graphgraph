@@ -675,6 +675,14 @@ def _resolve_member_call(
         and nodes[node_id].kind == "method"
         and _lang_family(nodes[node_id].path) == _lang_family(source.rel)
     ]
+    if not receiver_type and _identifier(call.receiver) and call.receiver[:1].isupper():
+        # Static/qualified calls such as C# ``Flow.Root()`` carry their type
+        # directly in the receiver.  Accept that evidence only when this graph
+        # actually owns the named method on that owner; capitalization alone is
+        # too weak to turn an arbitrary variable into a type.
+        candidate_owners = {_method_owner(node_id, nodes) for node_id in all_candidates}
+        if call.receiver in candidate_owners:
+            receiver_type = call.receiver
     if not receiver_type:
         # A matching method name is not receiver evidence.  Keeping this as
         # telemetry instead of materializing name-only candidate edges avoids

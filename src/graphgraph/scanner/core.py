@@ -32,7 +32,7 @@ from .frontends.persistent_facts import (
     PythonProjectTypeFacts,
     python_file_type_snapshot,
 )
-from .history import extract_commit_history
+from .history import extract_commit_history, repository_history_start
 from .imports import add_file_edges
 from .rust_references import filter_rust_reference_edges
 
@@ -1390,6 +1390,10 @@ def _build_graph_from_split(
     if history:
         _emit_progress(progress, "history", f"max_commits={max_history_commits}")
         history_nodes, history_edges = extract_commit_history(root, file_map, max_commits=max_history_commits)
+        history_valid_from = repository_history_start(root)
+        if history_valid_from:
+            metadata["history_valid_from"] = history_valid_from
+            metadata["temporal_coverage"] = "current_snapshot_bounded_by_repository_creation"
         if history_nodes or history_edges:
             nodes.update(history_nodes)
             _merge_new_edges(edges, history_edges)

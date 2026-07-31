@@ -218,6 +218,11 @@ class HistoryScannerTest(unittest.TestCase):
 
             graph = scan_directory(root, depth="files", history=True)
 
+            self.assertTrue(graph.metadata["history_valid_from"])
+            self.assertEqual(
+                graph.metadata["temporal_coverage"],
+                "current_snapshot_bounded_by_repository_creation",
+            )
             commit_nodes = {n.id: n for n in graph.nodes.values() if n.kind == "commit"}
             self.assertEqual(len(commit_nodes), 1, commit_nodes)
             commit_node = next(iter(commit_nodes.values()))

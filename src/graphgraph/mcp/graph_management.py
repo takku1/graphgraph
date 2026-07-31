@@ -296,8 +296,10 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
     validation = status.validation
     assert validation is not None
     result = {
-        "action": "updated",
+        "action": "updated" if status.built else "unchanged",
         "paths": paths,
+        "updated_paths": list(status.changed_paths),
+        "write_performed": status.built,
         "output": str(output_path),
         "nodes": len(graph.nodes),
         "edges": len(graph.edges),

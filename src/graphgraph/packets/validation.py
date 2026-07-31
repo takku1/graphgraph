@@ -45,10 +45,14 @@ def _split_on_marker_line(text: str, marker: str) -> tuple[str, str]:
 
 def validate_packet(packet: str) -> ValidationResult:
     text = packet.strip()
-    if text.startswith("<g>"):
-        return _require_nonempty_nodes(validate_lowlevel(text))
-    if text.startswith("TABLE nodes:"):
-        return _require_nonempty_nodes(validate_sql(text))
+    if text.startswith("#svo") or _has_marker_line(text, "#svo"):
+        return _require_nonempty_nodes(validate_svo(_from_marker_line(text, "#svo")))
+    if text.startswith("# Context Packet") or _has_marker_line(text, "# Context Packet"):
+        return _require_nonempty_nodes(validate_hybrid(_from_marker_line(text, "# Context Packet")))
+    if text.startswith("<g>") or _has_marker_line(text, "<g>"):
+        return _require_nonempty_nodes(validate_lowlevel(_from_marker_line(text, "<g>")))
+    if text.startswith("TABLE nodes:") or re.search(r"^TABLE nodes:", text, re.MULTILINE):
+        return _require_nonempty_nodes(validate_sql(_from_line_prefix(text, "TABLE nodes:")))
     if text.startswith("[r]") or _has_marker_line(text, "[r]"):
         return _require_nonempty_nodes(validate_gg_max(text))
     if text.startswith("@nodes") or "@nodes" in text:
@@ -76,6 +80,100 @@ def _from_marker_line(text: str, marker: str) -> str:
     # separator before a marker in wrapped CLI output. Reconstruct from the
     # marker itself to guarantee the delegated validator sees it on line one.
     return marker + text[match.end():] if match is not None else text
+
+
+def _from_line_prefix(text: str, prefix: str) -> str:
+    match = re.search(rf"^{re.escape(prefix)}", text, re.MULTILINE)
+    return text[match.start():] if match is not None else text
+
+
+def validate_hybrid(packet: str) -> ValidationResult:
+    errors: list[str] = []
+    nodes: set[str] = set()
+    edges: list[tuple[str, str, str]] = []
+    section = ""
+    for raw_line in packet.splitlines():
+        line = raw_line.strip()
+        if line == "Nodes:":
+            section = "nodes"
+            continue
+        if line == "Edges:":
+            section = "edges"
+            continue
+        if not line or line == "# Context Packet":
+            continue
+        if section == "nodes" and raw_line.startswith("- "):
+            match = re.match(r"^-\s+(\S+)\s+", raw_line)
+            if match:
+                nodes.add(match.group(1))
+            else:
+                errors.append(f"bad node row: {line}")
+        elif section == "edges" and raw_line.startswith("- "):
+            match = re.match(r"^-\s+(\S+)\s+-([^\s]+)->\s+(\S+)(?:\s+\(([^)]+)\))?$", raw_line)
+            if not match:
+                errors.append(f"bad edge row: {line}")
+                continue
+            source, relation, target, weight = match.groups()
+            if source not in nodes:
+                errors.append(f"edge source missing from nodes: {source}")
+            if target not in nodes:
+                errors.append(f"edge target missing from nodes: {target}")
+            if weight is not None:
+                try:
+                    float(weight)
+                except ValueError:
+                    errors.append(f"bad edge weight: {weight}")
+            edges.append((source, target, relation))
+    if not nodes:
+        errors.append("no node rows")
+    return ValidationResult(not errors, "hybrid", len(nodes), len(edges), tuple(errors))
+
+
+def validate_svo(packet: str) -> ValidationResult:
+    errors: list[str] = []
+    labels: set[str] = set()
+    node_count = 0
+    edge_count = 0
+    section = ""
+    for raw_line in packet.splitlines():
+        line = raw_line.strip()
+        if line == "@entities":
+            section = "entities"
+            continue
+        if line == "@triples":
+            section = "triples"
+            continue
+        if not line or line == "#svo":
+            continue
+        if section == "entities":
+            if ":" not in line:
+                errors.append(f"bad entity row: {line}")
+                continue
+            _node_id, label = line.split(":", 1)
+            if not _node_id.strip() or not label.strip():
+                errors.append(f"bad entity row: {line}")
+                continue
+            labels.add(label.strip())
+            node_count += 1
+        elif section == "triples":
+            match = re.match(r"^(.*?)\s+-([^\s]+)->\s+(.*?)(?:\s+\(([^)]+)\))?$", line)
+            if not match:
+                errors.append(f"bad triple row: {line}")
+                continue
+            source, _relation, target, weight = match.groups()
+            if source.strip() not in labels:
+                errors.append(f"triple source missing from entities: {source.strip()}")
+            if target.strip() not in labels:
+                errors.append(f"triple target missing from entities: {target.strip()}")
+            if weight is not None:
+                try:
+                    float(weight)
+                except ValueError:
+                    errors.append(f"bad triple weight: {weight}")
+            edge_count += 1
+    if not node_count:
+        errors.append("no entity rows")
+    return ValidationResult(not errors, "svo", node_count, edge_count, tuple(errors))
 
 
 def validate_graph_json(graph_json: str) -> ValidationResult:

@@ -346,6 +346,40 @@ class PlatformTest(unittest.TestCase):
             )
             self.assertTrue(payload["packet"].startswith("#gg"))
 
+    def test_exact_query_projects_graph_local_memory_automatically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_dir = root / ".graphgraph"
+            graph_dir.mkdir()
+            graph_path = graph_dir / "graph.json"
+            graph = Graph(
+                nodes={"run": Node("run", "run", "function", "src/app.py")},
+                edges=[],
+                metadata={"source_root": str(root)},
+            )
+            save_graph(graph, graph_path)
+            MemoryStore(graph_dir / "memory.json").remember(
+                "The run deployment requires the blue-green rollback decision.",
+                scope="project",
+                related_nodes=("run",),
+            )
+
+            payload = json.loads(
+                render_query_context(
+                    query="run",
+                    graph_path=graph_path,
+                    show_anchors=True,
+                    json_anchors=True,
+                    source_mode="auto",
+                )
+            )
+
+            sources = payload["retrieval"]["sources"]
+            self.assertTrue(sources["exact_fast_path"])
+            self.assertEqual(sources["memories"], 1)
+            self.assertIn("memory", sources["sources"])
+            self.assertIn("blue-green rollback", payload["packet"])
+
     def test_persisted_evidence_is_incremental_and_versioned(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -600,6 +634,43 @@ class PlatformTest(unittest.TestCase):
             projected = store.project(platform_graph())
             self.assertFalse(projected.nodes["episode:one"].active)
             self.assertIn(("episode:two", "episode:one", "supersedes"), {(e.source, e.target, e.type) for e in projected.edges})
+
+    def test_as_of_before_repository_history_is_empty_and_explicit(self) -> None:
+        graph = platform_graph()
+        graph.metadata["history_valid_from"] = "2025-01-01T12:17:18+00:00"
+
+        before = graph_as_of(graph, "2025-01-01T12:17:00+00:00")
+        after = graph_as_of(graph, "2025-01-01T12:18:00+00:00")
+
+        self.assertEqual(before.nodes, {})
+        self.assertEqual(before.edges, [])
+        self.assertEqual(before.metadata["temporal_status"], "before_recorded_history")
+        self.assertEqual(len(after.nodes), len(graph.nodes))
+        self.assertEqual(after.metadata["temporal_status"], "partial_current_snapshot")
+
+    def test_recent_changes_without_change_evidence_abstains(self) -> None:
+        graph = Graph(
+            nodes={
+                "README": Node(
+                    "README",
+                    "Change history",
+                    "section",
+                    "README.md",
+                    summary="Recent changes and project history",
+                )
+            },
+            edges=[],
+        )
+
+        result = GraphRuntime(graph).compile(
+            GraphProgram("What changed recently?", query_class="recent_changes")
+        )
+
+        self.assertFalse(result.retrieval.metadata["change_evidence"]["proven"])
+        answerability = result.retrieval.metadata["answerability"]
+        self.assertEqual(answerability["status"], "incomplete")
+        self.assertTrue(answerability["abstained"])
+        self.assertEqual(answerability["confidence"], 0.15)
 
     def test_memory_store_scopes_search_and_projection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

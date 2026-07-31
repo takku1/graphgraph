@@ -75,6 +75,139 @@ class ExactOverloadReceiptTest(unittest.TestCase):
         self.assertEqual(truncation.get("known_direct_neighbors"), 12)
         self.assertGreater(truncation.get("omitted_direct_neighbors", 0), 0)
 
+    def test_reverse_lookup_with_zero_call_edges_cannot_be_answerable(self) -> None:
+        # Lexical and containment evidence can locate the requested method but
+        # cannot answer a caller question.  This mirrors the C# gray-box case
+        # where the source had callers while extraction produced no call edge.
+        graph = Graph(
+            nodes={
+                "TYPE": Node("TYPE", "TelemetryHandler", "class", "src/TelemetryHandler.cs"),
+                "TARGET": Node(
+                    "TARGET",
+                    "InstallPackage",
+                    "method",
+                    "src/TelemetryHandler.cs",
+                    parent="TYPE",
+                ),
+                "SIBLING": Node(
+                    "SIBLING",
+                    "UninstallPackage",
+                    "method",
+                    "src/TelemetryHandler.cs",
+                    parent="TYPE",
+                ),
+                "TEST": Node(
+                    "TEST",
+                    "InstallPackageTest",
+                    "method",
+                    "tests/TelemetryHandlerTests.cs",
+                ),
+            },
+            edges=[
+                Edge("TYPE", "TARGET", "contains"),
+                Edge("TYPE", "SIBLING", "contains"),
+            ],
+            metadata={
+                "member_calls_global_resolved": "1",
+                "member_calls_global_unknown_receiver": "9",
+                "member_calls_global_ambiguous": "0",
+            },
+        )
+
+        result = retrieve_context(
+            graph,
+            "What calls TelemetryHandler::InstallPackage?",
+            "reverse_lookup",
+            hops=1,
+            max_nodes=10,
+        )
+
+        obligation = result.metadata["relationship_obligation"]
+        self.assertEqual(obligation["family"], "calls")
+        self.assertEqual(obligation["evidence_edges"], 0)
+        self.assertEqual(obligation["status"], "unresolved")
+        answerability = result.metadata["answerability"]
+        self.assertEqual(answerability["status"], "incomplete")
+        self.assertTrue(answerability["abstained"])
+        self.assertLessEqual(answerability["confidence"], 0.49)
+
+    def test_reverse_lookup_with_a_direct_call_edge_satisfies_relationship_obligation(self) -> None:
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "InstallPackage", "method", "src/TelemetryHandler.cs"),
+                "CALLER": Node("CALLER", "RunInstall", "method", "src/Runner.cs"),
+            },
+            edges=[Edge("CALLER", "TARGET", "calls", confidence=0.97, provenance="tree_sitter")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "What calls InstallPackage?",
+            "reverse_lookup",
+            hops=1,
+            max_nodes=10,
+        )
+
+        self.assertEqual(result.metadata["relationship_obligation"]["status"], "proven")
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+
+    def test_named_federated_projects_gate_compound_answerability(self) -> None:
+        graph = Graph(
+            nodes={
+                "project:flask": Node("project:flask", "flask", "project", scope="flask"),
+                "project:fixture": Node("project:fixture", "fixture", "project", scope="fixture"),
+                "flask::root": Node(
+                    "flask::root",
+                    "dispatch_root",
+                    "function",
+                    "flask/src/app.py",
+                    summary="flask request dispatch implementation comparison",
+                    scope="flask",
+                    parent="project:flask",
+                ),
+                "fixture::root": Node(
+                    "fixture::root",
+                    "root",
+                    "function",
+                    "fixture/src/flow.py",
+                    summary="fixture flow implementation",
+                    scope="fixture",
+                    parent="project:fixture",
+                ),
+            },
+            edges=[
+                Edge("project:flask", "flask::root", "contains"),
+                Edge("project:fixture", "fixture::root", "contains"),
+            ],
+            metadata={"projects": "fixture,flask"},
+        )
+        query = "Compare the Flask dispatch implementation with the fixture root implementation."
+
+        partial = retrieve_context(
+            graph,
+            query,
+            "subsystem_summary",
+            hops=1,
+            anchor_limit=1,
+            max_nodes=2,
+            seed_ids=("flask::root",),
+        )
+        self.assertEqual(partial.metadata["project_coverage"]["missing"], ["fixture"])
+        self.assertEqual(partial.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(partial.metadata["answerability"]["abstained"])
+
+        covered = retrieve_context(
+            graph,
+            query,
+            "subsystem_summary",
+            hops=1,
+            anchor_limit=2,
+            max_nodes=4,
+            seed_ids=("flask::root", "fixture::root"),
+        )
+        self.assertEqual(covered.metadata["project_coverage"]["missing"], [])
+        self.assertEqual(set(covered.metadata["project_coverage"]["represented"]), {"flask", "fixture"})
+
 
 class DocumentTruncationPartialResultTest(unittest.TestCase):
     """T10: a requested document the scanner truncated is a partial result."""

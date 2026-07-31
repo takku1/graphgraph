@@ -522,7 +522,11 @@ N1,N2,1,0.9
     def test_render_svo_empty_edges(self) -> None:
         g = sample_graph()
         packet = render_svo(g, set(g.nodes.keys()), [])
-        self.assertEqual(packet, "")
+        self.assertTrue(packet.startswith("#svo\n@entities"))
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+        self.assertEqual(result.format, "svo")
+        self.assertEqual(result.edge_count, 0)
 
 
 class DeadFormatGuardTest(unittest.TestCase):
@@ -543,6 +547,9 @@ class DeadFormatGuardTest(unittest.TestCase):
             with self.subTest(format=fmt):
                 out = render_packet(graph, set(graph.nodes), list(graph.edges), fmt)
                 self.assertTrue(out and out.strip(), f"registered format {fmt!r} rendered empty")
+                validation = validate_packet(out)
+                self.assertTrue(validation.ok, f"registered format {fmt!r} failed validation: {validation.errors}")
+                self.assertEqual(validation.format, fmt)
 
 
 class PacketPriorityTest(unittest.TestCase):

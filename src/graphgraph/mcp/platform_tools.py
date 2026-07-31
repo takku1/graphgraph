@@ -180,6 +180,8 @@ def handle_platform_tool(name: str, args: dict[str, Any]) -> str:
         return compact_json(
             {
                 "as_of": str(args["timestamp"]),
+                "status": graph.metadata.get("temporal_status", "unknown"),
+                "reason": graph.metadata.get("temporal_reason", ""),
                 "nodes": len(graph.nodes),
                 "edges": len(graph.edges),
                 "active_nodes": sum(node.active for node in graph.nodes.values()),

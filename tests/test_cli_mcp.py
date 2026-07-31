@@ -1343,6 +1343,64 @@ class CliMcpTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     handler({"directory": tmp, "output_path": out, "paths": "a.py"})
 
+    def test_public_update_paths_report_an_unchanged_file_as_a_noop(self) -> None:
+        import subprocess
+
+        from graphgraph.mcp.server import handle_update_graph_files
+        from graphgraph.services.native import scan_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "worker.py"
+            source.write_text("def worker():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                depth="symbols",
+                docs=False,
+            )
+
+            mcp = json.loads(
+                handle_update_graph_files(
+                    {
+                        "directory": str(root),
+                        "output_path": str(graph_path),
+                        "paths": ["worker.py"],
+                        "depth": "symbols",
+                        "docs": False,
+                    }
+                )
+            )
+            cli = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "graphgraph",
+                    "update",
+                    "--directory",
+                    str(root),
+                    "--output",
+                    str(graph_path),
+                    "--files",
+                    "worker.py",
+                    "--depth",
+                    "symbols",
+                    "--no-docs",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(mcp["action"], "unchanged")
+        self.assertFalse(mcp["write_performed"])
+        self.assertEqual(mcp["updated_paths"], [])
+        self.assertTrue(mcp["validation"]["ok"])
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        self.assertIn("No changes detected", cli.stdout)
+
     def test_mcp_missing_required_arg_returns_actionable_error(self) -> None:
         # Eval BUG-2 + systemic gap (blackbox-eval-2026-07-18): omitting a
         # required MCP arg leaked a raw `-32000: 'query_class'` KeyError. The
