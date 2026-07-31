@@ -87,7 +87,7 @@ PLATFORM_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "graph_at_time",
-        "description": "Materialize an ISO-timestamped graph view using native validity windows and return its compact status.",
+        "description": "Materialize an ISO-timestamped graph only with complete validity windows; otherwise refuse explicitly.",
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -456,6 +456,28 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             ],
         )
 
+    def test_affected_tests_recognizes_csharp_test_owner_in_shared_source_file(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "Root", "method", "csharp/Flow.cs", parent="FLOW"),
+                "OWNER": Node("OWNER", "FlowTests", "class", "csharp/Flow.cs"),
+                "TEST": Node(
+                    "TEST",
+                    "TestRoot",
+                    "method",
+                    "csharp/Flow.cs",
+                    parent="csharp_Flow_cs__FlowTests",
+                ),
+            },
+            edges=[Edge("TEST", "TARGET", "calls", confidence=0.97, provenance="tree_sitter")],
+        )
+
+        affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET", "TEST"})
+
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+
     def test_reverse_lookup_reports_known_callers_omitted_by_node_budget(self) -> None:
         nodes = {
             "TARGET": Node("TARGET", "normalize_rust", "function", "src/normalize.rs"),

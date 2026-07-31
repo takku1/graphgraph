@@ -95,7 +95,14 @@ class TemporalStore:
 
 
 def graph_as_of(graph: Graph, timestamp: str) -> Graph:
-    """Return the graph state valid at an ISO-8601 timestamp."""
+    """Return a validity-bounded graph state, or refuse to invent history.
+
+    A normal source scan is a current snapshot: its code nodes and edges do not
+    carry complete validity windows. Filtering the few timestamped elements in
+    that snapshot and relabeling the remainder ``as_of`` produces a
+    timestamped present, not a historical graph. Historical materialization is
+    therefore allowed only when every source element is validity-bounded.
+    """
     history_valid_from = str(graph.metadata.get("history_valid_from", ""))
     if history_valid_from and not _at_or_before(history_valid_from, timestamp):
         metadata = dict(graph.metadata)
@@ -106,6 +113,23 @@ def graph_as_of(graph: Graph, timestamp: str) -> Graph:
                 "temporal_reason": (
                     f"requested time precedes repository history start {history_valid_from}"
                 ),
+            }
+        )
+        return Graph(nodes={}, edges=[], metadata=metadata)
+    unbounded_nodes = sum(not node.created_at for node in graph.nodes.values())
+    unbounded_edges = sum(not edge.valid_from for edge in graph.edges)
+    if unbounded_nodes or unbounded_edges:
+        metadata = dict(graph.metadata)
+        metadata.update(
+            {
+                "as_of": timestamp,
+                "temporal_status": "historical_reconstruction_unavailable",
+                "temporal_reason": (
+                    "the saved graph is a current snapshot without complete validity "
+                    "windows; refusing to present current source topology as historical"
+                ),
+                "temporal_unbounded_nodes": str(unbounded_nodes),
+                "temporal_unbounded_edges": str(unbounded_edges),
             }
         )
         return Graph(nodes={}, edges=[], metadata=metadata)
@@ -125,15 +149,8 @@ def graph_as_of(graph: Graph, timestamp: str) -> Graph:
     ]
     metadata = dict(graph.metadata)
     metadata["as_of"] = timestamp
-    has_unbounded_state = any(not node.created_at for node in graph.nodes.values()) or any(
-        not edge.valid_from for edge in graph.edges
-    )
-    metadata["temporal_status"] = "partial_current_snapshot" if has_unbounded_state else "bounded"
-    if has_unbounded_state:
-        metadata["temporal_reason"] = (
-            "some graph elements have no validity window; this view is bounded at repository creation "
-            "but is not a reconstructed historical source snapshot"
-        )
+    metadata["temporal_status"] = "bounded"
+    metadata["temporal_reason"] = "all materialized elements are validity-bounded"
     return Graph(nodes=nodes, edges=edges, metadata=metadata)
 
 

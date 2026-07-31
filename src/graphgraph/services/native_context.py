@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from ..packets.validation import validate_any
-from ..scanner import DEFAULT_SCAN_MAX_NODES
+from ..surface import DEFAULT_SCAN_MAX_NODES
 from .context import render_query_context
 from .freshness import (
     inspect_saved_graph_freshness,

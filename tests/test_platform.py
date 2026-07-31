@@ -8,6 +8,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -346,6 +347,69 @@ class PlatformTest(unittest.TestCase):
             )
             self.assertTrue(payload["packet"].startswith("#gg"))
 
+    def test_named_federated_project_is_a_reserved_coverage_obligation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "base.json"
+            save_graph(
+                Graph({"fixture": Node("fixture", "fixture", "function", "src/base.py")}),
+                graph_path,
+            )
+            foreign_path = root / "foreign.json"
+            save_graph(
+                Graph({"remote": Node("remote", "fixture Root", "function", "src/flow.py")}),
+                foreign_path,
+            )
+            ProjectRegistry(root / "projects.json").register(
+                "fixture",
+                root / "foreign",
+                foreign_path,
+            )
+
+            plan = QuerySourcePlanner(root, graph_path=graph_path).plan(
+                Graph({"fixture": Node("fixture", "fixture", "function", "src/base.py")}),
+                "fixture",
+                mode="auto",
+            )
+
+            self.assertIn("federation", plan.receipt.sources)
+            self.assertEqual(plan.receipt.federated_projects, 1)
+            self.assertTrue(plan.seed_ids[0].startswith("fixture::"))
+            self.assertIn("fixture::remote", plan.graph.nodes)
+
+    def test_named_federated_context_covers_current_and_foreign_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "flask.json"
+            save_graph(
+                Graph(
+                    {"dispatch": Node("dispatch", "flask request dispatch", "function", "src/app.py")},
+                    metadata={"source_root": str(root)},
+                ),
+                graph_path,
+            )
+            foreign_path = root / "fixture.json"
+            save_graph(
+                Graph({"root": Node("root", "fixture Root flow", "function", "src/flow.py")}),
+                foreign_path,
+            )
+            registry = ProjectRegistry(root / "projects.json")
+            registry.register("flask", root, graph_path)
+            registry.register("fixture", root / "fixture", foreign_path)
+
+            payload = json.loads(render_query_context(
+                query="Compare flask request dispatch with fixture Root flow",
+                graph_path=graph_path,
+                show_anchors=True,
+                json_anchors=True,
+                source_mode="all",
+            ))
+
+            coverage = payload["retrieval"]["project_coverage"]
+            self.assertEqual(coverage["required"], ["fixture", "flask"])
+            self.assertEqual(coverage["represented"], ["fixture", "flask"])
+            self.assertEqual(coverage["missing"], [])
+
     def test_exact_query_projects_graph_local_memory_automatically(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -379,6 +443,36 @@ class PlatformTest(unittest.TestCase):
             self.assertEqual(sources["memories"], 1)
             self.assertIn("memory", sources["sources"])
             self.assertIn("blue-green rollback", payload["packet"])
+
+    def test_query_finds_nested_state_next_to_nonstandard_graph_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / "fixture.gg"
+            graph = Graph(
+                nodes={"run": Node("run", "run", "function", "src/app.py")},
+                metadata={"source_root": str(root)},
+            )
+            save_graph(graph, graph_path)
+            state_dir = root / ".graphgraph"
+            state_dir.mkdir()
+            MemoryStore(state_dir / "memory.json").remember(
+                "The run deployment uses the violet rollback marker.",
+                scope="isolated",
+                related_nodes=("run",),
+            )
+
+            payload = json.loads(
+                render_query_context(
+                    query="run violet rollback",
+                    graph_path=graph_path,
+                    show_anchors=True,
+                    json_anchors=True,
+                    memory_scopes=("isolated",),
+                )
+            )
+
+            self.assertEqual(payload["retrieval"]["sources"]["memories"], 1)
+            self.assertIn("violet rollback", payload["packet"])
 
     def test_persisted_evidence_is_incremental_and_versioned(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -621,7 +715,18 @@ class PlatformTest(unittest.TestCase):
             self.assertIn(matches[0][0], {"db", "query"})
 
     def test_temporal_store_projection_and_as_of(self) -> None:
-        graph = platform_graph()
+        current = platform_graph()
+        graph = Graph(
+            {
+                node_id: replace(node, created_at="2024-01-01T00:00:00+00:00")
+                for node_id, node in current.nodes.items()
+            },
+            [
+                replace(edge, valid_from="2024-01-01T00:00:00+00:00")
+                for edge in current.edges
+            ],
+            dict(current.metadata),
+        )
         graph.edges.append(Edge("run", "db", "uses", valid_from="2025-01-01T00:00:00+00:00", valid_to="2025-02-01T00:00:00+00:00", active=False))
         january = graph_as_of(graph, "2025-01-15T00:00:00+00:00")
         march = graph_as_of(graph, "2025-03-01T00:00:00+00:00")
@@ -645,8 +750,13 @@ class PlatformTest(unittest.TestCase):
         self.assertEqual(before.nodes, {})
         self.assertEqual(before.edges, [])
         self.assertEqual(before.metadata["temporal_status"], "before_recorded_history")
-        self.assertEqual(len(after.nodes), len(graph.nodes))
-        self.assertEqual(after.metadata["temporal_status"], "partial_current_snapshot")
+        self.assertEqual(after.nodes, {})
+        self.assertEqual(after.edges, [])
+        self.assertEqual(
+            after.metadata["temporal_status"],
+            "historical_reconstruction_unavailable",
+        )
+        self.assertIn("refusing", after.metadata["temporal_reason"])
 
     def test_recent_changes_without_change_evidence_abstains(self) -> None:
         graph = Graph(

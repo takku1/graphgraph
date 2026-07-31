@@ -368,7 +368,7 @@ def _add_status_command(sub) -> None:
 
 
 def _add_graph_validation_commands(sub) -> None:
-    validate = sub.add_parser("validate", help="Validate a rendered graph packet, or auto-detect saved graph JSON.")
+    validate = sub.add_parser("validate", help="Validate a rendered graph packet; empty input fails closed.")
     validate.add_argument("--packet", help="Rendered packet file, graph JSON file, or omitted to read stdin.")
     validate.set_defaults(func=_lazy_cmd("graph_io", "cmd_validate"))
 

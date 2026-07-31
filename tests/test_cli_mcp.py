@@ -274,13 +274,7 @@ class CliMcpTest(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(data["format"], "gg")
 
-    def test_mcp_validate_packet_falls_back_to_graph_file_when_packet_omitted(self) -> None:
-        # Regression: the MCP validate_packet tool required `packet` and could
-        # only validate rendered packet text, unlike `graphgraph validate`
-        # (CLI), which auto-detects and validates the saved graph JSON when no
-        # packet/stdin is given. An agent using only MCP tools had no way to
-        # validate a raw saved graph file at all -- a real capability gap
-        # between the CLI and MCP surfaces for the same underlying feature.
+    def test_mcp_validate_packet_accepts_explicit_graph_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             graph_path = root / "graph.json"
@@ -297,6 +291,19 @@ class CliMcpTest(unittest.TestCase):
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertTrue(data["ok"], data)
             self.assertGreater(data["node_count"], 0)
+
+    def test_mcp_validate_packet_fails_closed_without_an_artifact(self) -> None:
+        response = dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {"name": "validate_packet", "arguments": {}},
+            }
+        )
+        assert response is not None
+        self.assertIn("error", response)
+        self.assertIn("non-empty 'packet'", response["error"]["message"])
 
     def test_mcp_search_nodes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -810,6 +817,32 @@ class CliMcpTest(unittest.TestCase):
             )
             self.assertTrue(data["actionable"]["change_points"])
             self.assertIn("reverse dependency intent", data["routing"]["reasons"])
+
+    def test_mcp_detailed_context_uses_compact_machine_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+            response = dispatch(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5601,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "query_context",
+                        "arguments": {
+                            "query": "what calls AuthService",
+                            "graph_path": str(graph_path),
+                            "format": "detailed",
+                        },
+                    },
+                }
+            )
+
+        assert response is not None
+        text = response["result"]["content"][0]["text"]
+        payload = json.loads(text)
+        self.assertEqual(text, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        self.assertIn("retrieval", payload)
 
     def test_documented_gap_is_evidence_not_an_actionable_change_point(self) -> None:
         graph = Graph(
@@ -1657,6 +1690,29 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("STRUCTURAL FAIL semantic_arrow nodes=0 edges=0", proc.stdout)
         self.assertIn("empty packet: no nodes", proc.stdout)
+
+    def test_cli_validate_missing_packet_does_not_autodetect_a_graph(self) -> None:
+        import os
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path.cwd() / "src") + os.pathsep + env.get("PYTHONPATH", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_dir = root / ".graphgraph"
+            graph_dir.mkdir()
+            save_graph(sample_graph(), graph_dir / "graph.json")
+            proc = subprocess.run(
+                [sys.executable, "-m", "graphgraph", "validate"],
+                input="",
+                text=True,
+                capture_output=True,
+                cwd=root,
+                env=env,
+            )
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL no packet input", proc.stdout)
+        self.assertNotIn("STRUCTURAL PASS", proc.stdout)
 
     def test_cli_final_bad_start_exits_cleanly(self) -> None:
         import os

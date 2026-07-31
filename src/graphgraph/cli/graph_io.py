@@ -27,28 +27,11 @@ def cmd_validate(args: argparse.Namespace) -> None:
         packet = ""
 
     if not packet.strip():
-        try:
-            graph_path = find_graph_path()
-        except FileNotFoundError:
-            graph_path = None
-        if graph_path is not None:
-            print(f"No packet supplied; auto-detected saved graph: {graph_path}")
-            result = validate_graph_file(graph_path)
-            status = "PASS" if result.ok else "FAIL"
-            print(
-                f"STRUCTURAL {status} {result.format} "
-                f"nodes={result.node_count} edges={result.edge_count} path={graph_path}"
-            )
-            for error in result.errors:
-                print(f"- {error}")
-            if not result.ok:
-                sys.exit(1)
-            return
         print(
-            "FAIL no input: pipe a packet via stdin, pass --packet <file>, "
-            "or run `graphgraph validate-graph`."
+            "FAIL no packet input: pipe a non-empty packet via stdin or pass "
+            "--packet <file>."
         )
-        print("  (no saved graph found under .graphgraph/ to auto-detect)")
+        print("Use `graphgraph validate-graph` to validate a saved graph explicitly.")
         sys.exit(1)
 
     result = validate_any(packet)

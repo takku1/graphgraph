@@ -7,7 +7,6 @@ from pathlib import Path
 from ..io import project_root_for_graph
 from ..retrieval.git_utils import get_git_tracked_changed_paths, get_git_worktree_paths
 from ..runtime.manifest import Manifest, compute_file_hash
-from ..scanner.files import path_ignored_by_rules
 from .lifecycle import GraphBuildStatus, _worktree_sync_candidate, manifest_path_for_graph
 
 
@@ -36,6 +35,9 @@ def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict
     # untracked half arrives from `ls-files --exclude-standard`, which Git has
     # already filtered, so only non-Git `.ignore` rules remain to apply.
     tracked = set(get_git_tracked_changed_paths(directory))
+    if changed:
+        from ..scanner.files import path_ignored_by_rules
+
     ignored = {
         path
         for path in changed

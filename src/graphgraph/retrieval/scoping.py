@@ -152,6 +152,10 @@ def _is_test_node(node: object) -> bool:
     facts = {str(fact).casefold() for fact in (getattr(node, "facts", ()) or ())}
     if facts & {"role:test", "rust_attribute:test"}:
         return True
+    parent = str(getattr(node, "parent", ""))
+    owner = parent.rsplit("__", 1)[-1]
+    if owner.endswith(("Test", "Tests", "Spec", "Specs")):
+        return str(getattr(node, "kind", "")) in {"function", "method"}
     path = str(getattr(node, "path", ""))
     kind = str(getattr(node, "kind", ""))
     if _is_test_path(path) and kind in {"function", "method"}:

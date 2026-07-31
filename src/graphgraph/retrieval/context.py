@@ -62,13 +62,20 @@ def _named_project_coverage(graph: Graph, query: str, nodes: set[str]) -> dict[s
     )
     if not named:
         return None
+    current_project = str(graph.metadata.get("current_project", ""))
     represented = sorted(
         name
         for name in named
         if any(
             node_id in graph.nodes
             and graph.nodes[node_id].kind != "project"
-            and graph.nodes[node_id].scope.casefold() == name.casefold()
+            and (
+                graph.nodes[node_id].scope.casefold() == name.casefold()
+                or (
+                    name.casefold() == current_project.casefold()
+                    and "::" not in node_id
+                )
+            )
             for node_id in nodes
         )
     )

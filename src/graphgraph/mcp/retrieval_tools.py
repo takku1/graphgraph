@@ -314,9 +314,8 @@ TOOLS = [
         "name": "validate_packet",
         "description": (
             "Mechanically validate a graphgraph packet (lowlevel, sql, semantic_arrow, gg, or "
-            "raw graph JSON). Omit `packet` to instead validate the saved native graph file "
-            "(auto-detected, or `graph_path` if given) -- mirrors `graphgraph validate`'s "
-            "auto-detect behavior."
+            "raw graph JSON). To validate a saved native graph instead, omit `packet` and "
+            "supply its explicit `graph_path`. Empty arguments fail closed."
         ),
         "inputSchema": {
             "type": "object",
@@ -327,7 +326,7 @@ TOOLS = [
                 },
                 "graph_path": {
                     "type": "string",
-                    "description": "Path to native graphgraph graph; auto-detected if omitted and packet is also omitted.",
+                    "description": "Explicit path to a saved native graphgraph graph when no packet is supplied.",
                 },
             },
         },
@@ -518,9 +517,12 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         packet = args.get("packet")
         if packet:
             result = validate_any(str(packet))
+        elif args.get("graph_path"):
+            result = validate_graph_file(Path(args["graph_path"]))
         else:
-            graph_path = Path(args["graph_path"]) if args.get("graph_path") else find_graph_path()
-            result = validate_graph_file(graph_path)
+            raise ValueError(
+                "validate_packet requires a non-empty 'packet' or an explicit 'graph_path'."
+            )
         return content(
             _json(
                 {
@@ -664,7 +666,12 @@ def build_query_context(args: dict[str, Any]) -> str:
         or bool(args.get("show_anchors"))
         or bool(args.get("include_snippets"))
     ):
-        return rendered
+        # ``render_query_context`` pretty-prints CLI diagnostics. MCP results
+        # are machine-only, so forwarding that whitespace inflated detailed
+        # envelopes by roughly 45% (9.6k -> 6.6k characters on the critical
+        # C# fixture) without adding one bit of proof. Preserve the complete
+        # detailed schema while using the transport's canonical compact JSON.
+        return _json(json.loads(rendered))
     payload = json.loads(rendered)
     actionable = payload.get("actionable", {}) or {}
     workflow = payload.get("workflow", {}) or {}

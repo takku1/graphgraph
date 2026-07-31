@@ -20,18 +20,11 @@ from ..retrieval.git_utils import (
     get_git_worktree_paths,
 )
 from ..runtime.manifest import Manifest, compute_file_hash
-from ..scanner import DEFAULT_SCAN_MAX_NODES, remove_paths, scan_directory, update_paths
-from ..scanner.core import _normalize_rels
-from ..scanner.files import (
-    SKIP_DIRS,
-    SKIP_FILE_NAMES,
-    SKIP_SUFFIXES,
-    path_ignored_by_rules,
-)
 from ..storage.delta import (
     delta_sidecar_path,
     save_incremental_validated_graph,
 )
+from ..surface import DEFAULT_SCAN_MAX_NODES
 
 
 @dataclass(frozen=True)
@@ -43,6 +36,13 @@ class GraphBuildStatus:
     validation: ValidationResult | None = None
     changed_paths: tuple[str, ...] = ()
     deleted_paths: tuple[str, ...] = ()
+
+
+def scan_directory(*args: object, **kwargs: object) -> Graph:
+    """Lazy, patchable scanner boundary for lifecycle tests and callers."""
+    from ..scanner.core import scan_directory as scanner_scan_directory
+
+    return scanner_scan_directory(*args, **kwargs)
 
 
 def manifest_path_for_graph(output_path: Path) -> Path:
@@ -62,6 +62,8 @@ def _commit_deferred_manifests(sink: list) -> None:
 
 
 def _worktree_sync_candidate(rel_path: str) -> bool:
+    from ..scanner.files import SKIP_DIRS, SKIP_FILE_NAMES, SKIP_SUFFIXES
+
     path = Path(rel_path)
     lower_name = path.name.lower()
     if lower_name in SKIP_FILE_NAMES or lower_name == ".env" or lower_name.startswith(".env."):
@@ -254,6 +256,9 @@ def update_paths_validated_graph(
     an existing graph + manifest at *output_path*). Falls back to a full
     rebuild if that's missing or the result fails validation.
     """
+    from ..scanner import update_paths
+    from ..scanner.core import _normalize_rels
+
     manifest_path = manifest_path_for_graph(output_path)
     owned_artifacts = _normalize_rels(
         directory.resolve(),
@@ -352,6 +357,8 @@ def refresh_saved_graph(
     already represented by the graph, making repeated sync calls idempotent
     without a repository walk.
     """
+    from ..scanner.files import path_ignored_by_rules
+
     if directory == Path("."):
         directory = project_root_for_graph(output_path)
     directory = directory.resolve()
@@ -429,6 +436,8 @@ def remove_paths_validated_graph(
     Requires a prior ``scan_validated_graph``/``graphgraph scan`` run. Falls
     back to a full rebuild if that's missing or the result fails validation.
     """
+    from ..scanner import remove_paths
+
     manifest_path = manifest_path_for_graph(output_path)
     previous_graph = None
     prior_nodes = None

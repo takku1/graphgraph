@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING
 
 from ..graph.core import Graph
 from ..packets import render_packet
@@ -29,10 +30,10 @@ from ..retrieval import (
     search_nodes,
 )
 from .contracts import CapabilityReceipt, EvidenceProvider, ProviderRegistry
-from .evidence_store import EvidenceStore
-from .inference import DEFAULT_RULES, infer_edges
-from .intelligence import build_hierarchy
 from .source_planner import QuerySourcePlanner, receipt_data
+
+if TYPE_CHECKING:
+    from .evidence_store import EvidenceStore
 
 
 @dataclass(frozen=True)
@@ -204,10 +205,14 @@ class GraphRuntime:
                     for warning in receipt.warnings
                 )
             elif compiler_pass == "inference":
+                from .inference import DEFAULT_RULES, infer_edges
+
                 graph, inference_receipt = infer_edges(graph, DEFAULT_RULES)
                 if inference_receipt["truncated"]:
                     warnings.append("inference edge budget reached")
             elif compiler_pass == "hierarchy":
+                from .intelligence import build_hierarchy
+
                 graph = build_hierarchy(graph)
             else:
                 raise ValueError(f"unknown GraphGraph compiler pass: {compiler_pass}")

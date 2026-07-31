@@ -29,7 +29,7 @@ MACHINE_TOOL_DESCRIPTIONS = {
     "repair_context": "ACT:turn issue/error/trace into bounded repair context; OUT:grounding receipt.",
     "graph_change": "ACT:compare before/after graphs; OUT:changes,blast radius,breaking changes,cursor.",
     "memory_context": "ACT:add/query/list scoped agent/project memory in graph IR.",
-    "graph_at_time": "ACT:materialize graph at ISO timestamp using validity windows; OUT:compact status.",
+    "graph_at_time": "ACT:graph at timestamp if validity complete, else refuse; OUT:status.",
 }
 
 # The compact/detailed query response selector costs 73 recurring schema

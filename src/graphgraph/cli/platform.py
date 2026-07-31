@@ -323,7 +323,17 @@ def cmd_platform(args: argparse.Namespace) -> None:
     if action == "as-of":
         graph = graph_as_of(_graph(args), args.timestamp)
         validation = save_validated_graph(graph, Path(args.output))
-        print(json.dumps({"output": args.output, "nodes": len(graph.nodes), "edges": len(graph.edges), "valid": validation.ok}, indent=2))
+        status = str(graph.metadata.get("temporal_status", "unknown"))
+        print(json.dumps({
+            "output": args.output,
+            "status": status,
+            "reason": graph.metadata.get("temporal_reason", ""),
+            "nodes": len(graph.nodes),
+            "edges": len(graph.edges),
+            "valid": validation.ok,
+        }, indent=2))
+        if status != "bounded":
+            raise SystemExit(1)
         return
     if action == "transform":
         graph_path = _graph_path(args)

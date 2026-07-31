@@ -317,6 +317,9 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "validated",
         "validating",
         "validation",
+        "verify",
+        "verifies",
+        "verifying",
         "identify",
         "identifies",
         "identified",
@@ -877,6 +880,9 @@ _AFFECTED_OUTPUT_TERMS = {
     "test",
     "tests",
     "transitive",
+    "verify",
+    "verifies",
+    "verifying",
 }
 
 
@@ -920,7 +926,15 @@ def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, 
             evidence = [f"affected_tests.direct:{item.get('id', '')}" for item in direct[:5]]
         elif "transitive" in terms and transitive:
             evidence = [f"affected_tests.transitive:{item.get('id', '')}" for item in transitive[:5]]
-        elif terms & {"affected", "behavioral", "test", "tests"} and (direct or transitive):
+        elif terms & {
+            "affected",
+            "behavioral",
+            "test",
+            "tests",
+            "verify",
+            "verifies",
+            "verifying",
+        } and (direct or transitive):
             evidence = [f"affected_tests.test:{item.get('id', '')}" for item in (*direct, *transitive)[:5]]
         if evidence:
             fulfilled.append(

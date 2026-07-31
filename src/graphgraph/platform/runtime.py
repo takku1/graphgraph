@@ -8,8 +8,6 @@ from ..graph.core import Graph
 from ..io import load_any, project_root_for_graph
 from .compiler import GraphRuntime
 from .contracts import EvidenceProvider, StructuralEvidenceProvider
-from .cpg import CpgEvidenceProvider
-from .evidence_store import EvidenceStore
 from .source_planner import QuerySourcePlanner
 
 DEFAULT_SOURCE_MODE = "auto"
@@ -42,6 +40,9 @@ def create_graph_runtime(
 
     active_providers = providers
     if active_providers is None:
+        if enable_evidence:
+            from .cpg import CpgEvidenceProvider
+
         active_providers = (
             (StructuralEvidenceProvider(), CpgEvidenceProvider())
             if enable_evidence
@@ -49,6 +50,8 @@ def create_graph_runtime(
         )
     evidence_store = None
     if enable_evidence and resolved is not None:
+        from .evidence_store import EvidenceStore
+
         evidence_store = EvidenceStore(evidence_store_path or resolved.parent / "evidence.db")
     source_planner = None
     if source_planning and resolved is not None:

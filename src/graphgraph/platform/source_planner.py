@@ -10,16 +10,21 @@ from ..io import load_any_cached
 from ..planning.budgets import plan_terms
 from ..retrieval import search_nodes
 from ..retrieval.anchors import explicit_query_identifiers
-from .embeddings import active_backend_is_warm
 from .federation import ProjectRegistry
 from .memory import MemoryRecord, MemoryStore
-from .semantic import SemanticIndex
 from .temporal import Episode, TemporalStore
 from .tracing import ingest_runtime_trace
 
 _TOKENS = re.compile(r"[A-Za-z0-9_]{2,}")
 _RUNTIME_TERMS = {"runtime", "trace", "observed", "production", "execute", "execution", "call"}
 _FEDERATION_TERMS = {"repository", "repositories", "repo", "repos", "project", "projects", "federated", "cross"}
+
+
+def active_backend_is_warm() -> bool:
+    """Lazy, patchable boundary around optional embedding backend state."""
+    from .embeddings import active_backend_is_warm as backend_is_warm
+
+    return backend_is_warm()
 
 
 @dataclass(frozen=True)
@@ -73,9 +78,14 @@ class QuerySourcePlanner:
 
     def _state_path(self, name: str) -> Path:
         """Resolve graph-local state first, with a project-root legacy fallback."""
-        current = self._sidecar_dir() / name
-        legacy = self.directory / name
-        return current if current.exists() or current == legacy else legacy
+        sidecar = self._sidecar_dir()
+        candidates = (
+            sidecar / name,
+            sidecar / ".graphgraph" / name,
+            self.directory / ".graphgraph" / name,
+            self.directory / name,
+        )
+        return next((path for path in candidates if path.exists()), candidates[0])
 
     def plan(
         self,
@@ -154,6 +164,8 @@ class QuerySourcePlanner:
         semantic_path = self._sidecar_dir() / "semantic.json"
         if mode == "all" or weak_lexical:
             try:
+                from .semantic import SemanticIndex
+
                 semantic_index_state = SemanticIndex.state_for_graph(
                     semantic_path,
                     graph,
@@ -226,17 +238,39 @@ class QuerySourcePlanner:
 
         query_terms = set(_tokens(query))
         registry_path = self._state_path("projects.json")
-        if registry_path.exists() and (mode == "all" or weak_lexical or query_terms & _FEDERATION_TERMS):
+        registry = ProjectRegistry(registry_path)
+        named_projects = (
+            _named_registry_projects(registry, query) if registry_path.exists() else ()
+        )
+        if registry_path.exists() and (
+            mode == "all"
+            or weak_lexical
+            or query_terms & _FEDERATION_TERMS
+            or named_projects
+        ):
             try:
                 current, foreign_ids, project_count = _project_federation(
                     current,
-                    ProjectRegistry(registry_path),
+                    registry,
                     query,
                     current_graph_path=self.graph_path,
                     max_projects=max_projects,
                     max_nodes=max_foreign_nodes,
                 )
-                seeds.extend(foreign_ids)
+                # Named repositories are coverage obligations, not optional
+                # lexical hints. Reserve their seeds ahead of auxiliary
+                # semantic/memory/history evidence so the global seed cap
+                # cannot silently discard a requested project.
+                named_prefixes = tuple(f"{name}::" for name in named_projects)
+                required_ids = [
+                    node_id
+                    for node_id in foreign_ids
+                    if node_id.startswith(named_prefixes)
+                ]
+                optional_ids = [
+                    node_id for node_id in foreign_ids if node_id not in required_ids
+                ]
+                seeds = required_ids + seeds + optional_ids
                 federated_projects = project_count
                 federated_nodes = len(foreign_ids)
                 if foreign_ids:
@@ -289,6 +323,8 @@ def source_state_signature(directory: Path, *, graph_dir: Path | None = None) ->
     state_dir = graph_dir if graph_dir is not None else directory
     paths = [
         *(state_dir / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
+        *(state_dir / ".graphgraph" / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
+        *(directory / ".graphgraph" / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
         *(directory / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
         *[directory / name for name in ("runtime-trace.jsonl", "traces.jsonl", "trace.jsonl")],
     ]
@@ -468,17 +504,34 @@ def _project_federation(
     max_projects: int,
     max_nodes: int,
 ) -> tuple[Graph, tuple[str, ...], int]:
-    candidates: list[tuple[float, str, Graph, tuple[str, ...]]] = []
+    named_projects = set(_named_registry_projects(registry, query))
+    candidates: list[tuple[bool, float, str, Graph, tuple[str, ...]]] = []
+    current_project = ""
     for entry in registry.list():
         entry_path = Path(entry.graph).resolve()
         if current_graph_path and entry_path == current_graph_path:
+            current_project = entry.name
             continue
         foreign = load_any_cached(entry_path)
-        matches = search_nodes(foreign, query, limit=4, personalize=False)
+        search_query = query
+        if entry.name in named_projects:
+            search_query = re.sub(
+                rf"(?<![\w-]){re.escape(entry.name)}(?![\w-])",
+                " ",
+                query,
+                flags=re.I,
+            ).strip() or query
+        matches = search_nodes(foreign, search_query, limit=4, personalize=False)
         if not matches:
             continue
-        candidates.append((matches[0].score, entry.name, foreign, tuple(match.node.id for match in matches)))
-    candidates.sort(key=lambda item: (-item[0], item[1]))
+        candidates.append((
+            entry.name in named_projects,
+            matches[0].score,
+            entry.name,
+            foreign,
+            tuple(match.node.id for match in matches),
+        ))
+    candidates.sort(key=lambda item: (-int(item[0]), -item[1], item[2]))
     nodes = dict(graph.nodes)
     edges = list(graph.edges)
     seed_ids: list[str] = []
@@ -488,17 +541,26 @@ def _project_federation(
             base_labels.setdefault(node.label.casefold(), []).append(node.id)
     remaining = max_nodes
     projects = 0
-    for _score, project, foreign, starts in candidates[:max_projects]:
+    projected_projects: list[str] = []
+    required_candidates = [candidate for candidate in candidates if candidate[0]]
+    optional_candidates = [candidate for candidate in candidates if not candidate[0]]
+    selected_candidates = required_candidates + optional_candidates[
+        : max(0, max_projects - len(required_candidates))
+    ]
+    remaining = max(remaining, len(required_candidates))
+    for index, (_named, _score, project, foreign, starts) in enumerate(selected_candidates):
         if remaining <= 0:
             break
+        projects_left = len(selected_candidates) - index
+        project_budget = max(1, remaining // projects_left)
         selected = set(starts)
         for edge in foreign.edges:
             if edge.source in selected or edge.target in selected:
                 selected.update((edge.source, edge.target))
-            if len(selected) >= remaining:
+            if len(selected) >= project_budget:
                 break
         ordered = list(dict.fromkeys((*starts, *sorted(selected - set(starts)))))
-        selected = set(ordered[:remaining])
+        selected = set(ordered[:project_budget])
         if not selected:
             continue
         project_id = f"project:{project}"
@@ -542,7 +604,33 @@ def _project_federation(
         seed_ids.extend(f"{project}::{node_id}" for node_id in starts if node_id in selected)
         remaining -= len(selected)
         projects += 1
-    return Graph(nodes, edges, dict(graph.metadata)), tuple(seed_ids), projects
+        projected_projects.append(project)
+    metadata = dict(graph.metadata)
+    known_projects = {
+        name.strip()
+        for name in str(metadata.get("projects", "")).split(",")
+        if name.strip()
+    }
+    known_projects.update(projected_projects)
+    if current_project:
+        known_projects.add(current_project)
+        metadata["current_project"] = current_project
+    if known_projects:
+        metadata["projects"] = ",".join(sorted(known_projects))
+    return Graph(nodes, edges, metadata), tuple(seed_ids), projects
+
+
+def _named_registry_projects(registry: ProjectRegistry, query: str) -> tuple[str, ...]:
+    """Return registry projects explicitly named as whole query tokens."""
+    return tuple(
+        entry.name
+        for entry in registry.list()
+        if re.search(
+            rf"(?<![\w-]){re.escape(entry.name)}(?![\w-])",
+            query,
+            flags=re.I,
+        )
+    )
 
 
 def _trace_path(directory: Path) -> Path | None:
