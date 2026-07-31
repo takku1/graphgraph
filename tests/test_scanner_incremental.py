@@ -62,6 +62,146 @@ class ManifestDeferralTest(unittest.TestCase):
 class IncrementalScannerTest(unittest.TestCase):
     """scanner/core.py incremental paths and runtime/manifest.py."""
 
+    def test_identical_exact_path_update_is_graph_identity_noop(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "main.rs"
+            source.write_text(
+                "fn special() {}\nfn run() { special(); }\n",
+                encoding="utf-8",
+            )
+            graph_path = root / "graph.gg"
+            manifest_path = root / "manifest.json"
+            baseline = scan_directory(
+                root,
+                depth="symbols",
+                frontend="tree_sitter",
+                manifest_path=manifest_path,
+            )
+            save_graph(baseline, graph_path)
+
+            updated = update_paths(
+                root,
+                ["main.rs"],
+                depth="symbols",
+                frontend="tree_sitter",
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+
+        self.assertEqual(updated.nodes, baseline.nodes)
+        self.assertEqual(updated.edges, baseline.edges)
+        self.assertEqual(updated.metadata, baseline.metadata)
+
+    def test_validated_identical_update_reports_no_write(self) -> None:
+        from graphgraph.services.native import (
+            scan_validated_graph,
+            update_paths_validated_graph,
+        )
+        from graphgraph.storage.delta import delta_sidecar_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "worker.py").write_text(
+                "def worker():\n    return 1\n",
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.gg"
+            baseline = scan_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                depth="symbols",
+                docs=False,
+            )
+
+            status = update_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=["worker.py"],
+                depth="symbols",
+                docs=False,
+            )
+
+            self.assertFalse(status.built)
+            self.assertEqual(status.changed_paths, ())
+            self.assertEqual(status.deleted_paths, ())
+            self.assertEqual(status.graph.nodes, baseline.graph.nodes)
+            self.assertEqual(status.graph.edges, baseline.graph.edges)
+            self.assertFalse(delta_sidecar_path(graph_path).exists())
+
+    def test_changed_rust_file_matches_clean_rebuild_with_derived_field_collision(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+
+        def build_baseline(root: Path, graph_path: Path, manifest_path: Path) -> None:
+            (root / "main.rs").write_text(
+                "fn special(value: u8) {}\n"
+                "fn run(value: u8) { special(value); }\n",
+                encoding="utf-8",
+            )
+            (root / "model.rs").write_text(
+                "struct Options { special: u8 }\n",
+                encoding="utf-8",
+            )
+            graph = scan_directory(
+                root,
+                depth="symbols",
+                frontend="tree_sitter",
+                manifest_path=manifest_path,
+            )
+            save_graph(graph, graph_path)
+
+        def edit_main(root: Path) -> None:
+            (root / "main.rs").write_text(
+                "fn probe() {}\n"
+                "fn special(value: u8) {}\n"
+                "fn run(value: u8) { special(value); }\n",
+                encoding="utf-8",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_full:
+            root = Path(tmp_full)
+            graph_path = root / "graph.gg"
+            manifest_path = root / "manifest.json"
+            build_baseline(root, graph_path, manifest_path)
+            edit_main(root)
+            clean = scan_directory(
+                root,
+                depth="symbols",
+                frontend="tree_sitter",
+                previous_graph_path=None,
+                manifest_path=None,
+            )
+            clean_edges = sorted(clean.edges, key=repr)
+
+        with tempfile.TemporaryDirectory() as tmp_incremental:
+            root = Path(tmp_incremental)
+            graph_path = root / "graph.gg"
+            manifest_path = root / "manifest.json"
+            build_baseline(root, graph_path, manifest_path)
+            edit_main(root)
+            incremental = update_paths(
+                root,
+                ["main.rs"],
+                depth="symbols",
+                frontend="tree_sitter",
+                previous_graph_path=graph_path,
+                manifest_path=manifest_path,
+            )
+            incremental_edges = sorted(incremental.edges, key=repr)
+
+        self.assertEqual(incremental_edges, clean_edges)
+        self.assertTrue(
+            any(
+                edge.source == "main_rs__run"
+                and edge.target == "main_rs__special"
+                and edge.type == "calls"
+                for edge in incremental_edges
+            )
+        )
+
     def test_update_refuses_to_destroy_an_out_of_tree_graph(self) -> None:
         # SEV-1 regression: when the graph lives outside the scanned repo,
         # `update` found no manifest beside it, fell back to a full rescan of
@@ -465,7 +605,7 @@ class IncrementalScannerTest(unittest.TestCase):
 
             # a.py now calls into b.py instead of its own bar().
             (root / "a.py").write_text("def foo():\n    return baz()\n\ndef bar():\n    return 1\n", encoding="utf-8")
-            full = scan_directory(root, depth="symbols", previous_graph_path=graph_path, manifest_path=manifest_path)
+            full = scan_directory(root, depth="symbols", previous_graph_path=None, manifest_path=None)
             full_nodes = sorted((n.label, n.path) for n in full.nodes.values())
             full_edges = sorted((e.source, e.target, e.type) for e in full.edges)
 

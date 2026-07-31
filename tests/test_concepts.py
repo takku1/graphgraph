@@ -26,6 +26,7 @@ class ConceptLinkingTest(unittest.TestCase):
                 "semantic_operator:equality",
                 "semantic_operation:deduplication",
             ),
+            source="C:/checkout/src/logic.rs",
         )
 
         nodes, edges = link_source_interpretation_concepts(source)
@@ -39,6 +40,7 @@ class ConceptLinkingTest(unittest.TestCase):
         )
         self.assertTrue(all(edge.provenance == "interpretation_registry_fact" for edge in edges))
         self.assertTrue(all(edge.confidence == 0.98 for edge in edges))
+        self.assertTrue(all(node.source == "" for node in nodes.values()))
         self.assertEqual(
             {edge.evidence for edge in edges},
             {

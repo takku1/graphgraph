@@ -172,13 +172,19 @@ def detect_interpretation_concepts(text: str) -> tuple[InterpretationConcept, ..
 
 
 def concept_node(concept: InterpretationConcept, *, source: str = "") -> Node:
+    """Materialize one canonical registry node.
+
+    A concept can be supported by many source nodes, so storing whichever
+    contributor happened to be visited last makes the shared node vary across
+    clean and incremental builds. Contributor provenance belongs on the linking
+    edges; the registry node itself is source-independent.
+    """
     return Node(
         id=interpretation_concept_id(concept),
         label=concept.label,
         kind=concept.kind,
         summary=f"interpretation layer: {concept.layer}",
         facts=concept.facts,
-        source=source,
         confidence=0.9,
     )
 

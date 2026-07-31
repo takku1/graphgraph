@@ -106,13 +106,16 @@ def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
     return dirty_files, churn_counts
 
 
-def _load_manifest_and_graph(manifest_path: Path | None, previous_graph_path: Path | None):
+def _load_manifest_and_graph(
+    manifest_path: Path | None,
+    previous_graph_path: Path | None,
+    previous_graph: Graph | None = None,
+):
     from ..io import load_any
     from ..runtime.manifest import Manifest
 
     manifest = Manifest.load(manifest_path) if manifest_path else None
-    previous_graph = None
-    if previous_graph_path and previous_graph_path.exists():
+    if previous_graph is None and previous_graph_path and previous_graph_path.exists():
         try:
             previous_graph = load_any(previous_graph_path)
         except Exception:
@@ -362,6 +365,48 @@ def _manifest_type_fact_snapshots(
     return result
 
 
+def _effective_update_rels(
+    root: Path,
+    manifest,
+    existing_rels: set[str],
+    removed_rels: set[str],
+    *,
+    depth: str,
+    frontend: str,
+    docs: bool,
+) -> tuple[set[str], set[str]]:
+    """Partition requested paths into content/config changes and removals.
+
+    A manifest is an admissible oracle only when it is bound to this source
+    root. With that precondition, the partition is a set operation over tracked
+    paths plus one hash/config equality check per existing candidate. Without
+    it, retain every request so the normal repair and shrink guards decide.
+    """
+    from ..runtime.manifest import compute_file_hash
+
+    try:
+        manifest_root_matches = bool(manifest.source_root) and Path(
+            manifest.source_root
+        ).resolve() == root
+    except (OSError, ValueError):
+        manifest_root_matches = False
+    if not manifest_root_matches:
+        return set(existing_rels), set(removed_rels)
+
+    changed = {
+        rel
+        for rel in existing_rels
+        if (
+            (info := manifest.get_file_info(rel)) is None
+            or info.get("hash") != compute_file_hash(root / rel)
+            or info.get("depth") != depth
+            or info.get("frontend") != frontend
+            or info.get("docs") != docs
+        )
+    }
+    return changed, removed_rels.intersection(manifest.files)
+
+
 def _promote_type_fact_dependents(
     root: Path,
     manifest,
@@ -468,6 +513,7 @@ def update_paths(
     history: bool = False,
     max_history_commits: int = 300,
     previous_graph_path: Path | None = None,
+    previous_graph: Graph | None = None,
     manifest_path: Path | None = None,
     deleted_paths: list[str] | None = None,
     manifest_sink: list | None = None,
@@ -490,7 +536,11 @@ def update_paths(
     root = root.resolve()
     if not manifest_path or not previous_graph_path:
         raise ValueError("update_paths requires manifest_path and previous_graph_path from a prior scan")
-    manifest, previous_graph = _load_manifest_and_graph(manifest_path, previous_graph_path)
+    manifest, previous_graph = _load_manifest_and_graph(
+        manifest_path,
+        previous_graph_path,
+        previous_graph,
+    )
     if manifest is None or not manifest.compatible or previous_graph is None:
         raise ValueError(
             f"no existing graph/manifest at {previous_graph_path} -- run scan_directory once before update_paths"
@@ -504,6 +554,37 @@ def update_paths(
         if (root / rel).exists()
     }
     removed_target_rels = explicit_removed_rels | (changed_target_rels - existing_target_rels)
+
+    # Exact-path refreshes are assertions that these paths *may* have changed,
+    # not instructions to re-extract identical bytes. Re-running a file through
+    # only the incremental context can be both expensive and semantically lossy
+    # when a global extraction pass supplied evidence the targeted pass cannot
+    # reconstruct. The manifest already contains the content/configuration
+    # identity needed to reject that work exactly.
+    effective_changed_rels, effective_removed_rels = _effective_update_rels(
+        root,
+        manifest,
+        existing_target_rels,
+        removed_target_rels,
+        depth=depth,
+        frontend=frontend,
+        docs=docs,
+    )
+
+    # History is graph-global rather than file-owned. Do not classify an
+    # otherwise identical request as a no-op when it asks for a different
+    # history projection.
+    graph_options_unchanged = (
+        previous_graph.metadata.get("history") == str(bool(history)).lower()
+        and previous_graph.metadata.get("generic_mentions")
+        == str(bool(generic_mentions)).lower()
+        and previous_graph.metadata.get("scan_max_nodes") == str(max_nodes)
+    )
+    if not effective_changed_rels and not effective_removed_rels and graph_options_unchanged:
+        return previous_graph
+
+    existing_target_rels = effective_changed_rels
+    removed_target_rels = effective_removed_rels
 
     existing_target_rels |= _referrer_rels(root, previous_graph, removed_target_rels)
 
@@ -1131,6 +1212,7 @@ def _build_graph_from_split(
 
     metadata = {
         "scan_depth": depth,
+        "scan_max_nodes": str(max_nodes),
         # Default the label from the prior graph on an incremental refresh, so a
         # scan that preserves previously-extracted symbols (no dirty files this
         # round) does not reset `frontend` to "files" and misreport itself as a
@@ -1139,6 +1221,7 @@ def _build_graph_from_split(
         "frontend": str(previous_graph.metadata.get("frontend", "files")) if previous_graph is not None else "files",
         "docs": str(bool(docs)).lower(),
         "history": str(bool(history)).lower(),
+        "generic_mentions": str(bool(generic_mentions)).lower(),
         "git_dirty": ",".join(dirty_git),
         "git_high_churn": ",".join(rel for rel, churn in churn_git.items() if churn >= 5),
         "ignore_rule_files": ",".join(ignore_files),

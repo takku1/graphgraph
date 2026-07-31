@@ -688,7 +688,19 @@ def _add_tree_sitter_calls(
                 else set()
             )
             calls.update(rust_macro_calls)
-            for call in calls:
+            # ``calls`` is a set because repeated sites collapse to one fact.
+            # Sort the finite relation before projection so duplicate edges to
+            # the same target retain deterministic receiver evidence across
+            # processes and clean/incremental builds.
+            for call in sorted(
+                calls,
+                key=lambda item: (
+                    item.name,
+                    item.qualified,
+                    item.receiver,
+                    item.qualifier,
+                ),
+            ):
                 if call.qualified:
                     # Try import-aware module.func() resolution before the
                     # receiver-type resolver. It only binds when a top-level

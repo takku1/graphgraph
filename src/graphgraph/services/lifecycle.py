@@ -246,6 +246,7 @@ def update_paths_validated_graph(
     docs: bool = False,
     history: bool = False,
     force: bool = False,
+    previous_graph: Graph | None = None,
 ) -> GraphBuildStatus:
     """Re-extract *paths* and remove *deleted_paths* in one graph splice.
 
@@ -264,7 +265,8 @@ def update_paths_validated_graph(
     ]
     authoritative_deletions = list(dict.fromkeys([*(deleted_paths or ()), *owned_artifacts]))
     try:
-        previous_graph = load_any(output_path)
+        if previous_graph is None:
+            previous_graph = load_any(output_path)
         update_sink: list = []
         graph = update_paths(
             directory,
@@ -276,9 +278,21 @@ def update_paths_validated_graph(
             docs=docs,
             history=history,
             previous_graph_path=output_path,
+            previous_graph=previous_graph,
             manifest_path=manifest_path,
             manifest_sink=update_sink,
         )
+        # The scanner returns the supplied graph object itself only when its
+        # manifest-backed path partition proves the request is an exact no-op.
+        if graph is previous_graph:
+            return GraphBuildStatus(
+                output_path,
+                graph,
+                built=False,
+                repaired=False,
+                changed_paths=(),
+                deleted_paths=(),
+            )
         assert_no_catastrophic_shrink(graph, output_path, force=force)
         validation = save_incremental_validated_graph(
             previous_graph,
@@ -387,6 +401,7 @@ def refresh_saved_graph(
         frontend=resolved_frontend,
         docs=resolved_docs,
         history=resolved_history,
+        previous_graph=current_graph,
     )
 
 

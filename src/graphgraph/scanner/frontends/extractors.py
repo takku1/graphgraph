@@ -43,6 +43,18 @@ from .syntax import (
 )
 
 
+def _eligible_context_name_symbol(node: Node) -> bool:
+    """Whether a restored node belongs in the clean extractor's name index.
+
+    Clean extraction populates ``name_to_symbols`` from CST definitions before
+    derived Rust field nodes are added, and skips names shorter than three
+    characters. Incremental extraction must apply the same projection to its
+    restored context or generated fields create false ambiguity and suppress
+    otherwise stable call/reference edges.
+    """
+    return _is_context_symbol(node) and node.kind != "field" and len(node.label) > 2
+
+
 class RegexExtractor:
     name = "regex"
     confidence = 0.75
@@ -90,7 +102,7 @@ class TreeSitterExtractor:
         parse_error_files: list[str] = []
 
         for node_id, node in nodes.items():
-            if _is_context_symbol(node):
+            if _eligible_context_name_symbol(node):
                 name_to_symbols.setdefault(node.label, []).append(node_id)
 
         for source in files:
