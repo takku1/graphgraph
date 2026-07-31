@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -48,6 +48,7 @@ class ExtractionResult:
     unknown_receiver_classes: tuple[tuple[str, int], ...] = ()
     external_resolved_member_calls: int = 0
     unmatched_member_calls: int = 0
+    bare_unmatched_calls: int = 0
     # Compact stable rows:
     # (language, resolved, ambiguous, unknown_receiver, external_resolved, unmatched)
     member_calls_by_language: tuple[tuple[str, int, int, int, int, int], ...] = ()
@@ -124,6 +125,13 @@ class _MemberCallStats:
     # `unresolved` is retained below as their sum for telemetry continuity.
     external_resolved: int = 0
     unmatched: int = 0
+    # Bare (unqualified) call sites discarded because the name could not be
+    # bound to a single definition, even though the graph *does* define that
+    # name somewhere. These never become edges, so a caller count computed
+    # after them is a lower bound. Tracked separately from the member-call
+    # buckets because a repository of plain functions has no member calls at
+    # all, and its evidence was therefore reported as complete.
+    bare_unmatched: int = 0
     unknown_receiver_classes: tuple[tuple[str, int], ...] = ()
     by_language: tuple[tuple[str, int, int, int, int, int], ...] = ()
 
@@ -131,6 +139,9 @@ class _MemberCallStats:
     def unresolved(self) -> int:
         """Back-compatible total. Prefer the two components for diagnosis."""
         return self.external_resolved + self.unmatched
+
+    def add_bare_unmatched(self) -> _MemberCallStats:
+        return replace(self, bare_unmatched=self.bare_unmatched + 1)
 
     def add(
         self,
@@ -170,6 +181,7 @@ class _MemberCallStats:
             unknown_receiver=self.unknown_receiver + (outcome == "unknown_receiver"),
             external_resolved=self.external_resolved + (outcome == "external_resolved"),
             unmatched=self.unmatched + (outcome == "unmatched"),
+            bare_unmatched=self.bare_unmatched,
             unknown_receiver_classes=tuple(sorted(classes.items())),
             by_language=tuple(
                 (name, *counts)

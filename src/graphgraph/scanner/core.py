@@ -786,6 +786,7 @@ def _symbol_extraction_metadata(
     meta["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
     meta["member_calls_external_resolved"] = str(extraction.external_resolved_member_calls)
     meta["member_calls_unmatched"] = str(extraction.unmatched_member_calls)
+    meta["bare_calls_unmatched"] = str(extraction.bare_unmatched_calls)
     language_calls = {
         language: {
             "resolved": resolved,

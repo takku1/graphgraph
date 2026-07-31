@@ -224,6 +224,7 @@ class TreeSitterExtractor:
             unknown_receiver_member_calls=member_call_stats.unknown_receiver,
             external_resolved_member_calls=member_call_stats.external_resolved,
             unmatched_member_calls=member_call_stats.unmatched,
+            bare_unmatched_calls=member_call_stats.bare_unmatched,
             unknown_receiver_classes=member_call_stats.unknown_receiver_classes,
             member_calls_by_language=member_call_stats.by_language,
         )

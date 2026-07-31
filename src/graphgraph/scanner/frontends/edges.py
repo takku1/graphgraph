@@ -812,7 +812,15 @@ def _add_tree_sitter_calls(
                     if not call.qualifier and d.owner
                     else None
                 ) or local_resolutions.get(call.name)
-                if not tgt_id or tgt_id == src_id:
+                if not tgt_id:
+                    # The graph defines this name somewhere but resolution could
+                    # not choose. The call site is real and is being discarded,
+                    # so record it: a caller count computed downstream is a
+                    # lower bound, and "zero callers" must not read as proof.
+                    if name_to_symbols.get(call.name):
+                        stats = stats.add_bare_unmatched()
+                    continue
+                if tgt_id == src_id:
                     continue
                 tgt_node = nodes.get(tgt_id)
                 # A bare call cannot reach a method: methods are invoked through

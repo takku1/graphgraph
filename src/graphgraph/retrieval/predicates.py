@@ -131,7 +131,37 @@ def caller_evidence_quality(graph: Graph) -> tuple[bool, str]:
     unknown = _count("unknown_receiver")
     ambiguous = _count("ambiguous")
     typed_eligible = resolved + unknown + ambiguous
+
+    # Bare calls the resolver discarded are evidence loss too, and they are the
+    # only kind a repository of plain functions can suffer. Reporting on member
+    # calls alone declared such a graph complete precisely when it was not, so
+    # this is checked before the member-call verdict and can only weaken it.
+    def _bare_unmatched() -> int:
+        for key in ("bare_calls_global_unmatched", "bare_calls_unmatched"):
+            raw = metadata.get(key)
+            if raw not in (None, ""):
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
+    discarded = _bare_unmatched()
+    discarded_detail = (
+        f"; {discarded} bare call site{'' if discarded == 1 else 's'} named a "
+        "symbol the graph defines but could not be bound to one definition, and "
+        f"{'was' if discarded == 1 else 'were'} discarded"
+        if discarded > 0
+        else ""
+    )
+
     if typed_eligible <= 0:
+        if discarded > 0:
+            return False, (
+                "no member-call telemetry on this graph"
+                f"{discarded_detail}, so zero-caller counts are an upper bound "
+                "on dead code, not a proof"
+            )
         return True, "no member-call telemetry on this graph"
     ratio = resolved / typed_eligible
     scope = str(
@@ -144,14 +174,21 @@ def caller_evidence_quality(graph: Graph) -> tuple[bool, str]:
     if has_global_snapshot and last_update_scope and last_update_scope != scope:
         scope_detail += f"; last_update={last_update_scope}"
     scope_detail = f" [{scope_detail}]"
-    if unknown == 0:
+    if unknown == 0 and discarded == 0:
         return True, (
             f"member-call resolution complete ({resolved}/{typed_eligible})"
             f"{scope_detail}"
         )
+    if unknown == 0:
+        return False, (
+            f"member-call resolution complete ({resolved}/{typed_eligible})"
+            f"{discarded_detail}, so zero-caller counts are an upper bound on "
+            f"dead code, not a proof{scope_detail}"
+        )
     return False, (
         f"member-call resolution {ratio:.1%} ({resolved}/{typed_eligible}); "
-        f"{unknown} call sites lack receiver evidence and produce no calls edge, "
+        f"{unknown} call sites lack receiver evidence and produce no calls edge"
+        f"{discarded_detail}, "
         "so zero-caller counts are an upper bound on dead code, not a proof"
         f"{scope_detail}"
     )
