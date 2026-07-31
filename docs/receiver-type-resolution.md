@@ -194,17 +194,21 @@ independent critical gray-box graph. It retained every old edge and added 20
 source-visible callers using `current_app` (`9 -> 12`). The direct diff was
 then checked against the fixture source; the additions were supported by
 annotated globals, proxy inheritance, declared fields, or annotated locals.
-This does not establish cross-project precision, so generalization remains
-gated on held-out Python repositories.
+Subsequent held-out scans retained every incumbent edge: Requests added eight
+source-checked calls (`501 -> 509` resolved), and Mem0 added 28
+source-checked Python calls (`1622 -> 1650` resolved). Project fields, package
+re-exports, callable returns, assignments, and obligations now retain their
+fact provenance and ambiguity. Cross-language generalization remains gated on
+separate per-language oracles.
 
-## Limits worth stating before implementing
+## Limits worth stating before generalizing
 
 - **Recall is bounded by declared types.** Untyped JavaScript has no
   annotations to join. Stage 5 fixes express's false positive; it will not move
   express's recall, and no amount of joining will make 2.2% look like flask.
-- **Unmeasured.** How much of the 36x spread stages 1-4 recover has not been
-  measured. It should be a preregistered experiment against the gray-box
-  per-language oracle before any recall claim is published.
+- **Only Python is held-out so far.** Flask, Requests, and Mem0 establish the
+  Python slice. They do not license a recall claim for the rest of the 36x
+  language spread.
 - **Jedi would likely beat this on Python alone.** It is not proposed here
   because it is a heavy single-language dependency, and the join lifts six
   languages for less.

@@ -30,6 +30,39 @@ This P-series is the active execution order. The older T-series below preserves
 completed receipts and remaining sub-items, but does not override this order.
 Only one behavior-changing policy task may be active at a time.
 
+### Executable queue
+
+This is the dependency queue beneath the P-series. A batch may begin only when
+its `depends on` gate is green. Pure measurement and characterization may run
+ahead; two behavior-changing policy batches may not overlap.
+
+| batch | scope | depends on | promotion gate |
+| --- | --- | --- | --- |
+| Q02-A | Complete typed facts for Python fields, imports, assignments, returns, and deferred obligations; retain transitive provenance | P02 lattice | Focused ambiguity/provenance tests and no lost incumbent Flask edges |
+| Q02-B | Held-out Python receiver evaluation on Requests and Mem0, with Flask used only as calibration | Q02-A | Per-symbol source oracle improves; zero source-disproved added edges |
+| Q02-C | Persist per-file facts and re-join only affected keys | Q02-B | Full/incremental graph equivalence and measured `O(delta facts + affected obligations)` growth |
+| Q02-D | Addressable receiver slices for JS/TS, Rust, C#/Java, and C++ in descending oracle volume | Q02-C | Per-language held-out recall improves or the language explicitly abstains; precision does not regress |
+| Q03-A | Versioned routing feature registry plus calibrated query-class model | P01, Q02-D | Held-out conceptual/compound utility improves over incumbent with paired CI |
+| Q03-B | Multi-label facet decomposition and expected-loss selection | Q03-A | Facet completeness improves at equal token budget; red controls stay zero |
+| Q03-C | Utility-fitted abstention and next-action information gain | Q03-B | Brier/ECE and abstention utility improve by query class |
+| Q04-A | Inventory and normalize every ranking signal, boost, penalty, threshold, and cap | Q03-C | Every policy term has invariant, fitted provenance, or removal decision |
+| Q04-B | Ranking tournament: calibrated linear fusion, RRF, learning-to-rank baseline, and diversity selection | Q04-A | Held-out NDCG/facet gain at equal tokens with paired minimum effect |
+| Q05-A | Make all advertised packet formats generate and validate end to end | Q04-B | `10/10` format contract tests or remove unsupported advertisements |
+| Q05-B | Constrained packet selection with connectivity and token/latency constraints | Q05-A | Better required-evidence utility at equal resources; deterministic receipts |
+| Q06-A | Fit and version token, latency, and fact-density surfaces | Q05-B | Held-out residual/error reports and coefficient sensitivity stored |
+| Q06-B | Bounded resource controller over the fitted surfaces | Q06-A | Stability/no-oscillation and hard-budget tests pass |
+| Q07-A | Exact no-op equivalence and constant-time preflight | Q06-B | Effective graph delta is zero on `3/3`; no-op update `<100 ms` |
+| Q07-B | Phase-complete build/update telemetry and persistent-state experiments | Q07-A | Largest runtime terms attributed; delta scaling beats whole-corpus scaling |
+| Q08-A | Separate correctness, completeness, freshness, and provenance calibration | Q07-B | False-incomplete rate falls without unsafe answerability |
+| Q08-B | Deterministic source-value selection and affected-test attribution | Q08-A | Cross-process signature exact; held-out affected-test coverage improves |
+| Q09-A | Characterize and split orchestration monoliths into typed stages and lifecycle state machines | Q08-B | Behavior, benchmark signatures, and receipts remain unchanged |
+| Q10 | Adjacent optimization candidates ranked by expected value | active batch | Independent measurement passes and rollback remains trivial |
+
+Queue rule: a failed promotion gate keeps the incumbent and records `no
+change`; it does not trigger threshold tuning on the held-out set. Q10 work may
+ship beside an active batch only when it does not change that batch's frozen
+evaluation baseline.
+
 ### Current measured baseline
 
 - Local gates: `956 passed`, `96 subtests passed`, and Ruff green.
@@ -167,7 +200,7 @@ confidence intervals, and an explicit minimum practical effect.
 
 ### P02 — Replace receiver heuristics with bounded constraint propagation
 
-- [ ] Represent local types, field types, imports, assignments, returns, and
+- [x] Represent local types, field types, imports, assignments, returns, and
   deferred attribute obligations as typed facts with provenance.
 - [x] Define a small type lattice: `unknown < concrete`, conflicting concrete
   facts join to `ambiguous`, and no pass may guess through ambiguity.
@@ -197,8 +230,24 @@ Against the independent Flask gray-box graph, a fresh full scan kept all
 `current_app.ensure_sync` sites in `views.py`. All 20 additions were inspected
 as a direct old/new graph diff and matched source-visible declared field,
 proxy-base, or annotated-local evidence. This is a calibrated-repository gain,
-not yet a cross-repository promotion: the remaining typed-fact classes,
-incremental fact persistence, and held-out Python scan stay open.
+not by itself a cross-repository promotion; the next receipt records the
+subsequent held-out gate.
+
+Q02-A / Python Q02-B receipt (2026-07-31): project field facts, annotated
+module globals, package re-exports, callable return facts, assignments, and
+deferred obligations now retain provenance and ambiguity through the finite
+lattice. Against `cf9fa66`, paired full scans removed zero incumbent edges.
+Flask moved `850 -> 871` resolved and `534 -> 484` unknown with 20 added calls;
+held-out Requests moved `501 -> 509` and `174 -> 159` with 8 added calls; held-
+out Mem0's Python stratum moved `1622 -> 1650` and `1211 -> 1086` with 28
+added calls. All additions were checked against pinned source. A per-callable
+module reparse regression was caught by the comparison, removed, and locked by
+a file-bounded extraction-count test. Detailed commands, revisions, edge
+classes, and limits are in the indexed P02 held-out finding.
+
+Queue position: Q02-A and the Python portion of Q02-B are green. Q02-C
+(persistent per-file facts and affected-key rejoin) is next; Q02-D language
+generalization remains gated behind it.
 
 ### P03 — Calibrate routing and facet decomposition
 

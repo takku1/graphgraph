@@ -55,6 +55,17 @@ class TypeFact:
         )
 
 
+def join_type_fact_maps(
+    *fact_maps: Mapping[str, TypeFact],
+) -> dict[str, TypeFact]:
+    """Join binding environments without order-dependent overwrites."""
+    result: dict[str, TypeFact] = {}
+    for facts in fact_maps:
+        for binding, fact in facts.items():
+            result[binding] = result.get(binding, TypeFact()).join(fact)
+    return result
+
+
 @dataclass(frozen=True, order=True)
 class TypeObligation:
     target: str
@@ -85,10 +96,16 @@ class TypeSolution:
         }
 
 
+@dataclass(frozen=True)
+class ObligationResolution:
+    fact: TypeFact = TypeFact()
+    reason: str = ""
+
+
 def solve_type_obligations(
     seeds: Iterable[tuple[str, str, Evidence]],
     obligations: Iterable[TypeObligation],
-    field_types: Mapping[tuple[str, str], str],
+    field_types: Mapping[tuple[str, str], str | TypeFact],
     *,
     max_attribute_depth: int,
 ) -> TypeSolution:
@@ -111,30 +128,16 @@ def solve_type_obligations(
     while queue:
         obligation = queue.popleft()
         queued.discard(obligation)
-        if len(obligation.fields) > max_attribute_depth:
-            continue
-        root_fact = facts.get(obligation.root, TypeFact())
-        root_type = root_fact.concrete
-        if root_type is None:
-            continue
-        resolved = root_type
-        for field in obligation.fields:
-            resolved = field_types.get((resolved, field), "")
-            if not resolved:
-                break
-        if not resolved:
-            continue
-        candidate = TypeFact(
-            frozenset({resolved}),
-            tuple(
-                sorted(
-                    set(root_fact.evidence)
-                    | {Evidence(obligation.provenance, _obligation_expression(obligation))}
-                )
-            ),
+        resolution = resolve_type_obligation(
+            obligation,
+            facts,
+            field_types,
+            max_attribute_depth=max_attribute_depth,
         )
+        if resolution.reason:
+            continue
         previous = facts.get(obligation.target, TypeFact())
-        joined = previous.join(candidate)
+        joined = previous.join(resolution.fact)
         if joined == previous:
             continue
         facts[obligation.target] = joined
@@ -145,12 +148,15 @@ def solve_type_obligations(
 
     unresolved: list[UnresolvedTypeObligation] = []
     for obligation in ordered:
-        reason = _unresolved_reason(
+        resolution = resolve_type_obligation(
             obligation,
             facts,
             field_types,
             max_attribute_depth=max_attribute_depth,
         )
+        reason = resolution.reason
+        if not reason and facts.get(obligation.target, TypeFact()).state is TypeState.AMBIGUOUS:
+            reason = "ambiguous_target"
         if reason:
             unresolved.append(
                 UnresolvedTypeObligation(
@@ -167,26 +173,39 @@ def _obligation_expression(obligation: TypeObligation) -> str:
     return ".".join((obligation.root, *obligation.fields))
 
 
-def _unresolved_reason(
+def resolve_type_obligation(
     obligation: TypeObligation,
     facts: Mapping[str, TypeFact],
-    field_types: Mapping[tuple[str, str], str],
+    field_types: Mapping[tuple[str, str], str | TypeFact],
     *,
     max_attribute_depth: int,
-) -> str:
+) -> ObligationResolution:
     if len(obligation.fields) > max_attribute_depth:
-        return "depth_limit"
+        return ObligationResolution(reason="depth_limit")
     root = facts.get(obligation.root, TypeFact())
     if root.state is TypeState.UNKNOWN:
-        return "unknown_root"
+        return ObligationResolution(reason="unknown_root")
     if root.state is TypeState.AMBIGUOUS:
-        return "ambiguous_root"
+        return ObligationResolution(reason="ambiguous_root")
     resolved = root.concrete or ""
+    evidence = set(root.evidence)
     for field in obligation.fields:
-        resolved = field_types.get((resolved, field), "")
-        if not resolved:
-            return "unknown_field"
-    target = facts.get(obligation.target, TypeFact())
-    if target.state is TypeState.AMBIGUOUS:
-        return "ambiguous_target"
-    return ""
+        field_value = field_types.get((resolved, field), "")
+        field_fact = (
+            field_value
+            if isinstance(field_value, TypeFact)
+            else TypeFact.from_evidence(
+                field_value,
+                Evidence("field_type", f"{resolved}.{field}"),
+            )
+        )
+        if field_fact.state is TypeState.UNKNOWN:
+            return ObligationResolution(reason="unknown_field")
+        if field_fact.state is TypeState.AMBIGUOUS:
+            return ObligationResolution(reason="ambiguous_field")
+        resolved = field_fact.concrete or ""
+        evidence.update(field_fact.evidence)
+    evidence.add(Evidence(obligation.provenance, _obligation_expression(obligation)))
+    return ObligationResolution(
+        fact=TypeFact(frozenset({resolved}), tuple(sorted(evidence))),
+    )

@@ -1304,7 +1304,7 @@ class FrontendsScannerTest(unittest.TestCase):
             )
         )
 
-    def test_tree_sitter_classifies_builtin_and_unknown_python_receivers_without_candidate_edges(self) -> None:
+    def test_tree_sitter_separates_builtin_unknown_and_factory_python_receivers(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
         text = (
@@ -1335,13 +1335,15 @@ class FrontendsScannerTest(unittest.TestCase):
             )
 
         self.assertFalse(any(edge.type == "calls_candidate" for edge in result.edges))
-        self.assertFalse(
-            any(
-                edge.type == "calls" and result.nodes.get(edge.target) and result.nodes[edge.target].label == "append"
-                for edge in result.edges
-            )
-        )
-        self.assertEqual(result.unknown_receiver_member_calls, 2)
+        labels = {node_id: node.label for node_id, node in result.nodes.items()}
+        append_callers = {
+            labels[edge.source]
+            for edge in result.edges
+            if edge.type == "calls" and labels.get(edge.target) == "append"
+        }
+        self.assertEqual(append_callers, {"factory_receiver"})
+        self.assertEqual(result.resolved_member_calls, 1)
+        self.assertEqual(result.unknown_receiver_member_calls, 1)
         self.assertEqual(result.unresolved_member_calls, 1)
         self.assertEqual(result.external_resolved_member_calls, 1)
         self.assertEqual(result.unmatched_member_calls, 0)

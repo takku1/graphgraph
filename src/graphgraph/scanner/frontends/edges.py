@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
@@ -26,9 +26,11 @@ from .python import (
     _python_attribute_uses,
     _python_class_field_types,
     _python_fixture_return_types,
-    _python_imported_global_types,
+    _python_imported_global_facts,
+    _python_imported_return_facts,
     _python_local_types,
-    _python_module_global_types,
+    _python_module_global_facts,
+    _python_module_return_facts,
     _python_parameter_names,
 )
 from .rust import (
@@ -52,6 +54,7 @@ from .syntax import (
     _select_import_target,
     _syntax_text_without_literals,
 )
+from .type_facts import Evidence, TypeFact, join_type_fact_maps
 from .typescript import (
     _ts_class_field_types,
     _ts_local_call_return_types,
@@ -269,26 +272,113 @@ def _project_field_types(
     evidence, and inventing one here would spend the precision this resolver
     exists to protect.
     """
-    seen: dict[tuple[str, str], set[str]] = {}
+    return {
+        key: concrete
+        for key, fact in _project_field_type_facts(defs_by_file).items()
+        if (concrete := fact.concrete) is not None
+    }
+
+
+def _project_field_type_facts(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+) -> dict[tuple[str, str], TypeFact]:
+    """Repo-wide field facts retaining source provenance and ambiguity."""
+    result: dict[tuple[str, str], TypeFact] = {}
     for source, defs, root in defs_by_file:
-        for key, field_type in _file_field_types(source, defs, root).items():
-            if field_type:
-                seen.setdefault(key, set()).add(field_type)
-    return {key: next(iter(types)) for key, types in seen.items() if len(types) == 1}
+        for (owner, field), field_type in _file_field_types(source, defs, root).items():
+            if not field_type:
+                continue
+            key = (owner, field)
+            fact = TypeFact.from_evidence(
+                field_type,
+                Evidence("field_type", f"{source.rel}:{owner}.{field}"),
+            )
+            result[key] = result.get(key, TypeFact()).join(fact)
+    return result
 
 
 def _project_python_global_types(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], str]:
     """Repo-wide annotated module globals keyed by module provenance."""
-    seen: dict[tuple[str, str], set[str]] = {}
+    return {
+        key: concrete
+        for key, fact in _project_python_global_type_facts(defs_by_file).items()
+        if (concrete := fact.concrete) is not None
+    }
+
+
+def _project_python_global_type_facts(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+) -> dict[tuple[str, str], TypeFact]:
+    """Repo-wide annotated module-global facts retaining ambiguity."""
+    result: dict[tuple[str, str], TypeFact] = {}
     for source, _defs, _root in defs_by_file:
         if source.path.suffix.lower() != ".py":
             continue
         module_stem = source.path.stem
-        for name, type_name in _python_module_global_types(source.text).items():
-            seen.setdefault((module_stem, name), set()).add(type_name)
-    return {key: next(iter(types)) for key, types in seen.items() if len(types) == 1}
+        for name, fact in _python_module_global_facts(source.text, source.rel).items():
+            key = (module_stem, name)
+            result[key] = result.get(key, TypeFact()).join(fact)
+    return _join_python_package_reexports(
+        defs_by_file,
+        result,
+        _python_imported_global_facts,
+    )
+
+
+def _project_python_return_facts(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+) -> dict[tuple[str, str], TypeFact]:
+    """Repo-wide Python return facts keyed by module provenance and symbol."""
+    result: dict[tuple[str, str], TypeFact] = {}
+    for source, _defs, _root in defs_by_file:
+        if source.path.suffix.lower() != ".py":
+            continue
+        for name, fact in _python_module_return_facts(source.text, source.rel).items():
+            key = (source.path.stem, name)
+            result[key] = result.get(key, TypeFact()).join(fact)
+    return _join_python_package_reexports(
+        defs_by_file,
+        result,
+        _python_imported_return_facts,
+    )
+
+
+def _join_python_package_reexports(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    direct_facts: Mapping[tuple[str, str], TypeFact],
+    import_facts: Callable[
+        [str, Mapping[tuple[str, str], TypeFact]],
+        dict[str, TypeFact],
+    ],
+) -> dict[tuple[str, str], TypeFact]:
+    """Propagate facts through package ``__init__`` re-exports.
+
+    The finite worklist is bounded by package count. Each successful join is
+    monotone, and a package key is derived from its directory rather than from
+    a global symbol-name match.
+    """
+    result = dict(direct_facts)
+    packages = [
+        source
+        for source, _defs, _root in defs_by_file
+        if source.path.suffix.lower() == ".py" and source.path.name == "__init__.py"
+    ]
+    remaining_rounds = len(packages)
+    changed = True
+    while changed and remaining_rounds:
+        changed = False
+        remaining_rounds -= 1
+        for source in packages:
+            package_name = source.path.parent.name
+            for local_name, fact in import_facts(source.text, result).items():
+                key = (package_name, local_name)
+                joined = result.get(key, TypeFact()).join(fact)
+                if joined != result.get(key, TypeFact()):
+                    result[key] = joined
+                    changed = True
+    return result
 
 
 def _add_tree_sitter_calls(
@@ -315,8 +405,9 @@ def _add_tree_sitter_calls(
             if definition.kind == "class" and definition.extra:
                 base_classes.setdefault(definition.name, tuple(definition.extra))
 
-    project_field_types = _project_field_types(defs_by_file)
-    project_python_globals = _project_python_global_types(defs_by_file)
+    project_field_types = _project_field_type_facts(defs_by_file)
+    project_python_globals = _project_python_global_type_facts(defs_by_file)
+    project_python_returns = _project_python_return_facts(defs_by_file)
 
     # Repo-wide map of function name -> its single concrete return type, used
     # to type inline call receivers (`parse_ir(src).lower()`, normalized to
@@ -361,6 +452,21 @@ def _add_tree_sitter_calls(
         # resolvable.
         import_bound_names = whole_module_binding_names(suffix, source.text)
         src_lang = _lang_family(source.rel)
+        python_initial_facts: dict[str, TypeFact] = {}
+        python_call_return_facts: dict[str, TypeFact] = {}
+        if suffix == ".py":
+            # These are file facts, not callable facts. Parsing the complete
+            # module inside the callable loop changes the work from one parse
+            # per file to one parse per callable and made a 37-file Requests
+            # scan exceed 60 seconds.
+            python_initial_facts = join_type_fact_maps(
+                _python_module_global_facts(source.text, source.rel),
+                _python_imported_global_facts(source.text, project_python_globals),
+            )
+            python_call_return_facts = join_type_fact_maps(
+                _python_module_return_facts(source.text, source.rel),
+                _python_imported_return_facts(source.text, project_python_returns),
+            )
 
         # Build local resolutions dictionary starting with globally unique callables
         local_resolutions = dict(unique_callables)
@@ -449,15 +555,12 @@ def _add_tree_sitter_calls(
                 # carry the declared type of the field it reads. Without them a
                 # receiver bound this way stayed untyped even when both its
                 # receiver's type and that field were already known.
-                initial_types = _python_module_global_types(source.text)
-                initial_types.update(
-                    _python_imported_global_types(source.text, project_python_globals)
-                )
                 local_types = _python_local_types(
                     body,
                     field_types=project_field_types,
                     owner=d.owner or "",
-                    initial_types=initial_types,
+                    initial_facts=python_initial_facts,
+                    call_return_facts=python_call_return_facts,
                 )
                 normalized_path = "/" + source.rel.replace("\\", "/").casefold()
                 if "/tests/" in normalized_path or Path(source.rel).name.casefold().startswith("test_"):

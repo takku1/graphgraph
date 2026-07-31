@@ -12,8 +12,10 @@ from .syntax import (
 )
 from .type_facts import (
     Evidence,
+    TypeFact,
     TypeObligation,
     TypeSolution,
+    TypeState,
     solve_type_obligations,
 )
 
@@ -147,8 +149,17 @@ def _python_function_return_type(body: str) -> str:
         return ""
     if annotated := _python_type_name(function.returns):
         return annotated
-
     local_types = _python_local_types(body)
+    return _python_function_node_return_type(function, local_types)
+
+
+def _python_function_node_return_type(
+    function: py_ast.FunctionDef | py_ast.AsyncFunctionDef,
+    local_types: Mapping[str, str],
+) -> str:
+    """Infer one return type from an already parsed function node."""
+    if annotated := _python_type_name(function.returns):
+        return annotated
     returns: set[str] = set()
     for node in _python_body_nodes(function):
         if not isinstance(node, py_ast.Return) or node.value is None:
@@ -263,9 +274,11 @@ def _python_attribute_path(value: py_ast.AST | None) -> tuple[str, tuple[str, ..
 def _python_type_solution(
     body: str,
     *,
-    field_types: Mapping[tuple[str, str], str] | None = None,
+    field_types: Mapping[tuple[str, str], str | TypeFact] | None = None,
     owner: str = "",
     initial_types: Mapping[str, str] | None = None,
+    initial_facts: Mapping[str, TypeFact] | None = None,
+    call_return_facts: Mapping[str, TypeFact] | None = None,
     max_attribute_depth: int = DEFAULT_PYTHON_ATTRIBUTE_DEPTH,
 ) -> TypeSolution:
     """Solve local Python type facts with a bounded monotone worklist."""
@@ -287,6 +300,10 @@ def _python_type_solution(
     for name, type_name in sorted((initial_types or {}).items()):
         if type_name:
             seeds.append((name, type_name, Evidence("module_or_import", name)))
+    for name, fact in sorted((initial_facts or {}).items()):
+        evidence_items = fact.evidence or (Evidence("module_or_import", name),)
+        for type_name in sorted(fact.types):
+            seeds.extend((name, type_name, evidence) for evidence in evidence_items)
     if owner:
         seeds.extend(
             (
@@ -317,6 +334,18 @@ def _python_type_solution(
             return
         if type_name := _python_value_type(value):
             seeds.append((target, type_name, Evidence(provenance, target)))
+            return
+        if (
+            isinstance(value, py_ast.Call)
+            and isinstance(value.func, py_ast.Name)
+            and (return_fact := (call_return_facts or {}).get(value.func.id))
+            and (return_type := return_fact.concrete)
+        ):
+            return_evidence = return_fact.evidence or (
+                Evidence("return_type", value.func.id),
+            )
+            seeds.extend((target, return_type, evidence) for evidence in return_evidence)
+            seeds.append((target, return_type, Evidence(provenance, target)))
 
     for node in _python_body_nodes(function):
         if isinstance(node, py_ast.Attribute) and (path := _python_attribute_path(node)):
@@ -343,9 +372,11 @@ def _python_type_solution(
 def _python_local_types(
     body: str,
     *,
-    field_types: Mapping[tuple[str, str], str] | None = None,
+    field_types: Mapping[tuple[str, str], str | TypeFact] | None = None,
     owner: str = "",
     initial_types: Mapping[str, str] | None = None,
+    initial_facts: Mapping[str, TypeFact] | None = None,
+    call_return_facts: Mapping[str, TypeFact] | None = None,
     max_attribute_depth: int = DEFAULT_PYTHON_ATTRIBUTE_DEPTH,
 ) -> dict[str, str]:
     """Project concrete local receiver types from the bounded fact solution.
@@ -358,24 +389,42 @@ def _python_local_types(
         field_types=field_types,
         owner=owner,
         initial_types=initial_types,
+        initial_facts=initial_facts,
+        call_return_facts=call_return_facts,
         max_attribute_depth=max_attribute_depth,
     ).concrete_types
 
 
 def _python_module_global_types(source: str) -> dict[str, str]:
     """Return stable, explicitly annotated module-level bindings."""
+    return {
+        name: concrete
+        for name, fact in _python_module_global_facts(source, "<module>").items()
+        if (concrete := fact.concrete) is not None
+    }
+
+
+def _python_module_global_facts(
+    source: str,
+    source_path: str,
+) -> dict[str, TypeFact]:
+    """Return explicitly annotated module bindings with source provenance."""
     try:
         module = py_ast.parse(source)
     except (IndentationError, SyntaxError, ValueError, RecursionError):
         return {}
-    result: dict[str, str] = {}
+    result: dict[str, TypeFact] = {}
     for node in module.body:
         if (
             isinstance(node, py_ast.AnnAssign)
             and isinstance(node.target, py_ast.Name)
             and (type_name := _python_type_name(node.annotation))
         ):
-            result[node.target.id] = type_name
+            fact = TypeFact.from_evidence(
+                type_name,
+                Evidence("module_annotation", f"{source_path}:{node.lineno}"),
+            )
+            result[node.target.id] = result.get(node.target.id, TypeFact()).join(fact)
     return result
 
 
@@ -396,6 +445,75 @@ def _python_imported_global_types(
         for alias in node.names:
             if type_name := project_globals.get((module_stem, alias.name), ""):
                 result[alias.asname or alias.name] = type_name
+    return result
+
+
+def _python_imported_global_facts(
+    source: str,
+    project_globals: Mapping[tuple[str, str], TypeFact],
+) -> dict[str, TypeFact]:
+    """Map local imports to project-global facts without dropping ambiguity."""
+    try:
+        module = py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return {}
+    result: dict[str, TypeFact] = {}
+    for node in module.body:
+        if not isinstance(node, py_ast.ImportFrom) or not node.module:
+            continue
+        module_stem = node.module.rsplit(".", 1)[-1]
+        for alias in node.names:
+            fact = project_globals.get((module_stem, alias.name), TypeFact())
+            if fact.state is not TypeState.UNKNOWN:
+                result[alias.asname or alias.name] = fact
+    return result
+
+
+def _python_module_return_facts(
+    source: str,
+    source_path: str,
+) -> dict[str, TypeFact]:
+    """Return source-located facts for module-level callable return types."""
+    try:
+        module = py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return {}
+    result: dict[str, TypeFact] = {}
+    for node in module.body:
+        if not isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef)):
+            continue
+        # Project receiver inference needs annotations and direct concrete
+        # return expressions. It deliberately does not launch a second local
+        # analysis for every callable: the module AST is already available,
+        # and re-parsing every function caused superlinear scan overhead.
+        if not (type_name := _python_function_node_return_type(node, {})):
+            continue
+        fact = TypeFact.from_evidence(
+            type_name,
+            Evidence("function_return", f"{source_path}:{node.lineno}"),
+        )
+        result[node.name] = result.get(node.name, TypeFact()).join(fact)
+    return result
+
+
+def _python_imported_return_facts(
+    source: str,
+    project_returns: Mapping[tuple[str, str], TypeFact],
+) -> dict[str, TypeFact]:
+    """Map local imports to return facts from the named project module."""
+    try:
+        module = py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return {}
+    result: dict[str, TypeFact] = {}
+    for node in module.body:
+        if not isinstance(node, py_ast.ImportFrom) or not node.module:
+            continue
+        module_stem = node.module.rsplit(".", 1)[-1]
+        for alias in node.names:
+            fact = project_returns.get((module_stem, alias.name), TypeFact())
+            if fact.state is not TypeState.UNKNOWN:
+                result[alias.asname or alias.name] = fact
     return result
 
 
