@@ -63,8 +63,29 @@ def parse_authority_map(readme_text: str) -> dict[str, str]:
 
 @lru_cache(maxsize=8)
 def _repo_authority_map(readme_path: str) -> tuple[tuple[str, str], ...]:
-    text = Path(readme_path).read_text(encoding="utf-8", errors="replace")
+    try:
+        text = Path(readme_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()  # absent or unreadable index: every doc falls back to "current"
     return tuple(parse_authority_map(text).items())
+
+
+@lru_cache(maxsize=8)
+def _authority_lookup(readme_path: str) -> dict[str, str]:
+    """Read-only tier lookup, built once per index rather than per query node.
+
+    `document_authority` is a per-node tiebreaker, so it runs once for every
+    docs node in a search. Resolving the default path and testing it for
+    existence on each of those calls put ~930 filesystem syscalls in front of a
+    single query: the expensive read was cached, but the guard around it was
+    not. Both are now hoisted, leaving this a dict lookup.
+    """
+    return dict(_repo_authority_map(readme_path))
+
+
+@lru_cache(maxsize=1)
+def _default_docs_readme() -> str:
+    return str(Path(__file__).resolve().parents[3] / "docs" / "README.md")
 
 
 def document_authority(rel_path: str, *, docs_readme: Path | None = None) -> str:
@@ -78,12 +99,8 @@ def document_authority(rel_path: str, *, docs_readme: Path | None = None) -> str
     first = normalized.split("/", 1)[0]
     if first == "notes":
         return "notes"
-    readme = docs_readme or (Path(__file__).resolve().parents[3] / "docs" / "README.md")
-    if readme.exists():
-        mapping = dict(_repo_authority_map(str(readme)))
-        if normalized in mapping:
-            return mapping[normalized]
-    return "current"
+    readme = str(docs_readme) if docs_readme is not None else _default_docs_readme()
+    return _authority_lookup(readme).get(normalized, "current")
 
 
 def authority_rank(tier: str) -> int:

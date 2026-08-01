@@ -366,7 +366,11 @@ _NOISE_NAMES = frozenset({
 _CALLABLE_KINDS = frozenset({"function", "method"})
 
 
-@lru_cache(maxsize=8192)
+# Bound is a working-set quantity, not a tuning knob: this is keyed by path, so
+# a repository with more files than the bound evicts every entry before the next
+# resolution pass reaches it. Entries are one short string, and the paths are
+# already held by the graph, so the ceiling costs essentially nothing until hit.
+@lru_cache(maxsize=131072)
 def _lang_family(path: str) -> str | None:
     """Coarse language grouping derived from the file suffix's extractor.
 

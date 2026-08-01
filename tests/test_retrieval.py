@@ -1458,16 +1458,29 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
         cache = graph._search_index_cache
         self.assertIsNotNone(cache)
-        token_cache = graph._search_token_cache
-        self.assertIsNotNone(token_cache)
         self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
         self.assertIs(graph._search_index_cache, cache)
-        self.assertIs(graph._search_token_cache, token_cache)
 
         graph.nodes["B"] = Node("B", "BetaSearch", "function", "src/b.py")
         self.assertEqual(search_nodes(graph, "beta search", limit=1)[0].node.id, "B")
         self.assertIsNot(graph._search_index_cache, cache)
-        self.assertIsNot(graph._search_token_cache, token_cache)
+
+    def test_search_does_not_build_the_inverted_index(self) -> None:
+        # Candidate selection intersects each row's precomputed token set, so a
+        # search must not pay to invert 37k postings to read about five of them.
+        # The index still exists for facet requiredness, and still invalidates.
+        from graphgraph.retrieval.search import _search_token_index
+
+        graph = Graph(nodes={"A": Node("A", "AlphaSearch", "function", "src/a.py")})
+        self.assertEqual(search_nodes(graph, "alpha search", limit=1)[0].node.id, "A")
+        self.assertIsNone(graph._search_token_cache)
+
+        token_cache = _search_token_index(graph)
+        self.assertIn("alphasearch", token_cache)
+        self.assertIs(_search_token_index(graph), token_cache)
+
+        graph.nodes["B"] = Node("B", "BetaSearch", "function", "src/b.py")
+        self.assertIsNot(_search_token_index(graph), token_cache)
 
     def test_search_index_cache_invalidates_when_node_is_replaced_under_same_id(self) -> None:
         graph = Graph(nodes={"A": Node("A", "AlphaSearch", "function", "src/a.py")})

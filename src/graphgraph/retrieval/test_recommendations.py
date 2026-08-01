@@ -168,7 +168,10 @@ def _dotnet_test_project(path: str, source: str) -> str:
     return ""
 
 
-@lru_cache(maxsize=2048)
+# Working set is Rust files x labels queried, so 2048 was reachable on a real
+# workspace. Each entry is one bool but each miss re-reads and re-scans the file,
+# which is the expensive half; raising the ceiling is close to free.
+@lru_cache(maxsize=131072)
 def _rust_test_module_calls_symbol(source: str, label: str) -> bool:
     """Verify a missing graph edge against the bounded inline test module."""
     path = Path(source)

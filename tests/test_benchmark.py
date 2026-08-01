@@ -38,10 +38,17 @@ NON_ENGINE_SOURCE_FILES = frozenset(
         "graphgraph/live_validation.py",
     }
 )
-# Measured after the Q02-C persistent fact index landed (2026-07-31). This is a
-# versioned growth guard, not a packet budget: two percent permits small
-# maintenance changes while forcing intentional remeasurement for expansion.
-SOURCE_GRAPH_TOKEN_BASELINE = 151_006
+# Re-measured after the scan and retrieval hot-path work (2026-08-01), which
+# added the frontend parse/analysis caches and the retrieval lexical and
+# authority caches. This is a versioned growth guard, not a packet budget: two
+# percent permits small maintenance changes while forcing intentional
+# remeasurement for expansion.
+#
+# The previous baseline (151_006, measured 2026-07-30) had been consumed to 126
+# tokens of slack by the time this work started, so it was firing on any
+# addition at all rather than on unusual growth. Re-derive it when that happens
+# again; a guard with no headroom measures nothing.
+SOURCE_GRAPH_TOKEN_BASELINE = 154_149
 SOURCE_GRAPH_TOKEN_HEADROOM_RATIO = 0.02
 
 

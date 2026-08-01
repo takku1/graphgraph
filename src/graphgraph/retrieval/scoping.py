@@ -199,7 +199,10 @@ def _rust_source_lines(source: str) -> tuple[str, ...]:
         return ()
 
 
-@lru_cache(maxsize=8192)
+# Keyed per symbol, so the working set is the Rust symbol count rather than a
+# fixed quantity; entries are one bool. `_rust_source_lines` above is left small
+# on purpose -- it holds whole file contents, so its bound is a memory ceiling.
+@lru_cache(maxsize=131072)
 def _source_declares_rust_test(source: str, line: int) -> bool:
     """Recover inline-test identity for graphs built before test-role IR facts."""
     lines = _rust_source_lines(source)
