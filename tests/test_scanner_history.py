@@ -42,6 +42,33 @@ class HistoryScannerTest(unittest.TestCase):
         # Neutral feature commit -> excluded (no bugfix keyword).
         self.assertFalse(_is_bugfix_commit("feat: add packet renderer for hybrid format"))
 
+    def test_history_start_accepts_utc_z_with_python_310_parser(self) -> None:
+        from datetime import datetime
+
+        from graphgraph.scanner import history as history_module
+
+        class Python310DateTime:
+            @staticmethod
+            def fromisoformat(value: str):
+                if value.endswith("Z"):
+                    raise ValueError("Python 3.10 does not accept the UTC Z suffix")
+                return datetime.fromisoformat(value)
+
+        class GitResult:
+            returncode = 0
+            stdout = "2026-08-01T18:14:30Z\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            with (
+                patch.object(history_module, "datetime", Python310DateTime),
+                patch.object(history_module.subprocess, "run", return_value=GitResult()),
+            ):
+                timestamp = history_module.repository_history_start(root)
+
+        self.assertEqual("2026-08-01T18:14:30Z", timestamp)
+
     def test_history_parse_commit_log_output(self) -> None:
         from graphgraph.scanner.history import _parse_commit_log_output
 

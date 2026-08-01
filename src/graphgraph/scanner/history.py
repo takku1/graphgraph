@@ -42,6 +42,17 @@ def _is_bugfix_commit(subject: str) -> bool:
     return bool(BUGFIX_COMMIT_RE.search(subject)) and not MAINTENANCE_COMMIT_RE.search(subject)
 
 
+def _parse_git_iso_timestamp(value: str) -> datetime:
+    """Parse Git's strict ISO timestamp on every supported Python version."""
+
+    # Python 3.11 added support for the ISO 8601 UTC ``Z`` suffix. Git may
+    # emit that spelling for UTC commits, while GraphGraph still supports
+    # Python 3.10. Normalize only for comparison; metadata retains Git's exact
+    # original timestamp string.
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized)
+
+
 def repository_history_start(root: Path) -> str:
     """Return the earliest root-commit timestamp, or ``""`` when unavailable."""
     if not (root / ".git").exists():
@@ -61,7 +72,7 @@ def repository_history_start(root: Path) -> str:
         return ""
     timestamps = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     try:
-        return min(timestamps, key=datetime.fromisoformat) if timestamps else ""
+        return min(timestamps, key=_parse_git_iso_timestamp) if timestamps else ""
     except ValueError:
         return ""
 
