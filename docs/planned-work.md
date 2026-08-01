@@ -208,8 +208,12 @@ confidence intervals, and an explicit minimum practical effect.
 - [x] Implement bounded `k`-hop obligation discharge (stage 4) with explicit
   depth, unresolved, and ambiguity receipts rather than whole-program fixpoint
   convergence.
-- [ ] Generalize only after Python oracle gains survive held-out repositories;
-  then attack addressable JS/TS, C#, Rust, and C++ buckets by measured volume.
+- [x] Generalize the resolution architecture after Python oracle gains survived
+  held-out repositories. Every registered scanner language now enters through
+  the same local/field fact-provider contracts, ranked binding environment,
+  language-partitioned scope graph, and declarative grammar policy. Behavioral
+  activation remains evidence-gated per language; an empty provider is an
+  explicit abstention slot, not a suffix branch in the resolver.
 - [x] Complexity target: re-emit facts for changed files and re-join affected
   keys, approaching `O(delta facts + affected obligations)` rather than a
   whole-corpus analysis.
@@ -287,6 +291,38 @@ Queue position: sample UniGetUI's `3,665 named_local` and `872 field_chain`
 sites, separate external types from repository-owned targets, then take the
 largest syntactically provable C# join. The indexed C++ hold finding preserves
 the failed candidate, source counterexamples, and prerequisite algorithm.
+
+Q02-D C# inherited-member receipt (2026-08-01): a fresh, non-incremental scan
+of pinned UniGetUI `5b05b35bedfa5e15927c4e586644a0e40c9aba4a` with the current
+engine (`1845671`), Tree-sitter symbols, no docs, and no history superseded the
+older stale histogram. The baseline resolved `2,921` of `5,805` typed-or-
+unknown C# receiver sites (`50.32%`) with `2,810` unknown; `named_local` was
+`1,204` and `field_chain` `872`.
+
+Source sampling identified the largest internally provable repeated join:
+derived package managers call the cross-file inherited property
+`IManagerLogger TaskLogger` (`TaskLogger.CreateNew`, 53 sites). The promoted
+implementation is not a C# branch. All 15 grammar profiles declare enclosing-
+instance and field-visibility policy, all 15 languages have local and field
+fact-provider slots, a ranked binding environment makes local declarations
+stronger than fields while equal-strength conflicts abstain, and a scope graph
+partitions type/inheritance facts by language and resolves nearest scopes with
+bounded, cycle-safe traversal. C# is the measured activation case: its
+installed grammar exposes `: Base, IFace` as an unfielded `base_list`, which
+now enters that shared graph as exact CST evidence.
+
+The generalized candidate moved resolved `2,921 -> 3,144`, unknown receiver
+`2,810 -> 2,737`, unmatched `818 -> 668`, and `named_local 1,204 -> 1,131`;
+`field_chain` remained `872`. The full graph diff added 229 calls and 38
+source-visible `implements` edges. It removed 12 calls: each was a correction
+from the capitalization fallback's concrete `Package` target to methods on the
+source-declared inherited field type `IPackage`. All 229 added call targets had
+an owner exactly equal to the edge's receiver-type evidence. Cross-file base,
+unrelated receiver, equal-name decoy, same-language same-type-name, ambiguity,
+and cycle fixtures protect precision; the committed 15-language corpus remains
+byte-identical. The next C# slice should measure bounded property-chain
+discharge, while Rust/Java/C++ activation continues from their measured
+histograms through the same provider and policy contracts.
 
 ### P03 — Calibrate routing and facet decomposition
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
-from .grammars import UNION_PROFILE, profile_for_suffix
+from .grammars import SUFFIX_LANGUAGE, UNION_PROFILE, profile_for_suffix
 from .javascript import (
     js_callback_definition,
     js_definition_facts,
@@ -22,6 +22,7 @@ from .model import (
     _CallSite,
     _TsDef,
 )
+from .scope_graph import ScopeGraph, type_scope
 
 # Functions in JS/TS are usually assigned, not declared; see javascript.py.
 _JS_DEFINITION_SUFFIXES = frozenset(
@@ -229,9 +230,16 @@ def _base_class_names(node: Any, text: bytes) -> tuple[str, ...]:
     in the CST the parser already built, so recovering them is a read, not an
     inference.
     """
-    if _DEF_TYPES.get(node.type) != "class":
+    if _DEF_TYPES.get(node.type) not in {
+        "class",
+        "interface",
+        "struct",
+        "trait",
+        "type",
+    }:
         return ()
     names: list[str] = []
+    container = None
     for field in ("superclasses", "superclass", "bases"):
         try:
             container = node.child_by_field_name(field)
@@ -239,13 +247,26 @@ def _base_class_names(node: Any, text: bytes) -> tuple[str, ...]:
             container = None
         if container is None:
             continue
+        break
+    if container is None:
+        # tree-sitter-c-sharp exposes `: Base, IFace` as an unfielded
+        # `base_list` named child. It is still exact CST evidence; omitting the
+        # unfielded shape made every C# class appear to have no ancestors.
+        container = next(
+            (
+                child
+                for child in getattr(node, "named_children", ())
+                if child.type == "base_list"
+            ),
+            None,
+        )
+    if container is not None:
         for child in getattr(container, "named_children", ()):
             base = _node_text(child, text).strip()
             # Keep plain names; generics and keyword args (metaclass=...) are
             # not a nameable owner here.
             if base and _identifier(base) and base not in names:
                 names.append(base)
-        break
     return tuple(names)
 
 
@@ -696,30 +717,6 @@ def _method_owner(node_id: str, nodes: dict[str, Node]) -> str:
     return ""
 
 
-def _ancestor_chain(type_name: str, base_classes: dict[str, tuple[str, ...]]) -> list[str]:
-    """Base classes of *type_name*, nearest first, breadth-first.
-
-    Bounded and cycle-safe: a malformed or self-referential hierarchy must not
-    hang extraction, and depth beyond a few links is not evidence worth
-    claiming.
-    """
-    seen = {type_name}
-    order: list[str] = []
-    frontier = list(base_classes.get(type_name, ()))
-    depth = 0
-    while frontier and depth < 8:
-        nxt: list[str] = []
-        for name in frontier:
-            if name in seen:
-                continue
-            seen.add(name)
-            order.append(name)
-            nxt.extend(base_classes.get(name, ()))
-        frontier = nxt
-        depth += 1
-    return order
-
-
 def _resolve_member_call(
     *,
     source: SourceFile,
@@ -729,9 +726,8 @@ def _resolve_member_call(
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
-    base_classes: dict[str, tuple[str, ...]] | None = None,
+    scope_graph: ScopeGraph | None = None,
 ) -> str:
-    base_classes = base_classes or {}
     receiver_type = receiver_types.get(call.receiver, "")
     if not receiver_type and source.path.suffix.lower() == ".rs" and _rust_qualified_type_receiver(call.receiver):
         receiver_type = call.receiver.split("::")[-1]
@@ -774,16 +770,31 @@ def _resolve_member_call(
         # callee is the correct outcome, not a miss. See _unmatched_or_external.
         return "unknown_receiver" if all_candidates else "external_resolved"
     candidates = [node_id for node_id in all_candidates if _method_owner(node_id, nodes) == receiver_type]
-    if not candidates and base_classes:
+    if not candidates and scope_graph is not None:
         # Inherited call: the receiver's type is known and the method exists,
         # just on an ancestor. Requiring an exact owner match made every such
         # call unresolvable -- `app.route()` on a Flask misses because `route`
         # is defined on a base class. Walk the chain nearest-first so an
         # override still wins over the definition it overrides.
-        for ancestor in _ancestor_chain(receiver_type, base_classes):
-            candidates = [node_id for node_id in all_candidates if _method_owner(node_id, nodes) == ancestor]
+        source_suffix = source.path.suffix.lower()
+        source_language = SUFFIX_LANGUAGE.get(
+            source_suffix,
+            source_suffix.lstrip(".") or "unknown",
+        )
+        for ancestor_layer in scope_graph.ancestor_layers(
+            type_scope(source_language, receiver_type),
+            max_depth=8,
+        ):
+            candidates = [
+                node_id
+                for node_id in all_candidates
+                if _method_owner(node_id, nodes)
+                in {ancestor.name for ancestor in ancestor_layer}
+            ]
             if candidates:
-                receiver_type = ancestor
+                owners = {_method_owner(node_id, nodes) for node_id in candidates}
+                if len(owners) == 1:
+                    receiver_type = next(iter(owners))
                 break
     if len(candidates) > 1:
         # Nearest scope again, one level down: two files can each declare a

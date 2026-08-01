@@ -603,6 +603,107 @@ class FrontendsScannerTest(unittest.TestCase):
         }
         self.assertIn(("Run", "Save"), resolved)
 
+    def test_csharp_inherited_property_receiver_resolves_across_files(self) -> None:
+        # Q02-D held-out UniGetUI slice: PackageManager declares
+        # `IManagerLogger TaskLogger`, while derived manager classes call
+        # `TaskLogger.CreateNew()` from other files. The property is inherited,
+        # so looking only at fields declared on the callable's immediate owner
+        # leaves every such call untyped. An unrelated same-named property and
+        # method are the precision guard against name-only resolution.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "Logging.cs": (
+                "public interface IManagerLogger {\n"
+                "  int CreateNew();\n"
+                "}\n"
+                "public class WrongLogger {\n"
+                "  public int CreateNew() { return 9; }\n"
+                "}\n"
+                "public class Other {\n"
+                "  public WrongLogger TaskLogger { get; }\n"
+                "}\n"
+            ),
+            "PackageManager.cs": (
+                "public abstract class PackageManager {\n"
+                "  public IManagerLogger TaskLogger { get; }\n"
+                "}\n"
+            ),
+            "Snap.cs": (
+                "public class Snap : PackageManager {\n"
+                "  public int Refresh() { return TaskLogger.CreateNew(); }\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, source in sources.items():
+                path = root / rel
+                path.write_text(source, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace(".", "_"), source))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+        targets = {
+            result.nodes[result.nodes[edge.target].parent].label
+            for edge in result.edges
+            if edge.type == "calls"
+            and result.nodes[edge.source].label == "Refresh"
+            and result.nodes[edge.target].label == "CreateNew"
+        }
+        self.assertEqual({"IManagerLogger"}, targets)
+        implements = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "implements"
+        }
+        self.assertIn(("Snap", "PackageManager"), implements)
+
+    def test_same_named_csharp_type_elsewhere_does_not_hide_local_field(self) -> None:
+        # Type names are not globally unique inside one language. Project-wide
+        # facts for two `Handler._repo` declarations must become ambiguous,
+        # while the declaration in the caller's own file remains exact.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "Good.cs": (
+                "namespace GoodSpace;\n"
+                "public class GoodRepo { public void Save() {} }\n"
+                "public class Handler {\n"
+                "  private GoodRepo _repo;\n"
+                "  public void Run() { _repo.Save(); }\n"
+                "}\n"
+            ),
+            "Wrong.cs": (
+                "namespace WrongSpace;\n"
+                "public class WrongRepo { public void Save() {} }\n"
+                "public class Handler { private WrongRepo _repo; }\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = []
+            for rel, source in sources.items():
+                path = root / rel
+                path.write_text(source, encoding="utf-8")
+                files.append(SourceFile(path, rel, rel.replace(".", "_"), source))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files,
+                max_total_symbols=100,
+            )
+
+        targets = {
+            result.nodes[result.nodes[edge.target].parent].label
+            for edge in result.edges
+            if edge.type == "calls"
+            and result.nodes[edge.source].label == "Run"
+            and result.nodes[edge.target].label == "Save"
+        }
+        self.assertEqual({"GoodRepo"}, targets)
+
     def test_java_field_receiver_calls_resolve(self) -> None:
         # T13: the Java analogue -- `repo.save()` on a declared field, plus the
         # explicit `this.repo` form.

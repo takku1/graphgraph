@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import unittest
 
+from graphgraph.scanner.frontends.binding_providers import (
+    FIELD_BINDING_PROVIDERS,
+    LOCAL_BINDING_PROVIDERS,
+)
 from graphgraph.scanner.frontends.grammars import (
     _UNCLAIMED_BY_INTENT,
     _UNIVERSAL_CALLS,
@@ -77,6 +81,10 @@ class GrammarProfileValidationTest(unittest.TestCase):
                 f"{suffix} maps to '{language}', which has no grammar profile",
             )
 
+    def test_every_language_has_uniform_binding_provider_slots(self) -> None:
+        self.assertEqual(set(GRAMMARS), set(LOCAL_BINDING_PROVIDERS))
+        self.assertEqual(set(GRAMMARS), set(FIELD_BINDING_PROVIDERS))
+
     def test_union_is_the_superset_of_every_profile(self) -> None:
         # The migration's whole safety argument: per-language tables are
         # subsets of the union, so narrowing a lookup cannot admit anything new.
@@ -96,6 +104,14 @@ class GrammarProfileValidationTest(unittest.TestCase):
                 self.assertLessEqual(
                     profile.variable_sigils, UNION_PROFILE.variable_sigils
                 )
+                self.assertLessEqual(
+                    set(profile.field_receiver_prefixes),
+                    set(UNION_PROFILE.field_receiver_prefixes),
+                )
+                if profile.bare_field_receivers:
+                    self.assertTrue(UNION_PROFILE.bare_field_receivers)
+                if profile.inherited_field_receivers:
+                    self.assertTrue(UNION_PROFILE.inherited_field_receivers)
 
     def test_unknown_language_and_suffix_fall_back_to_the_union(self) -> None:
         # An unrecognised suffix must behave exactly as it did before profiles
@@ -106,6 +122,15 @@ class GrammarProfileValidationTest(unittest.TestCase):
 
     def test_suffix_lookup_is_case_insensitive(self) -> None:
         self.assertIs(profile_for_suffix(".PY"), profile_for_suffix(".py"))
+
+    def test_field_visibility_is_declared_by_language(self) -> None:
+        self.assertEqual(("self.",), GRAMMARS["python"].field_receiver_prefixes)
+        self.assertEqual(("this.",), GRAMMARS["csharp"].field_receiver_prefixes)
+        self.assertEqual(("this->",), GRAMMARS["cpp"].field_receiver_prefixes)
+        self.assertTrue(GRAMMARS["csharp"].bare_field_receivers)
+        self.assertTrue(GRAMMARS["java"].bare_field_receivers)
+        self.assertFalse(GRAMMARS["typescript"].bare_field_receivers)
+        self.assertFalse(GRAMMARS["rust"].inherited_field_receivers)
 
     def test_module_means_different_things_per_language(self) -> None:
         # The concrete reason these tables are per-language. `module` is a

@@ -8,9 +8,15 @@ from typing import Any, Callable, Mapping
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
-from .cpp import cpp_class_field_types, cpp_local_types
-from .csharp import csharp_class_field_types, csharp_local_types
-from .go import go_local_types
+from .binding_providers import (
+    DIRECT_FIELD_BINDING_PRIORITY,
+    ENCLOSING_INSTANCE_PRIORITY,
+    FIELD_BINDING_PRIORITY,
+    FieldBindingContext,
+    LocalBindingContext,
+    field_bindings,
+    local_bindings,
+)
 from .grammars import profile_for_suffix
 from .languages import _SUFFIX_LANGUAGE
 from .model import (
@@ -27,21 +33,16 @@ from .module_calls import (
 from .persistent_facts import PythonProjectTypeFacts
 from .python import (
     _python_attribute_uses,
-    _python_class_field_types,
     _python_fixture_return_types,
     _python_imported_global_facts,
     _python_imported_return_facts,
-    _python_local_types,
     _python_module_global_facts,
     _python_module_return_facts,
-    _python_parameter_names,
 )
 from .rust import (
-    _rust_fields_in_range,
-    _rust_local_call_return_types,
-    _rust_local_types,
     _rust_macro_bare_call_names_in_range,
 )
+from .scope_graph import ScopeGraph, type_scope
 from .syntax import (
     _call_sites_in_range,
     _callback_arg_names_in_range,
@@ -60,12 +61,7 @@ from .syntax import (
 )
 from .type_facts import Evidence, TypeFact, join_type_fact_maps
 from .typescript import (
-    _ts_class_field_types,
-    _ts_local_call_return_types,
-    _ts_local_types,
-    _ts_parameter_names,
     _ts_return_type_from_body,
-    _ts_this_aliases,
 )
 
 _TS_SUFFIXES = frozenset({".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"})
@@ -301,25 +297,11 @@ def _file_field_types(
 ) -> dict[tuple[str, str], str]:
     """`(owner, field) -> declared type` for one file, in any supported language."""
     suffix = source.path.suffix.lower()
-    if suffix == ".rs":
-        text_bytes = source.text.encode("utf-8", errors="replace")
-        fields: dict[tuple[str, str], str] = {}
-        for struct in (item for item in defs if item.kind == "struct"):
-            for field_name, field_type, _line in _rust_fields_in_range(
-                root, text_bytes, struct.start, struct.end
-            ):
-                if field_type:
-                    fields[(struct.name, field_name)] = field_type
-        return fields
-    if suffix == ".py":
-        return dict(_python_class_field_types(source.text))
-    if suffix in _TS_SUFFIXES:
-        return dict(_ts_class_field_types(source.text))
-    if suffix in {".cs", ".java"}:
-        return dict(csharp_class_field_types(source.text))
-    if suffix in _CPP_SUFFIXES:
-        return dict(cpp_class_field_types(source.text))
-    return {}
+    language = _SUFFIX_LANGUAGE.get(suffix, suffix.lstrip(".") or "unknown")
+    return field_bindings(
+        language,
+        FieldBindingContext(source, tuple(defs), root),
+    )
 
 
 def _project_field_types(
@@ -349,8 +331,35 @@ def _project_field_type_facts(
     defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], TypeFact]:
     """Repo-wide field facts retaining source provenance and ambiguity."""
+    result, _scope_graph = _project_field_indexes(defs_by_file)
+    return result
+
+
+def _project_field_indexes(
+    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+) -> tuple[dict[tuple[str, str], TypeFact], ScopeGraph]:
+    """Build compatibility field facts and the language-partitioned scope graph."""
+
     result: dict[tuple[str, str], TypeFact] = {}
+    scope_graph = ScopeGraph()
     for source, defs, root in defs_by_file:
+        suffix = source.path.suffix.lower()
+        language = _SUFFIX_LANGUAGE.get(suffix, suffix.lstrip(".") or "unknown")
+        for definition in defs:
+            if definition.kind not in {
+                "class",
+                "interface",
+                "struct",
+                "trait",
+                "type",
+            }:
+                continue
+            for base in definition.extra:
+                if base:
+                    scope_graph.add_parent(
+                        type_scope(language, definition.name),
+                        type_scope(language, base),
+                    )
         for (owner, field), field_type in _file_field_types(source, defs, root).items():
             if not field_type:
                 continue
@@ -360,7 +369,8 @@ def _project_field_type_facts(
                 Evidence("field_type", f"{source.rel}:{owner}.{field}"),
             )
             result[key] = result.get(key, TypeFact()).join(fact)
-    return result
+            scope_graph.add_binding(type_scope(language, owner), field, fact)
+    return result, scope_graph
 
 
 def _project_python_global_types(
@@ -459,16 +469,6 @@ def _add_tree_sitter_calls(
     unique_by_language: dict[str | None, dict[str, str]] = {}
     reexports = _reexported_symbols(defs_by_file, nodes, edges)
 
-    # Class name -> declared base names, so a call on a typed receiver can find
-    # a method defined on an ancestor. Without it, resolution requires the
-    # method to be owned by the receiver's exact class, and every inherited
-    # call fails with both ends already present in the graph.
-    base_classes: dict[str, tuple[str, ...]] = {}
-    for _source, defs, _root in defs_by_file:
-        for definition in defs:
-            if definition.kind == "class" and definition.extra:
-                base_classes.setdefault(definition.name, tuple(definition.extra))
-
     # Edge identity seen so far. This was rebuilt from the whole `edges` list
     # once per definition, making the scan quadratic in edge count: 2,252
     # rebuilds over a list past 12,000 edges on sympy/core, 11% of scan time.
@@ -479,7 +479,7 @@ def _add_tree_sitter_calls(
     existing_edge_keys: set[tuple[str, str, str]] = set()
     absorbed_edge_count = 0
 
-    project_field_types = _project_field_type_facts(defs_by_file)
+    project_field_types, scope_graph = _project_field_indexes(defs_by_file)
     project_python_globals = _project_python_global_type_facts(defs_by_file)
     project_python_returns = _project_python_return_facts(defs_by_file)
     if python_project_facts is not None:
@@ -488,6 +488,8 @@ def _add_tree_sitter_calls(
         # for non-Python field facts; duplicate Python evidence is harmless.
         for key, fact in python_project_facts.fields.items():
             project_field_types[key] = project_field_types.get(key, TypeFact()).join(fact)
+            owner, field = key
+            scope_graph.add_binding(type_scope("python", owner), field, fact)
         for key, fact in python_project_facts.globals.items():
             project_python_globals[key] = project_python_globals.get(key, TypeFact()).join(fact)
         for key, fact in python_project_facts.returns.items():
@@ -618,31 +620,13 @@ def _add_tree_sitter_calls(
         # One encode per file. This was previously re-run for every callable in
         # the file, re-encoding the whole source once per definition.
         text_bytes = source.text.encode("utf-8", errors="replace")
-        rust_field_types: dict[tuple[str, str], str] = {}
-        python_field_types: dict[tuple[str, str], str] = {}
-        ts_field_types: dict[tuple[str, str], str] = {}
-        js_object_owners: set[str] = set()
-        csharp_field_types: dict[tuple[str, str], str] = {}
-        cpp_field_types: dict[tuple[str, str], str] = {}
-        if suffix == ".rs":
-            for struct in (item for item in defs if item.kind == "struct"):
-                for field_name, field_type, _line in _rust_fields_in_range(
-                    root,
-                    text_bytes,
-                    struct.start,
-                    struct.end,
-                ):
-                    if field_type:
-                        rust_field_types[(struct.name, field_name)] = field_type
-        elif suffix == ".py":
-            python_field_types = _python_class_field_types(source.text)
-        elif suffix in _TS_SUFFIXES:
-            ts_field_types = _ts_class_field_types(source.text)
-            js_object_owners = {d.owner for d in defs if d.kind == "method" and d.owner}
-        elif suffix in {".cs", ".java"}:
-            csharp_field_types = csharp_class_field_types(source.text)
-        elif suffix in _CPP_SUFFIXES:
-            cpp_field_types = cpp_class_field_types(source.text)
+        profile = profile_for_suffix(suffix)
+        file_field_types = _file_field_types(source, defs, root)
+        js_object_owners = frozenset(
+            d.owner
+            for d in defs
+            if suffix in _TS_SUFFIXES and d.kind == "method" and d.owner
+        )
         for d in callable_defs:
             src_id = _definition_node_id(source, d)
             if src_id not in nodes:
@@ -664,145 +648,100 @@ def _add_tree_sitter_calls(
                 body = d.literal_free_text or _syntax_text_without_literals(d.node, text_bytes)
             else:
                 body = raw_body
-            if suffix in _TS_SUFFIXES:
-                local_types = _ts_local_types(body)
-                # `const s = createStore();` -- bind the local to the factory's
-                # inferred return type, unless a stronger annotation/`new` type
-                # was already found (setdefault preserves the direct evidence).
-                for binding, inferred in _ts_local_call_return_types(body, unique_return_types).items():
-                    local_types.setdefault(binding, inferred)
-                # `var app = {}; app.set = function(){}; app.boot = function(){ app.set() }`
-                # -- the object-literal idiom JS uses instead of classes. Those
-                # definitions already carry `owner="app"`, and `this.set()` inside
-                # them resolves, but a same-file call written through the object's
-                # own name did not: nothing bound `app` to its own type. On
-                # express that name is the third most common receiver in the
-                # library.
-                #
-                # The bound value must be the *path-qualified* owner that
-                # `_method_owner` reports for these definitions, because the
-                # object exists only within its file -- an `app` elsewhere is a
-                # different object. Binding the bare name instead merely moves
-                # the call from `unknown_receiver` to `unmatched` without
-                # producing an edge. Only names this file owns methods on are
-                # bound, and setdefault keeps real type evidence ahead of them.
-                shadowing_params = _ts_parameter_names(body) if js_object_owners else set()
-                for owner_name in js_object_owners - shadowing_params:
-                    local_types.setdefault(owner_name, f"{source.rel}::{owner_name}")
-            elif suffix == ".rs":
-                local_types = _rust_local_types(body)
-                # `let ir = parse_ir(src);` -- bind the local to the callee's
-                # return type, but only where nothing stronger is known.
-                # A declared annotation or parameter type is direct evidence;
-                # a return type is inferred, and letting it overwrite the
-                # former loses real resolutions (measured: -83 calls edges,
-                # while the resolved/unknown *ratio* rose, because displaced
-                # sites fall out of that ratio's denominator entirely).
-                for binding, inferred in _rust_local_call_return_types(body, unique_return_types).items():
-                    local_types.setdefault(binding, inferred)
-                for binding, inferred in call_receiver_types.items():
-                    local_types.setdefault(binding, inferred)
-            elif suffix == ".py":
-                # Field types let an attribute-valued assignment (`app = ctx.app`)
-                # carry the declared type of the field it reads. Without them a
-                # receiver bound this way stayed untyped even when both its
-                # receiver's type and that field were already known.
-                local_types = _python_local_types(
-                    body,
-                    field_types=project_field_types,
+            receiver_owner = _callable_receiver_owner(source, d) if d.owner else ""
+            structural_owner = any(
+                fact.startswith("javascript_owner:") for fact in d.facts
+            )
+            binds_structural_this = "javascript_this:assigned_owner" in d.facts
+            binds_enclosing_receiver = bool(d.owner) and not (
+                suffix in _TS_SUFFIXES
+                and structural_owner
+                and not binds_structural_this
+            )
+            bindings = local_bindings(
+                LocalBindingContext(
+                    language=language,
+                    body=body,
+                    source_rel=source.rel,
                     owner=d.owner or "",
+                    receiver_owner=receiver_owner,
+                    binds_enclosing_receiver=binds_enclosing_receiver,
+                    structural_owners=js_object_owners,
+                    field_types=project_field_types,
                     initial_facts=python_initial_facts,
                     call_return_facts=python_call_return_facts,
+                    unique_return_types=unique_return_types,
+                    call_receiver_types=call_receiver_types,
+                    unique_fixture_return_types=unique_fixture_return_types,
                 )
-                normalized_path = "/" + source.rel.replace("\\", "/").casefold()
-                if "/tests/" in normalized_path or Path(source.rel).name.casefold().startswith("test_"):
-                    # Pytest fixture injection binds a test parameter to the
-                    # same-named fixture function's return value. Only accept
-                    # a repository-unique concrete return type.
-                    for parameter in _python_parameter_names(body):
-                        if inferred := unique_fixture_return_types.get(parameter):
-                            local_types.setdefault(parameter, inferred)
-            elif suffix in {".cs", ".java"}:
-                # Java shares C#'s declaration shapes (`Type x`, `new Type()`,
-                # typed params), so the same inference serves both.
-                local_types = csharp_local_types(body)
-            elif suffix in _CPP_SUFFIXES:
-                local_types = cpp_local_types(body)
-            elif suffix == ".go":
-                local_types = go_local_types(body)
-            else:
-                local_types = {}
+            )
             if d.owner:
-                receiver_owner = _callable_receiver_owner(source, d)
-                structural_owner = any(
-                    fact.startswith("javascript_owner:")
-                    for fact in d.facts
-                )
-                binds_structural_this = (
-                    "javascript_this:assigned_owner" in d.facts
-                )
-                # Which names denote the enclosing instance is a property of the
-                # language, so it is declared once per grammar rather than
-                # rediscovered as a chain of suffix tests here. That chain knew
-                # `self` (Python, Rust), `cls` (Python) and `this` (TS/JS, C#,
-                # Java, C++), and consequently gave Swift, PHP, Kotlin, Scala
-                # and Ruby no enclosing-instance binding at all -- Swift's
-                # `self.Handle()` and PHP's `$this->Handle()` were unresolvable
-                # for want of one table entry each.
-                #
-                # JS keeps its own guard: a function attached to an object
-                # literal has a structural owner, and its `this` is the call
-                # site's receiver rather than that object, so binding it to the
-                # owner would invent edges. Only definitions that provably bind
-                # `this` to the owner are excepted.
-                self_aliases = profile_for_suffix(suffix).self_aliases
-                if self_aliases and not (
-                    suffix in _TS_SUFFIXES
-                    and structural_owner
-                    and not binds_structural_this
-                ):
-                    for alias in self_aliases:
-                        local_types[alias] = receiver_owner
-                if suffix in _TS_SUFFIXES and (
-                    not structural_owner or binds_structural_this
-                ):
-                    for alias in _ts_this_aliases(body):
-                        local_types.setdefault(alias, receiver_owner)
-                field_types = (
-                    ts_field_types
-                    if suffix in _TS_SUFFIXES
-                    else rust_field_types
-                    if suffix == ".rs"
-                    else csharp_field_types
-                    if suffix in {".cs", ".java"}
-                    else cpp_field_types
-                    if suffix in _CPP_SUFFIXES
-                    else python_field_types
-                )
-                owner_fields = {
-                    field_name: field_type
-                    for (owner, field_name), field_type in field_types.items()
-                    if owner == d.owner
+                if binds_enclosing_receiver:
+                    enclosing_fact = TypeFact.from_evidence(
+                        receiver_owner,
+                        Evidence(
+                            "enclosing_instance",
+                            f"{source.rel}:{d.owner}",
+                        ),
+                    )
+                    for alias in profile.self_aliases:
+                        bindings.bind(
+                            alias,
+                            enclosing_fact,
+                            priority=ENCLOSING_INSTANCE_PRIORITY,
+                        )
+
+                direct_fields = {
+                    field_name: TypeFact.from_evidence(
+                        field_type,
+                        Evidence(
+                            "field_type",
+                            f"{source.rel}:{d.owner}.{field_name}",
+                        ),
+                    )
+                    for (owner, field_name), field_type in file_field_types.items()
+                    if owner == d.owner and field_type
                 }
-                # The enclosing-instance receiver is spelled differently per
-                # language, and C#/Java also read fields *bare* (`_repo.M()`,
-                # not `this._repo.M()`).
-                if suffix in {".cs", ".java"}:
-                    qualified_prefix, bare_access = "this.", True
-                elif suffix in _TS_SUFFIXES:
-                    qualified_prefix, bare_access = "this.", False
-                elif suffix in _CPP_SUFFIXES:
-                    qualified_prefix, bare_access = "this->", True
-                else:  # rust, python
-                    qualified_prefix, bare_access = "self.", False
-                local_types.update(
-                    {f"{qualified_prefix}{field_name}": field_type for field_name, field_type in owner_fields.items()}
+                for field_name, fact in direct_fields.items():
+                    for prefix in profile.field_receiver_prefixes:
+                        bindings.bind(
+                            f"{prefix}{field_name}",
+                            fact,
+                            priority=DIRECT_FIELD_BINDING_PRIORITY,
+                        )
+                    if profile.bare_field_receivers:
+                        bindings.bind(
+                            field_name,
+                            fact,
+                            priority=DIRECT_FIELD_BINDING_PRIORITY,
+                        )
+
+                inherited_fields = (
+                    scope_graph.visible_bindings(
+                        type_scope(language, d.owner),
+                        include_start=False,
+                    )
+                    if profile.inherited_field_receivers
+                    else {}
                 )
-                if bare_access:
-                    # A real local of the same name is stronger evidence, so
-                    # setdefault lets the already-populated local win.
-                    for field_name, field_type in owner_fields.items():
-                        local_types.setdefault(field_name, field_type)
+                for field_name, resolution in inherited_fields.items():
+                    if field_name in direct_fields:
+                        continue
+                    if resolution.fact.concrete is None:
+                        continue
+                    for prefix in profile.field_receiver_prefixes:
+                        bindings.bind(
+                            f"{prefix}{field_name}",
+                            resolution.fact,
+                            priority=FIELD_BINDING_PRIORITY,
+                        )
+                    if profile.bare_field_receivers:
+                        bindings.bind(
+                            field_name,
+                            resolution.fact,
+                            priority=FIELD_BINDING_PRIORITY,
+                        )
+            local_types = bindings.concrete_types
             calls = _call_sites_in_range(
                 root,
                 text_bytes,
@@ -874,7 +813,7 @@ def _add_tree_sitter_calls(
                         nodes=nodes,
                         name_to_symbols=name_to_symbols,
                         edges=edges,
-                        base_classes=base_classes,
+                        scope_graph=scope_graph,
                     )
                     stats = stats.add(outcome, call.receiver, language)
                     continue

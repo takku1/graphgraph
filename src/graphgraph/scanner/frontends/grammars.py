@@ -64,6 +64,14 @@ class GrammarProfile:
     # entirely unhelpful.
     variable_sigils: frozenset[str] = frozenset()
 
+    # Declarative field visibility. Language adapters emit field facts; these
+    # values describe how those facts are spelled and which surrounding type
+    # scopes make them visible. Resolution policy therefore stays out of the
+    # per-language extractors and out of suffix ladders in the edge builder.
+    field_receiver_prefixes: tuple[str, ...] = ()
+    bare_field_receivers: bool = False
+    inherited_field_receivers: bool = False
+
     def strip_sigil(self, name: str) -> str:
         """Return *name* without a leading sigil this language permits."""
         if name[:1] in self.variable_sigils:
@@ -95,6 +103,9 @@ def _profile(
     path_qualified_calls: frozenset[str] = frozenset(),
     self_aliases: frozenset[str] = frozenset(),
     variable_sigils: frozenset[str] = frozenset(),
+    field_receiver_prefixes: tuple[str, ...] = (),
+    bare_field_receivers: bool = False,
+    inherited_field_receivers: bool = False,
 ) -> GrammarProfile:
     return GrammarProfile(
         definitions=MappingProxyType(dict(definitions)),
@@ -103,6 +114,9 @@ def _profile(
         path_qualified_calls=path_qualified_calls,
         self_aliases=self_aliases,
         variable_sigils=variable_sigils,
+        field_receiver_prefixes=field_receiver_prefixes,
+        bare_field_receivers=bare_field_receivers,
+        inherited_field_receivers=inherited_field_receivers,
     )
 
 
@@ -134,6 +148,9 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         # lexically fixed target, unlike receiver.method(...).
         frozenset({"qualified_identifier"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this->",),
+        bare_field_receivers=True,
+        inherited_field_receivers=True,
     ),
     "csharp": _profile(
         {
@@ -149,6 +166,9 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         _IDENT,
         frozenset({"invocation_expression"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        bare_field_receivers=True,
+        inherited_field_receivers=True,
     ),
     "go": _profile(
         {
@@ -172,6 +192,9 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"method_invocation"}),
         frozenset({"scoped_identifier"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        bare_field_receivers=True,
+        inherited_field_receivers=True,
     ),
     "javascript": _profile(
         {
@@ -183,6 +206,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         _JS_NAMES,
         frozenset({"call_expression"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        inherited_field_receivers=True,
     ),
     "kotlin": _profile(
         {
@@ -193,6 +218,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"identifier", "simple_identifier", "type_identifier"}),
         frozenset({"call_expression"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        inherited_field_receivers=True,
     ),
     "php": _profile(
         {
@@ -213,6 +240,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         }),
         self_aliases=frozenset({"$this"}),
         variable_sigils=frozenset({"$"}),
+        field_receiver_prefixes=("$this->",),
+        inherited_field_receivers=True,
     ),
     "python": _profile(
         {
@@ -227,6 +256,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         _IDENT,
         frozenset({"call"}),
         self_aliases=frozenset({"self", "cls"}),
+        field_receiver_prefixes=("self.",),
+        inherited_field_receivers=True,
     ),
     "ruby": _profile(
         {
@@ -240,6 +271,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"constant", "identifier"}),
         frozenset({"call"}) | _UNCLAIMED_BY_INTENT["ruby"].calls,
         self_aliases=_SELF,
+        field_receiver_prefixes=("self.",),
+        inherited_field_receivers=True,
     ),
     "rust": _profile(
         {
@@ -253,6 +286,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"call_expression"}),
         frozenset({"scoped_identifier"}),
         self_aliases=_SELF,
+        field_receiver_prefixes=("self.",),
     ),
     "scala": _profile(
         {
@@ -265,6 +299,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"identifier", "type_identifier"}),
         frozenset({"call_expression"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        inherited_field_receivers=True,
     ),
     "swift": _profile(
         {
@@ -275,6 +311,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"identifier", "simple_identifier", "type_identifier"}),
         frozenset({"call_expression"}),
         self_aliases=_SELF,
+        field_receiver_prefixes=("self.",),
+        inherited_field_receivers=True,
     ),
     "tsx": _profile(
         {
@@ -289,6 +327,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         _TS_NAMES,
         frozenset({"call_expression"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        inherited_field_receivers=True,
     ),
     "typescript": _profile(
         {
@@ -303,6 +343,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         _TS_NAMES,
         frozenset({"call_expression"}),
         self_aliases=_THIS,
+        field_receiver_prefixes=("this.",),
+        inherited_field_receivers=True,
     ),
 }
 
@@ -366,6 +408,9 @@ def _union() -> GrammarProfile:
     path_qualified: set[str] = set()
     self_aliases: set[str] = set()
     variable_sigils: set[str] = set()
+    field_receiver_prefixes: set[str] = set()
+    bare_field_receivers = False
+    inherited_field_receivers = False
     for profile in GRAMMARS.values():
         definitions.update(profile.definitions)
         names |= profile.names
@@ -373,6 +418,11 @@ def _union() -> GrammarProfile:
         path_qualified |= profile.path_qualified_calls
         self_aliases |= profile.self_aliases
         variable_sigils |= profile.variable_sigils
+        field_receiver_prefixes.update(profile.field_receiver_prefixes)
+        bare_field_receivers = bare_field_receivers or profile.bare_field_receivers
+        inherited_field_receivers = (
+            inherited_field_receivers or profile.inherited_field_receivers
+        )
     for profile in _UNCLAIMED_BY_INTENT.values():
         definitions.update(profile.definitions)
         names |= profile.names
@@ -385,6 +435,9 @@ def _union() -> GrammarProfile:
         path_qualified_calls=frozenset(path_qualified),
         self_aliases=frozenset(self_aliases),
         variable_sigils=frozenset(variable_sigils),
+        field_receiver_prefixes=tuple(sorted(field_receiver_prefixes)),
+        bare_field_receivers=bare_field_receivers,
+        inherited_field_receivers=inherited_field_receivers,
     )
 
 
