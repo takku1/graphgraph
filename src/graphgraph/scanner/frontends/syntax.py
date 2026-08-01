@@ -10,6 +10,7 @@ from typing import Any
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
+from .grammars import UNION_PROFILE, profile_for_suffix
 from .javascript import (
     js_callback_definition,
     js_definition_facts,
@@ -63,59 +64,23 @@ def _definition_node_id(source: SourceFile, definition: _TsDef) -> str:
     return f"{source.file_node_id}__{definition.name}"
 
 
-_DEF_TYPES = {
-    "class_definition": "class",
-    # C++ (tree-sitter-cpp). Inline function_definition nodes nested inside
-    # these types are converted to owned methods by
-    # _attach_lexical_method_owners below.
-    "class_specifier": "class",
-    "struct_specifier": "struct",
-    "function_definition": "function",
-    "function_item": "function",
-    "struct_item": "struct",
-    "enum_item": "enum",
-    "trait_item": "trait",
-    "function_signature_item": "method",
-    "function_declaration": "function",
-    "method_declaration": "method",
-    "method_definition": "method",
-    "class_declaration": "class",
-    "class": "class",
-    "type_declaration": "type",
-    "interface_declaration": "interface",
-    # C# (tree-sitter c_sharp)
-    "struct_declaration": "struct",
-    "enum_declaration": "enum",
-    "constructor_declaration": "method",
-    "record_declaration": "class",
-    "record_struct_declaration": "struct",
-    # Ruby
-    "method": "method",
-    "singleton_method": "method",
-    "module": "class",
-    # PHP / Scala traits
-    "trait_declaration": "trait",
-    "trait_definition": "trait",
-    # Kotlin / Scala objects and Scala class/def (function_definition/class_definition
-    # already mapped above)
-    "object_declaration": "class",
-    "object_definition": "class",
-    # Swift protocols
-    "protocol_declaration": "interface",
-}
+# These four tables are now *derived* from the per-language profiles in
+# `grammars.py`, rather than being the shared union those profiles were carved
+# out of. They are byte-for-byte what they were -- `test_grammar_profiles.py`
+# asserts the union still reproduces each one exactly -- so every caller that
+# genuinely cannot know the language keeps its behaviour: `platform/cpg.py`
+# walks nodes it was handed, the regex extractor has no grammar at all, and
+# `DEFINITION_NODE_TYPES` is public API.
+#
+# Callers that *do* know the language should prefer `profile_for_suffix` (or
+# `profile_for_language`), which cannot mistake one grammar's node type for
+# another's. `module` is the standing example: it means a Ruby module, a
+# TypeScript namespace, and the root node of every Python file.
+_DEF_TYPES = UNION_PROFILE.definitions
 
-_NAME_NODE_TYPES = {
-    "identifier",
-    "type_identifier",
-    "field_identifier",
-    "property_identifier",
-    "shorthand_property_identifier",
-    "simple_identifier",  # Kotlin function/property names
-    "name",  # PHP bare function/method names
-    "constant",  # Ruby class/module names
-}
+_NAME_NODE_TYPES = UNION_PROFILE.names
 
-DEFINITION_NODE_TYPES = MappingProxyType(_DEF_TYPES)
+DEFINITION_NODE_TYPES = MappingProxyType(dict(_DEF_TYPES))
 
 NAME_NODE_TYPES = frozenset(_NAME_NODE_TYPES)
 
@@ -156,6 +121,13 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     # -- which in a C or Rust file is nearly all of them. It cost 775,388 calls
     # on a 132-file C corpus, about 10% of that scan, to re-derive one constant.
     is_js_like = source.path.suffix.lower() in _JS_DEFINITION_SUFFIXES
+    # Resolved once per file, for the same reason `is_js_like` is: this is a
+    # constant for the whole walk. Consulting this language's own table rather
+    # than the union means a node type cannot be read as another grammar's
+    # construct -- and because a grammar can only emit node types it defines,
+    # the narrower table returns identical answers for every node that can
+    # actually appear here.
+    definition_types = profile_for_suffix(source.path.suffix).definitions
     stack = [root]
     while stack:
         node = stack.pop()
@@ -165,7 +137,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             if impl:
                 defs.append(impl)
             continue
-        kind = _DEF_TYPES.get(node.type)
+        kind = definition_types.get(node.type)
         if not kind:
             # JS/TS functions are usually assigned, not declared -- recover the
             # `res.send = function` / `const f = () => ...` idioms the
@@ -1085,18 +1057,7 @@ def _identifier(value: str) -> bool:
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value))
 
 
-_CALL_NODE_TYPES = {
-    "call_expression",  # JS/TS, Go, Rust, C/C++, Kotlin, Scala, Swift
-    "call",  # Python, Ruby
-    "invocation_expression",  # C#
-    "method_invocation",  # Java
-    "function_call_expression",  # PHP
-    "member_call_expression",  # PHP  (obj->method())
-    "scoped_call_expression",  # PHP  (Class::method())
-    "command",  # Ruby (method call without parentheses)
-    "command_call",  # Ruby (receiver.method arg)
-    "method_call",  # misc grammars
-}
+_CALL_NODE_TYPES = UNION_PROFILE.calls
 
 # Fields that hold the callee across the grammars above.
 _CALL_NAME_FIELDS = ("function", "name", "method")
@@ -1112,10 +1073,7 @@ _CALL_NAME_FIELDS = ("function", "name", "method")
 # `Class.method()` and `instance.method()`; same for C#/JS/Java `.`-access)
 # -- there the grammar gives no signal to split them safely, so those stay
 # qualified/unresolved.
-_PATH_QUALIFIED_CALL_TYPES = {
-    "scoped_identifier",  # Rust: Type::function(...), module::function(...)
-    "qualified_identifier",  # C++: Namespace::function(...), Class::static_method(...)
-}
+_PATH_QUALIFIED_CALL_TYPES = UNION_PROFILE.path_qualified_calls
 
 
 def _rust_qualified_type_receiver(value: str) -> bool:
@@ -1134,13 +1092,20 @@ def _call_sites_in_range(
 ) -> set[_CallSite]:
     """Return bounded call-site facts, retaining receiver text for type resolution."""
     sites: set[_CallSite] = set()
+    # This function already knows its language, so it can use that grammar's
+    # own tables instead of every grammar's at once. Hoisted for the same
+    # reason as in `_collect_defs`: constant for the whole walk.
+    profile = profile_for_suffix(suffix)
+    call_types = profile.calls
+    name_types = profile.names
+    path_qualified_types = profile.path_qualified_calls
     stack = [root]
     while stack:
         node = stack.pop()
         if int(node.end_byte) < start or int(node.start_byte) > end:
             continue
         stack.extend(reversed(list(getattr(node, "named_children", ()))))
-        if node.type not in _CALL_NODE_TYPES:
+        if node.type not in call_types:
             continue
         fn = None
         for field in _CALL_NAME_FIELDS:
@@ -1176,14 +1141,14 @@ def _call_sites_in_range(
                 rhs = fn.child_by_field_name("rhs")
             except Exception:
                 rhs = None
-            if has_call_suffix and rhs is not None and rhs.type in _NAME_NODE_TYPES:
+            if has_call_suffix and rhs is not None and rhs.type in name_types:
                 fn = rhs
-        is_qualified = fn.type not in _NAME_NODE_TYPES and fn.type not in _PATH_QUALIFIED_CALL_TYPES
+        is_qualified = fn.type not in name_types and fn.type not in path_qualified_types
         name = _call_name(fn, text)
         if name:
             receiver = ""
             qualifier = ""
-            if fn.type in _PATH_QUALIFIED_CALL_TYPES:
+            if fn.type in path_qualified_types:
                 qualified_text = _node_text(fn, text).strip()
                 parts = qualified_text.split("::")
                 if len(parts) >= 2:
@@ -1195,7 +1160,7 @@ def _call_sites_in_range(
             # finding is worse in Java). Other languages nest the receiver
             # inside the name/function child, so this only fires where the call
             # node exposes its own object field.
-            if not is_qualified and fn.type in _NAME_NODE_TYPES:
+            if not is_qualified and fn.type in name_types:
                 direct_object = None
                 for field in ("object", "receiver"):
                     try:

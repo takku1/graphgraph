@@ -7,6 +7,7 @@ from importlib import import_module
 from importlib.util import find_spec
 from typing import Any
 
+from .grammars import SUFFIX_LANGUAGE
 from .model import (
     FrontendCapability,
 )
@@ -83,28 +84,9 @@ def available_frontends() -> list[FrontendCapability]:
         ),
     ]
 
-_SUFFIX_LANGUAGE = {
-    ".py": "python",
-    ".rs": "rust",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".go": "go",
-    ".java": "java",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-    ".cxx": "cpp",
-    ".cc": "cpp",
-    ".hpp": "cpp",
-    ".cs": "csharp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".kt": "kotlin",
-    ".scala": "scala",
-    ".swift": "swift",
-}
+# Defined alongside the grammar profiles it keys, and re-exported here because
+# this module's callers have always imported it from `frontends.languages`.
+_SUFFIX_LANGUAGE = SUFFIX_LANGUAGE
 
 _LANGUAGE_MODULES = {
     "python": ("tree_sitter_python",),
