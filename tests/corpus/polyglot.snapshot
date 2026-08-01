@@ -1,0 +1,334 @@
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Core_cs","kind":"csharp","label":"Core.cs","parent":"","path":"Core.cs","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_cs__Core","kind":"class","label":"Core","parent":"","path":"Core.cs","scope":"","source":"Core.cs","summary":"L2 public class Core {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_cs__Core__Entry","kind":"method","label":"Entry","parent":"Core_cs__Core","path":"Core.cs","scope":"","source":"Core.cs","summary":"L7 static int Entry() { [Core::Entry]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_cs__Core__Handle","kind":"method","label":"Handle","parent":"Core_cs__Core","path":"Core.cs","scope":"","source":"Core.cs","summary":"L11 int Handle() { [Core::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_cs__Core__Middle","kind":"method","label":"Middle","parent":"Core_cs__Core","path":"Core.cs","scope":"","source":"Core.cs","summary":"L3 static int Middle() { [Core::Middle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_cs__Core__Run","kind":"method","label":"Run","parent":"Core_cs__Core","path":"Core.cs","scope":"","source":"Core.cs","summary":"L15 int Run() { [Core::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Core_java","kind":"java","label":"Core.java","parent":"","path":"Core.java","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_java__Core","kind":"class","label":"Core","parent":"","path":"Core.java","scope":"","source":"Core.java","summary":"L1 public class Core {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_java__Core__Entry","kind":"method","label":"Entry","parent":"Core_java__Core","path":"Core.java","scope":"","source":"Core.java","summary":"L6 static int Entry() { [Core::Entry]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_java__Core__Handle","kind":"method","label":"Handle","parent":"Core_java__Core","path":"Core.java","scope":"","source":"Core.java","summary":"L10 int Handle() { [Core::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_java__Core__Middle","kind":"method","label":"Middle","parent":"Core_java__Core","path":"Core.java","scope":"","source":"Core.java","summary":"L2 static int Middle() { [Core::Middle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_java__Core__Run","kind":"method","label":"Run","parent":"Core_java__Core","path":"Core.java","scope":"","source":"Core.java","summary":"L14 int Run() { [Core::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Core_kt","kind":"kotlin","label":"Core.kt","parent":"","path":"Core.kt","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_kt__Entry","kind":"function","label":"Entry","parent":"","path":"Core.kt","scope":"","source":"Core.kt","summary":"L7 fun Entry(): Int {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_kt__Middle","kind":"function","label":"Middle","parent":"","path":"Core.kt","scope":"","source":"Core.kt","summary":"L3 fun Middle(): Int {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_kt__Service","kind":"class","label":"Service","parent":"","path":"Core.kt","scope":"","source":"Core.kt","summary":"L11 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_kt__Service__Handle","kind":"method","label":"Handle","parent":"Core_kt__Service","path":"Core.kt","scope":"","source":"Core.kt","summary":"L12 fun Handle(): Int { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_kt__Service__Run","kind":"method","label":"Run","parent":"Core_kt__Service","path":"Core.kt","scope":"","source":"Core.kt","summary":"L16 fun Run(): Int { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Core_scala","kind":"scala","label":"Core.scala","parent":"","path":"Core.scala","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_scala__Core","kind":"class","label":"Core","parent":"","path":"Core.scala","scope":"","source":"Core.scala","summary":"L3 object Core {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_scala__Core__Entry","kind":"method","label":"Entry","parent":"Core_scala__Core","path":"Core.scala","scope":"","source":"Core.scala","summary":"L6 def Entry(): Int = Middle() + Helper.Assist() [Core::Entry]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_scala__Core__Handle","kind":"method","label":"Handle","parent":"Core_scala__Core","path":"Core.scala","scope":"","source":"Core.scala","summary":"L8 def Handle(): Int = 2 [Core::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_scala__Core__Middle","kind":"method","label":"Middle","parent":"Core_scala__Core","path":"Core.scala","scope":"","source":"Core.scala","summary":"L4 def Middle(): Int = 1 [Core::Middle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_scala__Core__Run","kind":"method","label":"Run","parent":"Core_scala__Core","path":"Core.scala","scope":"","source":"Core.scala","summary":"L10 def Run(): Int = Handle() [Core::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Core_swift","kind":"swift","label":"Core.swift","parent":"","path":"Core.swift","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Entry","kind":"function","label":"Entry","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L5 func Entry() -> Int {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Middle","kind":"function","label":"Middle","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L1 func Middle() -> Int {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service","kind":"class","label":"Service","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L9 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__Handle","kind":"method","label":"Handle","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L10 func Handle() -> Int { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__Run","kind":"method","label":"Run","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L14 func Run() -> Int { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Helper_cs","kind":"csharp","label":"Helper.cs","parent":"","path":"Helper.cs","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_cs__Helper","kind":"class","label":"Helper","parent":"","path":"Helper.cs","scope":"","source":"Helper.cs","summary":"L2 public class Helper {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_cs__Helper__Assist","kind":"method","label":"Assist","parent":"Helper_cs__Helper","path":"Helper.cs","scope":"","source":"Helper.cs","summary":"L3 public static int Assist() { [Helper::Assist]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_cs__Helper__Middle","kind":"method","label":"Middle","parent":"Helper_cs__Helper","path":"Helper.cs","scope":"","source":"Helper.cs","summary":"L7 static int Middle() { [Helper::Middle]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Helper_java","kind":"java","label":"Helper.java","parent":"","path":"Helper.java","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_java__Helper","kind":"class","label":"Helper","parent":"","path":"Helper.java","scope":"","source":"Helper.java","summary":"L1 public class Helper {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_java__Helper__Assist","kind":"method","label":"Assist","parent":"Helper_java__Helper","path":"Helper.java","scope":"","source":"Helper.java","summary":"L2 static int Assist() { [Helper::Assist]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_java__Helper__Middle","kind":"method","label":"Middle","parent":"Helper_java__Helper","path":"Helper.java","scope":"","source":"Helper.java","summary":"L6 static int Middle() { [Helper::Middle]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Helper_kt","kind":"kotlin","label":"Helper.kt","parent":"","path":"Helper.kt","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_kt__Assist","kind":"function","label":"Assist","parent":"","path":"Helper.kt","scope":"","source":"Helper.kt","summary":"L3 fun Assist(): Int {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Helper_scala","kind":"scala","label":"Helper.scala","parent":"","path":"Helper.scala","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_scala__Helper","kind":"class","label":"Helper","parent":"","path":"Helper.scala","scope":"","source":"Helper.scala","summary":"L3 object Helper {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_scala__Helper__Assist","kind":"method","label":"Assist","parent":"Helper_scala__Helper","path":"Helper.scala","scope":"","source":"Helper.scala","summary":"L4 def Assist(): Int = 3 [Helper::Assist]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_scala__Helper__Middle","kind":"method","label":"Middle","parent":"Helper_scala__Helper","path":"Helper.scala","scope":"","source":"Helper.scala","summary":"L6 def Middle(): Int = 4 [Helper::Middle]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Helper_swift","kind":"swift","label":"Helper.swift","parent":"","path":"Helper.swift","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_swift__Assist","kind":"function","label":"Assist","parent":"","path":"Helper.swift","scope":"","source":"Helper.swift","summary":"L1 func Assist() -> Int {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_c","kind":"c","label":"core.c","parent":"","path":"core.c","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_c__Entry","kind":"function","label":"Entry","parent":"","path":"core.c","scope":"","source":"core.c","summary":"L7 int Entry(void) {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_c__Middle","kind":"function","label":"Middle","parent":"","path":"core.c","scope":"","source":"core.c","summary":"L3 int Middle(void) {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_cpp","kind":"cpp","label":"core.cpp","parent":"","path":"core.cpp","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_cpp__Entry","kind":"function","label":"Entry","parent":"","path":"core.cpp","scope":"","source":"core.cpp","summary":"L7 int Entry() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_cpp__Middle","kind":"function","label":"Middle","parent":"","path":"core.cpp","scope":"","source":"core.cpp","summary":"L3 int Middle() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_cpp__Service","kind":"class","label":"Service","parent":"","path":"core.cpp","scope":"","source":"core.cpp","summary":"L11 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_cpp__Service__Handle","kind":"method","label":"Handle","parent":"core_cpp__Service","path":"core.cpp","scope":"","source":"core.cpp","summary":"L13 int Handle() { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_cpp__Service__Run","kind":"method","label":"Run","parent":"core_cpp__Service","path":"core.cpp","scope":"","source":"core.cpp","summary":"L17 int Run() { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_go","kind":"go","label":"core.go","parent":"","path":"core.go","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_go__Entry","kind":"function","label":"Entry","parent":"","path":"core.go","scope":"","source":"core.go","summary":"L7 func Entry() int {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_go__Middle","kind":"function","label":"Middle","parent":"","path":"core.go","scope":"","source":"core.go","summary":"L3 func Middle() int {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_go__Service","kind":"type","label":"Service","parent":"","path":"core.go","scope":"","source":"core.go","summary":"L11 type Service struct{}"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_go__Service__Handle","kind":"method","label":"Handle","parent":"core_go__Service","path":"core.go","scope":"","source":"core.go","summary":"L13 func (s Service) Handle() int { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_go__Service__Run","kind":"method","label":"Run","parent":"core_go__Service","path":"core.go","scope":"","source":"core.go","summary":"L17 func (s Service) Run() int { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_js","kind":"javascript","label":"core.js","parent":"","path":"core.js","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_js__Entry","kind":"function","label":"Entry","parent":"","path":"core.js","scope":"","source":"core.js","summary":"L7 function Entry() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_js__Middle","kind":"function","label":"Middle","parent":"","path":"core.js","scope":"","source":"core.js","summary":"L3 function Middle() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_js__Service","kind":"class","label":"Service","parent":"","path":"core.js","scope":"","source":"core.js","summary":"L11 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_js__Service__Handle","kind":"method","label":"Handle","parent":"core_js__Service","path":"core.js","scope":"","source":"core.js","summary":"L12 Handle() { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_js__Service__Run","kind":"method","label":"Run","parent":"core_js__Service","path":"core.js","scope":"","source":"core.js","summary":"L16 Run() { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_php","kind":"php","label":"core.php","parent":"","path":"core.php","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Entry","kind":"function","label":"Entry","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L8 function Entry() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Middle","kind":"function","label":"Middle","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L4 function Middle() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service","kind":"class","label":"Service","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L12 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__Handle","kind":"method","label":"Handle","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L13 function Handle() { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__Run","kind":"method","label":"Run","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L17 function Run() { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_py","kind":"python","label":"core.py","parent":"","path":"core.py","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Entry","kind":"function","label":"Entry","parent":"","path":"core.py","scope":"","source":"core.py","summary":"L8 def Entry():"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Middle","kind":"function","label":"Middle","parent":"","path":"core.py","scope":"","source":"core.py","summary":"L4 def Middle():"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Service","kind":"class","label":"Service","parent":"","path":"core.py","scope":"","source":"core.py","summary":"L12 class Service:"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Service__Handle","kind":"method","label":"Handle","parent":"core_py__Service","path":"core.py","scope":"","source":"core.py","summary":"L13 def Handle(self): [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Service__Run","kind":"method","label":"Run","parent":"core_py__Service","path":"core.py","scope":"","source":"core.py","summary":"L16 def Run(self): [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_rb","kind":"ruby","label":"core.rb","parent":"","path":"core.rb","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rb__Entry","kind":"method","label":"Entry","parent":"","path":"core.rb","scope":"","source":"core.rb","summary":"L7 def Entry"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rb__Middle","kind":"method","label":"Middle","parent":"","path":"core.rb","scope":"","source":"core.rb","summary":"L3 def Middle"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rb__Service","kind":"class","label":"Service","parent":"","path":"core.rb","scope":"","source":"core.rb","summary":"L11 class Service"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rb__Service__Handle","kind":"method","label":"Handle","parent":"core_rb__Service","path":"core.rb","scope":"","source":"core.rb","summary":"L12 def Handle [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rb__Service__Run","kind":"method","label":"Run","parent":"core_rb__Service","path":"core.rb","scope":"","source":"core.rb","summary":"L16 def Run [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_rs","kind":"rust","label":"core.rs","parent":"","path":"core.rs","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rs__Service","kind":"struct","label":"Service","parent":"","path":"core.rs","scope":"","source":"core.rs","summary":"L11 pub struct Service;"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rs__Service__handle","kind":"method","label":"handle","parent":"core_rs__Service","path":"core.rs","scope":"","source":"core.rs","summary":"L14 pub fn handle(&self) -> i32 { [Service::handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rs__Service__run","kind":"method","label":"run","parent":"core_rs__Service","path":"core.rs","scope":"","source":"core.rs","summary":"L18 pub fn run(&self) -> i32 { [Service::run]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rs__entry","kind":"function","label":"entry","parent":"","path":"core.rs","scope":"","source":"core.rs","summary":"L7 pub fn entry() -> i32 {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_rs__middle","kind":"function","label":"middle","parent":"","path":"core.rs","scope":"","source":"core.rs","summary":"L3 pub fn middle() -> i32 {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_ts","kind":"typescript","label":"core.ts","parent":"","path":"core.ts","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_ts__Drive","kind":"function","label":"Drive","parent":"","path":"core.ts","scope":"","source":"core.ts","summary":"L21 export function Drive(svc: Service): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_ts__Entry","kind":"function","label":"Entry","parent":"","path":"core.ts","scope":"","source":"core.ts","summary":"L7 export function Entry(): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_ts__Middle","kind":"function","label":"Middle","parent":"","path":"core.ts","scope":"","source":"core.ts","summary":"L3 export function Middle(): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_ts__Service","kind":"class","label":"Service","parent":"","path":"core.ts","scope":"","source":"core.ts","summary":"L11 export class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_ts__Service__Handle","kind":"method","label":"Handle","parent":"core_ts__Service","path":"core.ts","scope":"","source":"core.ts","summary":"L12 Handle(): number { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_ts__Service__Run","kind":"method","label":"Run","parent":"core_ts__Service","path":"core.ts","scope":"","source":"core.ts","summary":"L16 Run(): number { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_tsx","kind":"tsx","label":"core.tsx","parent":"","path":"core.tsx","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_tsx__Entry","kind":"function","label":"Entry","parent":"","path":"core.tsx","scope":"","source":"core.tsx","summary":"L7 export function Entry(): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_tsx__Middle","kind":"function","label":"Middle","parent":"","path":"core.tsx","scope":"","source":"core.tsx","summary":"L3 export function Middle(): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_tsx__Service","kind":"class","label":"Service","parent":"","path":"core.tsx","scope":"","source":"core.tsx","summary":"L11 export class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_tsx__Service__Handle","kind":"method","label":"Handle","parent":"core_tsx__Service","path":"core.tsx","scope":"","source":"core.tsx","summary":"L12 Handle(): number { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_tsx__Service__Run","kind":"method","label":"Run","parent":"core_tsx__Service","path":"core.tsx","scope":"","source":"core.tsx","summary":"L16 Run(): number { [Service::Run]"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_c","kind":"c","label":"helper.c","parent":"","path":"helper.c","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_c__Assist","kind":"function","label":"Assist","parent":"","path":"helper.c","scope":"","source":"helper.c","summary":"L1 int Assist(void) {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_cpp","kind":"cpp","label":"helper.cpp","parent":"","path":"helper.cpp","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_cpp__Assist","kind":"function","label":"Assist","parent":"","path":"helper.cpp","scope":"","source":"helper.cpp","summary":"L1 int Assist() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_cpp__Middle","kind":"function","label":"Middle","parent":"","path":"helper.cpp","scope":"","source":"helper.cpp","summary":"L5 int Middle() {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_go","kind":"go","label":"helper.go","parent":"","path":"helper.go","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_go__Assist","kind":"function","label":"Assist","parent":"","path":"helper.go","scope":"","source":"helper.go","summary":"L3 func Assist() int {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_h","kind":"header","label":"helper.h","parent":"","path":"helper.h","scope":"","source":"","summary":""}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_hpp","kind":"header","label":"helper.hpp","parent":"","path":"helper.hpp","scope":"","source":"","summary":""}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_js","kind":"javascript","label":"helper.js","parent":"","path":"helper.js","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_js__Assist","kind":"function","label":"Assist","parent":"","path":"helper.js","scope":"","source":"helper.js","summary":"L1 function Assist() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_js__Middle","kind":"function","label":"Middle","parent":"","path":"helper.js","scope":"","source":"helper.js","summary":"L5 function Middle() {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_php","kind":"php","label":"helper.php","parent":"","path":"helper.php","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_php__Assist","kind":"function","label":"Assist","parent":"","path":"helper.php","scope":"","source":"helper.php","summary":"L2 function Assist() {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_php__Middle","kind":"function","label":"Middle","parent":"","path":"helper.php","scope":"","source":"helper.php","summary":"L6 function Middle() {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_py","kind":"python","label":"helper.py","parent":"","path":"helper.py","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_py__Assist","kind":"function","label":"Assist","parent":"","path":"helper.py","scope":"","source":"helper.py","summary":"L1 def Assist():"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_py__Middle","kind":"function","label":"Middle","parent":"","path":"helper.py","scope":"","source":"helper.py","summary":"L5 def Middle():"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_rb","kind":"ruby","label":"helper.rb","parent":"","path":"helper.rb","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_rb__Assist","kind":"method","label":"Assist","parent":"","path":"helper.rb","scope":"","source":"helper.rb","summary":"L1 def Assist"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_rb__Middle","kind":"method","label":"Middle","parent":"","path":"helper.rb","scope":"","source":"helper.rb","summary":"L5 def Middle"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_rs","kind":"rust","label":"helper.rs","parent":"","path":"helper.rs","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_rs__assist","kind":"function","label":"assist","parent":"","path":"helper.rs","scope":"","source":"helper.rs","summary":"L1 pub fn assist() -> i32 {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_rs__middle","kind":"function","label":"middle","parent":"","path":"helper.rs","scope":"","source":"helper.rs","summary":"L5 pub fn middle() -> i32 {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_ts","kind":"typescript","label":"helper.ts","parent":"","path":"helper.ts","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_ts__Assist","kind":"function","label":"Assist","parent":"","path":"helper.ts","scope":"","source":"helper.ts","summary":"L1 export function Assist(): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_ts__Middle","kind":"function","label":"Middle","parent":"","path":"helper.ts","scope":"","source":"helper.ts","summary":"L5 export function Middle(): number {"}
+N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_tsx","kind":"tsx","label":"helper.tsx","parent":"","path":"helper.tsx","scope":"","source":"","summary":""}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_tsx__Assist","kind":"function","label":"Assist","parent":"","path":"helper.tsx","scope":"","source":"helper.tsx","summary":"L1 export function Assist(): number {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_tsx__Middle","kind":"function","label":"Middle","parent":"","path":"helper.tsx","scope":"","source":"helper.tsx","summary":"L5 export function Middle(): number {"}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs","source_location":"Core.cs:2","target":"Core_cs__Core","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs","source_location":"Core.cs:7","target":"Core_cs__Core__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs","source_location":"Core.cs:11","target":"Core_cs__Core__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs","source_location":"Core.cs:3","target":"Core_cs__Core__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs","source_location":"Core.cs:15","target":"Core_cs__Core__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs__Core","source_location":"Core.cs:7","target":"Core_cs__Core__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs__Core","source_location":"Core.cs:11","target":"Core_cs__Core__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs__Core","source_location":"Core.cs:3","target":"Core_cs__Core__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_cs__Core","source_location":"Core.cs:15","target":"Core_cs__Core__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_cs__Core__Entry","source_location":"","target":"Core_cs__Core__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver Helper:Helper","provenance":"tree_sitter_type_resolved","source":"Core_cs__Core__Entry","source_location":"Core.cs","target":"Helper_cs__Helper__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver this:Core","provenance":"tree_sitter_type_resolved","source":"Core_cs__Core__Run","source_location":"Core.cs","target":"Core_cs__Core__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java","source_location":"Core.java:1","target":"Core_java__Core","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java","source_location":"Core.java:6","target":"Core_java__Core__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java","source_location":"Core.java:10","target":"Core_java__Core__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java","source_location":"Core.java:2","target":"Core_java__Core__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java","source_location":"Core.java:14","target":"Core_java__Core__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java__Core","source_location":"Core.java:6","target":"Core_java__Core__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java__Core","source_location":"Core.java:10","target":"Core_java__Core__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java__Core","source_location":"Core.java:2","target":"Core_java__Core__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_java__Core","source_location":"Core.java:14","target":"Core_java__Core__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_java__Core__Entry","source_location":"","target":"Core_java__Core__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver Helper:Helper","provenance":"tree_sitter_type_resolved","source":"Core_java__Core__Entry","source_location":"Core.java","target":"Helper_java__Helper__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver this:Core","provenance":"tree_sitter_type_resolved","source":"Core_java__Core__Run","source_location":"Core.java","target":"Core_java__Core__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt","source_location":"Core.kt:7","target":"Core_kt__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt","source_location":"Core.kt:3","target":"Core_kt__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt","source_location":"Core.kt:11","target":"Core_kt__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt","source_location":"Core.kt:12","target":"Core_kt__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt","source_location":"Core.kt:16","target":"Core_kt__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_kt__Entry","source_location":"","target":"Core_kt__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_kt__Entry","source_location":"","target":"Helper_kt__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt__Service","source_location":"Core.kt:12","target":"Core_kt__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_kt__Service","source_location":"Core.kt:16","target":"Core_kt__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_kt__Service__Run","source_location":"","target":"Core_kt__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala","source_location":"Core.scala:3","target":"Core_scala__Core","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala","source_location":"Core.scala:6","target":"Core_scala__Core__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala","source_location":"Core.scala:8","target":"Core_scala__Core__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala","source_location":"Core.scala:4","target":"Core_scala__Core__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala","source_location":"Core.scala:10","target":"Core_scala__Core__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core","source_location":"Core.scala:6","target":"Core_scala__Core__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core","source_location":"Core.scala:8","target":"Core_scala__Core__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core","source_location":"Core.scala:4","target":"Core_scala__Core__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core","source_location":"Core.scala:10","target":"Core_scala__Core__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core__Entry","source_location":"","target":"Core_scala__Core__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver Helper:Helper","provenance":"tree_sitter_type_resolved","source":"Core_scala__Core__Entry","source_location":"Core.scala","target":"Helper_scala__Helper__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core__Run","source_location":"","target":"Core_scala__Core__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:5","target":"Core_swift__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:1","target":"Core_swift__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:9","target":"Core_swift__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:10","target":"Core_swift__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:14","target":"Core_swift__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Entry","source_location":"","target":"Core_swift__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Entry","source_location":"","target":"Helper_swift__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:10","target":"Core_swift__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:14","target":"Core_swift__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs","source_location":"Helper.cs:2","target":"Helper_cs__Helper","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs","source_location":"Helper.cs:3","target":"Helper_cs__Helper__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs","source_location":"Helper.cs:7","target":"Helper_cs__Helper__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs__Helper","source_location":"Helper.cs:3","target":"Helper_cs__Helper__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs__Helper","source_location":"Helper.cs:7","target":"Helper_cs__Helper__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_java","source_location":"Helper.java:1","target":"Helper_java__Helper","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_java","source_location":"Helper.java:2","target":"Helper_java__Helper__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_java","source_location":"Helper.java:6","target":"Helper_java__Helper__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_java__Helper","source_location":"Helper.java:2","target":"Helper_java__Helper__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_java__Helper","source_location":"Helper.java:6","target":"Helper_java__Helper__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_kt","source_location":"Helper.kt:3","target":"Helper_kt__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_scala","source_location":"Helper.scala:3","target":"Helper_scala__Helper","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_scala","source_location":"Helper.scala:4","target":"Helper_scala__Helper__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_scala","source_location":"Helper.scala:6","target":"Helper_scala__Helper__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_scala__Helper","source_location":"Helper.scala:4","target":"Helper_scala__Helper__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_scala__Helper","source_location":"Helper.scala:6","target":"Helper_scala__Helper__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_swift","source_location":"Helper.swift:1","target":"Helper_swift__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_c","source_location":"core.c:7","target":"core_c__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_c","source_location":"core.c:3","target":"core_c__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_c","source_location":"","target":"helper_h","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_c__Entry","source_location":"","target":"core_c__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp","source_location":"core.cpp:7","target":"core_cpp__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp","source_location":"core.cpp:3","target":"core_cpp__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp","source_location":"core.cpp:11","target":"core_cpp__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp","source_location":"core.cpp:13","target":"core_cpp__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp","source_location":"core.cpp:17","target":"core_cpp__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_cpp","source_location":"","target":"helper_hpp","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_cpp__Entry","source_location":"","target":"core_cpp__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp__Service","source_location":"core.cpp:13","target":"core_cpp__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_cpp__Service","source_location":"core.cpp:17","target":"core_cpp__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver this:Service","provenance":"tree_sitter_type_resolved","source":"core_cpp__Service__Run","source_location":"core.cpp","target":"core_cpp__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go","source_location":"core.go:7","target":"core_go__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go","source_location":"core.go:3","target":"core_go__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go","source_location":"core.go:11","target":"core_go__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go","source_location":"core.go:13","target":"core_go__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go","source_location":"core.go:17","target":"core_go__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_go__Entry","source_location":"","target":"core_go__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_go__Entry","source_location":"","target":"helper_go__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go__Service","source_location":"core.go:13","target":"core_go__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_go__Service","source_location":"core.go:17","target":"core_go__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver s:Service","provenance":"tree_sitter_type_resolved","source":"core_go__Service__Run","source_location":"core.go","target":"core_go__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js","source_location":"core.js:7","target":"core_js__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js","source_location":"core.js:3","target":"core_js__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js","source_location":"core.js:11","target":"core_js__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js","source_location":"core.js:12","target":"core_js__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js","source_location":"core.js:16","target":"core_js__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_js","source_location":"","target":"helper_ts","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_js__Entry","source_location":"","target":"core_js__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js__Service","source_location":"core.js:12","target":"core_js__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_js__Service","source_location":"core.js:16","target":"core_js__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver this:Service","provenance":"tree_sitter_type_resolved","source":"core_js__Service__Run","source_location":"core.js","target":"core_js__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:8","target":"core_php__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:4","target":"core_php__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:12","target":"core_php__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:13","target":"core_php__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:17","target":"core_php__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_php__Entry","source_location":"","target":"core_php__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_php__Entry","source_location":"","target":"helper_php__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:13","target":"core_php__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:17","target":"core_php__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:8","target":"core_py__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:4","target":"core_py__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:12","target":"core_py__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:13","target":"core_py__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:16","target":"core_py__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_py","source_location":"","target":"helper_py","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py","target":"helper_py__Assist","type":"imports_from","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_py__Entry","source_location":"","target":"core_py__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_py__Entry","source_location":"","target":"helper_py__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py__Service","source_location":"core.py:13","target":"core_py__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py__Service","source_location":"core.py:16","target":"core_py__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver self:Service","provenance":"tree_sitter_type_resolved","source":"core_py__Service__Run","source_location":"core.py","target":"core_py__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb","source_location":"core.rb:7","target":"core_rb__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb","source_location":"core.rb:3","target":"core_rb__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb","source_location":"core.rb:11","target":"core_rb__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb","source_location":"core.rb:12","target":"core_rb__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb","source_location":"core.rb:16","target":"core_rb__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_rb","source_location":"","target":"helper_rb","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_rb__Entry","source_location":"","target":"core_rb__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_rb__Entry","source_location":"","target":"helper_rb__Assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb__Service","source_location":"core.rb:12","target":"core_rb__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rb__Service","source_location":"core.rb:16","target":"core_rb__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_rb__Service__Run","source_location":"","target":"core_rb__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rs","source_location":"core.rs:11","target":"core_rs__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rs","source_location":"core.rs:14","target":"core_rs__Service__handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rs","source_location":"core.rs:18","target":"core_rs__Service__run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rs","source_location":"core.rs:7","target":"core_rs__entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_rs","source_location":"core.rs:3","target":"core_rs__middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_rs","source_location":"","target":"helper_rs","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"","provenance":"tree_sitter_type_resolved","source":"core_rs__Service","source_location":"core.rs:14","target":"core_rs__Service__handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"","provenance":"tree_sitter_type_resolved","source":"core_rs__Service","source_location":"core.rs:18","target":"core_rs__Service__run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver self:Service","provenance":"tree_sitter_type_resolved","source":"core_rs__Service__run","source_location":"core.rs","target":"core_rs__Service__handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_rs__entry","source_location":"","target":"core_rs__middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.96,"evidence":"","provenance":"tree_sitter_path_resolved","source":"core_rs__entry","source_location":"","target":"helper_rs__assist","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts","source_location":"core.ts:21","target":"core_ts__Drive","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts","source_location":"core.ts:7","target":"core_ts__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts","source_location":"core.ts:3","target":"core_ts__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts","source_location":"core.ts:11","target":"core_ts__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts","source_location":"core.ts:12","target":"core_ts__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts","source_location":"core.ts:16","target":"core_ts__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_ts","source_location":"","target":"helper_ts","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver svc:Service","provenance":"tree_sitter_type_resolved","source":"core_ts__Drive","source_location":"core.ts","target":"core_ts__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_ts__Entry","source_location":"","target":"core_ts__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts__Service","source_location":"core.ts:12","target":"core_ts__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_ts__Service","source_location":"core.ts:16","target":"core_ts__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver this:Service","provenance":"tree_sitter_type_resolved","source":"core_ts__Service__Run","source_location":"core.ts","target":"core_ts__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx","source_location":"core.tsx:7","target":"core_tsx__Entry","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx","source_location":"core.tsx:3","target":"core_tsx__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx","source_location":"core.tsx:11","target":"core_tsx__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx","source_location":"core.tsx:12","target":"core_tsx__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx","source_location":"core.tsx:16","target":"core_tsx__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.85,"evidence":"","provenance":"regex_import","source":"core_tsx","source_location":"","target":"helper_ts","type":"imports","weight":1.0}
+E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_tsx__Entry","source_location":"","target":"core_tsx__Middle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx__Service","source_location":"core.tsx:12","target":"core_tsx__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_tsx__Service","source_location":"core.tsx:16","target":"core_tsx__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver this:Service","provenance":"tree_sitter_type_resolved","source":"core_tsx__Service__Run","source_location":"core.tsx","target":"core_tsx__Service__Handle","type":"calls","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_c","source_location":"helper.c:1","target":"helper_c__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_cpp","source_location":"helper.cpp:1","target":"helper_cpp__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_cpp","source_location":"helper.cpp:5","target":"helper_cpp__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_go","source_location":"helper.go:3","target":"helper_go__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_js","source_location":"helper.js:1","target":"helper_js__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_js","source_location":"helper.js:5","target":"helper_js__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_php","source_location":"helper.php:2","target":"helper_php__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_php","source_location":"helper.php:6","target":"helper_php__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_py","source_location":"helper.py:1","target":"helper_py__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_py","source_location":"helper.py:5","target":"helper_py__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_rb","source_location":"helper.rb:1","target":"helper_rb__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_rb","source_location":"helper.rb:5","target":"helper_rb__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_rs","source_location":"helper.rs:1","target":"helper_rs__assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_rs","source_location":"helper.rs:5","target":"helper_rs__middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_ts","source_location":"helper.ts:1","target":"helper_ts__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_ts","source_location":"helper.ts:5","target":"helper_ts__Middle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_tsx","source_location":"helper.tsx:1","target":"helper_tsx__Assist","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_tsx","source_location":"helper.tsx:5","target":"helper_tsx__Middle","type":"contains","weight":1.0}
+M member_call_resolution_rate=0.8667
+M member_calls_internal_total=15
+M member_calls_resolved=13
+M member_calls_ambiguous=0
+M member_calls_unknown_receiver=2
+M member_calls_external_resolved=0
+M member_calls_unmatched=0
+M member_calls_by_language={"cpp":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"csharp":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0},"go":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"java":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0},"javascript":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"php":{"ambiguous":0,"external_resolved":0,"resolved":0,"unknown_receiver":1,"unmatched":0},"python":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"rust":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"scala":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"swift":{"ambiguous":0,"external_resolved":0,"resolved":0,"unknown_receiver":1,"unmatched":0},"tsx":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"typescript":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0}}
+M member_call_telemetry_version=2
+M member_call_telemetry_scope=full_scan
+M bare_calls_unmatched=5
