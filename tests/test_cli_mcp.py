@@ -1460,6 +1460,42 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(cli.returncode, 0, cli.stderr)
         self.assertIn("No changes detected", cli.stdout)
 
+    def test_update_and_remove_resolve_the_graph_against_directory_not_cwd(self) -> None:
+        # `update`/`remove` defaulted to a bare `.graphgraph/graph.gg`, which is
+        # relative to the *current* directory. Running them with `--directory`
+        # from anywhere else loaded whatever graph happened to sit in cwd and
+        # rebuilt it from the other repo's files, exiting 1 on the shrink guard.
+        # The pre-existing update test passes --output and runs with cwd=root,
+        # so it cannot see this; both conditions have to be absent to catch it.
+        import subprocess
+
+        from graphgraph.services.native import scan_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
+            root = Path(tmp)
+            (root / "worker.py").write_text("def worker():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols", docs=False)
+
+            def run(command: str) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    [sys.executable, "-m", "graphgraph", command, "--directory", str(root),
+                     "--files", "worker.py", "--depth", "symbols"],
+                    cwd=elsewhere,  # deliberately not the scanned root
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            updated = run("update")
+            self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
+            self.assertIn(str(graph_path), updated.stdout)
+            self.assertNotIn("Refusing to overwrite", updated.stdout + updated.stderr)
+
+            removed = run("remove")
+            self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+            self.assertIn(str(graph_path), removed.stdout)
+
     def test_mcp_missing_required_arg_returns_actionable_error(self) -> None:
         # Eval BUG-2 + systemic gap (blackbox-eval-2026-07-18): omitting a
         # required MCP arg leaked a raw `-32000: 'query_class'` KeyError. The

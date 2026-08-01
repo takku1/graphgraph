@@ -17,6 +17,24 @@ from ..services.lifecycle import (
 )
 
 
+def _default_graph_path(root: Path, output: str | None) -> Path:
+    """Resolve the graph a command should act on, relative to *root*.
+
+    `update` and `remove` defaulted to a bare `.graphgraph/graph.gg`, which is
+    relative to the current directory rather than to `--directory`. Running
+    `update -d other/repo` from anywhere else therefore loaded *this* directory's
+    graph and rebuilt it from the other repo's files -- caught only by the shrink
+    guard, and exiting 1. `scan` already resolved this against the root; these
+    now share that behaviour.
+    """
+    if output:
+        return Path(output)
+    try:
+        return find_graph_path(root)
+    except (FileNotFoundError, RuntimeError):
+        return root / ".graphgraph" / "graph.gg"
+
+
 def cmd_scan(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
     existing_graph = None
@@ -235,7 +253,7 @@ def _run_scan(
 
 def cmd_update(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
-    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
+    output_path = _default_graph_path(root, args.output)
     existing_metadata: dict = {}
     if output_path.exists():
         try:
@@ -296,7 +314,7 @@ def _run_update(
 
 def cmd_remove(args: argparse.Namespace) -> None:
     root = Path(args.directory) if args.directory else Path(".")
-    output_path = Path(args.output) if args.output else Path(".graphgraph/graph.gg")
+    output_path = _default_graph_path(root, args.output)
     prior_nodes = None
     if output_path.exists():
         try:
