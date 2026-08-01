@@ -87,6 +87,11 @@ class _TsDef:
     # stages can reuse the parser's structure instead of re-scanning text.
     # Excluded from comparison: parse nodes are not value-comparable.
     node: object | None = field(default=None, compare=False, repr=False)
+    # This definition's source with comments and literals blanked, for the same
+    # reason as `node`: resolution needs it and collection has already computed
+    # it, and re-deriving it means walking every descendant a second time.
+    # Empty when nothing asked for it (Python resolves from a real AST instead).
+    literal_free_text: str = field(default="", compare=False, repr=False)
 
 # Syntactic classes of receiver expression, for the unknown_receiver
 # histogram. A single opaque total says a resolver pass is needed but not

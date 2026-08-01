@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
 from collections import defaultdict
@@ -31,6 +32,11 @@ from .frontends.persistent_facts import (
     PersistentPythonTypeIndex,
     PythonProjectTypeFacts,
     python_file_type_snapshot,
+)
+from .frontends.python import (
+    _python_class_field_types,
+    _python_module_global_facts,
+    _python_module_return_facts,
 )
 from .history import extract_commit_history, repository_history_start
 from .imports import add_file_edges
@@ -104,6 +110,69 @@ def _get_git_metadata(root: Path) -> tuple[set[str], dict[str, int]]:
     except Exception:
         logger.debug("git metadata lookup failed; scan priority/churn signals disabled", exc_info=True)
     return dirty_files, churn_counts
+
+
+# Below this many files a worker pool costs more than it saves: spawning and
+# re-importing graphgraph in each worker takes 213-410 ms on Windows, which is
+# longer than the whole snapshot phase of a small repository.
+PARALLEL_SNAPSHOT_MIN_FILES = 200
+
+
+def _python_snapshot_worker(item: tuple[str, str]) -> tuple[str, dict, tuple]:
+    """Snapshot one file, and hand back the analyses it computed on the way.
+
+    Module level so `spawn` can import it. The three analyses are already
+    memoized inside `python_file_type_snapshot`, so returning them is free here
+    and saves the parent recomputing them -- which is the whole reason
+    parallelising this phase is worth anything.
+    """
+    rel, text = item
+    snapshot = python_file_type_snapshot(text, rel)
+    analyses = (
+        _python_class_field_types(text),
+        _python_module_return_facts(text, rel),
+        _python_module_global_facts(text, rel),
+    )
+    return rel, snapshot, analyses
+
+
+def _python_snapshots(pending: list[tuple[str, str]]) -> dict[str, dict]:
+    """Compute per-file Python type snapshots, in parallel when it pays.
+
+    This phase is a pure function of each file's text and produces data that is
+    already serializable, so unlike the tree-sitter phases it can cross a
+    process boundary. Results are keyed by path, so completion order cannot
+    affect the output, and any failure to obtain a pool falls back to computing
+    in-process rather than degrading the scan.
+    """
+    if not pending:
+        return {}
+    if len(pending) < PARALLEL_SNAPSHOT_MIN_FILES:
+        return {rel: snapshot for rel, snapshot, _ in map(_python_snapshot_worker, pending)}
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+
+        workers = min(8, os.cpu_count() or 1)
+        if workers < 2:
+            raise RuntimeError("single cpu")
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_python_snapshot_worker, pending, chunksize=16))
+    except Exception:
+        # Nested pools, restricted sandboxes and frozen apps all land here.
+        logger.debug("parallel type-fact snapshot unavailable; using this process", exc_info=True)
+        return {rel: snapshot for rel, snapshot, _ in map(_python_snapshot_worker, pending)}
+
+    texts = dict(pending)
+    snapshots: dict[str, dict] = {}
+    for rel, snapshot, analyses in results:
+        snapshots[rel] = snapshot
+        text = texts[rel]
+        fields, returns, globals_ = analyses
+        # setdefault semantics: a value computed in this process always wins.
+        _python_class_field_types.cache_prime((text,), fields)
+        _python_module_return_facts.cache_prime((text, rel), returns)
+        _python_module_global_facts.cache_prime((text, rel), globals_)
+    return snapshots
 
 
 def _load_manifest_and_graph(
@@ -462,6 +531,7 @@ def _promote_type_fact_dependents(
     changed_rels = dirty_rels | removed_rels
     old_snapshots = _manifest_type_fact_snapshots(manifest, changed_rels)
     new_snapshots: dict[str, dict] = {}
+    pending_snapshots: list[tuple[str, str]] = []
     for path, rel, _file_hash in dirty_files:
         if path.suffix.casefold() != ".py":
             new_snapshots.pop(rel, None)
@@ -470,7 +540,8 @@ def _promote_type_fact_dependents(
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             source = ""
-        new_snapshots[rel] = python_file_type_snapshot(source, rel)
+        pending_snapshots.append((rel, source))
+    new_snapshots.update(_python_snapshots(pending_snapshots))
 
     index_data = getattr(manifest, "type_index", {}) if manifest is not None else {}
     index = PersistentPythonTypeIndex.from_data(index_data)
@@ -786,6 +857,28 @@ def _symbol_extraction_metadata(
     meta["member_calls_unresolved"] = str(extraction.unresolved_member_calls)
     meta["member_calls_external_resolved"] = str(extraction.external_resolved_member_calls)
     meta["member_calls_unmatched"] = str(extraction.unmatched_member_calls)
+    # One gate-able number, with its denominator published beside it.
+    #
+    # The denominator is every member call for which an internal target
+    # plausibly exists: `resolved` plus the three real misses (`ambiguous`,
+    # `unknown_receiver`, `unmatched`). `external_resolved` is excluded because
+    # no internal symbol carries that method name at all -- declining to link it
+    # is the correct outcome, and counting it would penalise correct behaviour.
+    #
+    # `unmatched` must stay in the denominator. Omitting it makes the rate
+    # gameable: typing a receiver moves a call from `unknown_receiver` to
+    # `unmatched` without producing an edge, so a change that resolves nothing
+    # scores higher. Observed going 66.7% -> 100% on a two-call fixture.
+    internal_member_calls = (
+        extraction.resolved_member_calls
+        + extraction.ambiguous_member_calls
+        + extraction.unknown_receiver_member_calls
+        + extraction.unmatched_member_calls
+    )
+    meta["member_calls_internal_total"] = str(internal_member_calls)
+    meta["member_call_resolution_rate"] = (
+        f"{extraction.resolved_member_calls / internal_member_calls:.4f}" if internal_member_calls else "1.0000"
+    )
     meta["bare_calls_unmatched"] = str(extraction.bare_unmatched_calls)
     language_calls = {
         language: {
@@ -1297,6 +1390,7 @@ def _build_graph_from_split(
     symbols_started = time.perf_counter()
     if depth == "symbols" and dirty_files:
         source_files: list[SourceFile] = []
+        pending_snapshots: list[tuple[str, str]] = []
         for f, rel, fhash in dirty_files:
             suffix = f.suffix.lower()
             if suffix not in SOURCE_SUFFIXES:
@@ -1308,7 +1402,8 @@ def _build_graph_from_split(
                 continue
             source_files.append(SourceFile(f, rel, file_nid, text))
             if suffix == ".py" and rel not in python_fact_snapshots:
-                python_fact_snapshots[rel] = python_file_type_snapshot(text, rel)
+                pending_snapshots.append((rel, text))
+        python_fact_snapshots.update(_python_snapshots(pending_snapshots))
 
         if source_files:
             # Raised from *5 (10,000 symbols at the old max_nodes=2000 default)

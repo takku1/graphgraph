@@ -27,8 +27,15 @@ _DECL_ANNOTATION = re.compile(
     r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$.]*)"
 )
 # `const x = new Type(...)` -- the only class name an untyped JS binding gives.
+# `new Engine()` and `new mod.Engine()` alike. The constructor may be reached
+# through a namespace -- `var m = require('./dep'); new m.Engine()` is how
+# CommonJS names an imported class -- and `_nominal` already reduces `ns.Type`
+# to `Type`. Requiring the *whole* path to start uppercase missed that form
+# entirely, though it states the receiver's type just as explicitly as the bare
+# one. The final segment must still look like a type, so `new makeThing()`
+# stays out.
 _NEW_EXPRESSION = re.compile(
-    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?new\s+([A-Z][\w$.]*)"
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?new\s+((?:[A-Za-z_$][\w$]*\.)*[A-Z][\w$]*)"
 )
 # `x as Type` / `<Type>x` assertions on a declaration.
 _AS_ASSERTION = re.compile(
@@ -99,6 +106,30 @@ def _ts_local_call_return_types(body: str, return_types: dict[str, str]) -> dict
 def _ts_this_aliases(body: str) -> frozenset[str]:
     """Bindings proven to alias the current structural/class instance."""
     return frozenset(_THIS_ALIAS.findall(body))
+
+
+_JS_PARAM_LIST = re.compile(r"\(([^)]*)\)")
+
+
+def _ts_parameter_names(body: str) -> set[str]:
+    """Bare parameter names of the outermost callable in *body*.
+
+    `_ts_local_types` only sees *annotated* parameters, so in plain JavaScript a
+    parameter is invisible. That matters when a name is also a module-level
+    object: `app.mount = function mount(app) { app.send() }` shadows the object,
+    and binding the outer one there would fabricate an edge to a method the
+    argument may not have.
+    """
+    signature = body.split("{", 1)[0]
+    match = _JS_PARAM_LIST.search(signature)
+    if not match:
+        return set()
+    names: set[str] = set()
+    for part in match.group(1).split(","):
+        token = part.strip().split(":", 1)[0].split("=", 1)[0].strip().lstrip(". ")
+        if token.isidentifier():
+            names.add(token)
+    return names
 
 
 def _ts_local_types(body: str) -> dict[str, str]:

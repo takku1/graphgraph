@@ -111,6 +111,7 @@ _NAME_NODE_TYPES = {
     "property_identifier",
     "shorthand_property_identifier",
     "simple_identifier",  # Kotlin function/property names
+    "name",  # PHP bare function/method names
     "constant",  # Ruby class/module names
 }
 
@@ -150,6 +151,11 @@ def _go_receiver_owner(node: Any, text: bytes) -> str:
 
 def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
     defs: list[_TsDef] = []
+    # Hoisted out of the walk below: `Path.suffix` re-parses the path string on
+    # every access, and the JS check ran for every node that is not a definition
+    # -- which in a C or Rust file is nearly all of them. It cost 775,388 calls
+    # on a 132-file C corpus, about 10% of that scan, to re-derive one constant.
+    is_js_like = source.path.suffix.lower() in _JS_DEFINITION_SUFFIXES
     stack = [root]
     while stack:
         node = stack.pop()
@@ -164,7 +170,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             # JS/TS functions are usually assigned, not declared -- recover the
             # `res.send = function` / `const f = () => ...` idioms the
             # declaration walk cannot see (javascript.py).
-            if source.path.suffix.lower() in _JS_DEFINITION_SUFFIXES:
+            if is_js_like:
                 assigned = js_function_definition(node)
                 callback = js_callback_definition(node)
                 if assigned is not None or callback is not None:
@@ -174,6 +180,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
                     else:
                         assert callback is not None
                         name, kind, js_facts = callback
+                    base_facts, literal_free = _definition_facts_and_text(source, node, text)
                     defs.append(
                         _TsDef(
                             name=name,
@@ -181,14 +188,12 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
                             start=int(node.start_byte),
                             end=int(node.end_byte),
                             line=int(node.start_point[0]) + 1,
-                            facts=(
-                                *_definition_facts(source, node, text),
-                                *js_facts,
-                            ),
+                            facts=(*base_facts, *js_facts),
                             extra=(),
                             owner=js_definition_owner(node),
                             return_type=_declared_return_type(node, text),
                             node=node,
+                            literal_free_text=literal_free,
                         )
                     )
             continue
@@ -208,6 +213,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             if node.type == "method_declaration" and source.path.suffix.lower() == ".go"
             else ""
         )
+        node_facts, literal_free = _definition_facts_and_text(source, node, text)
         defs.append(
             _TsDef(
                 name=name,
@@ -215,11 +221,12 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
                 start=int(node.start_byte),
                 end=int(node.end_byte),
                 line=int(node.start_point[0]) + 1,
-                facts=_definition_facts(source, node, text),
+                facts=node_facts,
                 extra=_base_class_names(node, text),
                 owner=owner,
                 return_type=_declared_return_type(node, text),
                 node=node,
+                literal_free_text=literal_free,
             )
         )
     if source.path.suffix.lower() != ".rs":
@@ -290,6 +297,28 @@ def _declared_return_type(node: Any, text: bytes) -> str:
     return _node_text(annotation, text).strip().lstrip(":").strip()
 
 
+# A grammar has a few dozen node types, but a walk visits millions of nodes, so
+# the classification below was recomputed constantly: casefolding plus four
+# substring scans, 2.2M times on a 132-file C corpus. Keyed by the type string,
+# which is drawn from a fixed per-grammar vocabulary, so this stays tiny.
+_NON_CODE_NODE_TYPES: dict[str, bool] = {}
+
+
+def _is_non_code_node_type(child_type: str) -> bool:
+    """True when a node's text is a comment or literal rather than code."""
+    classified = _NON_CODE_NODE_TYPES.get(child_type)
+    if classified is None:
+        folded = child_type.casefold()
+        classified = (
+            "comment" in folded
+            or "string" in folded
+            or "regex" in folded
+            or folded in {"char_literal", "character_literal", "heredoc_body"}
+        )
+        _NON_CODE_NODE_TYPES[child_type] = classified
+    return classified
+
+
 def _syntax_text_without_literals(node: Any, text: bytes) -> str:
     """Return a node's source with non-executable literal regions blanked."""
     start = int(node.start_byte)
@@ -297,14 +326,7 @@ def _syntax_text_without_literals(node: Any, text: bytes) -> str:
     stack = list(getattr(node, "children", ()))
     while stack:
         child = stack.pop()
-        child_type = str(getattr(child, "type", "")).casefold()
-        is_non_code = (
-            "comment" in child_type
-            or "string" in child_type
-            or "regex" in child_type
-            or child_type in {"char_literal", "character_literal", "heredoc_body"}
-        )
-        if is_non_code:
+        if _is_non_code_node_type(str(getattr(child, "type", ""))):
             left = max(0, int(child.start_byte) - start)
             right = min(len(segment), int(child.end_byte) - start)
             segment[left:right] = b" " * max(0, right - left)
@@ -315,8 +337,17 @@ def _syntax_text_without_literals(node: Any, text: bytes) -> str:
 
 def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, ...]:
     """Project language attributes into small, queryable normalized-IR facts."""
+    return _definition_facts_and_text(source, node, text)[0]
+
+
+def _definition_facts_and_text(source: SourceFile, node: Any, text: bytes) -> tuple[tuple[str, ...], str]:
+    """Facts plus the literal-blanked source they were derived from.
+
+    Resolution needs that same blanked text, so returning it here means the
+    descendant walk happens once per definition rather than twice.
+    """
     if _DEF_TYPES.get(node.type) not in {"function", "method"}:
-        return ()
+        return (), ""
     snippet = _syntax_text_without_literals(node, text)
     suffix = source.path.suffix.lower()
     facts: list[str] = []
@@ -339,7 +370,7 @@ def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, 
         facts.append("semantic_operator:equality")
 
     if suffix != ".rs":
-        return tuple(facts)
+        return tuple(facts), snippet
 
     prefix = _node_text_range(
         text,
@@ -355,7 +386,7 @@ def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, 
         r"\.insert\s*\(", snippet
     ):
         facts.extend(("collection_contract:unique", "semantic_operation:deduplication"))
-    return tuple(dict.fromkeys(facts))
+    return tuple(dict.fromkeys(facts)), snippet
 
 
 def _attach_lexical_method_owners(defs: list[_TsDef]) -> list[_TsDef]:
@@ -1093,7 +1124,14 @@ def _rust_qualified_type_receiver(value: str) -> bool:
     return bool(len(parts) >= 1 and all(_identifier(part) for part in parts) and parts[-1][:1].isupper())
 
 
-def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_CallSite]:
+def _call_sites_in_range(
+    root: Any,
+    text: bytes,
+    start: int,
+    end: int,
+    *,
+    suffix: str = "",
+) -> set[_CallSite]:
     """Return bounded call-site facts, retaining receiver text for type resolution."""
     sites: set[_CallSite] = set()
     stack = [root]
@@ -1112,6 +1150,7 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                 fn = None
             if fn is not None:
                 break
+        used_named_child_fallback = fn is None
         if fn is None:
             # Fall back to the first named child that is not the argument list.
             for child in getattr(node, "named_children", ()):
@@ -1120,6 +1159,25 @@ def _call_sites_in_range(root: Any, text: bytes, start: int, end: int) -> set[_C
                     break
         if fn is None:
             continue
+        if suffix == ".swift" and used_named_child_fallback:
+            # Swift folds the final call in `First() + Second()` into an outer
+            # `call_expression(additive_expression(... rhs: Second),
+            # call_suffix)`. The generic fallback sees the whole additive
+            # expression as the callee, misclassifies `Second` as a qualified
+            # call on `First()`, and drops it during receiver resolution.
+            # The suffix applies specifically to the RHS identifier. Nested
+            # compound expressions repeat this shape, so each later call is
+            # recovered as the traversal visits its corresponding wrapper.
+            has_call_suffix = any(
+                child.type == "call_suffix"
+                for child in getattr(node, "named_children", ())
+            )
+            try:
+                rhs = fn.child_by_field_name("rhs")
+            except Exception:
+                rhs = None
+            if has_call_suffix and rhs is not None and rhs.type in _NAME_NODE_TYPES:
+                fn = rhs
         is_qualified = fn.type not in _NAME_NODE_TYPES and fn.type not in _PATH_QUALIFIED_CALL_TYPES
         name = _call_name(fn, text)
         if name:

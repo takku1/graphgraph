@@ -5,7 +5,8 @@ from __future__ import annotations
 import ast as py_ast
 import re
 import textwrap
-from typing import Mapping
+from functools import lru_cache, wraps
+from typing import Any, Mapping
 
 from .syntax import (
     _PYTHON_BUILTIN_TYPES,
@@ -20,6 +21,74 @@ from .type_facts import (
 )
 
 DEFAULT_PYTHON_ATTRIBUTE_DEPTH = 3
+
+# Helpers below used to re-parse the text handed to them, several times per
+# module: 86 sympy/core files caused 9,338 `ast.parse` calls, 20% of scan time.
+# Parsing is pure in the text, so one cache removes it. The tree is shared, so
+# callers must only read it -- all of them do.
+#
+# The two sizes below are different kinds of number, and both were measured on a
+# 692-file tree rather than picked.
+#
+# The analysis bound is a *working-set* requirement: the scan makes several
+# passes over every file, so a cache smaller than the corpus evicts each module
+# before the next pass reaches it. The threshold is sharp and tracks the file
+# count -- at 692 files, 512 took 104.5 s where 1024 took 80.0 s. It is also free
+# to raise, being a ceiling rather than an allocation: the cache never holds more
+# entries than the corpus has files, and its keys are the same source strings the
+# scan already keeps alive. Raising it 4096 -> 65536 moved peak memory not at all
+# (607.4 MB either way). Setting it beyond any realistic corpus therefore buys
+# what deriving it from the file count would, without the plumbing.
+#
+# The parse bound is a real *memory* ceiling, and once analysis results are
+# cached it buys almost nothing: 8 -> 128 cost 34 MB for no reliable time gain,
+# since the remaining body parses are reused only locally. Small wins here.
+_PARSE_CACHE_SIZE = 16
+_ANALYSIS_CACHE_SIZE = 65536
+
+
+@lru_cache(maxsize=_PARSE_CACHE_SIZE)
+def _parse_python_cached(source: str) -> py_ast.Module | None:
+    """Parse *source*, returning None on the malformed input callers tolerate."""
+    try:
+        return py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return None
+
+
+# Caching the parse alone still left the three analyses below walking the same
+# module once per caller -- three times per file -- and `ast.walk` over whole
+# modules dominated what remained (1.1M node visits on sympy/core). Each is pure
+# in its arguments, so `_module_analysis_cache` memoizes the whole result.
+#
+# The returned mapping is shared: callers must not mutate it. All present
+# callers only read it (`.items()`, lookups, or an explicit `dict(...)` copy),
+# and `join_type_fact_maps` takes a `Mapping` and builds a new dict.
+#
+# Backed by a plain dict rather than `lru_cache` so entries can be *contributed*
+# as well as computed. The scanner's snapshot pass produces exactly these
+# results, and when that pass runs in worker processes the parent would
+# otherwise recompute all of it: on sympy that costs 33.6 s (113.7 s warm
+# against 147.3 s with the cache cleared before resolution), which is more than
+# parallelising the pass saves. `cache_prime` lets the work cross back.
+def _module_analysis_cache(func):
+    store: dict[tuple, Any] = {}
+
+    @wraps(func)
+    def wrapper(*args):
+        try:
+            return store[args]
+        except KeyError:
+            pass
+        value = func(*args)
+        if len(store) < _ANALYSIS_CACHE_SIZE:
+            store[args] = value
+        return value
+
+    wrapper.cache_prime = store.setdefault  # type: ignore[attr-defined]
+    wrapper.cache_clear = store.clear  # type: ignore[attr-defined]
+    wrapper.cache_size = store.__len__  # type: ignore[attr-defined]
+    return wrapper
 
 
 def _python_type_name(annotation: py_ast.AST | None) -> str:
@@ -137,9 +206,8 @@ def _python_body_nodes(function: py_ast.FunctionDef | py_ast.AsyncFunctionDef) -
 
 def _python_function_return_type(body: str) -> str:
     """Infer one stable concrete return type from a Python callable body."""
-    try:
-        module = py_ast.parse(textwrap.dedent(body))
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(textwrap.dedent(body))
+    if module is None:
         return ""
     function = next(
         (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
@@ -176,9 +244,8 @@ def _python_function_node_return_type(
 
 def _python_parameter_names(body: str) -> set[str]:
     """Return parameter bindings for the outer callable in *body*."""
-    try:
-        module = py_ast.parse(textwrap.dedent(body))
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(textwrap.dedent(body))
+    if module is None:
         return set()
     function = next(
         (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
@@ -201,9 +268,8 @@ def _python_parameter_names(body: str) -> set[str]:
 
 def _python_fixture_return_types(source: str) -> dict[str, str]:
     """Return concrete types for functions explicitly decorated as fixtures."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
 
     def decorator_name(node: py_ast.AST) -> str:
@@ -230,9 +296,8 @@ def _python_fixture_return_types(source: str) -> dict[str, str]:
 
 def _python_attribute_uses(body: str) -> set[tuple[str, str, str, int]]:
     """Return simple receiver attribute reads/writes from one callable."""
-    try:
-        module = py_ast.parse(textwrap.dedent(body))
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(textwrap.dedent(body))
+    if module is None:
         return set()
     function = next(
         (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
@@ -282,9 +347,8 @@ def _python_type_solution(
     max_attribute_depth: int = DEFAULT_PYTHON_ATTRIBUTE_DEPTH,
 ) -> TypeSolution:
     """Solve local Python type facts with a bounded monotone worklist."""
-    try:
-        module = py_ast.parse(textwrap.dedent(body))
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(textwrap.dedent(body))
+    if module is None:
         return TypeSolution({}, ())
     function = next(
         (node for node in module.body if isinstance(node, (py_ast.FunctionDef, py_ast.AsyncFunctionDef))),
@@ -404,14 +468,14 @@ def _python_module_global_types(source: str) -> dict[str, str]:
     }
 
 
+@_module_analysis_cache
 def _python_module_global_facts(
     source: str,
     source_path: str,
 ) -> dict[str, TypeFact]:
     """Return explicitly annotated module bindings with source provenance."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
     result: dict[str, TypeFact] = {}
     for node in module.body:
@@ -433,9 +497,8 @@ def _python_imported_global_types(
     project_globals: Mapping[tuple[str, str], str],
 ) -> dict[str, str]:
     """Map local import bindings to unambiguous project-global type facts."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
     result: dict[str, str] = {}
     for node in module.body:
@@ -453,9 +516,8 @@ def _python_imported_global_facts(
     project_globals: Mapping[tuple[str, str], TypeFact],
 ) -> dict[str, TypeFact]:
     """Map local imports to project-global facts without dropping ambiguity."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
     result: dict[str, TypeFact] = {}
     for node in module.body:
@@ -469,14 +531,14 @@ def _python_imported_global_facts(
     return result
 
 
+@_module_analysis_cache
 def _python_module_return_facts(
     source: str,
     source_path: str,
 ) -> dict[str, TypeFact]:
     """Return source-located facts for module-level callable return types."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
     result: dict[str, TypeFact] = {}
     for node in module.body:
@@ -501,9 +563,8 @@ def _python_imported_return_facts(
     project_returns: Mapping[tuple[str, str], TypeFact],
 ) -> dict[str, TypeFact]:
     """Map local imports to return facts from the named project module."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
     result: dict[str, TypeFact] = {}
     for node in module.body:
@@ -536,11 +597,11 @@ def _python_parameter_types(
     }
 
 
+@_module_analysis_cache
 def _python_class_field_types(source: str) -> dict[tuple[str, str], str]:
     """Infer stable ``self.field`` types from annotations or constructor writes."""
-    try:
-        module = py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
+    module = _parse_python_cached(source)
+    if module is None:
         return {}
     result: dict[tuple[str, str], str] = {}
     writes: dict[tuple[str, str], list[str]] = {}

@@ -1817,6 +1817,325 @@ class FrontendsScannerTest(unittest.TestCase):
         if tested == 0:
             self.skipTest("no additional-language Tree-sitter grammar is installed")
 
+    def test_tree_sitter_swift_extracts_every_call_in_compound_expression(self) -> None:
+        if parser_for_suffix(".swift") is None:
+            self.skipTest("Swift Tree-sitter grammar is not installed")
+        # Swift's grammar represents `Middle() + Assist()` as an outer call
+        # whose callee expression contains the already-complete `Middle()` and
+        # whose trailing call suffix belongs to `Assist`. Treating the whole
+        # additive expression as a member-style callee kept only the first
+        # call and silently dropped the cross-file second call.
+        core_text = (
+            "func Middle() -> Int { return 1 }\n"
+            "func Root() -> Int { return Middle() + Assist() }\n"
+        )
+        helper_text = (
+            "func Assist() -> Int { return 2 }\n"
+            "func Middle() -> Int { return 3 }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = root / "Core.swift"
+            helper = root / "Helper.swift"
+            core.write_text(core_text, encoding="utf-8")
+            helper.write_text(helper_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [
+                    SourceFile(core, "Core.swift", "Core_swift", core_text),
+                    SourceFile(helper, "Helper.swift", "Helper_swift", helper_text),
+                ],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (
+                result.nodes[edge.source].label,
+                result.nodes[edge.target].label,
+                result.nodes[edge.target].path,
+            )
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("Root", "Middle", "Core.swift"), calls)
+        self.assertIn(("Root", "Assist", "Helper.swift"), calls)
+        self.assertNotIn(("Root", "Middle", "Helper.swift"), calls)
+
+    def test_tree_sitter_php_extracts_same_and_cross_file_calls(self) -> None:
+        if parser_for_suffix(".php") is None:
+            self.skipTest("PHP Tree-sitter grammar is not installed")
+        # PHP's grammar calls a bare callee node `name`. Definitions were
+        # already extracted, but the shared call normalizer did not recognize
+        # that node kind, so every PHP call site disappeared before resolution.
+        core_text = (
+            "<?php\n"
+            "function Middle() { return 1; }\n"
+            "function Root() { return Middle() + Assist(); }\n"
+        )
+        helper_text = (
+            "<?php\n"
+            "function Assist() { return 2; }\n"
+            "function Middle() { return 3; }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = root / "core.php"
+            helper = root / "helper.php"
+            core.write_text(core_text, encoding="utf-8")
+            helper.write_text(helper_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [
+                    SourceFile(core, "core.php", "core_php", core_text),
+                    SourceFile(helper, "helper.php", "helper_php", helper_text),
+                ],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (
+                result.nodes[edge.source].label,
+                result.nodes[edge.target].label,
+                result.nodes[edge.target].path,
+            )
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("Root", "Middle", "core.php"), calls)
+        self.assertIn(("Root", "Assist", "helper.php"), calls)
+        self.assertNotIn(("Root", "Middle", "helper.php"), calls)
+
+    def test_tree_sitter_ruby_binds_top_level_def_as_a_free_callable(self) -> None:
+        if parser_for_suffix(".rb") is None:
+            self.skipTest("Ruby Tree-sitter grammar is not installed")
+        # A Ruby top-level `def` parses as a `method`, not a `function`, and the
+        # file-local binding layer admitted only functions. An ownerless method
+        # is a free function under another name, so the same-file `Middle` was
+        # left to repository-wide resolution, where the decoy of the same name
+        # in helper.rb made it ambiguous and dropped it entirely. The decoy is
+        # what makes this test load-bearing: without it, `Middle` is globally
+        # unique and resolves without ever consulting the file-local scope.
+        core_text = "def Middle\n  1\nend\n\ndef Root\n  Middle() + Assist()\nend\n"
+        helper_text = "def Assist\n  2\nend\n\ndef Middle\n  3\nend\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = root / "core.rb"
+            helper = root / "helper.rb"
+            core.write_text(core_text, encoding="utf-8")
+            helper.write_text(helper_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [
+                    SourceFile(core, "core.rb", "core_rb", core_text),
+                    SourceFile(helper, "helper.rb", "helper_rb", helper_text),
+                ],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (
+                result.nodes[edge.source].label,
+                result.nodes[edge.target].label,
+                result.nodes[edge.target].path,
+            )
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("Root", "Middle", "core.rb"), calls)
+        self.assertIn(("Root", "Assist", "helper.rb"), calls)
+        self.assertNotIn(("Root", "Middle", "helper.rb"), calls)
+
+    def test_tree_sitter_scala_resolves_unqualified_call_to_object_sibling(self) -> None:
+        if parser_for_suffix(".scala") is None:
+            self.skipTest("Scala Tree-sitter grammar is not installed")
+        # `object Core { def Middle() }` gives the method an owner, so the file
+        # scope does not bind it; the enclosing type does. Scala joins C#, Java,
+        # C++ and Ruby as a language where an unqualified call reaches a sibling
+        # member. As with the Ruby case above, the same-named decoy in
+        # Helper.scala is essential: it denies the repository-wide fallback, so
+        # only the enclosing-object scope can resolve the call.
+        core_text = "object Core {\n  def Middle(): Int = 1\n  def Root(): Int = Middle() + Assist()\n}\n"
+        helper_text = "object Helper {\n  def Assist(): Int = 2\n  def Middle(): Int = 3\n}\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = root / "Core.scala"
+            helper = root / "Helper.scala"
+            core.write_text(core_text, encoding="utf-8")
+            helper.write_text(helper_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [
+                    SourceFile(core, "Core.scala", "Core_scala", core_text),
+                    SourceFile(helper, "Helper.scala", "Helper_scala", helper_text),
+                ],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (
+                result.nodes[edge.source].label,
+                result.nodes[edge.target].label,
+                result.nodes[edge.target].path,
+            )
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("Root", "Middle", "Core.scala"), calls)
+        self.assertIn(("Root", "Assist", "Helper.scala"), calls)
+        self.assertNotIn(("Root", "Middle", "Helper.scala"), calls)
+
+    def test_tree_sitter_javascript_binds_a_module_object_receiver(self) -> None:
+        if parser_for_suffix(".js") is None:
+            self.skipTest("JavaScript Tree-sitter grammar is not installed")
+        # `var app = {}; app.set = function(){}` is the object-literal idiom JS
+        # uses instead of classes. `this.set()` inside those already resolved,
+        # but a same-file call written through the object's own name did not:
+        # nothing bound `app` to its own (file-qualified) owner type.
+        #
+        # The shadowing case is the precision half: `function mount(app)` takes
+        # a *different* object, so binding the module-level one there would
+        # fabricate an edge.
+        core_text = (
+            "var app = {};\n"
+            "app.set = function set(k) { return k; };\n"
+            "app.boot = function boot() { return app.set('x'); };\n"
+            "app.mount = function mount(app) { return app.set('y'); };\n"
+        )
+        other_text = "var app = {};\napp.set = function set(k) { return 2; };\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            core = root / "core.js"
+            other = root / "other.js"
+            core.write_text(core_text, encoding="utf-8")
+            other.write_text(other_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [
+                    SourceFile(core, "core.js", "core_js", core_text),
+                    SourceFile(other, "other.js", "other_js", other_text),
+                ],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (
+                result.nodes[edge.source].label,
+                result.nodes[edge.target].label,
+                result.nodes[edge.target].path,
+            )
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("boot", "set", "core.js"), calls)
+        # The shadowing parameter must not bind to the module object...
+        self.assertNotIn(("mount", "set", "core.js"), calls)
+        # ...and a same-named object in another file is a different object.
+        self.assertNotIn(("boot", "set", "other.js"), calls)
+
+    def test_tree_sitter_javascript_binds_a_namespace_qualified_constructor(self) -> None:
+        if parser_for_suffix(".js") is None:
+            self.skipTest("JavaScript Tree-sitter grammar is not installed")
+        # `var m = require('./dep'); new m.Engine()` is how CommonJS names an
+        # imported class, and it states the receiver's type as explicitly as
+        # `new Engine()` does. The pattern required the whole path to start
+        # uppercase, so the namespaced form bound nothing.
+        #
+        # `new makeThing()` is the precision half: a lowercase callee is a
+        # factory, not a type, so it must still bind nothing.
+        main_text = (
+            "var m = require('./dep');\n"
+            "function run() { var e = new m.Engine(); return e.start(); }\n"
+            "function nope() { var f = new makeThing(); return f.start(); }\n"
+        )
+        dep_text = (
+            "class Engine { start() { return 1; } }\n"
+            "function makeThing() { return 1; }\n"
+            "module.exports = { Engine: Engine, makeThing: makeThing };\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            main = root / "main.js"
+            dep = root / "dep.js"
+            main.write_text(main_text, encoding="utf-8")
+            dep.write_text(dep_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [
+                    SourceFile(main, "main.js", "main_js", main_text),
+                    SourceFile(dep, "dep.js", "dep_js", dep_text),
+                ],
+                max_total_symbols=100,
+            )
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("run", "start"), calls)
+        self.assertNotIn(("nope", "start"), calls)
+
+    def test_member_call_resolution_rate_counts_unmatched_as_a_miss(self) -> None:
+        if parser_for_suffix(".js") is None:
+            self.skipTest("JavaScript Tree-sitter grammar is not installed")
+        # The rate is meant to be a CI gate, so it has to be hard to move
+        # without resolving anything. `f.beta()` has a known receiver type
+        # (`Foo`) and `beta` does exist internally -- on `Bar` -- so the call is
+        # a real miss recorded as `unmatched`, not as `unknown_receiver`.
+        #
+        # Defining the rate as resolved/(resolved+unknown_receiver) would read
+        # 0/0 here and score a scan that resolved nothing as unpenalised. Worse,
+        # merely typing a receiver moves calls from `unknown_receiver` into
+        # `unmatched`, so that definition rewards changes which produce no edge.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "m.js").write_text(
+                "class Foo { alpha() { return 1; } }\n"
+                "class Bar { beta() { return 2; } }\n"
+                "function run() { var f = new Foo(); return f.beta(); }\n",
+                encoding="utf-8",
+            )
+            graph = scan_directory(root, max_nodes=1000, depth="symbols")
+
+        meta = graph.metadata or {}
+        self.assertEqual(meta["member_calls_resolved"], "0")
+        self.assertEqual(meta["member_calls_unknown_receiver"], "0")
+        self.assertEqual(meta["member_calls_unmatched"], "1")
+        # The miss is in the denominator, so the rate reports the failure.
+        self.assertEqual(meta["member_calls_internal_total"], "1")
+        self.assertEqual(meta["member_call_resolution_rate"], "0.0000")
+
+    def test_member_call_resolution_rate_excludes_external_callees(self) -> None:
+        if parser_for_suffix(".js") is None:
+            self.skipTest("JavaScript Tree-sitter grammar is not installed")
+        # The mirror property: a call whose method name no internal symbol owns
+        # is correctly declined, not a miss. Counting it would drag the gate
+        # down for behaving correctly, and would make the number track how much
+        # third-party API a repository touches rather than how well it resolves.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "m.js").write_text(
+                "class Foo { alpha() { return 1; } beta() { return this.alpha(); } }\n"
+                "function run() { var f = new Foo(); return f.nowhereDefined(); }\n",
+                encoding="utf-8",
+            )
+            graph = scan_directory(root, max_nodes=1000, depth="symbols")
+
+        meta = graph.metadata or {}
+        # One internal call that resolved, one callee that lives outside the graph.
+        self.assertEqual(meta["member_calls_resolved"], "1")
+        self.assertEqual(meta["member_calls_external_resolved"], "1")
+        # The external callee is not in the denominator, so a correctly declined
+        # link cannot drag the gate below a perfect score.
+        self.assertEqual(meta["member_calls_internal_total"], "1")
+        self.assertEqual(meta["member_call_resolution_rate"], "1.0000")
+        self.assertEqual(
+            int(meta["member_calls_internal_total"]),
+            sum(
+                int(meta[key])
+                for key in (
+                    "member_calls_resolved",
+                    "member_calls_ambiguous",
+                    "member_calls_unknown_receiver",
+                    "member_calls_unmatched",
+                )
+            ),
+        )
+
     def test_regex_extractor_reports_symbol_truncation(self) -> None:
         # Same silent-truncation bug class, at the symbol-extraction layer:
         # TreeSitterExtractor/RegexExtractor both used to `break` out the

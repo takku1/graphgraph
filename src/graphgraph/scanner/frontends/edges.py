@@ -62,6 +62,7 @@ from .typescript import (
     _ts_class_field_types,
     _ts_local_call_return_types,
     _ts_local_types,
+    _ts_parameter_names,
     _ts_return_type_from_body,
     _ts_this_aliases,
 )
@@ -467,6 +468,16 @@ def _add_tree_sitter_calls(
             if definition.kind == "class" and definition.extra:
                 base_classes.setdefault(definition.name, tuple(definition.extra))
 
+    # Edge identity seen so far. This was rebuilt from the whole `edges` list
+    # once per definition, making the scan quadratic in edge count: 2,252
+    # rebuilds over a list past 12,000 edges on sympy/core, 11% of scan time.
+    # Since `edges` is appended to here and in `_resolve_member_call`, the set
+    # catches up on whatever arrived since it last looked rather than requiring
+    # every appender to record its key -- correct no matter who appends, and
+    # O(total edges) per scan instead of O(definitions x edges).
+    existing_edge_keys: set[tuple[str, str, str]] = set()
+    absorbed_edge_count = 0
+
     project_field_types = _project_field_type_facts(defs_by_file)
     project_python_globals = _project_python_global_type_facts(defs_by_file)
     project_python_returns = _project_python_return_facts(defs_by_file)
@@ -576,19 +587,27 @@ def _add_tree_sitter_calls(
         # Only plain functions are bound: a bare call cannot reach a method.
         # An explicit import of the same name is a real rebinding, so it wins.
         for local_def in defs:
-            if local_def.kind != "function" or local_def.name in all_imported:
+            # An ownerless "method" is a free function under another name:
+            # Ruby's top-level `def` parses as a method but belongs to no type,
+            # and a bare call reaches it exactly as it would a function. Methods
+            # that do have an owner are handled by the class scope above.
+            free_callable = local_def.kind == "function" or (
+                local_def.kind == "method" and not local_def.owner
+            )
+            if not free_callable or local_def.name in all_imported:
                 continue
             local_id = _definition_node_id(source, local_def)
             if local_id in nodes:
                 local_resolutions[local_def.name] = local_id
         callable_defs = [d for d in sorted(defs, key=lambda d: d.start) if d.kind in {"function", "method"}]
-        # Enclosing-class scope. In C#, Java and C++ an unqualified call reaches
-        # a sibling member of the same class, so the class is a real binding
-        # scope sitting between the file and the repository. Python, JS/TS and
-        # Rust require an explicit receiver (`self.`, `this.`, `Self::`), so
-        # adding them here would invent calls the language cannot express.
+        # Enclosing-class scope. In C#, Java, C++, Scala and Ruby an unqualified
+        # call reaches a sibling member of the same class or object, so that
+        # type is a real binding scope sitting between the file and the
+        # repository. Python, JS/TS and Rust require an explicit receiver
+        # (`self.`, `this.`, `Self::`), so adding them here would invent calls
+        # the language cannot express.
         same_class_methods: dict[str, dict[str, str]] = {}
-        if suffix in {".cs", ".java"} or suffix in _CPP_SUFFIXES:
+        if suffix in {".cs", ".java", ".scala", ".rb"} or suffix in _CPP_SUFFIXES:
             for method_def in defs:
                 if method_def.kind != "method" or not method_def.owner:
                     continue
@@ -601,6 +620,7 @@ def _add_tree_sitter_calls(
         rust_field_types: dict[tuple[str, str], str] = {}
         python_field_types: dict[tuple[str, str], str] = {}
         ts_field_types: dict[tuple[str, str], str] = {}
+        js_object_owners: set[str] = set()
         csharp_field_types: dict[tuple[str, str], str] = {}
         cpp_field_types: dict[tuple[str, str], str] = {}
         if suffix == ".rs":
@@ -617,6 +637,7 @@ def _add_tree_sitter_calls(
             python_field_types = _python_class_field_types(source.text)
         elif suffix in _TS_SUFFIXES:
             ts_field_types = _ts_class_field_types(source.text)
+            js_object_owners = {d.owner for d in defs if d.kind == "method" and d.owner}
         elif suffix in {".cs", ".java"}:
             csharp_field_types = csharp_class_field_types(source.text)
         elif suffix in _CPP_SUFFIXES:
@@ -635,11 +656,13 @@ def _add_tree_sitter_calls(
             # contents -- and blanking literals leaves whitespace that its
             # parser then rejects outright.
             raw_body = _node_text_range(text_bytes, d.start, d.end)
-            body = (
-                _syntax_text_without_literals(d.node, text_bytes)
-                if d.node is not None and suffix != ".py"
-                else raw_body
-            )
+            if d.node is not None and suffix != ".py":
+                # Collection already blanked this definition's literals; reusing
+                # that avoids walking every descendant a second time. It is only
+                # populated for callables, so anything else still computes here.
+                body = d.literal_free_text or _syntax_text_without_literals(d.node, text_bytes)
+            else:
+                body = raw_body
             if suffix in _TS_SUFFIXES:
                 local_types = _ts_local_types(body)
                 # `const s = createStore();` -- bind the local to the factory's
@@ -647,6 +670,24 @@ def _add_tree_sitter_calls(
                 # was already found (setdefault preserves the direct evidence).
                 for binding, inferred in _ts_local_call_return_types(body, unique_return_types).items():
                     local_types.setdefault(binding, inferred)
+                # `var app = {}; app.set = function(){}; app.boot = function(){ app.set() }`
+                # -- the object-literal idiom JS uses instead of classes. Those
+                # definitions already carry `owner="app"`, and `this.set()` inside
+                # them resolves, but a same-file call written through the object's
+                # own name did not: nothing bound `app` to its own type. On
+                # express that name is the third most common receiver in the
+                # library.
+                #
+                # The bound value must be the *path-qualified* owner that
+                # `_method_owner` reports for these definitions, because the
+                # object exists only within its file -- an `app` elsewhere is a
+                # different object. Binding the bare name instead merely moves
+                # the call from `unknown_receiver` to `unmatched` without
+                # producing an edge. Only names this file owns methods on are
+                # bound, and setdefault keeps real type evidence ahead of them.
+                shadowing_params = _ts_parameter_names(body) if js_object_owners else set()
+                for owner_name in js_object_owners - shadowing_params:
+                    local_types.setdefault(owner_name, f"{source.rel}::{owner_name}")
             elif suffix == ".rs":
                 local_types = _rust_local_types(body)
                 # `let ir = parse_ir(src);` -- bind the local to the callee's
@@ -754,7 +795,13 @@ def _add_tree_sitter_calls(
                     # setdefault lets the already-populated local win.
                     for field_name, field_type in owner_fields.items():
                         local_types.setdefault(field_name, field_type)
-            calls = _call_sites_in_range(root, text_bytes, d.start, d.end)
+            calls = _call_sites_in_range(
+                root,
+                text_bytes,
+                d.start,
+                d.end,
+                suffix=suffix,
+            )
             rust_macro_calls = (
                 {
                     _CallSite(name=name, qualified=False)
@@ -883,8 +930,21 @@ def _add_tree_sitter_calls(
                 normalized_path = "/" + source.rel.replace("\\", "/").casefold()
                 if "/tests/" not in normalized_path and not Path(source.rel).name.casefold().startswith("test_"):
                     continue
-                existing = {(edge.source, edge.target, edge.type) for edge in edges}
-                for receiver, field_name, relation, line in _python_attribute_uses(body):
+                if absorbed_edge_count < len(edges):
+                    for edge in edges[absorbed_edge_count:]:
+                        existing_edge_keys.add((edge.source, edge.target, edge.type))
+                    absorbed_edge_count = len(edges)
+                # `_python_attribute_uses` returns a set and the dedup key below
+                # ignores receiver and line, so when one attribute is reached
+                # from several places the surviving edge was whichever tuple the
+                # set yielded first -- hash-seed dependent: 9 edges changed their
+                # recorded line *and receiver* between PYTHONHASHSEED=0 and =1 on
+                # sympy/core. Ordering by line makes the earliest use win.
+                attribute_uses = sorted(
+                    _python_attribute_uses(body),
+                    key=lambda use: (use[3], use[0], use[1], use[2]),
+                )
+                for receiver, field_name, relation, line in attribute_uses:
                     receiver_type = local_types.get(receiver, "")
                     if not receiver_type:
                         continue
@@ -901,9 +961,9 @@ def _add_tree_sitter_calls(
                     if len(candidates) != 1:
                         continue
                     key = (src_id, candidates[0], relation)
-                    if key in existing:
+                    if key in existing_edge_keys:
                         continue
-                    existing.add(key)
+                    existing_edge_keys.add(key)
                     edges.append(
                         Edge(
                             src_id,
