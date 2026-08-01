@@ -1,0 +1,9 @@
+# The acceptance corpus and its baseline are compared byte-for-byte, so they
+# check out identically on every platform regardless of core.autocrlf.
+#
+# The snapshot is currently line-ending insensitive -- verified by converting
+# the whole corpus to LF and re-dumping, which produced an identical file. This
+# is prophylactic rather than a fix: it removes the possibility that a future
+# fixture whose captured summary text does depend on line endings turns a green
+# gate red on someone else's machine.
+tests/corpus/** text eol=lf
