@@ -435,7 +435,6 @@ def cmd_platform(args: argparse.Namespace) -> None:
         return
     if action == "serve":
         graph_path = Path(args.graph) if args.graph else find_graph_path()
-        print(f"GraphGraph console: http://{args.host}:{args.port}")
         from ..platform.service import serve_graph
 
         serve_graph(
@@ -447,6 +446,7 @@ def cmd_platform(args: argparse.Namespace) -> None:
             allowed_origins=tuple(args.allow_origin),
             max_body_bytes=args.max_body_bytes,
             rate_limit_per_minute=args.rate_limit,
+            on_ready=lambda url: print(f"GraphGraph console: {url}", flush=True),
         )
         return
     if action == "migrate":

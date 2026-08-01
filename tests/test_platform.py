@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -10,6 +13,7 @@ import urllib.error
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from graphgraph import Edge, Graph, Node
@@ -49,7 +53,7 @@ from graphgraph.platform import (
     run_benchmark,
 )
 from graphgraph.platform.interop import export_graph
-from graphgraph.platform.service import create_server, install_git_hooks
+from graphgraph.platform.service import create_server, install_git_hooks, serve_graph
 from graphgraph.runtime.state import atomic_write_text, file_lock
 from graphgraph.services import render_query_context
 
@@ -1098,8 +1102,19 @@ class PlatformTest(unittest.TestCase):
     def test_git_hook_install_is_idempotent_and_preserves_existing_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            hooks = root / ".git" / "hooks"
-            hooks.mkdir(parents=True)
+            subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "core.hooksPath", ".git/hooks"],
+                check=True,
+            )
+            hooks = Path(
+                subprocess.run(
+                    ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+            )
             post_commit = hooks / "post-commit"
             post_commit.write_text("#!/bin/sh\necho existing\n", encoding="utf-8")
             install_git_hooks(root, executable="gg")
@@ -1108,6 +1123,116 @@ class PlatformTest(unittest.TestCase):
             self.assertIn("echo existing", content)
             self.assertEqual(content.count("# >>> graphgraph managed >>>"), 1)
             self.assertIn("graphgraph context", content)
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required")
+    def test_git_hook_install_uses_custom_hooks_path_and_linked_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            root = parent / "main"
+            linked = parent / "linked"
+            subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "tests@example.invalid"],
+                check=True,
+            )
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "GraphGraph Tests"], check=True)
+            (root / "tracked.txt").write_text("initial\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-m", "initial"], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(root), "worktree", "add", "-b", "linked-test", str(linked)],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(linked), "config", "core.hooksPath", ".custom-hooks"],
+                check=True,
+            )
+
+            installed = install_git_hooks(linked)
+
+            expected = linked / ".custom-hooks"
+            self.assertEqual({path.parent.resolve() for path in installed}, {expected.resolve()})
+            self.assertTrue((expected / "post-commit").is_file())
+            self.assertTrue((linked / ".graphgraph").is_dir())
+
+    @unittest.skipUnless(shutil.which("git"), "Git is required")
+    def test_new_hook_recreates_receipt_directory_before_redirect(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", str(root)], check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "core.hooksPath", ".git/hooks"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "tests@example.invalid"],
+                check=True,
+            )
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "GraphGraph Tests"], check=True)
+            executable = root / "fake-graphgraph"
+            executable.write_text("#!/bin/sh\nprintf '{\"ok\":true}\\n'\n", encoding="utf-8", newline="\n")
+            executable.chmod(executable.stat().st_mode | 0o111)
+            installed = install_git_hooks(root, executable="./fake-graphgraph")
+            (root / ".graphgraph").rmdir()
+            (root / "tracked.txt").write_text("initial\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+
+            commit = subprocess.run(
+                ["git", "-C", str(root), "commit", "-m", "exercise hook"],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(commit.returncode, 0, commit.stderr)
+            self.assertEqual(
+                json.loads((root / ".graphgraph" / "hook-receipt.json").read_text(encoding="utf-8")),
+                {"ok": True},
+            )
+            self.assertIn("mkdir -p .graphgraph", installed[0].read_text(encoding="utf-8"))
+
+    def test_serve_graph_uses_bound_port_for_ready_and_browser_urls(self) -> None:
+        server = SimpleNamespace(server_address=("127.0.0.1", 43123), serve_forever=lambda: None)
+        ready: list[str] = []
+
+        class ImmediateTimer:
+            def __init__(self, _delay, callback):  # noqa: ANN001
+                self.callback = callback
+
+            def start(self) -> None:
+                self.callback()
+
+        with (
+            patch("graphgraph.platform.service.create_server", return_value=server),
+            patch("graphgraph.platform.service.threading.Timer", ImmediateTimer),
+            patch("graphgraph.platform.service.webbrowser.open") as browser_open,
+        ):
+            serve_graph(
+                Path("graph.gg"),
+                port=0,
+                open_browser=True,
+                on_ready=ready.append,
+            )
+
+        self.assertEqual(ready, ["http://127.0.0.1:43123"])
+        browser_open.assert_called_once_with("http://127.0.0.1:43123")
+
+    def test_platform_serve_announces_only_the_post_bind_url(self) -> None:
+        args = build_parser().parse_args(
+            ["platform", "serve", "--graph", "graph.gg", "--port", "0"]
+        )
+        with (
+            patch("graphgraph.platform.service.serve_graph") as mocked_serve,
+            patch("builtins.print") as mocked_print,
+        ):
+            args.func(args)
+            mocked_print.assert_not_called()
+            mocked_serve.call_args.kwargs["on_ready"]("http://127.0.0.1:43123")
+
+        mocked_print.assert_called_once_with(
+            "GraphGraph console: http://127.0.0.1:43123",
+            flush=True,
+        )
 
 
 class SemanticEmbeddingBackendTest(unittest.TestCase):
@@ -1377,9 +1502,8 @@ class FileLockTest(unittest.TestCase):
     """
 
     def test_transient_permission_error_is_retried_as_contention(self) -> None:
-        # Windows leaves an unlinked-but-still-open lock file in "delete
-        # pending", where os.open raises PermissionError rather than
-        # FileExistsError. That is contention and must be waited out.
+        # Transient sharing/permission failures while opening the rendezvous
+        # file are contention and must be waited out.
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "state.json"
             real_open = os.open
@@ -1397,7 +1521,9 @@ class FileLockTest(unittest.TestCase):
 
             self.assertTrue(acquired)
             self.assertEqual(len(calls), 1)
-            self.assertFalse(target.with_name("state.json.lock").exists())
+            # The stable inode prevents a waiter from locking an unlinked old
+            # inode while another process creates a new lock at this path.
+            self.assertTrue(target.with_name("state.json.lock").exists())
 
     def test_persistent_permission_error_surfaces_the_real_cause(self) -> None:
         # A read-only directory also raises PermissionError forever. Retrying
@@ -1460,6 +1586,53 @@ class FileLockTest(unittest.TestCase):
                 with self.assertRaises(TimeoutError):
                     with file_lock(target, timeout=0.1):
                         pass
+
+    def test_live_lock_is_not_stolen_when_age_threshold_expires(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            inside: list[str] = []
+            overlap: list[str] = []
+            barrier = threading.Barrier(2)
+
+            def holder() -> None:
+                with file_lock(target, stale_seconds=0.01):
+                    inside.append("holder")
+                    barrier.wait()
+                    time.sleep(0.12)
+                    inside.remove("holder")
+
+            def waiter() -> None:
+                barrier.wait()
+                time.sleep(0.03)
+                with file_lock(target, stale_seconds=0.01):
+                    overlap.extend(inside)
+
+            first = threading.Thread(target=holder)
+            second = threading.Thread(target=waiter)
+            first.start()
+            second.start()
+            first.join()
+            second.join()
+
+            self.assertEqual(overlap, [])
+
+    def test_lock_is_recoverable_after_owner_process_exits_without_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            script = (
+                "import os, sys\n"
+                "from pathlib import Path\n"
+                "from graphgraph.runtime.state import file_lock\n"
+                "with file_lock(Path(sys.argv[1])):\n"
+                "    os._exit(0)\n"
+            )
+
+            child = subprocess.run([sys.executable, "-c", script, str(target)])
+            self.assertEqual(child.returncode, 0)
+            with file_lock(target, timeout=1.0):
+                recovered = True
+
+            self.assertTrue(recovered)
 
 
 if __name__ == "__main__":

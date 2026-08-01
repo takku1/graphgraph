@@ -64,6 +64,7 @@ requested.
 Current empirical evaluation of the tool as an agent context source. It is
 self-contained and supersedes the removed cycle drafts.
 
+- [Confirmed bug checklist and resolution receipts](findings/BUGS.md)
 - [Comprehensive gray-box evaluation after updates](findings/2026-07-27-graybox-comprehensive.md)
 - [The influence field, not the cover formula, is the failing stage](findings/2026-07-29-influence-field-coupling.md)
 - [Fixing the field did not rescue the cover — it raised the baseline](findings/2026-07-30-recoupled-cover-verdicts.md)

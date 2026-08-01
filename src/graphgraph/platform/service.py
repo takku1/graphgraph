@@ -3,6 +3,8 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import json
+import shlex
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -353,6 +355,7 @@ def serve_graph(
     allowed_origins: tuple[str, ...] = (),
     max_body_bytes: int = 1_000_000,
     rate_limit_per_minute: int = 120,
+    on_ready: Callable[[str], None] | None = None,
 ) -> None:
     server = create_server(
         graph_path,
@@ -363,8 +366,13 @@ def serve_graph(
         max_body_bytes=max_body_bytes,
         rate_limit_per_minute=rate_limit_per_minute,
     )
+    bound_port = int(server.server_address[1])
+    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    url = f"http://{url_host}:{bound_port}"
+    if on_ready is not None:
+        on_ready(url)
     if open_browser:
-        threading.Timer(0.3, lambda: webbrowser.open(f"http://{host}:{port}")).start()
+        threading.Timer(0.3, lambda: webbrowser.open(url)).start()
     server.serve_forever()
 
 
@@ -401,17 +409,44 @@ def _snapshot(root: Path, include: tuple[str, ...]) -> dict[str, tuple[int, int]
 
 def install_git_hooks(root: Path, *, executable: str = "graphgraph") -> list[Path]:
     """Install managed post-commit/post-merge refresh hooks without replacing existing hooks."""
-    git_dir = root.resolve() / ".git"
-    if not git_dir.is_dir():
+    requested_root = root.resolve()
+    if not requested_root.is_dir():
         raise ValueError(f"not a Git repository: {root}")
-    hooks_dir = git_dir / "hooks"
+
+    def git_output(cwd: Path, *args: str) -> str:
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("Git is required to resolve the repository hooks directory") from exc
+        if result.returncode != 0 or not result.stdout.strip():
+            detail = result.stderr.strip()
+            suffix = f": {detail}" if detail else ""
+            raise ValueError(f"not a Git repository: {root}{suffix}")
+        return result.stdout.strip()
+
+    repo_root = Path(git_output(requested_root, "rev-parse", "--show-toplevel")).resolve()
+    hooks_dir = Path(git_output(repo_root, "rev-parse", "--git-path", "hooks"))
+    if not hooks_dir.is_absolute():
+        hooks_dir = repo_root / hooks_dir
+    hooks_dir = hooks_dir.resolve()
+    if hooks_dir.exists() and not hooks_dir.is_dir():
+        raise ValueError(f"effective Git hooks path is not a directory: {hooks_dir}")
     hooks_dir.mkdir(parents=True, exist_ok=True)
+    (repo_root / ".graphgraph").mkdir(parents=True, exist_ok=True)
     installed = []
     marker_start = "# >>> graphgraph managed >>>"
     marker_end = "# <<< graphgraph managed <<<"
+    command = shlex.quote(executable)
     block = (
         f"{marker_start}\n"
-        f"{executable} context \"refresh graph after git change\" --sync git --json > .graphgraph/hook-receipt.json\n"
+        "mkdir -p .graphgraph\n"
+        f"{command} context \"refresh graph after git change\" --sync git --json > .graphgraph/hook-receipt.json\n"
         f"{marker_end}\n"
     )
     for name in ("post-commit", "post-merge"):

@@ -11,6 +11,33 @@ from typing import Iterator
 STATE_VERSION = 2
 
 
+def _try_advisory_lock(descriptor: int) -> None:
+    """Acquire one non-blocking, process-scoped exclusive file lock."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _release_advisory_lock(descriptor: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
 @contextmanager
 def file_lock(
     path: Path,
@@ -18,51 +45,51 @@ def file_lock(
     timeout: float = 10.0,
     stale_seconds: float = 120.0,
 ) -> Iterator[None]:
+    """Serialize access with an OS lock that cannot expire while held.
+
+    ``stale_seconds`` remains in the public signature for compatibility with
+    callers of the former lock-file lease. Advisory locks are released by the
+    operating system when a process exits, so age-based stealing is neither
+    necessary nor safe.
+
+    The rendezvous file intentionally remains in place. Removing it around an
+    unlock creates an inode race on POSIX: a waiter can lock the old inode while
+    a third process creates and locks a new file at the same path.
+    """
+    del stale_seconds
     lock_path = path.with_name(f"{path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     descriptor: int | None = None
-    denied: PermissionError | None = None
     while descriptor is None:
         try:
-            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(descriptor, f"{os.getpid()} {time.time()}\n".encode("ascii"))
-        except (FileExistsError, PermissionError) as exc:
-            # Windows reports contention two different ways. A held lock gives
-            # FileExistsError, but a lock the previous holder has just
-            # unlinked lingers in "delete pending" until the last handle
-            # closes, and opening it in that window raises PermissionError
-            # (ERROR_ACCESS_DENIED) instead. Treating only the former as
-            # contention let the latter escape and kill the waiting thread
-            # under concurrent load.
-            denied = exc if isinstance(exc, PermissionError) else None
-            try:
-                stale = time.time() - lock_path.stat().st_mtime > stale_seconds
-            except OSError:
-                stale = False
-            if stale:
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
-                continue
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        except PermissionError as exc:
             if time.monotonic() - started >= timeout:
-                # A genuine permission problem (read-only directory) also
-                # lands here, so surface the real error rather than a
-                # misleading timeout that hides the cause.
-                if denied is not None:
-                    raise denied
-                raise TimeoutError(f"timed out waiting for state lock: {lock_path}")
+                raise exc
             time.sleep(0.025)
+
+    acquired = False
     try:
+        while not acquired:
+            try:
+                _try_advisory_lock(descriptor)
+                acquired = True
+            except OSError as exc:
+                if time.monotonic() - started >= timeout:
+                    raise TimeoutError(f"timed out waiting for state lock: {lock_path}") from exc
+                time.sleep(0.025)
+
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, f"{os.getpid()} {time.time()}\n".encode("ascii"))
         yield
     finally:
         if descriptor is not None:
-            os.close(descriptor)
-        try:
-            lock_path.unlink()
-        except OSError:
-            pass
+            try:
+                if acquired:
+                    _release_advisory_lock(descriptor)
+            finally:
+                os.close(descriptor)
 
 
 def _replace_with_retry(temp_path: Path, path: Path, *, timeout: float = 2.0) -> None:
