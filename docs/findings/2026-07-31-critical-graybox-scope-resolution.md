@@ -194,17 +194,43 @@ Two smaller observations:
 | sympy/solvers | 44 | 1,364 | 14.9 s |
 | sympy/core | 86 | 3,904 | 20.2 s |
 | sympy/physics | 225 | 4,558 | 34.3 s |
-| sympy (full) | 2,073 | — | **>65 min, did not complete** |
+| sympy (full) | 2,073 | 40,857 | 714.6 s → **124.2 s** (see below) |
 
 Cost tracks file *density*, not file count: Flask runs 17 ms/file, sympy 338 ms/file, because sympy's files are far larger and denser.
 
 **Superlinearity, measured.** Scanning `core`+`solvers`+`physics` together took 101.7 s against 69.4 s for the sum of the three separately — **1.47× superlinear** on a 3-way merge. The merge produced 3,926 additional cross-directory edges, so the extra work is real; but it means whole-repo cost grows faster than corpus size.
 
-The full sympy scan ran **>65 minutes without completing** at ~19.5% CPU utilization — *inference, marked as such:* not CPU-bound, so likely I/O, allocation, or GC pressure rather than raw parsing. A 10-day-old sympy graph on disk (53,483 nodes) proves such a scan *can* complete, so this is a degradation or a threshold effect, not a hard wall.
+**Correction — the full scan completes.** This section first recorded the full sympy
+scan as ">65 min, did not complete," inferring a degradation or threshold effect.
+A later cold run (`rm -rf .graphgraph && graphgraph scan --depth symbols`, background,
+uncontended machine) **completed in 714.6 s** producing 40,857 nodes and 192,689
+edges at `STRUCTURAL PASS`. The original observation was an artifact of a contended,
+interrupted run, not a property of the tool, and the "threshold effect" inference
+built on it was wrong.
+
+The completed number also **retires the threshold hypothesis on its own arithmetic**:
+714.6 s over 2,073 files is 345 ms/file against 195 ms/file for the three subsets
+(69.4 s / 355 files) — a 1.8× per-file penalty at 5.8× the corpus. That is the same
+mild superlinearity the 3-way merge already showed, extended smoothly to full scale.
+Nothing falls off a cliff; the cost model that predicts ~12 minutes is the one that
+was measured. **The defect is the constant, not the curve.**
 
 **Crash safety is good:** killing the scan mid-flight left the pre-existing graph valid and intact (`STRUCTURAL PASS`). Atomic write is working.
 
-**Floor:** tree-sitter parses ~1,500 Python files in well under 60 s single-threaded, and the work is embarrassingly parallel across files. A cold full scan of sympy should be **30–60 s**, not 65+ minutes. Gap: **>65×**.
+**Floor:** tree-sitter parses ~1,500 Python files in well under 60 s single-threaded, and the work is embarrassingly parallel across files. A cold full scan of sympy should be **30–60 s**. Measured 714.6 s. Gap: **12–24×** — a real and large defect, but a bounded one, and roughly the same multiple as the 60–300× fluidity gap rather than the unbounded wall previously reported.
+
+**Superseded by `2026-07-31-scan-hot-path-optimization.md`.** Profiling this path
+found one accidentally quadratic dedup set and two layers of redundant Python
+re-analysis (9,338 `ast.parse` calls for 86 files). Removing them took the same
+cold CLI scan to **124.2 s — 5.75× faster — for a byte-identical graph**. The
+gap to the 30–60 s floor is now **2–4×**, and gate 5 below passes. The cost was
+never structural; it was three fixable defects sitting in the per-definition loop.
+
+**Further reduced to 87.5 s** by
+`2026-08-01-retrieval-and-shared-path-optimization.md`: deduping the
+literal-blanking walk, then parallelising the Python type-snapshot phase with
+worker→parent cache priming. Still byte-identical. Against the 30–60 s floor the
+remaining gap is **1.5–3×**.
 
 ---
 
@@ -275,8 +301,8 @@ Scored on this run's evidence. Categories not re-probed are marked and carried f
 | Incremental freshness | 8.0 | **9.0** | 10.0 | Scaling contract verified: 52× graph → 1.4× cost |
 | Abstention & calibration | 7.5 | **7.5** | 9.8 | Good on queries; `caller_evidence_complete` blind spot |
 | Build safety & validation | 8.0 | **8.5** | 9.9 | Survived mid-scan kill with graph intact |
-| Determinism | — | **8.5** | 10.0 | Content deterministic; 8 bytes differ per scan (timestamp) — breaks hash gates |
-| Scan cost at scale | — | **3.0** | 9.5 | sympy >65 min, incomplete; 1.47× superlinear merge |
+| Determinism | — | **8.5** | 10.0 | "Content deterministic" was wrong: 9 edges varied with `PYTHONHASHSEED`, now fixed; 8-byte timestamp drift remains |
+| Scan cost at scale | — | **8.0** | 9.5 | sympy full 714.6 s → 87.5 s after hot-path fixes and parallelised snapshots; 1.5–3× above floor, gate 5 passes |
 | End-to-end latency / fluidity | 6.5 | **5.5** | 9.9 | 131 ms fixed process cost; 60–300× above floor |
 | Token efficiency | 7.0 | **8.0** | 9.9 | 23× compression, correct answer; 5× headroom in selectivity |
 | Recursion / cycle modeling | — | **2.0** | 9.5 | 0/7 languages record self-calls |
@@ -303,7 +329,7 @@ Thresholds that can fail, in priority order.
 2. **Same-file binding.** In a repo where name `N` is defined in ≥2 files, a call to `N` in the same file as a definition must bind to that definition. Currently fails.
 3. **Dead-code honesty.** `select "production_callers = 0"` must set `caller_evidence_complete: false` whenever any call site was dropped for ambiguity. Currently reports `true`.
 4. **Self-recursion.** A directly self-recursive function must have itself among its callers, in every advertised language. Currently 0/7.
-5. **Cold full scan.** 2,000-file Python repo must complete in **< 180 s**. Currently >65 min.
+5. **Cold full scan.** 2,000-file Python repo must complete in **< 180 s**. **Passes:** 87.5 s (sympy, 2,073 files), down from 714.6 s.
 6. **Exact-lookup latency.** `relations` p50 **< 50 ms** via a resident service (< 5 ms is the real floor). Currently 310 ms.
 7. **Byte determinism.** Two scans of an unchanged tree must produce identical bytes. Currently differs by 8 bytes.
 

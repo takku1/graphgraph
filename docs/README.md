@@ -78,6 +78,10 @@ self-contained and supersedes the removed cycle drafts.
 - [Critical gray-box post-fix delta evaluation](findings/2026-07-31-critical-graybox-fix-delta.md)
 - [Critical gray-box scope resolution, scale, and fluidity](findings/2026-07-31-critical-graybox-scope-resolution.md)
 - [Caching and compression prototypes: three candidates, two falsified](findings/2026-07-31-caching-and-compression-prototypes.md)
+- [Remaining language coverage: seven-language direct-call closure](findings/2026-07-31-remaining-language-coverage.md)
+- [The scan hot path: one quadratic, two redundancies, and a determinism bug](findings/2026-07-31-scan-hot-path-optimization.md)
+- [Retrieval, the shared tree-sitter path, and a parallelism result that failed](findings/2026-08-01-retrieval-and-shared-path-optimization.md)
+- [Gray-box evaluation: Flask and multi-language corpora](findings/2026-08-01-graybox-flask-multilang.md)
 - [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons
