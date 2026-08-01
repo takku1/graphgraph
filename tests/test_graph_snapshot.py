@@ -64,7 +64,7 @@ class GraphSnapshotTest(unittest.TestCase):
     def test_snapshot_matches_committed_baseline(self) -> None:
         self.assertTrue(
             DEFAULT_BASELINE.exists(),
-            f"missing baseline; regenerate with `python scripts/graph_snapshot.py write`",
+            "missing baseline; regenerate with `python scripts/graph_snapshot.py write`",
         )
         expected = DEFAULT_BASELINE.read_text(encoding="utf-8")
         if expected == self.dump:

@@ -25,9 +25,12 @@ N {"active":true,"confidence":0.95,"facts":[],"id":"Core_scala__Core__Run","kind
 N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Core_swift","kind":"swift","label":"Core.swift","parent":"","path":"Core.swift","scope":"","source":"","summary":""}
 N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Entry","kind":"function","label":"Entry","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L5 func Entry() -> Int {"}
 N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Middle","kind":"function","label":"Middle","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L1 func Middle() -> Int {"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service","kind":"class","label":"Service","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L9 class Service {"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__Handle","kind":"method","label":"Handle","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L10 func Handle() -> Int { [Service::Handle]"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__Run","kind":"method","label":"Run","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L14 func Run() -> Int { [Service::Run]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Other","kind":"class","label":"Other","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L9 class Other {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Other__Handle","kind":"method","label":"Handle","parent":"Core_swift__Other","path":"Core.swift","scope":"","source":"Core.swift","summary":"L10 func Handle() -> Int { [Other::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service","kind":"class","label":"Service","parent":"","path":"Core.swift","scope":"","source":"Core.swift","summary":"L15 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__Handle","kind":"method","label":"Handle","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L16 func Handle() -> Int { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__Run","kind":"method","label":"Run","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L20 func Run() -> Int { [Service::Run]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"Core_swift__Service__RunOther","kind":"method","label":"RunOther","parent":"Core_swift__Service","path":"Core.swift","scope":"","source":"Core.swift","summary":"L26 func RunOther(other: Other) -> Int { [Service::RunOther]"}
 N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"Helper_cs","kind":"csharp","label":"Helper.cs","parent":"","path":"Helper.cs","scope":"","source":"","summary":""}
 N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_cs__Helper","kind":"class","label":"Helper","parent":"","path":"Helper.cs","scope":"","source":"Helper.cs","summary":"L2 public class Helper {"}
 N {"active":true,"confidence":0.95,"facts":[],"id":"Helper_cs__Helper__Assist","kind":"method","label":"Assist","parent":"Helper_cs__Helper","path":"Helper.cs","scope":"","source":"Helper.cs","summary":"L3 public static int Assist() { [Helper::Assist]"}
@@ -68,9 +71,12 @@ N {"active":true,"confidence":0.95,"facts":[],"id":"core_js__Service__Run","kind
 N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_php","kind":"php","label":"core.php","parent":"","path":"core.php","scope":"","source":"","summary":""}
 N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Entry","kind":"function","label":"Entry","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L8 function Entry() {"}
 N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Middle","kind":"function","label":"Middle","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L4 function Middle() {"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service","kind":"class","label":"Service","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L12 class Service {"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__Handle","kind":"method","label":"Handle","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L13 function Handle() { [Service::Handle]"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__Run","kind":"method","label":"Run","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L17 function Run() { [Service::Run]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Other","kind":"class","label":"Other","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L12 class Other {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Other__Handle","kind":"method","label":"Handle","parent":"core_php__Other","path":"core.php","scope":"","source":"core.php","summary":"L13 function Handle() { [Other::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service","kind":"class","label":"Service","parent":"","path":"core.php","scope":"","source":"core.php","summary":"L18 class Service {"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__Handle","kind":"method","label":"Handle","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L19 function Handle() { [Service::Handle]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__Run","kind":"method","label":"Run","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L23 function Run() { [Service::Run]"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"core_php__Service__RunOther","kind":"method","label":"RunOther","parent":"core_php__Service","path":"core.php","scope":"","source":"core.php","summary":"L29 function RunOther($other) { [Service::RunOther]"}
 N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"core_py","kind":"python","label":"core.py","parent":"","path":"core.py","scope":"","source":"","summary":""}
 N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Entry","kind":"function","label":"Entry","parent":"","path":"core.py","scope":"","source":"core.py","summary":"L8 def Entry():"}
 N {"active":true,"confidence":0.95,"facts":[],"id":"core_py__Middle","kind":"function","label":"Middle","parent":"","path":"core.py","scope":"","source":"core.py","summary":"L4 def Middle():"}
@@ -180,13 +186,19 @@ E {"active":true,"confidence":0.97,"evidence":"receiver Helper:Helper","provenan
 E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_scala__Core__Run","source_location":"","target":"Core_scala__Core__Handle","type":"calls","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:5","target":"Core_swift__Entry","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:1","target":"Core_swift__Middle","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:9","target":"Core_swift__Service","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:10","target":"Core_swift__Service__Handle","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:14","target":"Core_swift__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:9","target":"Core_swift__Other","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:10","target":"Core_swift__Other__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:15","target":"Core_swift__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:16","target":"Core_swift__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:20","target":"Core_swift__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift","source_location":"Core.swift:26","target":"Core_swift__Service__RunOther","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Entry","source_location":"","target":"Core_swift__Middle","type":"calls","weight":1.0}
 E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Entry","source_location":"","target":"Helper_swift__Assist","type":"calls","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:10","target":"Core_swift__Service__Handle","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:14","target":"Core_swift__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Other","source_location":"Core.swift:10","target":"Core_swift__Other__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:16","target":"Core_swift__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:20","target":"Core_swift__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Core_swift__Service","source_location":"Core.swift:26","target":"Core_swift__Service__RunOther","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver self:Service","provenance":"tree_sitter_type_resolved","source":"Core_swift__Service__Run","source_location":"Core.swift","target":"Core_swift__Service__Handle","type":"calls","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs","source_location":"Helper.cs:2","target":"Helper_cs__Helper","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs","source_location":"Helper.cs:3","target":"Helper_cs__Helper__Assist","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"Helper_cs","source_location":"Helper.cs:7","target":"Helper_cs__Helper__Middle","type":"contains","weight":1.0}
@@ -240,13 +252,19 @@ E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","sou
 E {"active":true,"confidence":0.97,"evidence":"receiver this:Service","provenance":"tree_sitter_type_resolved","source":"core_js__Service__Run","source_location":"core.js","target":"core_js__Service__Handle","type":"calls","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:8","target":"core_php__Entry","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:4","target":"core_php__Middle","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:12","target":"core_php__Service","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:13","target":"core_php__Service__Handle","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:17","target":"core_php__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:12","target":"core_php__Other","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:13","target":"core_php__Other__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:18","target":"core_php__Service","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:19","target":"core_php__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:23","target":"core_php__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php","source_location":"core.php:29","target":"core_php__Service__RunOther","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_php__Entry","source_location":"","target":"core_php__Middle","type":"calls","weight":1.0}
 E {"active":true,"confidence":0.9,"evidence":"","provenance":"tree_sitter","source":"core_php__Entry","source_location":"","target":"helper_php__Assist","type":"calls","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:13","target":"core_php__Service__Handle","type":"contains","weight":1.0}
-E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:17","target":"core_php__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Other","source_location":"core.php:13","target":"core_php__Other__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:19","target":"core_php__Service__Handle","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:23","target":"core_php__Service__Run","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_php__Service","source_location":"core.php:29","target":"core_php__Service__RunOther","type":"contains","weight":1.0}
+E {"active":true,"confidence":0.97,"evidence":"receiver $this:Service","provenance":"tree_sitter_type_resolved","source":"core_php__Service__Run","source_location":"core.php","target":"core_php__Service__Handle","type":"calls","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:8","target":"core_py__Entry","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:4","target":"core_py__Middle","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"core_py","source_location":"core.py:12","target":"core_py__Service","type":"contains","weight":1.0}
@@ -321,14 +339,14 @@ E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","sou
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_ts","source_location":"helper.ts:5","target":"helper_ts__Middle","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_tsx","source_location":"helper.tsx:1","target":"helper_tsx__Assist","type":"contains","weight":1.0}
 E {"active":true,"confidence":0.95,"evidence":"","provenance":"tree_sitter","source":"helper_tsx","source_location":"helper.tsx:5","target":"helper_tsx__Middle","type":"contains","weight":1.0}
-M member_call_resolution_rate=0.8667
-M member_calls_internal_total=15
-M member_calls_resolved=13
+M member_call_resolution_rate=0.8824
+M member_calls_internal_total=17
+M member_calls_resolved=15
 M member_calls_ambiguous=0
 M member_calls_unknown_receiver=2
 M member_calls_external_resolved=0
 M member_calls_unmatched=0
-M member_calls_by_language={"cpp":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"csharp":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0},"go":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"java":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0},"javascript":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"php":{"ambiguous":0,"external_resolved":0,"resolved":0,"unknown_receiver":1,"unmatched":0},"python":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"rust":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"scala":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"swift":{"ambiguous":0,"external_resolved":0,"resolved":0,"unknown_receiver":1,"unmatched":0},"tsx":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"typescript":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0}}
+M member_calls_by_language={"cpp":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"csharp":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0},"go":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"java":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0},"javascript":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"php":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":1,"unmatched":0},"python":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"rust":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"scala":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"swift":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":1,"unmatched":0},"tsx":{"ambiguous":0,"external_resolved":0,"resolved":1,"unknown_receiver":0,"unmatched":0},"typescript":{"ambiguous":0,"external_resolved":0,"resolved":2,"unknown_receiver":0,"unmatched":0}}
 M member_call_telemetry_version=2
 M member_call_telemetry_scope=full_scan
 M bare_calls_unmatched=5

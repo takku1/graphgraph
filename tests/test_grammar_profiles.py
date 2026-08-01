@@ -11,11 +11,11 @@ from __future__ import annotations
 import unittest
 
 from graphgraph.scanner.frontends.grammars import (
+    _UNCLAIMED_BY_INTENT,
+    _UNIVERSAL_CALLS,
     GRAMMARS,
     SUFFIX_LANGUAGE,
     UNION_PROFILE,
-    _UNCLAIMED_BY_INTENT,
-    _UNIVERSAL_CALLS,
     profile_for_language,
     profile_for_suffix,
 )
@@ -92,6 +92,10 @@ class GrammarProfileValidationTest(unittest.TestCase):
                 self.assertLessEqual(
                     profile.path_qualified_calls, UNION_PROFILE.path_qualified_calls
                 )
+                self.assertLessEqual(profile.self_aliases, UNION_PROFILE.self_aliases)
+                self.assertLessEqual(
+                    profile.variable_sigils, UNION_PROFILE.variable_sigils
+                )
 
     def test_unknown_language_and_suffix_fall_back_to_the_union(self) -> None:
         # An unrecognised suffix must behave exactly as it did before profiles
@@ -129,6 +133,118 @@ class GrammarProfileValidationTest(unittest.TestCase):
                 self.fail(
                     f"{language}: '{node_type}' is now defined by the installed "
                     "grammar; move it out of _UNCLAIMED_BY_INTENT"
+                )
+
+
+class EnclosingInstanceBindingTest(unittest.TestCase):
+    """Resolution of `self` / `this` / `$this` receivers, per language.
+
+    Which name denotes the enclosing instance used to be a chain of
+    `suffix in {...}` tests covering Python, Rust, TS/JS, C#, Java and C++.
+    Swift, PHP, Kotlin, Scala and Ruby were absent from it, so a `self.m()` or
+    `$this->m()` call inside a method could not resolve to its own class.
+    """
+
+    def _scan(self, files: dict[str, str]):
+        import tempfile
+        from pathlib import Path
+
+        from graphgraph.scanner.core import scan_directory
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, body in files.items():
+                (root / name).write_text(body, encoding="utf-8")
+            graph = scan_directory(root, depth="symbols", frontend="tree_sitter", docs=False)
+            return {
+                (edge.source, edge.target)
+                for edge in graph.edges
+                if edge.type == "calls"
+            }
+
+    def test_php_this_arrow_call_resolves_to_its_own_class(self) -> None:
+        calls = self._scan({"svc.php": (
+            "<?php\n"
+            "class Service {\n"
+            "    function Handle() { return 2; }\n"
+            "    function Run() { return $this->Handle(); }\n"
+            "}\n"
+        )})
+        self.assertIn(
+            ("svc_php__Service__Run", "svc_php__Service__Handle"),
+            calls,
+            "PHP `$this->Handle()` did not resolve to the enclosing class",
+        )
+
+    def test_swift_self_call_resolves_to_its_own_class(self) -> None:
+        calls = self._scan({"Svc.swift": (
+            "class Service {\n"
+            "    func Handle() -> Int { return 2 }\n"
+            "    func Run() -> Int { return self.Handle() }\n"
+            "}\n"
+        )})
+        self.assertIn(
+            ("Svc_swift__Service__Run", "Svc_swift__Service__Handle"),
+            calls,
+            "Swift `self.Handle()` did not resolve to the enclosing class",
+        )
+
+    def test_an_untyped_receiver_does_not_bind_to_the_enclosing_class(self) -> None:
+        # The precision half. Binding self-aliases must not degrade into
+        # "any unresolved receiver means the enclosing type", which would
+        # invent an edge for every call on an unknown object.
+        calls = self._scan({"svc.php": (
+            "<?php\n"
+            "class Other { function Handle() { return 9; } }\n"
+            "class Service {\n"
+            "    function Handle() { return 2; }\n"
+            "    function RunOther($other) { return $other->Handle(); }\n"
+            "}\n"
+        )})
+        self.assertNotIn(
+            ("svc_php__Service__RunOther", "svc_php__Service__Handle"),
+            calls,
+            "an untyped receiver was bound to the enclosing class",
+        )
+        self.assertNotIn(
+            ("svc_php__Service__RunOther", "svc_php__Other__Handle"),
+            calls,
+            "an untyped receiver was guessed at a same-named method elsewhere",
+        )
+
+    def test_php_receiver_text_survives_the_identifier_filter(self) -> None:
+        # `$this` fails a bare [A-Za-z_]\w* test, and the receiver was dropped
+        # before resolution -- then reported as `complex_expression`, a bucket
+        # meaning "receiver text discarded".
+        from graphgraph.scanner.frontends.languages import (
+            _parse_with_timeout,
+            _parser_for_suffix,
+        )
+        from graphgraph.scanner.frontends.syntax import _call_sites_in_range
+
+        source = b"<?php\nclass S {\n  function h() { return 1; }\n  function r() { return $this->h(); }\n}\n"
+        parser = _parser_for_suffix(".php")
+        if parser is None:
+            self.skipTest("php grammar not installed")
+        tree = _parse_with_timeout(parser, source, 0)
+        sites = _call_sites_in_range(
+            tree.root_node, source, 0, len(source), suffix=".php"
+        )
+        receivers = {site.receiver for site in sites if site.name == "h"}
+        self.assertIn("$this", receivers, f"PHP receiver was discarded: {receivers}")
+
+    def test_every_language_with_methods_declares_a_self_alias(self) -> None:
+        # C and Go are the deliberate exceptions: C has no methods, and a Go
+        # method names its own receiver (`func (s Service)`) rather than using
+        # a fixed keyword.
+        for language, profile in GRAMMARS.items():
+            if language in {"c", "go"}:
+                continue
+            with self.subTest(language=language):
+                self.assertTrue(
+                    profile.self_aliases,
+                    f"{language} declares no enclosing-instance name, so a "
+                    "member call on it cannot resolve to its own class",
                 )
 
 

@@ -11,6 +11,7 @@ from ..ast import _lang_family
 from .cpp import cpp_class_field_types, cpp_local_types
 from .csharp import csharp_class_field_types, csharp_local_types
 from .go import go_local_types
+from .grammars import profile_for_suffix
 from .languages import _SUFFIX_LANGUAGE
 from .model import (
     SourceFile,
@@ -740,21 +741,28 @@ def _add_tree_sitter_calls(
                 binds_structural_this = (
                     "javascript_this:assigned_owner" in d.facts
                 )
-                if suffix in {".py", ".rs"}:
-                    local_types["self"] = receiver_owner
-                if suffix == ".py":
-                    local_types["cls"] = receiver_owner
-                # C#/Java/TS/C++ spell the enclosing-instance receiver `this`,
-                # not `self`; without this a `this.Method()` / `this->Method()`
-                # call never resolved to its own class.
-                if (
-                    (suffix in _TS_SUFFIXES and (
-                        not structural_owner or binds_structural_this
-                    ))
-                    or suffix in {".cs", ".java"}
-                    or suffix in _CPP_SUFFIXES
+                # Which names denote the enclosing instance is a property of the
+                # language, so it is declared once per grammar rather than
+                # rediscovered as a chain of suffix tests here. That chain knew
+                # `self` (Python, Rust), `cls` (Python) and `this` (TS/JS, C#,
+                # Java, C++), and consequently gave Swift, PHP, Kotlin, Scala
+                # and Ruby no enclosing-instance binding at all -- Swift's
+                # `self.Handle()` and PHP's `$this->Handle()` were unresolvable
+                # for want of one table entry each.
+                #
+                # JS keeps its own guard: a function attached to an object
+                # literal has a structural owner, and its `this` is the call
+                # site's receiver rather than that object, so binding it to the
+                # owner would invent edges. Only definitions that provably bind
+                # `this` to the owner are excepted.
+                self_aliases = profile_for_suffix(suffix).self_aliases
+                if self_aliases and not (
+                    suffix in _TS_SUFFIXES
+                    and structural_owner
+                    and not binds_structural_this
                 ):
-                    local_types["this"] = receiver_owner
+                    for alias in self_aliases:
+                        local_types[alias] = receiver_owner
                 if suffix in _TS_SUFFIXES and (
                     not structural_owner or binds_structural_this
                 ):

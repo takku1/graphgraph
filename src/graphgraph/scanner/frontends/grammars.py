@@ -41,12 +41,34 @@ from typing import Mapping
 
 @dataclass(frozen=True)
 class GrammarProfile:
-    """What one grammar's node types mean to the extractor."""
+    """What one grammar's node types and binding forms mean to the extractor."""
 
     definitions: Mapping[str, str] = field(default_factory=dict)
     names: frozenset[str] = frozenset()
     calls: frozenset[str] = frozenset()
     path_qualified_calls: frozenset[str] = frozenset()
+
+    # Names that denote the enclosing instance, bound to the owning type when
+    # resolving a member call inside a method body. This was previously a chain
+    # of `suffix in {...}` tests that knew about `self` (Python, Rust), `cls`
+    # (Python) and `this` (TS/JS, C#, Java, C++) -- and therefore silently gave
+    # Swift, PHP, Kotlin, Scala and Ruby no enclosing-instance binding at all.
+    # Swift's `self.Handle()` and PHP's `$this->Handle()` both went unresolved
+    # for exactly that reason.
+    self_aliases: frozenset[str] = frozenset()
+
+    # Sigils a variable reference may carry. PHP writes `$this`, which fails a
+    # bare `[A-Za-z_]\w*` identifier test, so every PHP receiver was thrown
+    # away before resolution could see it -- reported as `complex_expression`,
+    # a bucket meaning "receiver text discarded", which was accurate and
+    # entirely unhelpful.
+    variable_sigils: frozenset[str] = frozenset()
+
+    def strip_sigil(self, name: str) -> str:
+        """Return *name* without a leading sigil this language permits."""
+        if name[:1] in self.variable_sigils:
+            return name[1:]
+        return name
 
 
 # Node types no installed grammar defines, kept against grammar-version drift.
@@ -71,13 +93,22 @@ def _profile(
     names: frozenset[str],
     calls: frozenset[str],
     path_qualified_calls: frozenset[str] = frozenset(),
+    self_aliases: frozenset[str] = frozenset(),
+    variable_sigils: frozenset[str] = frozenset(),
 ) -> GrammarProfile:
     return GrammarProfile(
         definitions=MappingProxyType(dict(definitions)),
         names=names,
         calls=calls | _UNIVERSAL_CALLS,
         path_qualified_calls=path_qualified_calls,
+        self_aliases=self_aliases,
+        variable_sigils=variable_sigils,
     )
+
+
+# The three spellings of "the object this method was called on".
+_SELF = frozenset({"self"})
+_THIS = frozenset({"this"})
 
 
 _IDENT = frozenset({"identifier"})
@@ -102,6 +133,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         # Namespace::function(...) and Class::static_method(...) name a
         # lexically fixed target, unlike receiver.method(...).
         frozenset({"qualified_identifier"}),
+        self_aliases=_THIS,
     ),
     "csharp": _profile(
         {
@@ -116,6 +148,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         _IDENT,
         frozenset({"invocation_expression"}),
+        self_aliases=_THIS,
     ),
     "go": _profile(
         {
@@ -138,6 +171,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         frozenset({"identifier", "type_identifier"}),
         frozenset({"method_invocation"}),
         frozenset({"scoped_identifier"}),
+        self_aliases=_THIS,
     ),
     "javascript": _profile(
         {
@@ -148,6 +182,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         _JS_NAMES,
         frozenset({"call_expression"}),
+        self_aliases=_THIS,
     ),
     "kotlin": _profile(
         {
@@ -157,6 +192,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         frozenset({"identifier", "simple_identifier", "type_identifier"}),
         frozenset({"call_expression"}),
+        self_aliases=_THIS,
     ),
     "php": _profile(
         {
@@ -175,6 +211,8 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
             "member_call_expression",
             "scoped_call_expression",
         }),
+        self_aliases=frozenset({"$this"}),
+        variable_sigils=frozenset({"$"}),
     ),
     "python": _profile(
         {
@@ -188,6 +226,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         _IDENT,
         frozenset({"call"}),
+        self_aliases=frozenset({"self", "cls"}),
     ),
     "ruby": _profile(
         {
@@ -200,6 +239,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         frozenset({"constant", "identifier"}),
         frozenset({"call"}) | _UNCLAIMED_BY_INTENT["ruby"].calls,
+        self_aliases=_SELF,
     ),
     "rust": _profile(
         {
@@ -212,6 +252,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         _C_NAMES,
         frozenset({"call_expression"}),
         frozenset({"scoped_identifier"}),
+        self_aliases=_SELF,
     ),
     "scala": _profile(
         {
@@ -223,6 +264,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         frozenset({"identifier", "type_identifier"}),
         frozenset({"call_expression"}),
+        self_aliases=_THIS,
     ),
     "swift": _profile(
         {
@@ -232,6 +274,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         frozenset({"identifier", "simple_identifier", "type_identifier"}),
         frozenset({"call_expression"}),
+        self_aliases=_SELF,
     ),
     "tsx": _profile(
         {
@@ -245,6 +288,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         _TS_NAMES,
         frozenset({"call_expression"}),
+        self_aliases=_THIS,
     ),
     "typescript": _profile(
         {
@@ -258,6 +302,7 @@ GRAMMARS: Mapping[str, GrammarProfile] = {
         },
         _TS_NAMES,
         frozenset({"call_expression"}),
+        self_aliases=_THIS,
     ),
 }
 
@@ -319,11 +364,15 @@ def _union() -> GrammarProfile:
     names: set[str] = set()
     calls: set[str] = set()
     path_qualified: set[str] = set()
+    self_aliases: set[str] = set()
+    variable_sigils: set[str] = set()
     for profile in GRAMMARS.values():
         definitions.update(profile.definitions)
         names |= profile.names
         calls |= profile.calls
         path_qualified |= profile.path_qualified_calls
+        self_aliases |= profile.self_aliases
+        variable_sigils |= profile.variable_sigils
     for profile in _UNCLAIMED_BY_INTENT.values():
         definitions.update(profile.definitions)
         names |= profile.names
@@ -334,6 +383,8 @@ def _union() -> GrammarProfile:
         names=frozenset(names),
         calls=frozenset(calls),
         path_qualified_calls=frozenset(path_qualified),
+        self_aliases=frozenset(self_aliases),
+        variable_sigils=frozenset(variable_sigils),
     )
 
 

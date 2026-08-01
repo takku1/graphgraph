@@ -1214,8 +1214,13 @@ def _call_sites_in_range(
                     # component to be a proven import alias.
                     pass
                 elif (
-                    not _identifier(receiver)
-                    and receiver != "self"
+                    # Sigil-aware, so PHP's `$this` / `$svc` survive. A bare
+                    # `[A-Za-z_]\w*` test discarded every PHP receiver before
+                    # resolution could see it, and the discard was then
+                    # reported as `complex_expression` -- a bucket that means
+                    # "receiver text discarded", which was true and useless.
+                    not _identifier(profile.strip_sigil(receiver))
+                    and receiver not in profile.self_aliases
                     and not rust_field_receiver
                     and not _rust_qualified_type_receiver(receiver)
                 ):
