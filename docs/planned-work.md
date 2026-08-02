@@ -24,6 +24,45 @@ Do not combine an unmeasured retrieval change with an architectural refactor.
 Do not claim an absence, dead symbol, or complete blast radius from unresolved
 member-call topology.
 
+## 2026-08-01 Express ceiling implementation receipt
+
+Completed in this cycle:
+
+- [x] One conservative, read-only natural-language query compiler shared by the
+  Python API, CLI, and MCP, with lossless typed routing and explicit overrides.
+- [x] JavaScript function-object/property-copy, CommonJS factory return,
+  lexical closure, external package-summary, and Express-like handler protocol
+  facts, guarded by adversarial ambiguity/unknown-receiver fixtures.
+- [x] Innermost nested-call ownership and corrected receiver telemetry.
+- [x] npm package/runtime metadata and conservative import-based affected-test
+  witnesses with runnable command provenance.
+- [x] Minimum directed facet connector for multi-hop proof packets, including a
+  bounded lifecycle prerequisite.
+- [x] Exact rendered-cost packet selection, gated by identity safety and actual
+  packet validation.
+- [x] Atomic semantic sidecar v4 coupled to the complete active graph topology.
+- [x] Runtime `observed_calls` accepted as typed path/test evidence with its
+  provenance preserved in output receipts.
+- [x] Full repository suite, lint, clean Express scan, exact-path query,
+  paraphrase equivalence, and affected-test acceptance gates.
+
+Measured Express receipt: 3,486 nodes / 12,139 edges; 1,315 of 1,510 internal
+receiver sites resolved (87.09%); exact and paraphrased request-path queries
+produce the same 5-node/4-edge packet at 116 proxy tokens.
+
+Remaining ordered work:
+
+1. Aggregate JavaScript affected-test evidence to runnable file/suite units so
+   the current 1,171 omitted callable-level candidates do not force an
+   incomplete receipt.
+2. Ingest and validate real Express coverage traces, then compare runtime and
+   static witnesses rather than treating fixture support as production proof.
+3. Run held-out precision/recall oracles across languages; do not promote the
+   self-reported trusted-resolution rate as independent precision.
+4. Continue Q03/Q04 ranking calibration and RRF experiments only against frozen
+   judgments. Hybrid retrieval may propose terminals; typed graph edges remain
+   the structural proof layer.
+
 ## Active ordered improvement program — post-`a534942` (2026-07-30)
 
 This P-series is the active execution order. The older T-series below preserves

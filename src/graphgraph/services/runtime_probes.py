@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -64,12 +65,14 @@ def _resolve_cargo_workspace_members(
 def _read_package_status(directory: Path) -> dict[str, object]:
     pyproject = directory / "pyproject.toml"
     cargo_manifest = directory / "Cargo.toml"
+    npm_manifest = directory / "package.json"
     src_layout = (directory / "src").is_dir()
     package: dict[str, object] = {
         "ecosystem": "python" if pyproject.exists() else "",
         "ecosystems": ["python"] if pyproject.exists() else [],
         "pyproject": str(pyproject) if pyproject.exists() else "",
         "cargo_manifest": str(cargo_manifest) if cargo_manifest.exists() else "",
+        "package_json": str(npm_manifest) if npm_manifest.exists() else "",
         "name": "",
         "version": "",
         "module": "",
@@ -82,6 +85,36 @@ def _read_package_status(directory: Path) -> dict[str, object]:
             else ""
         ),
     }
+    if npm_manifest.exists():
+        try:
+            npm = json.loads(npm_manifest.read_text(encoding="utf-8"))
+            if not isinstance(npm, dict):
+                raise ValueError("root value is not an object")
+            npm_scripts = npm.get("scripts") or {}
+            if not isinstance(npm_scripts, dict):
+                npm_scripts = {}
+            javascript = {
+                "kind": "workspace" if npm.get("workspaces") else "package",
+                "name": str(npm.get("name") or directory.name),
+                "version": str(npm.get("version") or ""),
+                "main": str(npm.get("main") or ""),
+                "type": str(npm.get("type") or ""),
+                "scripts": {
+                    str(key): str(value) for key, value in npm_scripts.items()
+                },
+                "workspaces": npm.get("workspaces") or [],
+            }
+            package["javascript"] = javascript
+            ecosystems = list(package["ecosystems"])
+            ecosystems.append("npm")
+            package["ecosystems"] = ecosystems
+            package["ecosystem"] = "mixed" if len(ecosystems) > 1 else "npm"
+            if not pyproject.exists():
+                package["name"] = javascript["name"]
+                package["version"] = javascript["version"]
+                package["scripts"] = javascript["scripts"]
+        except Exception as exc:  # noqa: BLE001 - status reports parse failures.
+            package["npm_error"] = f"failed to parse package.json: {exc}"
     if cargo_manifest.exists():
         try:
             cargo = tomllib.loads(cargo_manifest.read_text(encoding="utf-8"))
@@ -102,8 +135,8 @@ def _read_package_status(directory: Path) -> dict[str, object]:
             ecosystems = list(package["ecosystems"])
             ecosystems.append("rust")
             package["ecosystems"] = ecosystems
-            package["ecosystem"] = "mixed" if pyproject.exists() else "rust"
-            if not pyproject.exists():
+            package["ecosystem"] = "mixed" if len(ecosystems) > 1 else "rust"
+            if not pyproject.exists() and not npm_manifest.exists():
                 package["name"] = rust["name"]
                 package["version"] = rust["version"]
         except Exception as exc:  # noqa: BLE001 - status reports parse failures.

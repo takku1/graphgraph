@@ -83,5 +83,8 @@ from .retrieval_tools import (
     handle_tools_list as handle_tools_list,
 )
 from .retrieval_tools import (
+    handle_unified_query as handle_unified_query,
+)
+from .retrieval_tools import (
     main as main,
 )

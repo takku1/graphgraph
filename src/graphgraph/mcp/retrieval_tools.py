@@ -27,6 +27,7 @@ from ..services.lifecycle import (
     refresh_saved_graph,
 )
 from ..services.project_status import build_project_status
+from ..services.query import execute_query
 from .descriptions import (
     DESCRIPTION_TOOL_NAMES,
     DESCRIPTION_TOOLS,
@@ -139,6 +140,43 @@ TOOLS = [
                     "description": "Token guard (default 20000). Pass 0 to disable and render regardless of size.",
                 },
             },
+        },
+    },
+    {
+        "name": "query",
+        "description": (
+            "Canonical read-only GraphGraph query facade. Accepts arbitrary user text, "
+            "compiles it into the cheapest lossless typed operator (exact relations, set "
+            "predicate, search, status, or general context), and returns the plan and receipt. "
+            "It never builds, removes, or exports implicitly; a missing graph returns needs_index."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["auto", "context", "relations", "select", "search", "status"],
+                    "default": "auto",
+                },
+                "directory": {"type": "string", "description": "Project root; default current directory."},
+                "graph_path": {"type": "string", "description": "Saved graph; auto-detected if omitted."},
+                "sync": {"type": "string", "enum": ["none", "git"], "default": "none"},
+                "target": {"type": "string", "description": "Explicit target for relations/search override."},
+                "direction": {"type": "string", "enum": ["callers", "callees"]},
+                "predicate": {"type": "string", "description": "Explicit typed predicate for select override."},
+                "result_mode": {"type": "string", "enum": ["select", "count", "exists"], "default": "select"},
+                "limit": {"type": "integer", "minimum": 0, "default": 20},
+                "include_tests": {"type": "boolean", "default": False},
+                "include_external": {"type": "boolean", "default": False},
+                "query_class": query_class_schema(include_auto=True, default="auto"),
+                "packet": packet_format_schema(),
+                "max_nodes": {"type": "integer"},
+                "scopes": {"type": "array", "items": {"type": "string"}},
+                "scope_mode": {"type": "string", "enum": ["strict", "expand"], "default": "strict"},
+                "source_mode": {"type": "string", "enum": ["auto", "off", "all"], "default": "auto"},
+            },
+            "required": ["query"],
         },
     },
     {
@@ -435,6 +473,7 @@ RETRIEVAL_TOOL_NAMES = frozenset(
         "plan_context",
         "final_packet",
         "full_graph",
+        "query",
         "query_context",
         "query_relations",
         "project_status",
@@ -507,6 +546,8 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
         return content(build_final_packet(args))
     if name == "full_graph":
         return content(build_full_graph(args))
+    if name == "query":
+        return content(handle_unified_query(args))
     if name == "query_context":
         return content(build_query_context(args))
     if name == "query_relations":
@@ -734,6 +775,30 @@ def handle_project_status(args: dict[str, Any]) -> str:
         run_probes=bool(args.get("probe")),
     )
     return _json(report)
+
+
+def handle_unified_query(args: dict[str, Any]) -> str:
+    response = execute_query(
+        str(args["query"]),
+        directory=Path(str(args.get("directory") or ".")),
+        graph_path=Path(str(args["graph_path"])) if args.get("graph_path") else None,
+        mode=str(args.get("mode") or "auto"),
+        result_mode=str(args.get("result_mode") or "select"),
+        target=str(args.get("target") or ""),
+        direction=str(args.get("direction") or ""),
+        predicate=str(args.get("predicate") or ""),
+        sync=str(args.get("sync") or "none"),
+        limit=int(args["limit"]) if args.get("limit") is not None else 20,
+        include_tests=bool(args.get("include_tests", False)),
+        include_external=bool(args.get("include_external", False)),
+        query_class=str(args.get("query_class") or "auto"),
+        packet=str(args["packet"]) if args.get("packet") else None,
+        max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
+        scopes=tuple(str(item) for item in args.get("scopes", ())),
+        scope_mode=str(args.get("scope_mode") or "strict"),
+        source_mode=str(args.get("source_mode") or "auto"),
+    )
+    return _json(response)
 
 
 def handle_select_symbols(args: dict[str, Any]) -> str:

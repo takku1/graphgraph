@@ -741,6 +741,7 @@ def _actionable_receipt(
                 "id": item.get("id"),
                 "label": item.get("label"),
                 "path": item.get("path"),
+                "evidence_mode": item.get("evidence_mode"),
                 "covers": [
                     covered.get("id")
                     for covered in item.get("covers", ())

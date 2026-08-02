@@ -3,8 +3,9 @@ from __future__ import annotations
 from .budgets import is_doc_query
 from .types import PacketChoice, SubgraphStats
 
-# Empirically measured optimal (hops, packet) per query class. gg is the token
-# floor for any non-empty structural graph; the exceptions are documented inline.
+# Empirically measured default (hops, packet) per query class.  The compiler
+# renders safe candidates after selection and may choose a smaller encoding;
+# there is no universal token floor independent of packet shape.
 #   negative_query: hops=1 not 0, so the packet can prove connectivity rather
 #     than reading every node as isolated (confirmed on a real repo).
 _PACKET_BY_CLASS: dict[str, PacketChoice] = {
@@ -51,12 +52,7 @@ def refine_packet_for_subgraph(choice: PacketChoice, edge_count: int) -> PacketC
 
 
 def choose_packet_for_subgraph(choice: PacketChoice, stats: SubgraphStats, query_class: str = "") -> PacketChoice:
-    """Apply measured post-retrieval packet refinements.
-
-    Real-project sweeps show semantic_arrow only beats gg/gg_hybrid when the retrieved
-    subgraph has zero edges. For any non-empty structural graph, gg remains
-    the token floor. The helper keeps docs/explicit formats unchanged.
-    """
+    """Apply cheap estimated refinements before exact rendered comparison."""
     if choice.packet in {"doc_summary", "semantic_arrow"}:
         return choice
     if stats.edges == 0 and choice.packet in {"gg", "gg_hybrid"}:

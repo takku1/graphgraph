@@ -172,6 +172,7 @@ class DevelopmentFieldLogRetrievalTest(unittest.TestCase):
                             ],
                         }
                     ],
+                    "evidence_mode": "direct_static",
                     "attributed_to": {
                         "id": "OWNER",
                         "label": "test_view_decorators",

@@ -51,8 +51,10 @@ library. CLI, MCP, and plugins should be wrappers.
 ## Current Recommendation
 
 1. Keep benchmark/index/build workflows as CLI tools.
-2. Use MCP `query_context` for live LLM context retrieval; use `final_packet`
-   only after resolving exact node IDs.
+2. Use MCP `query` for unrestricted read-only text. It returns the compiled
+   typed operator, arguments, result, and execution receipt; it never mutates or
+   builds implicitly. Use `query_context` when a full graph packet envelope is
+   specifically required, and `final_packet` only after resolving exact node IDs.
 3. Use `graphgraph install --project --platform codex` to generate or refresh
    the repo-local Codex plugin at `plugins/graphgraph`.
 

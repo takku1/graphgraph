@@ -149,7 +149,78 @@ def cmd_final(args: argparse.Namespace) -> None:
 
 
 def cmd_query(args: argparse.Namespace) -> None:
-    graph_path = Path(args.graph) if args.graph else find_graph_path()
+    from ..planning.query_compiler import QueryOperator, compile_query
+    from ..services.query import execute_query
+
+    directory = Path(getattr(args, "directory", None) or ".")
+    explicit_graph = Path(args.graph) if args.graph else None
+    operator_mode = getattr(args, "operator", "auto")
+    # ``query --query-class ...`` predates the universal facade and promises
+    # the full context envelope. Preserve that contract while allowing plain
+    # ``query <anything>`` to choose a cheaper lossless expert operator.
+    if operator_mode == "auto" and args.query_class != "auto":
+        operator_mode = "context"
+    compiled = compile_query(
+        args.query,
+        mode=operator_mode,
+        result_mode=getattr(args, "result_mode", "select"),
+        target=getattr(args, "target", ""),
+        direction=getattr(args, "direction", "") or "",
+        predicate=getattr(args, "predicate", ""),
+    )
+    try:
+        graph_path = explicit_graph or find_graph_path(directory)
+    except (FileNotFoundError, RuntimeError):
+        response = execute_query(
+            args.query,
+            directory=directory,
+            graph_path=explicit_graph,
+            mode=operator_mode,
+            result_mode=getattr(args, "result_mode", "select"),
+            target=getattr(args, "target", ""),
+            direction=getattr(args, "direction", "") or "",
+            predicate=getattr(args, "predicate", ""),
+        )
+        emit_json(response, getattr(args, "pretty", False))
+        return
+    if compiled.operator is not QueryOperator.CONTEXT or getattr(args, "sync", "none") == "git":
+        response = execute_query(
+            args.query,
+            directory=directory,
+            graph_path=graph_path,
+            mode=operator_mode,
+            result_mode=getattr(args, "result_mode", "select"),
+            target=getattr(args, "target", ""),
+            direction=getattr(args, "direction", "") or "",
+            predicate=getattr(args, "predicate", ""),
+            sync=getattr(args, "sync", "none"),
+            limit=max(0, getattr(args, "limit", 20)),
+            query_class=args.query_class,
+            packet=args.packet,
+            hops=args.hops,
+            anchor_limit=args.anchor_limit,
+            max_nodes=args.max_nodes,
+            scopes=tuple(args.scope),
+            scope_mode=args.scope_mode,
+            source_mode=args.source_mode,
+        )
+        if getattr(args, "json", False):
+            emit_json(response, getattr(args, "pretty", False))
+        else:
+            result = response.get("result")
+            if response.get("operator") == "context" and isinstance(result, dict):
+                print(result.get("packet") or result.get("message") or "")
+            else:
+                print(json.dumps(result, separators=(",", ":"), ensure_ascii=False))
+        if getattr(args, "show_stats", False):
+            receipt = response.get("receipt", {})
+            elapsed = receipt.get("milliseconds") if isinstance(receipt, dict) else None
+            print(
+                f"GraphGraph query operator={response.get('operator')} "
+                f"cost={compiled.cost_class} ms={elapsed}",
+                file=sys.stderr,
+            )
+        return
     freshness = scope_freshness(
         inspect_saved_graph_freshness(
             directory=source_root_for_saved_graph(graph_path),

@@ -25,6 +25,7 @@ from graphgraph.io import (
 from graphgraph.mcp import dispatch
 from graphgraph.packets import (
     render_gg_max,
+    validate_packet,
 )
 from graphgraph.scanner import scan_directory
 from graphgraph.services.native import (
@@ -651,7 +652,7 @@ class CliMcpTest(unittest.TestCase):
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["anchors"][0]["id"], "N1")
-            self.assertIn("[e]", data["packet"])
+            self.assertTrue(validate_packet(data["packet"]).ok)
 
     def test_mcp_query_context_default_has_bounded_compact_proof(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1866,7 +1867,7 @@ class CliMcpTest(unittest.TestCase):
                 env=env,
             )
             self.assertEqual(context_proc.returncode, 0, context_proc.stderr)
-            self.assertIn("[n]", context_proc.stdout)
+            self.assertTrue(validate_packet(context_proc.stdout).ok)
             self.assertIn("GraphGraph context built:", context_proc.stderr)
             self.assertNotIn("API Key", context_proc.stdout + context_proc.stderr)
 
@@ -2577,7 +2578,7 @@ class CliMcpTest(unittest.TestCase):
             self.assertIn("GraphGraph control:", receipt)
             self.assertIn("anchor=", receipt)
             # The packet still goes to stdout unchanged.
-            self.assertIn("#gg", stdout.getvalue())
+            self.assertTrue(validate_packet(stdout.getvalue()).ok)
 
     def test_query_json_emits_the_full_envelope(self) -> None:
         # `query` is the primary retrieval command and was the only major one
@@ -2628,7 +2629,7 @@ class CliMcpTest(unittest.TestCase):
                 payload["workflow"]["freshness"]["measured_at"],
                 "unknown",
             )
-            self.assertIn("#gg", payload["packet"])
+            self.assertTrue(validate_packet(payload["packet"]).ok)
 
     def test_query_binds_relocated_graph_to_manifest_source_root(self) -> None:
         import contextlib

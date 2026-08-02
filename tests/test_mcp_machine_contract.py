@@ -15,6 +15,7 @@ TOOL_NAMES = (
     "plan_context",
     "final_packet",
     "full_graph",
+    "query",
     "query_context",
     "project_status",
     "query_relations",
@@ -99,6 +100,7 @@ class McpMachineContractTest(unittest.TestCase):
             {
                 "plan_context": ("query_class",),
                 "final_packet": ("query_class", "starts"),
+                "query": ("query",),
                 "query_context": ("query",),
                 "query_relations": ("target", "direction"),
                 "update_graph_files": ("paths",),
@@ -117,6 +119,16 @@ class McpMachineContractTest(unittest.TestCase):
             {
                 "plan_context": {"query_class": QUERY_CLASSES},
                 "final_packet": {"query_class": QUERY_CLASSES, "packet": PACKET_FORMATS},
+                "query": {
+                    "mode": ("auto", "context", "relations", "select", "search", "status"),
+                    "sync": ("none", "git"),
+                    "direction": ("callers", "callees"),
+                    "result_mode": ("select", "count", "exists"),
+                    "query_class": ("auto", *QUERY_CLASSES),
+                    "packet": PACKET_FORMATS,
+                    "scope_mode": ("strict", "expand"),
+                    "source_mode": ("auto", "off", "all"),
+                },
                 "query_context": {
                     "query_class": ("auto", *QUERY_CLASSES),
                     "packet": PACKET_FORMATS,
@@ -156,6 +168,17 @@ class McpMachineContractTest(unittest.TestCase):
         self.assertEqual(
             {name: contract["defaults"] for name, contract in snapshot.items() if contract["defaults"]},
             {
+                "query": {
+                    "mode": "auto",
+                    "sync": "none",
+                    "result_mode": "select",
+                    "limit": 20,
+                    "include_tests": False,
+                    "include_external": False,
+                    "query_class": "auto",
+                    "scope_mode": "strict",
+                    "source_mode": "auto",
+                },
                 "query_context": {"query_class": "auto", "format": "compact"},
                 "query_relations": {
                     "limit": 20,
@@ -181,6 +204,7 @@ class McpMachineContractTest(unittest.TestCase):
             any("description" in spec for tool in TOOLS for spec in tool["inputSchema"].get("properties", {}).values())
         )
         cues = {
+            "query": ("read-only", "typed expert operator", "never"),
             "query_context": ("natural-language", "node ids"),
             "query_relations": ("one-hop", "complete_within_graph"),
             "final_packet": ("starts", "packet"),
@@ -209,7 +233,7 @@ class McpMachineContractTest(unittest.TestCase):
 
     def test_pre_compaction_size_baseline_is_recorded_per_tool(self) -> None:
         receipt = tool_contract_size_receipt(TOOLS)
-        self.assertEqual(receipt["tools"], 23)
+        self.assertEqual(receipt["tools"], 24)
         self.assertLessEqual(receipt["aggregate_chars"], MACHINE_CONTRACT_CHAR_CEILING)
         self.assertLessEqual(
             receipt["proxy_tokens"],

@@ -23,8 +23,11 @@ use `--source-mode off` only for a structural baseline. Evidence compilation
 uses versioned per-source CPG IR and exact merge/truncation receipts.
 
 > [!IMPORTANT]
-> **Check availability.** Use `graphgraph/query_context` when that MCP tool is
-> registered for this client. Otherwise use the CLI commands below; never
+> **Check availability.** Use `graphgraph/query` for arbitrary read-only user
+> text when that MCP tool is registered; it compiles to the cheapest lossless
+> expert operator and never infers a mutation or implicit build. Use
+> `graphgraph/query_context` when the caller specifically requires the full
+> context packet envelope. Otherwise use the CLI commands below; never
 > translate MCP tool names into guessed CLI flags. `graphgraph doctor` reports
 > installed frontends and client registration.
 
@@ -46,8 +49,9 @@ uses versioned per-source CPG IR and exact merge/truncation receipts.
 > 5. Build only after this audit. Later, `query_context` with `sync: "git"`
 >    reconciles paths made stale by new ignore rules.
 
-> **Default query path.** For an existing healthy graph, use
-> `query_context`. After edits, pass exact `changed_paths`/`deleted_paths`; if
+> **Default query path.** For an existing healthy graph, use `query` for free
+> text and inspect its typed plan receipt. Use `query_context` for an explicitly
+> packet-shaped retrieval. After edits, pass exact `changed_paths`/`deleted_paths`; if
 > that list was lost, pass `sync: "git"`. CLI equivalent:
 > `graphgraph context "<query>" --sync git`. Leave `query_class` and node
 > budgets automatic unless testing a known policy.
@@ -71,6 +75,7 @@ medians on a 14.5k-node Rust workspace.
 
 | Question shape | Tool | Cost |
 | --- | --- | --- |
+| Arbitrary read-only user text or unknown intent | `query` | Routes to the cheapest lossless typed operator; context fallback |
 | Exact named symbol, one-hop callers/callees | `query_relations` / `relations` | 1–2 ms warm; tuple IR |
 | One named symbol: blast radius, path, or "how does X work" | `query_context` / `query` | 0.4s fast path, 2.4s ranked |
 | A predicate over **many** symbols: "which functions have no production caller", counts, existence | `select` | ~0.5s |
@@ -131,7 +136,8 @@ answer is always the whole predicate.
 
 ## Decision rules
 
-1. Exact symbol plus one-hop caller/callee question: call `query_relations`
+1. Unknown or unrestricted read-only question: call `query`; follow its typed
+   plan and receipt. Exact symbol plus one-hop caller/callee question: call `query_relations`
    (or CLI `relations`) first. Its micro tuple IR is the low-latency/token lane;
    tests are opt-in. Add `sync: "git"` / `--sync git` when freshness is needed;
    otherwise it is explicitly unchecked. Follow any returned `a` action
@@ -171,6 +177,7 @@ answer is always the whole predicate.
 
 | Need | MCP | CLI |
 | --- | --- | --- |
+| Any read-only natural-language question, typed routing | `query` | `query "<text>"` |
 | Exact one-hop callers/callees, low-token IR | `query_relations` | `relations <symbol> --direction callers\|callees [--sync git]` |
 | Natural-language packet, optionally fresh | `query_context` | `context "<query>" [--sync git] [--json]` |
 | Build after exclusion audit | `build_graph` | `scan --depth symbols --docs --exclude <dirs...>` |

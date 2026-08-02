@@ -18,6 +18,7 @@ guess -- the same error direction the whole call-resolution surface protects.
 
 from __future__ import annotations
 
+import posixpath
 import re
 
 from .syntax import _identifier, _lang_family
@@ -144,6 +145,39 @@ def module_alias_targets(suffix: str, text: str) -> dict[str, str]:
     return targets
 
 
+def javascript_module_specifier_bindings(text: str) -> dict[str, str]:
+    """Map JS whole-module aliases to their unmodified import specifiers."""
+    result: dict[str, str] = {}
+    for pattern in (_JS_REQUIRE, _JS_IMPORT_NS, _JS_IMPORT_DEFAULT):
+        for alias, specifier in pattern.findall(text):
+            result.setdefault(alias, specifier)
+    return result
+
+
+def resolve_javascript_relative_source(
+    specifier: str,
+    source_rel: str,
+    source_paths: object,
+) -> str | None:
+    """Resolve one relative JS specifier to a unique repository file."""
+    if not specifier.startswith("."):
+        return None
+    base = posixpath.normpath(posixpath.join(posixpath.dirname(source_rel.replace("\\", "/")), specifier))
+    if base == ".":
+        base = ""
+    candidates = {
+        base,
+        *(f"{base}{suffix}" for suffix in _JS_SOURCE_SUFFIXES),
+        *(posixpath.join(base, f"index{suffix}") for suffix in _JS_SOURCE_SUFFIXES),
+    }
+    matches = [
+        str(path)
+        for path in source_paths
+        if str(path).replace("\\", "/") in candidates
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _module_parts(path: str | None) -> list[str]:
     """Dotted module components of a file path: ``pkg/model_io.py`` -> [pkg, model_io]."""
     if not path:
@@ -163,6 +197,28 @@ def _suffix_overlap(path_parts: list[str], module_parts: list[str]) -> int:
             break
         overlap += 1
     return overlap
+
+
+def resolve_module_source(module_path: str, source_paths: object) -> str | None:
+    """Resolve a module specifier to one unique repository source path."""
+    module_parts = [segment for segment in module_path.split(".") if segment]
+    if not module_parts:
+        return None
+    best: str | None = None
+    best_score = (-1, 1)
+    ambiguous = False
+    for source_path in source_paths:
+        path = str(source_path)
+        path_parts = _module_parts(path)
+        overlap = _suffix_overlap(path_parts, module_parts)
+        if overlap == 0:
+            continue
+        score = (overlap, -(len(path_parts) - overlap))
+        if score > best_score:
+            best, best_score, ambiguous = path, score, False
+        elif score == best_score:
+            ambiguous = True
+    return None if best is None or ambiguous else best
 
 
 def resolve_module_qualified_call(

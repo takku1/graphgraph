@@ -21,6 +21,9 @@ CODE_KINDS = frozenset({
     "package",
     "service",
     "data",
+    # Package-qualified API summaries are executable structural evidence even
+    # though their synthetic ``npm:...`` paths have no source extension.
+    "external",
 })
 
 DOC_EXTENSIONS = frozenset({".md", ".mdx", ".rst", ".txt", ".html", ".htm"})

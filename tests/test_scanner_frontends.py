@@ -483,6 +483,340 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertNotIn(("send", "json"), calls)
         self.assertEqual(result.unmatched_member_calls, 1)
 
+    def test_js_known_property_copy_types_function_object_receiver(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "lib/application.js": (
+                "var app = exports = module.exports = {}\n"
+                "app.init = function init() { return this.handle() }\n"
+                "app.handle = function handle() { return 1 }\n"
+            ),
+            "lib/express.js": (
+                "var mixin = require('merge-descriptors')\n"
+                "var proto = require('./application')\n"
+                "function createApplication() {\n"
+                "  var app = function(req, res) { return app.handle(req, res) }\n"
+                "  mixin(app, proto, false)\n"
+                "  app.init()\n"
+                "  return app\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for name, text in sources.items():
+                path = Path(tmp) / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, name, name.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files, max_total_symbols=100
+            )
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("createApplication", "init"), calls)
+        handle_edges = [
+            edge
+            for edge in result.edges
+            if edge.type == "calls" and result.nodes[edge.target].label == "handle"
+        ]
+        self.assertTrue(handle_edges)
+        create_id = next(node.id for node in result.nodes.values() if node.label == "createApplication")
+        self.assertTrue(any(result.nodes[edge.source].parent == create_id for edge in handle_edges))
+
+    def test_js_commonjs_default_export_propagates_structural_return_type(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "lib/application.js": (
+                "var app = module.exports = {}\n"
+                "app.handle = function handle() {}\n"
+            ),
+            "lib/express.js": (
+                "var mixin = require('merge-descriptors')\n"
+                "var proto = require('./application')\n"
+                "function createApplication() {\n"
+                "  var app = function() {}\n"
+                "  mixin(app, proto)\n"
+                "  return app\n"
+                "}\n"
+                "module.exports = createApplication\n"
+            ),
+            "index.js": "module.exports = require('./lib/express')\n",
+            "test/app.js": (
+                "var express = require('../')\n"
+                "function run() { var app = express(); return app.handle() }\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for name, text in sources.items():
+                path = Path(tmp) / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, name, name.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label, edge.evidence)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertTrue(
+            any(source == "run" and target == "handle" and "receiver app:lib/application.js::app" in evidence
+                for source, target, evidence in calls)
+        )
+
+    def test_js_structural_handler_protocol_types_request_response_parameters(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "lib/application.js": (
+                "var app = module.exports = {}\n"
+                "app.use = function use() {}\n"
+                "app.handle = function handle() {}\n"
+                "app.route = function route() {}\n"
+                "app.get = function get() {}\n"
+            ),
+            "lib/request.js": (
+                "var req = module.exports = {}\n"
+                "req.get = function get() {}\n"
+                "req.header = function header() {}\n"
+                "req.accepts = function accepts() {}\n"
+                "req.is = function is() {}\n"
+                "req.range = function range() {}\n"
+            ),
+            "lib/response.js": (
+                "var res = module.exports = {}\n"
+                "res.send = function send() {}\n"
+                "res.json = function json() {}\n"
+                "res.status = function status() {}\n"
+            ),
+            "lib/express.js": (
+                "var mixin = require('merge-descriptors')\n"
+                "var proto = require('./application')\n"
+                "function createApplication() {\n"
+                "  var app = function() {}\n"
+                "  mixin(app, proto)\n"
+                "  return app\n"
+                "}\n"
+                "module.exports = createApplication\n"
+            ),
+            "index.js": "module.exports = require('./lib/express')\n",
+            "test/app.js": (
+                "var express = require('../')\n"
+                "function scenario() {\n"
+                "  var app = express()\n"
+                "  app.get('/', function(req, res) { return res.send(req.get('x')) })\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for name, text in sources.items():
+                path = Path(tmp) / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, name, name.replace("/", "_").replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=200)
+
+        call_targets = {
+            result.nodes[edge.target].label
+            for edge in result.edges
+            if edge.type == "calls" and result.nodes[edge.source].label.startswith("get_callback_")
+        }
+        self.assertEqual(call_targets, {"get", "send"})
+
+    def test_js_incomplete_handler_shape_does_not_type_callback_parameters(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var app = {}\n"
+            "app.use = function use() {}\n"
+            "app.handle = function handle() {}\n"
+            "app.route = function route() {}\n"
+            "var req = {}\n"
+            "req.get = function get() {}\n"
+            "var res = {}\n"
+            "res.send = function send() {}\n"
+            "function scenario() { app.use(function(req, res) { return res.send(req.get('x')) }) }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "local.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "local.js", "local_js", source)],
+                max_total_symbols=100,
+            )
+
+        self.assertGreaterEqual(result.unknown_receiver_member_calls, 2)
+
+    def test_js_unknown_mixin_does_not_type_function_object_receiver(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        sources = {
+            "application.js": "var app = {}\napp.handle = function handle() {}\n",
+            "express.js": (
+                "var proto = require('./application')\n"
+                "function mixin(a, b) { return a }\n"
+                "function createApplication() {\n"
+                "  var app = function() {}\n"
+                "  mixin(app, proto)\n"
+                "  app.handle()\n"
+                "}\n"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for name, text in sources.items():
+                path = Path(tmp) / name
+                path.write_text(text, encoding="utf-8")
+                files.append(SourceFile(path, name, name.replace(".", "_"), text))
+            result = select_extractor("tree_sitter").extract_symbols(
+                files, max_total_symbols=100
+            )
+
+        calls = {
+            (result.nodes[edge.source].label, result.nodes[edge.target].label)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertNotIn(("createApplication", "handle"), calls)
+
+    def test_js_getter_and_external_api_summary_connect_router_handle(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var Router = require('router')\n"
+            "var app = {}\n"
+            "app.init = function init() {\n"
+            "  Object.defineProperty(this, 'router', {\n"
+            "    get: function () { return new Router({}) }\n"
+            "  })\n"
+            "}\n"
+            "app.handle = function handle(req, res) {\n"
+            "  return this.router.handle(req, res)\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "application.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "application.js", "application_js", source)],
+                max_total_symbols=100,
+            )
+
+        external = [node for node in result.nodes.values() if node.kind == "external"]
+        self.assertEqual([node.summary for node in external], ["router:Router::handle"])
+        edges = [
+            edge
+            for edge in result.edges
+            if edge.type == "calls"
+            and result.nodes[edge.source].label == "handle"
+            and result.nodes[edge.target].kind == "external"
+        ]
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0].provenance, "external_api_summary")
+
+    def test_js_unknown_external_package_does_not_gain_router_summary(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var Router = require('unrelated-router')\n"
+            "var app = {}\n"
+            "Object.defineProperty(app, 'router', { get: function () { return new Router({}) } })\n"
+            "app.handle = function handle() { return this.router.handle() }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "application.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "application.js", "application_js", source)],
+                max_total_symbols=100,
+            )
+
+        self.assertFalse(any(node.kind == "external" for node in result.nodes.values()))
+
+    def test_js_import_proven_external_namespace_and_call_result_are_attributed(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "const assert = require('node:assert')\n"
+            "const request = require('supertest')\n"
+            "var app = {}\n"
+            "app.get = function get() {}\n"
+            "app.set = function set() {}\n"
+            "function run(app) {\n"
+            "  const test = request(app)\n"
+            "  assert.equal(1, 1)\n"
+            "  test.set('x', 'y')\n"
+            "  return request(app).get('/')\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "app.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "app.js", "app_js", source)],
+                max_total_symbols=100,
+            )
+
+        external_edges = [
+            edge
+            for edge in result.edges
+            if edge.type == "calls" and result.nodes[edge.target].kind == "external"
+        ]
+        self.assertEqual({result.nodes[edge.target].label for edge in external_edges}, {"equal", "get", "set"})
+        self.assertTrue(all(edge.provenance == "tree_sitter_external_receiver" for edge in external_edges))
+        self.assertTrue(all("imported package" in edge.evidence for edge in external_edges))
+        self.assertEqual(result.unknown_receiver_member_calls, 0)
+
+    def test_js_local_factory_does_not_gain_external_call_result_evidence(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var app = {}\n"
+            "app.get = function get() {}\n"
+            "function request() { return {} }\n"
+            "function run(app) { return request(app).get('/') }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "app.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "app.js", "app_js", source)],
+                max_total_symbols=100,
+            )
+
+        self.assertFalse(any(node.kind == "external" for node in result.nodes.values()))
+        self.assertEqual(result.unknown_receiver_member_calls, 1)
+
+    def test_js_nested_callback_calls_are_attributed_once_to_innermost_callable(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        source = (
+            "var api = {}\n"
+            "api.send = function send() {}\n"
+            "function wrap(callback) { return callback }\n"
+            "function outer() {\n"
+            "  return wrap(function inner(req) { return req.send() })\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nested.js"
+            path.write_text(source, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "nested.js", "nested_js", source)],
+                max_total_symbols=100,
+            )
+
+        self.assertEqual(result.unknown_receiver_member_calls, 1)
+
     def test_js_prototype_assignment_owner_resolves_this_calls(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")

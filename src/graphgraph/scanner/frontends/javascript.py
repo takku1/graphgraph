@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 _FUNCTION_VALUE_TYPES = frozenset(
@@ -189,6 +190,11 @@ def js_callback_definition(
         "javascript_definition:callback",
         f"callback_registered_by:{callee}",
     )
+    function_text = _text(function).strip()
+    if "." in function_text:
+        receiver = function_text.rsplit(".", 1)[0]
+        if re.fullmatch(r"[A-Za-z_$][\w$]*", receiver):
+            facts += (f"callback_receiver:{receiver}",)
     if callee in {"context", "describe", "it", "specify", "test"}:
         facts += ("role:test",)
     return name, "function", facts

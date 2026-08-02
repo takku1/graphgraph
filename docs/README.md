@@ -50,6 +50,8 @@ How the pieces fit and the math they run.
 - [Mathematical Formulations](mathematical_formulations.md)
 - [Adaptive Planning Math](adaptive-planning-math.md)
 - [Dynamic Surface Math](dynamic_surface_math.md)
+- [Project Orientation Engine — architecture proposal](project-orientation-architecture-proposal.md)
+- [`.gg` v4 Incremental Store — architecture proposal](gg-v4-storage-architecture-proposal.md)
 
 **Note on inference:** an older claim that "no inference exists" is superseded.
 There is now a bounded, Horn-style **optional** compiler pass
@@ -83,6 +85,7 @@ self-contained and supersedes the removed cycle drafts.
 - [The scan hot path: one quadratic, two redundancies, and a determinism bug](findings/2026-07-31-scan-hot-path-optimization.md)
 - [Retrieval, the shared tree-sitter path, and a parallelism result that failed](findings/2026-08-01-retrieval-and-shared-path-optimization.md)
 - [Gray-box evaluation: Flask and multi-language corpora](findings/2026-08-01-graybox-flask-multilang.md)
+- [Gray-box Express theoretical ceiling and implementation roadmap](findings/2026-08-01-graybox-express-theoretical-ceiling.md)
 - [The token proxy was uncalibrated, and it was not a constant offset](findings/2026-07-30-token-proxy-recalibration.md)
 
 ## Comparisons
@@ -122,6 +125,7 @@ These are hypotheses and drafts, not authoritative behavior.
 - [SWE-bench evaluation protocol](swe_bench_evaluation_protocol.md)
 - [Global project attention under finite compute](global_project_attention_research_proposal.md)
 - [Context-system research tournament](context_system_research_tournament.md)
+- [Project Navigation Research Agenda](project-navigation-research-agenda.md)
   - [executable claim ledger](../eval/context-system-research.json)
   - [Phase 0 oracle](../benchmarks/context_graph/global_attention_phase0.py)
   - [Phase 1 equal-token transfer screen](../benchmarks/context_graph/global_attention_phase1.py)

@@ -2,6 +2,7 @@ from .budgets import default_anchor_limit, default_node_budget, retrieval_node_b
 from .context import plan_context, refine_plan_for_subgraph
 from .packet import choose_packet, choose_packet_for_subgraph, refine_packet_for_subgraph
 from .policies import path_matches, policy_applies, render_policy_packet, select_policies
+from .query_compiler import QueryOperator, QueryPlan, compile_query
 from .routing import (
     QUERY_CLASS_NAMES,
     QUERY_CLASSES,
@@ -33,11 +34,14 @@ __all__ = [
     "QUERY_CLASSES",
     "QUERY_CLASS_NAMES",
     "QueryClassSpec",
+    "QueryOperator",
+    "QueryPlan",
     "QueryRoute",
     "SubgraphStats",
     "choose_packet",
     "choose_packet_for_subgraph",
     "compute_subgraph_stats",
+    "compile_query",
     "default_anchor_limit",
     "default_node_budget",
     "estimate_packet_tokens",

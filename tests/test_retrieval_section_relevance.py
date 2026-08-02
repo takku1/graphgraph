@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -421,6 +422,32 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertFalse(affected["direct"][0]["in_packet"])
         self.assertEqual(affected["direct"][0]["evidence"][0]["provenance"], "tree_sitter_type_resolved")
 
+    def test_affected_tests_preserves_runtime_observation_provenance(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "dispatch", "function", "src/router.js"),
+                "TEST": Node("TEST", "dispatches request", "function", "test/router.js"),
+            },
+            edges=[
+                Edge(
+                    "TEST",
+                    "TARGET",
+                    "observed_calls",
+                    confidence=1.0,
+                    provenance="runtime_trace",
+                    evidence="trace:test/router.js -> src/router.js",
+                )
+            ],
+        )
+
+        affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET"})
+
+        self.assertEqual([item["id"] for item in affected["direct"]], ["TEST"])
+        self.assertEqual(affected["direct"][0]["evidence_mode"], "runtime_observed")
+        self.assertEqual(affected["direct"][0]["evidence"][0]["provenance"], "runtime_trace")
+
     def test_affected_tests_emits_focused_dotnet_command_for_csharp_test_project(self) -> None:
         from graphgraph.retrieval.test_recommendations import affected_test_recommendations
 
@@ -454,6 +481,62 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                 'dotnet test "src/Acme.Tests/Acme.Tests.csproj" '
                 "--filter FullyQualifiedName~InstallWidget_SendsPayload"
             ],
+        )
+
+    def test_affected_tests_uses_npm_package_import_as_conservative_witness(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "lib").mkdir()
+            (root / "test").mkdir()
+            implementation = root / "lib" / "application.js"
+            implementation.write_text("app.handle = function handle() {}\n", encoding="utf-8")
+            test_source = root / "test" / "app.router.js"
+            test_source.write_text(
+                "const express = require('../')\n"
+                "const request = require('supertest')\n"
+                "it('dispatches', () => request(express()).get('/'))\n",
+                encoding="utf-8",
+            )
+            (root / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "express",
+                        "main": "index.js",
+                        "scripts": {"test": "mocha test/"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            graph = Graph(
+                nodes={
+                    "TARGET": Node(
+                        "TARGET",
+                        "handle",
+                        "method",
+                        "lib/application.js",
+                        summary="app.handle = function handle() { [app::handle]",
+                        source=str(implementation),
+                    ),
+                    "TEST": Node(
+                        "TEST",
+                        "dispatches",
+                        "function",
+                        "test/app.router.js",
+                        source=str(test_source),
+                    ),
+                }
+            )
+
+            affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET"})
+
+        self.assertEqual([item["id"] for item in affected["transitive"]], ["TEST"])
+        self.assertEqual(affected["transitive"][0]["evidence_mode"], "conservative_import")
+        self.assertEqual(affected["commands"], ["npm test -- test/app.router.js"])
+        self.assertEqual(
+            affected["command_provenance"][0]["evidence_mode"],
+            "conservative_import",
         )
 
     def test_affected_tests_recognizes_csharp_test_owner_in_shared_source_file(self) -> None:

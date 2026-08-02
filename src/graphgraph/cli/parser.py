@@ -133,7 +133,29 @@ def _add_retrieval_commands(sub) -> None:
         "query", help="Retrieve a query-specific graph context packet without preselecting node IDs."
     )
     query.add_argument("query", help="Natural-language query used to find graph anchors.")
+    query.add_argument("--directory", "-d", help="Project root used for graph discovery (default: cwd).")
     query.add_argument("--graph")
+    query.add_argument(
+        "--operator",
+        choices=("auto", "context", "relations", "select", "search", "status"),
+        default="auto",
+        help="Typed operator override; auto chooses the cheapest lossless read-only operator.",
+    )
+    query.add_argument("--target", default="", help="Explicit target for relations/search override.")
+    query.add_argument("--direction", choices=("callers", "callees"))
+    query.add_argument("--predicate", default="", help="Explicit typed predicate for select override.")
+    query.add_argument(
+        "--result-mode",
+        choices=("select", "count", "exists"),
+        default="select",
+    )
+    query.add_argument("--limit", type=int, default=20, help="Specialized operator result limit.")
+    query.add_argument(
+        "--sync",
+        choices=("none", "git"),
+        default="none",
+        help="Optionally refresh Git-dirty paths before executing the query.",
+    )
     query.add_argument(
         "--query-class",
         choices=("auto", *QUERY_CLASS_NAMES),

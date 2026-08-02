@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from functools import lru_cache
@@ -30,7 +31,164 @@ from .scoping import (
     _is_test_path,
 )
 
-_TEST_EVIDENCE_RELATIONS = frozenset({"calls", "references", "tests", "reads", "writes"})
+_TEST_EVIDENCE_RELATIONS = frozenset(
+    {"calls", "observed_calls", "references", "tests", "reads", "writes"}
+)
+
+
+def _source_root(path: str, source: str) -> Path | None:
+    """Recover the scan root from one repo-relative path and absolute source."""
+    relative = Path(path.replace("\\", "/"))
+    source_path = Path(source)
+    if not relative.parts or not source_path.is_file():
+        return None
+    try:
+        resolved = source_path.resolve()
+        root = resolved
+        for _part in relative.parts:
+            root = root.parent
+        if tuple(part.casefold() for part in resolved.parts[-len(relative.parts) :]) != tuple(
+            part.casefold() for part in relative.parts
+        ):
+            return None
+        return root
+    except (OSError, ValueError):
+        return None
+
+
+def _javascript_imports_package_root(text: str, test_source: Path, root: Path, package_name: str) -> bool:
+    """Whether a JS/TS test imports the package entry point, with path proof."""
+    specifiers = re.findall(
+        r"(?:require\s*\(\s*|\bfrom\s+)[\"']([^\"']+)[\"']\s*\)?",
+        text,
+    )
+    for specifier in specifiers:
+        if package_name and specifier == package_name:
+            return True
+        if not specifier.startswith("."):
+            continue
+        try:
+            resolved = (test_source.parent / specifier).resolve()
+        except OSError:
+            continue
+        if resolved == root.resolve():
+            return True
+    return False
+
+
+def _npm_import_witnesses(graph: Graph, starts: tuple[str, ...]) -> list[dict[str, object]]:
+    """Return conservative behavior candidates when call topology is absent.
+
+    Importing the package does not prove a particular method executed, so these
+    remain explicitly low-confidence transitive witnesses.  Path/owner overlap
+    prevents one package import from recommending every test in the repository.
+    """
+    root_nodes = [graph.nodes[start] for start in starts if start in graph.nodes]
+    if not root_nodes:
+        return []
+    first = next((node for node in root_nodes if node.source), None)
+    if first is None:
+        return []
+    root = _source_root(first.path, first.source)
+    if root is None or not (root / "package.json").is_file():
+        return []
+    try:
+        manifest = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(manifest, dict):
+        return []
+    package_name = str(manifest.get("name") or "")
+    root_terms: dict[str, set[str]] = {}
+    low_value_terms = {
+        "callback",
+        "done",
+        "function",
+        "handle",
+        "return",
+        "this",
+        "req",
+        "res",
+        "var",
+    }
+    for node in root_nodes:
+        owner_match = re.search(r"\[([^:\]]+)::", node.summary or "")
+        terms = {term_key(node.label)}
+        if owner_match:
+            terms.add(term_key(owner_match.group(1)))
+        if node.source and node.line:
+            try:
+                lines = Path(node.source).read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                window = "\n".join(lines[max(0, node.line - 1) : node.line + 50])
+                terms.update(
+                    token.casefold()
+                    for token in re.findall(r"\b[A-Za-z_$][\w$]*\b", window)
+                    if len(token) >= 3
+                )
+            except OSError:
+                pass
+        terms -= low_value_terms
+        terms.discard("")
+        root_terms[node.id] = terms
+
+    by_path: dict[str, object] = {}
+    for node in graph.nodes.values():
+        if node.active and _is_runnable_test_node(node) and node.source:
+            by_path.setdefault(node.path.replace("\\", "/"), node)
+
+    ranked: list[tuple[int, str, object, list[str]]] = []
+    for path, node in by_path.items():
+        if not path.casefold().endswith((".js", ".jsx", ".ts", ".tsx")):
+            continue
+        source = Path(node.source)
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not _javascript_imports_package_root(text, source, root, package_name):
+            continue
+        path_key = term_key(path)
+        covered = [
+            root_id
+            for root_id, terms in root_terms.items()
+            if any(term and term in path_key for term in terms)
+        ]
+        if not covered:
+            continue
+        score = sum(
+            sum(1 for term in root_terms[root_id] if term and term in path_key)
+            for root_id in covered
+        )
+        ranked.append((-score, path, node, covered))
+
+    witnesses: list[dict[str, object]] = []
+    for negative_score, path, node, covered in sorted(ranked)[:12]:
+        witnesses.append(
+            {
+                "id": node.id,
+                "label": node.label,
+                "path": path,
+                "distance": 3,
+                "in_packet": node.id in starts,
+                "evidence_mode": "conservative_import",
+                "relevance_score": -negative_score,
+                "evidence": [
+                    {
+                        "type": "imports",
+                        "confidence": 0.35,
+                        "provenance": "package_entrypoint_import",
+                    }
+                ],
+                "covers": [
+                    {"id": root_id, "label": graph.nodes[root_id].label}
+                    for root_id in covered
+                ],
+                "root_paths": [],
+            }
+        )
+    return witnesses
 
 
 def _cargo_source_context(source: str) -> tuple[str, Path, Path] | None:
@@ -411,11 +569,40 @@ def affected_test_recommendations(
                 for start, (path_nodes, path_edges) in sorted(paths_by_node.get(node_id, {}).items())
                 if start in graph.nodes
             ],
+            "evidence_mode": (
+                "runtime_observed"
+                if any(edge.type == "observed_calls" for edge in evidence_edges)
+                else "direct_static"
+                if effective_distance == 1
+                else "transitive_static"
+            ),
         }
         if runnable:
             (direct if effective_distance == 1 else transitive).append(item)
         else:
             structural_witnesses.append(item)
+
+    # Fuse conservative package-import witnesses even when partial static
+    # topology exists. Static edges and import provenance answer different
+    # questions; suppressing the latter whenever *any* call path exists made a
+    # relevant behavior suite disappear behind unrelated low-distance tests.
+    existing_tests = {str(item["id"]): item for item in (*direct, *transitive)}
+    for witness in _npm_import_witnesses(graph, starts):
+        existing = existing_tests.get(str(witness["id"]))
+        if existing is None:
+            transitive.append(witness)
+            continue
+        existing["relevance_score"] = max(
+            int(existing.get("relevance_score", 0)),
+            int(witness.get("relevance_score", 0)),
+        )
+        existing_mode = str(existing.get("evidence_mode", "static"))
+        existing["evidence_mode"] = f"{existing_mode}_plus_conservative_import"
+        existing_evidence = list(existing.get("evidence", ()))
+        existing_evidence.extend(
+            evidence for evidence in witness.get("evidence", ()) if evidence not in existing_evidence
+        )
+        existing["evidence"] = existing_evidence
 
     def recommendation_rank(item: dict[str, object]) -> tuple[object, ...]:
         evidence = item.get("evidence", [])
@@ -425,6 +612,7 @@ def affected_test_recommendations(
         )
         return (
             -len(item.get("covers", [])),
+            -int(item.get("relevance_score", 0)),
             -max_confidence,
             str(item.get("path", "")),
             str(item.get("label", "")),
@@ -473,9 +661,38 @@ def affected_test_recommendations(
     direct_commands = commands_for(direct)
     transitive_commands = commands_for(transitive)
     all_items = [*direct, *transitive]
+    def command_evidence_mode(command: str) -> str:
+        modes = {
+            str(item.get("evidence_mode", "structural"))
+            for item in all_items
+            if _test_command(
+                str(item["path"]),
+                graph.nodes[str(item["id"])].source,
+                inline_test=not _is_test_path(str(item["path"])),
+                test_label=str(item.get("label", "")),
+            )
+            == command
+        }
+        if len(modes) == 1:
+            return next(iter(modes))
+        if any(mode.startswith("runtime_observed") for mode in modes):
+            return (
+                "runtime_observed_plus_conservative_import"
+                if any("conservative_import" in mode for mode in modes)
+                else "runtime_observed"
+            )
+        if any("conservative_import" in mode for mode in modes):
+            return "conservative_import"
+        if modes == {"direct_static"}:
+            return "direct_static"
+        if modes == {"transitive_static"}:
+            return "transitive_static"
+        return "structural_static"
+
     candidate_command_provenance = [
         {
             "command": command,
+            "evidence_mode": command_evidence_mode(command),
             "tests": [
                 {
                     "id": item["id"],

@@ -6,7 +6,7 @@ from json import loads
 from pathlib import Path
 from types import SimpleNamespace
 
-from graphgraph import Graph, Node
+from graphgraph import Edge, Graph, Node
 from graphgraph.acceptance.live_validation import _prepare_validation_graph
 from graphgraph.platform.semantic import SemanticIndex
 from graphgraph.runtime.manifest import Manifest
@@ -161,7 +161,9 @@ class CycleFiveRegressionTest(unittest.TestCase):
             )
             legacy = SemanticIndex.load(legacy_path)
 
-        self.assertEqual(payload["version"], 3)
+        self.assertEqual(payload["version"], 4)
+        self.assertEqual(payload["transaction_policy"], "graph-version-coupled-v1")
+        self.assertEqual(len(payload["graph_version"]), 64)
         self.assertEqual(payload["vector_encoding"], "base85-u32-f32-le")
         self.assertIsInstance(payload["vectors"]["A"], str)
         self.assertEqual(
@@ -169,6 +171,22 @@ class CycleFiveRegressionTest(unittest.TestCase):
             expected,
         )
         self.assertEqual(legacy.vectors["A"], {1: 0.5, 2: -0.25})
+
+    def test_semantic_index_rejects_topology_from_another_graph_transaction(self) -> None:
+        nodes = {
+            "A": Node("A", "alpha_parser", "function", "src/a.py"),
+            "B": Node("B", "beta_renderer", "function", "src/b.py"),
+        }
+        original = Graph(nodes=nodes, edges=[Edge("A", "B", "calls")])
+        changed = Graph(nodes=nodes, edges=[Edge("B", "A", "calls")])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "semantic.json"
+            index = SemanticIndex(path).build(original)
+
+            self.assertTrue(index.is_current(original))
+            self.assertEqual(SemanticIndex.state_for_graph(path, original), "current")
+            self.assertFalse(index.is_current(changed))
+            self.assertEqual(SemanticIndex.state_for_graph(path, changed), "stale")
 
     def test_manifest_is_compact_and_round_trips(self) -> None:
         manifest = Manifest()

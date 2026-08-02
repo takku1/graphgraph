@@ -48,7 +48,9 @@ NON_ENGINE_SOURCE_FILES = frozenset(
 # tokens of slack by the time this work started, so it was firing on any
 # addition at all rather than on unusual growth. Re-derive it when that happens
 # again; a guard with no headroom measures nothing.
-SOURCE_GRAPH_TOKEN_BASELINE = 160_148
+# Re-measured after the additive query compiler, JavaScript external summaries,
+# and graph-version-coupled semantic index landed on 2026-08-01.
+SOURCE_GRAPH_TOKEN_BASELINE = 163_748
 SOURCE_GRAPH_TOKEN_HEADROOM_RATIO = 0.02
 
 

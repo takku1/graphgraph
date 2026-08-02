@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -17,6 +18,15 @@ from .binding_providers import (
     field_bindings,
     local_bindings,
 )
+from .external_summaries import (
+    JAVASCRIPT_HANDLER_PACKAGES,
+    javascript_external_method,
+    javascript_external_module_bindings,
+    javascript_external_receiver,
+    javascript_external_receiver_types,
+    javascript_external_type_bindings,
+    javascript_property_copy_helpers,
+)
 from .grammars import profile_for_suffix
 from .languages import _SUFFIX_LANGUAGE
 from .model import (
@@ -26,8 +36,11 @@ from .model import (
     _TsDef,
 )
 from .module_calls import (
+    javascript_module_specifier_bindings,
     module_alias_targets,
+    resolve_javascript_relative_source,
     resolve_module_qualified_call,
+    resolve_module_source,
     whole_module_binding_names,
 )
 from .persistent_facts import PythonProjectTypeFacts
@@ -61,6 +74,7 @@ from .syntax import (
 )
 from .type_facts import Evidence, TypeFact, join_type_fact_maps
 from .typescript import (
+    _ts_property_copy_types,
     _ts_return_type_from_body,
 )
 
@@ -176,7 +190,9 @@ def _add_nested_contains(
             parents = [
                 parent
                 for parent in materialized
-                if parent.kind in owner_kinds and parent.start < child.start and child.end <= parent.end
+                if parent.kind in owner_kinds | {"function", "method"}
+                and parent.start < child.start
+                and child.end <= parent.end
             ]
             if not parents and child.kind == "method" and child.owner:
                 # Go declares a method beside its type, not inside it, so
@@ -495,11 +511,79 @@ def _add_tree_sitter_calls(
         for key, fact in python_project_facts.returns.items():
             project_python_returns[key] = project_python_returns.get(key, TypeFact()).join(fact)
 
+    js_structural_owners_by_source: dict[str, frozenset[str]] = {}
+    for source, defs, _root in defs_by_file:
+        if source.path.suffix.lower() not in _TS_SUFFIXES:
+            continue
+        owners = {
+            _callable_receiver_owner(source, definition)
+            for definition in defs
+            if definition.kind == "method"
+            and definition.owner
+            and any(
+                fact.startswith("javascript_owner:")
+                for fact in definition.facts
+            )
+        }
+        if owners:
+            js_structural_owners_by_source[source.rel] = frozenset(owners)
+
+    js_property_context: dict[str, tuple[dict[str, str], frozenset[str]]] = {}
+    for source, _defs, _root in defs_by_file:
+        if source.path.suffix.lower() not in _TS_SUFFIXES:
+            continue
+        source_types: dict[str, str] = {}
+        for alias, module_path in module_alias_targets(source.path.suffix.lower(), source.text).items():
+            imported_source = resolve_module_source(module_path, js_structural_owners_by_source)
+            owners = js_structural_owners_by_source.get(imported_source or "", ())
+            if len(owners) == 1:
+                source_types[alias] = next(iter(owners))
+        js_property_context[source.rel] = (
+            source_types,
+            javascript_property_copy_helpers(source.text),
+        )
+
+    structural_methods: dict[str, set[str]] = {}
+    for source, defs, _root in defs_by_file:
+        for definition in defs:
+            if definition.kind == "method" and definition.owner and any(
+                fact.startswith("javascript_owner:") for fact in definition.facts
+            ):
+                structural_methods.setdefault(
+                    _callable_receiver_owner(source, definition),
+                    set(),
+                ).add(definition.name)
+    application_types = [
+        owner for owner, methods in structural_methods.items() if {"use", "handle", "route"} <= methods
+    ]
+    request_types = [
+        owner for owner, methods in structural_methods.items() if {"header", "accepts", "is", "range"} <= methods
+    ]
+    response_types = [
+        owner for owner, methods in structural_methods.items() if {"send", "json", "status"} <= methods
+    ]
+    handler_protocol = (
+        (application_types[0], request_types[0], response_types[0])
+        if len(application_types) == len(request_types) == len(response_types) == 1
+        else ()
+    )
+    handler_application_types = (
+        frozenset(
+            {
+                handler_protocol[0],
+                *(f"external::{package}::return" for package in JAVASCRIPT_HANDLER_PACKAGES),
+            }
+        )
+        if handler_protocol
+        else frozenset()
+    )
+
     # Repo-wide map of function name -> its single concrete return type, used
     # to type inline call receivers (`parse_ir(src).lower()`, normalized to
     # the key `parse_ir()`). Names returning more than one concrete type are
     # dropped: an ambiguous return is not receiver evidence.
     return_types_by_name: dict[str, set[str]] = {}
+    return_type_by_definition: dict[tuple[str, str], str] = {}
     for source, defs, _root in defs_by_file:
         source_suffix = source.path.suffix.lower()
         if source_suffix not in ({".rs"} | _TS_SUFFIXES):
@@ -509,12 +593,59 @@ def _add_tree_sitter_calls(
             body_text = _node_text_range(text_bytes, definition.start, definition.end)
             # Rust reads the `-> Type` annotation; JS/TS has none, so infer the
             # factory return type from `return new X()` in the body.
-            return_type = (
-                _return_type_name(body_text) if source_suffix == ".rs" else _ts_return_type_from_body(body_text)
-            )
+            if source_suffix == ".rs":
+                return_type = _return_type_name(body_text)
+            else:
+                source_types, helpers = js_property_context.get(source.rel, ({}, frozenset()))
+                copied_types = _ts_property_copy_types(body_text, source_types, helpers)
+                return_type = _ts_return_type_from_body(body_text, copied_types)
             if return_type:
                 return_types_by_name.setdefault(definition.name, set()).add(return_type)
+                return_type_by_definition[(source.rel, definition.name)] = return_type
     unique_return_types = {name: next(iter(types)) for name, types in return_types_by_name.items() if len(types) == 1}
+
+    js_source_paths = tuple(source.rel for source, _defs, _root in defs_by_file if source.path.suffix.lower() in _TS_SUFFIXES)
+    default_return_types: dict[str, str] = {}
+    forwarded_defaults: dict[str, str] = {}
+    for source, defs, _root in defs_by_file:
+        if source.path.suffix.lower() not in _TS_SUFFIXES:
+            continue
+        direct = re.search(
+            r"\bmodule\.exports\s*=\s*(?:exports\s*=\s*)?([A-Za-z_$][\w$]*)\b",
+            source.text,
+        )
+        if direct is not None:
+            local_names = {definition.name for definition in defs}
+            if direct.group(1) in local_names:
+                if return_type := return_type_by_definition.get((source.rel, direct.group(1))):
+                    default_return_types[source.rel] = return_type
+        forwarded = re.search(
+            r"\bmodule\.exports\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)",
+            source.text,
+        )
+        if forwarded is not None:
+            forwarded_defaults[source.rel] = forwarded.group(1)
+    for _round in range(len(forwarded_defaults)):
+        changed = False
+        for source_rel, specifier in forwarded_defaults.items():
+            target = resolve_javascript_relative_source(specifier, source_rel, js_source_paths)
+            if target and target in default_return_types and source_rel not in default_return_types:
+                default_return_types[source_rel] = default_return_types[target]
+                changed = True
+        if not changed:
+            break
+
+    module_call_return_types: dict[str, dict[str, str]] = {}
+    for source, _defs, _root in defs_by_file:
+        if source.path.suffix.lower() not in _TS_SUFFIXES:
+            continue
+        aliases: dict[str, str] = {}
+        for alias, specifier in javascript_module_specifier_bindings(source.text).items():
+            target = resolve_javascript_relative_source(specifier, source.rel, js_source_paths)
+            if target and (return_type := default_return_types.get(target)):
+                aliases[alias] = return_type
+        if aliases:
+            module_call_return_types[source.rel] = aliases
     fixture_return_types_by_name: dict[str, set[str]] = {}
     for source, _defs, _root in defs_by_file:
         if source.path.suffix.lower() != ".py":
@@ -525,7 +656,6 @@ def _add_tree_sitter_calls(
         name: next(iter(types)) for name, types in fixture_return_types_by_name.items() if len(types) == 1
     }
     call_receiver_types = {f"{name}()": value for name, value in unique_return_types.items()}
-
     stats = _MemberCallStats()
     for source, defs, root in defs_by_file:
         suffix = source.path.suffix.lower()
@@ -533,6 +663,22 @@ def _add_tree_sitter_calls(
         imported_sources = _imported_symbol_sources(suffix, source.text)
         imported_modules = _imported_symbol_modules(suffix, source.text)
         module_aliases = module_alias_targets(suffix, source.text)
+        property_copy_source_types: dict[str, str] = {}
+        property_copy_helpers = frozenset()
+        external_type_bindings: dict[str, tuple[str, str]] = {}
+        external_module_bindings: dict[str, str] = {}
+        if suffix in _TS_SUFFIXES:
+            property_copy_helpers = javascript_property_copy_helpers(source.text)
+            external_type_bindings = javascript_external_type_bindings(source.text)
+            external_module_bindings = javascript_external_module_bindings(source.text)
+            for alias, module_path in module_aliases.items():
+                imported_source = resolve_module_source(
+                    module_path,
+                    js_structural_owners_by_source,
+                )
+                owners = js_structural_owners_by_source.get(imported_source or "", ())
+                if len(owners) == 1:
+                    property_copy_source_types[alias] = next(iter(owners))
         # Names bound to an entire imported module. A bare call to one of these
         # invokes the module, never a same-named method defined nearby. Member
         # bindings are excluded: those name a real exported symbol and must stay
@@ -622,11 +768,32 @@ def _add_tree_sitter_calls(
         text_bytes = source.text.encode("utf-8", errors="replace")
         profile = profile_for_suffix(suffix)
         file_field_types = _file_field_types(source, defs, root)
+        lexical_types: dict[tuple[int, int, str], dict[str, str]] = {}
         js_object_owners = frozenset(
             d.owner
             for d in defs
             if suffix in _TS_SUFFIXES and d.kind == "method" and d.owner
         )
+        module_lexical_types: dict[str, str] = {}
+        if suffix in _TS_SUFFIXES:
+            module_lexical_types = local_bindings(
+                LocalBindingContext(
+                    language=language,
+                    body=source.text,
+                    source_rel=source.rel,
+                    structural_owners=js_object_owners,
+                    unique_return_types={
+                        **unique_return_types,
+                        **module_call_return_types.get(source.rel, {}),
+                    },
+                    property_copy_source_types=property_copy_source_types,
+                    property_copy_helpers=property_copy_helpers,
+                    external_receiver_types=javascript_external_receiver_types(
+                        source.text,
+                        external_module_bindings,
+                    ),
+                )
+            ).concrete_types
         for d in callable_defs:
             src_id = _definition_node_id(source, d)
             if src_id not in nodes:
@@ -648,6 +815,25 @@ def _add_tree_sitter_calls(
                 body = d.literal_free_text or _syntax_text_without_literals(d.node, text_bytes)
             else:
                 body = raw_body
+            callable_external_receiver_types = (
+                javascript_external_receiver_types(body, external_module_bindings)
+                if suffix in _TS_SUFFIXES
+                else {}
+            )
+            lexical_parents = [
+                candidate
+                for candidate in callable_defs
+                if candidate.start < d.start and d.end <= candidate.end
+            ]
+            lexical_parent_types: dict[str, str] = dict(module_lexical_types)
+            if lexical_parents:
+                lexical_parent = min(lexical_parents, key=lambda item: item.end - item.start)
+                lexical_parent_types.update(
+                    lexical_types.get(
+                        (lexical_parent.start, lexical_parent.end, lexical_parent.name),
+                        {},
+                    )
+                )
             receiver_owner = _callable_receiver_owner(source, d) if d.owner else ""
             structural_owner = any(
                 fact.startswith("javascript_owner:") for fact in d.facts
@@ -670,9 +856,19 @@ def _add_tree_sitter_calls(
                     field_types=project_field_types,
                     initial_facts=python_initial_facts,
                     call_return_facts=python_call_return_facts,
-                    unique_return_types=unique_return_types,
+                    unique_return_types={
+                        **unique_return_types,
+                        **module_call_return_types.get(source.rel, {}),
+                    },
                     call_receiver_types=call_receiver_types,
                     unique_fixture_return_types=unique_fixture_return_types,
+                    property_copy_source_types=property_copy_source_types,
+                    property_copy_helpers=property_copy_helpers,
+                    external_receiver_types=callable_external_receiver_types,
+                    lexical_parent_types=lexical_parent_types,
+                    callable_facts=d.facts,
+                    handler_protocol=handler_protocol,
+                    handler_application_types=handler_application_types,
                 )
             )
             if d.owner:
@@ -742,12 +938,18 @@ def _add_tree_sitter_calls(
                             priority=FIELD_BINDING_PRIORITY,
                         )
             local_types = bindings.concrete_types
+            lexical_types[(d.start, d.end, d.name)] = dict(local_types)
             calls = _call_sites_in_range(
                 root,
                 text_bytes,
                 d.start,
                 d.end,
                 suffix=suffix,
+                excluded_ranges=tuple(
+                    (nested.start, nested.end)
+                    for nested in callable_defs
+                    if d.start < nested.start and nested.end <= d.end
+                ),
             )
             rust_macro_calls = (
                 {
@@ -804,6 +1006,95 @@ def _add_tree_sitter_calls(
                             )
                         )
                         stats = stats.add("resolved", call.receiver, language)
+                        continue
+                    receiver_type = local_types.get(call.receiver, "")
+                    if not receiver_type and "(" in call.receiver:
+                        callee = call.receiver.split("(", 1)[0].split(".", 1)[0]
+                        if package_name := external_module_bindings.get(callee):
+                            receiver_type = f"external::{package_name}::return"
+                    external_method = javascript_external_method(
+                        receiver_type,
+                        call.name,
+                        external_type_bindings,
+                    )
+                    if external_method is not None:
+                        package_name, type_name = external_method
+                        external_id = (
+                            f"external_npm_{package_name}_{type_name}_{call.name}"
+                            .replace("-", "_")
+                        )
+                        nodes.setdefault(
+                            external_id,
+                            Node(
+                                external_id,
+                                call.name,
+                                "external",
+                                f"npm:{package_name}",
+                                summary=f"{package_name}:{type_name}::{call.name}",
+                                facts=(
+                                    f"external_package:{package_name}",
+                                    f"external_type:{type_name}",
+                                    "evidence:api_summary",
+                                ),
+                                confidence=0.85,
+                            ),
+                        )
+                        edges.append(
+                            Edge(
+                                src_id,
+                                external_id,
+                                "calls",
+                                confidence=0.85,
+                                provenance="external_api_summary",
+                                source_location=source.rel,
+                                evidence=(
+                                    f"receiver {call.receiver}:{receiver_type}; "
+                                    f"package {package_name} summary"
+                                ),
+                            )
+                        )
+                        stats = stats.add("external_resolved", call.receiver, language)
+                        continue
+                    external_receiver = javascript_external_receiver(receiver_type)
+                    if external_receiver is not None:
+                        package_name, value_kind = external_receiver
+                        external_id = (
+                            f"external_js_{package_name}_{value_kind}_{call.name}"
+                            .replace("-", "_")
+                            .replace("/", "_")
+                            .replace(":", "_")
+                        )
+                        nodes.setdefault(
+                            external_id,
+                            Node(
+                                external_id,
+                                call.name,
+                                "external",
+                                f"npm:{package_name}",
+                                summary=f"{package_name}:{value_kind}::{call.name}",
+                                facts=(
+                                    f"external_package:{package_name}",
+                                    f"external_value:{value_kind}",
+                                    "evidence:import_value_flow",
+                                ),
+                                confidence=0.9,
+                            ),
+                        )
+                        edges.append(
+                            Edge(
+                                src_id,
+                                external_id,
+                                "calls",
+                                confidence=0.9,
+                                provenance="tree_sitter_external_receiver",
+                                source_location=source.rel,
+                                evidence=(
+                                    f"receiver {call.receiver}:{receiver_type}; "
+                                    f"imported package {package_name}"
+                                ),
+                            )
+                        )
+                        stats = stats.add("external_resolved", call.receiver, language)
                         continue
                     outcome = _resolve_member_call(
                         source=source,

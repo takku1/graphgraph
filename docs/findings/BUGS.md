@@ -18,6 +18,47 @@ contract questions rather than unresolved algorithmic questions, so primary
 Python and Git documentation was a stronger source than secondary or academic
 literature.
 
+## Express ceiling follow-up checklist
+
+This checklist tracks the independent Express gray-box report at
+[`2026-08-01-graybox-express-theoretical-ceiling.md`](2026-08-01-graybox-express-theoretical-ceiling.md).
+It separates fixed false negatives from the remaining precision work.
+
+- [x] Attribute a nested call to its innermost callable exactly once; correct
+  the inflated receiver-site denominator.
+- [x] Resolve JavaScript callable-object properties, known copy/mixin helpers,
+  CommonJS default-return factories, lexical closures, and package-qualified
+  external summaries without binding adversarial unknown receivers.
+- [x] Recover the Express golden path in a minimal validated packet.
+- [x] Normalize npm package identity, scripts, and workspace/runtime metadata.
+- [x] Replace the affected-test zero-result with attributed static/import
+  witnesses, including `test/app.router.js`, and a runnable manifest-derived
+  command.
+- [x] Preserve test evidence mode through recommendation and command receipts,
+  including `observed_calls` runtime provenance.
+- [x] Compile equivalent prose path queries to the same structural terminals
+  and minimum directed connector.
+- [x] Couple semantic indexes to a full active graph version and reject legacy
+  or topology-mismatched sidecars as stale.
+- [x] Select the smallest identity-safe, validating packet encoding from exact
+  rendered costs instead of declaring a universal format floor.
+- [x] Add one read-only `graphgraph.query(text)` / `graphgraph query <text>` /
+  MCP `query` facade that routes to typed expert operators and never infers a
+  mutation or implicit index build.
+- [ ] Collapse JavaScript affected-test candidates to runnable file/suite
+  boundaries. The current Express result is useful but remains honestly
+  incomplete because 1,171 callable-level transitive candidates exceed the
+  recommendation cap.
+- [ ] Validate runtime coverage ingestion on a real Express test run; fixtures
+  prove provenance preservation, not production trace availability.
+- [ ] Repeat receiver precision/recall oracles across held-out repositories and
+  languages. The Express 87.09% evidence ratio clears the volume gate, but the
+  tool's 100% trusted-resolution telemetry is not an independent 98% precision
+  measurement.
+- [ ] Repair stale global/client skill installations where deployed. The
+  repository contract is current; external client state remains an operational
+  action, not a source-code correctness claim.
+
 The standard test suite passes (`1050 passed, 4 skipped, 124 subtests passed`),
 but the following edge cases were reproduced independently. The three Ruff
 findings under `docs/findings/fixtures/` are fixture-formatting issues and are

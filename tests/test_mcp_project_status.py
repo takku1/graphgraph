@@ -243,6 +243,44 @@ class McpProjectStatusTest(unittest.TestCase):
         self.assertEqual(report["package"]["rust"]["kind"], "workspace")
         self.assertEqual(report["package"]["rust"]["members"], ["crates/core", "crates/cli"])
 
+    def test_project_status_reports_npm_manifest_and_test_script(self) -> None:
+        from graphgraph.services.native import build_project_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "express",
+                        "version": "5.2.1",
+                        "main": "index.js",
+                        "scripts": {
+                            "test": "mocha --require test/support/env test/ test/acceptance/"
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            graph_path = root / ".graphgraph" / "graph.json"
+            graph_path.parent.mkdir(parents=True)
+            save_graph(
+                Graph(nodes={"J": Node("J", "index.js", "javascript", "index.js")}),
+                graph_path,
+            )
+
+            report = build_project_status(directory=root, graph_path=graph_path)
+
+        package = report["package"]
+        self.assertEqual(package["ecosystem"], "npm")
+        self.assertEqual(package["ecosystems"], ["npm"])
+        self.assertEqual(package["name"], "express")
+        self.assertEqual(package["version"], "5.2.1")
+        self.assertEqual(package["javascript"]["main"], "index.js")
+        self.assertEqual(
+            package["scripts"]["test"],
+            "mocha --require test/support/env test/ test/acceptance/",
+        )
+
     def test_project_status_expands_cargo_workspace_globs_and_excludes(self) -> None:
         from graphgraph.services.native import build_project_status
 

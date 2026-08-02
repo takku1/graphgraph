@@ -53,6 +53,7 @@ _LAZY_EXPORTS = {
     "RetrievalResult": "retrieval",
     "retrieve_context": "retrieval",
     "search_nodes": "retrieval",
+    "query": "services.query",
     "extract_symbols": "scanner",
     "remove_paths": "scanner",
     "scan_directory": "scanner",
@@ -108,6 +109,7 @@ if TYPE_CHECKING:
     from .planning.policies import select_policies
     from .retrieval import Match, RetrievalResult, retrieve_context, search_nodes
     from .scanner import extract_symbols, remove_paths, scan_directory, update_paths
+    from .services.query import query
 
 __all__ = [
     "Edge",
@@ -149,6 +151,7 @@ __all__ = [
     "update_paths",
     "remove_paths",
     "search_nodes",
+    "query",
     "select_policies",
     "term_key",
     "validate_packet",

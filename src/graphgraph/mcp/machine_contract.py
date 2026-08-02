@@ -11,6 +11,7 @@ MACHINE_TOOL_DESCRIPTIONS = {
     "final_packet": "ACT:render bounded graph packet; IN:starts=node IDs/paths; OUT:packet.",
     "full_graph": "ACT:every active node/edge; USE:offline snapshot,not the default; SAFE:max_tokens.",
     "query_context": "ACT:natural-language when node IDs unknown; OUT:anchors,packet,receipts; MAY:refresh.",
+    "query": "ACT:any read-only natural-language query; ROUTE:typed expert operator or context fallback; OUT:plan,result,receipt; NEVER:index implicitly.",
     "query_relations": "ACT:one-hop callers/callees; OUT:micro IR; SAFE:complete_within_graph,call_topology_status; MAY:sync=git; tests opt-in.",
     "project_status": "ACT:report project graph status; OUT:validity,shape,freshness,packages,runtime probes.",
     "validate_packet": "ACT:validate packet or saved graph; OUT:ok,format,node_count,edge_count,errors.",
@@ -32,9 +33,10 @@ MACHINE_TOOL_DESCRIPTIONS = {
     "graph_at_time": "ACT:graph at timestamp if validity complete, else refuse; OUT:status.",
 }
 
-# The compact/detailed query response selector costs 73 recurring schema
-# characters and removes thousands of response characters on the default path.
-MACHINE_CONTRACT_CHAR_CEILING = 10_500
+# The additive natural-language facade costs 1,473 recurring schema characters
+# while preserving every expert tool. Keep the complete 24-tool surface below
+# a round 3,000-token proxy instead of hiding advanced controls in prose.
+MACHINE_CONTRACT_CHAR_CEILING = 12_000
 
 
 def serialize_tool_contract(value: object) -> str:

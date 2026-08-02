@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ..graph.core import Graph
-from ..packets import render_packet
+from ..packets import estimate_tokens, render_packet
 from ..packets.validation import validate_packet
 from ..planning import (
     ContextPlan,
@@ -91,6 +91,7 @@ class CompilationReceipt:
     provider_receipts: tuple[dict[str, object], ...] = field(default_factory=tuple)
     source_receipt: dict[str, object] = field(default_factory=dict)
     representation_receipt: dict[str, object] = field(default_factory=dict)
+    format_selection: dict[str, object] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
 
 
@@ -276,17 +277,67 @@ class GraphRuntime:
             route.query_class,
             graph=graph,
         )
-        packet = (
-            render_packet(
+        format_selection: dict[str, object] = {}
+        packet = ""
+        if retrieval.starts:
+            packet = render_packet(
                 graph,
                 retrieval.nodes,
                 retrieval.edges,
                 packet_format,
                 priority=priority,
             )
-            if retrieval.starts
-            else ""
-        )
+            # Packet choice is made after the bounded subgraph exists.  Compare
+            # exact rendered proxy costs rather than assuming one universal
+            # winner.  SVO is admitted only when labels are unique, because its
+            # triples use labels instead of node handles at the edge endpoints.
+            labels = [
+                graph.nodes[node_id].label
+                for node_id in retrieval.nodes
+                if node_id in graph.nodes
+            ]
+            adaptive = (
+                program.packet is None
+                and packet_format == "gg"
+                and len(labels) == len(set(labels))
+            )
+            candidates = {packet_format: packet}
+            svo_validation_safe = False
+            if adaptive:
+                svo_candidate = render_packet(
+                    graph,
+                    retrieval.nodes,
+                    retrieval.edges,
+                    "svo",
+                )
+                svo_validation_safe = validate_packet(svo_candidate).ok
+                if svo_validation_safe:
+                    candidates["svo"] = svo_candidate
+            costs = {name: estimate_tokens(text) for name, text in candidates.items()}
+            chosen = min(costs, key=lambda name: (costs[name], name))
+            packet_format = chosen
+            packet = candidates[chosen]
+            minimum = min(costs.values())
+            format_selection = {
+                "policy": "exact_rendered_minimum_v1" if adaptive else "explicit_or_semantic_constraint",
+                "candidates": costs,
+                "chosen": chosen,
+                "chosen_tokens": costs[chosen],
+                "minimum_tokens": minimum,
+                "ratio_to_minimum": round(costs[chosen] / max(1, minimum), 4),
+                "label_identity_safe": len(labels) == len(set(labels)),
+                "svo_validation_safe": svo_validation_safe,
+            }
+            retrieval.metadata["format_selection"] = format_selection
+            if chosen != plan.packet:
+                plan = replace(
+                    plan,
+                    packet=chosen,
+                    reason=(
+                        f"adaptive rendered format minimum: {chosen}={costs[chosen]} "
+                        f"tokens across {costs}"
+                    ),
+                )
         representation_receipt: dict[str, object] = {}
         if packet and program.representation == "hybrid":
             seed_weights = {
@@ -348,6 +399,7 @@ class GraphRuntime:
             provider_receipts=tuple(asdict(item) for item in provider_receipts),
             source_receipt=source_receipt,
             representation_receipt=representation_receipt,
+            format_selection=format_selection,
             warnings=(
                 tuple(warnings)
                 + (validation.errors if validation is not None else ())

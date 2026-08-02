@@ -1100,8 +1100,15 @@ def _call_sites_in_range(
     end: int,
     *,
     suffix: str = "",
+    excluded_ranges: tuple[tuple[int, int], ...] = (),
 ) -> set[_CallSite]:
-    """Return bounded call-site facts, retaining receiver text for type resolution."""
+    """Return call facts owned by the requested lexical range.
+
+    Nested callable bodies may sit inside the outer callable's byte range.
+    Their calls belong to the innermost callable and are excluded here when
+    the caller supplies those child ranges; otherwise one source call is
+    counted and attributed once per enclosing function.
+    """
     sites: set[_CallSite] = set()
     # This function already knows its language, so it can use that grammar's
     # own tables instead of every grammar's at once. Hoisted for the same
@@ -1115,7 +1122,16 @@ def _call_sites_in_range(
         node = stack.pop()
         if int(node.end_byte) < start or int(node.start_byte) > end:
             continue
+        node_start = int(node.start_byte)
+        node_end = int(node.end_byte)
+        if any(child_start <= node_start and node_end <= child_end for child_start, child_end in excluded_ranges):
+            continue
         stack.extend(reversed(list(getattr(node, "named_children", ()))))
+        # Ancestors of the requested callable overlap its byte range and must
+        # be traversed to reach it, but an enclosing registration call such as
+        # ``app.use(function (...) {...})`` is not itself owned by the callback.
+        if node_start < start or node_end > end:
+            continue
         if node.type not in call_types:
             continue
         fn = None

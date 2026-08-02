@@ -38,6 +38,7 @@ def _query(directory: Path, graph_path: Path, *, rebuild: bool = False, changed:
         json_details=True,
         show_anchors=True,
         max_nodes=20,
+        packet="gg",
         rebuild=rebuild,
         changed_paths=changed,
     )

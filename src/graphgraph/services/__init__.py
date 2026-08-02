@@ -5,6 +5,7 @@ from .context import (
     render_query_context,
     render_stable_skeleton,
 )
+from .query import execute_query, query
 from .snippets import render_source_snippets
 
 __all__ = [
@@ -14,4 +15,6 @@ __all__ = [
     "render_query_context",
     "render_stable_skeleton",
     "render_source_snippets",
+    "execute_query",
+    "query",
 ]

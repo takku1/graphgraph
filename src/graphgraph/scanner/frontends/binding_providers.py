@@ -28,7 +28,9 @@ from .typescript import (
     _ts_class_field_types,
     _ts_local_call_return_types,
     _ts_local_types,
+    _ts_ordered_parameter_names,
     _ts_parameter_names,
+    _ts_property_copy_types,
     _ts_this_aliases,
 )
 
@@ -57,6 +59,13 @@ class LocalBindingContext:
     unique_return_types: Mapping[str, str] = field(default_factory=dict)
     call_receiver_types: Mapping[str, str] = field(default_factory=dict)
     unique_fixture_return_types: Mapping[str, str] = field(default_factory=dict)
+    property_copy_source_types: Mapping[str, str] = field(default_factory=dict)
+    property_copy_helpers: frozenset[str] = frozenset()
+    external_receiver_types: Mapping[str, str] = field(default_factory=dict)
+    lexical_parent_types: Mapping[str, str] = field(default_factory=dict)
+    callable_facts: tuple[str, ...] = ()
+    handler_protocol: tuple[str, str, str] = ()
+    handler_application_types: frozenset[str] = frozenset()
 
 
 LocalBindingProvider = Callable[[LocalBindingContext], dict[str, str]]
@@ -64,9 +73,17 @@ LocalBindingProvider = Callable[[LocalBindingContext], dict[str, str]]
 
 def _typescript_bindings(context: LocalBindingContext) -> dict[str, str]:
     result = _ts_local_types(context.body)
+    for binding, inferred in context.external_receiver_types.items():
+        result.setdefault(binding, inferred)
     for binding, inferred in _ts_local_call_return_types(
         context.body,
         dict(context.unique_return_types),
+    ).items():
+        result.setdefault(binding, inferred)
+    for binding, inferred in _ts_property_copy_types(
+        context.body,
+        dict(context.property_copy_source_types),
+        context.property_copy_helpers,
     ).items():
         result.setdefault(binding, inferred)
 
@@ -83,6 +100,32 @@ def _typescript_bindings(context: LocalBindingContext) -> dict[str, str]:
     if context.binds_enclosing_receiver and context.receiver_owner:
         for alias in _ts_this_aliases(context.body):
             result.setdefault(alias, context.receiver_owner)
+    shadowing.update(_ts_parameter_names(context.body))
+    for binding, inferred in context.lexical_parent_types.items():
+        if binding not in shadowing:
+            result.setdefault(binding, inferred)
+    if len(context.handler_protocol) == 3:
+        application_type, request_type, response_type = context.handler_protocol
+        receiver = next(
+            (fact.split(":", 1)[1] for fact in context.callable_facts if fact.startswith("callback_receiver:")),
+            "",
+        )
+        registrar = next(
+            (fact.split(":", 1)[1] for fact in context.callable_facts if fact.startswith("callback_registered_by:")),
+            "",
+        )
+        handler_methods = {
+            "all", "delete", "get", "head", "options", "patch", "post", "put", "use",
+        }
+        allowed_applications = context.handler_application_types or frozenset({application_type})
+        if context.lexical_parent_types.get(receiver) in allowed_applications and registrar in handler_methods:
+            parameters = _ts_ordered_parameter_names(context.body)
+            if len(parameters) >= 3:
+                result.setdefault(parameters[-3], request_type)
+                result.setdefault(parameters[-2], response_type)
+            elif len(parameters) >= 2:
+                result.setdefault(parameters[0], request_type)
+                result.setdefault(parameters[1], response_type)
     return result
 
 
@@ -207,7 +250,22 @@ def _python_field_bindings(
 def _typescript_field_bindings(
     context: FieldBindingContext,
 ) -> dict[tuple[str, str], str]:
-    return dict(_ts_class_field_types(context.source.text))
+    fields = {
+        key: value
+        for key, value in _ts_class_field_types(context.source.text).items()
+        if key[0] != "this"
+    }
+    encoded = context.source.text.encode("utf-8", errors="replace")
+    for definition in context.definitions:
+        if not definition.owner or definition.kind != "method":
+            continue
+        body = encoded[definition.start : definition.end].decode(
+            "utf-8", errors="replace"
+        )
+        for (owner, field_name), type_name in _ts_class_field_types(body).items():
+            if owner == "this":
+                fields[(definition.owner, field_name)] = type_name
+    return fields
 
 
 def _csharp_field_bindings(

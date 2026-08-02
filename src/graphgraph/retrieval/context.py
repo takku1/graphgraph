@@ -775,6 +775,7 @@ def retrieve_context(
         priority_ids = {match.node.id for match in priority_matches}
         matches = priority_matches + tuple(match for match in matches if match.node.id not in priority_ids)
     exact_anchor_fast_path = bool(matches) and all("exact_fast_path" in match.reasons for match in matches)
+    semantic_terminal_matches: tuple[Match, ...] = ()
     if facets and not path_matches and not exact_anchor_fast_path:
         # A single bag-of-words search for a conjunction is dominated by nodes
         # that repeat the query's common subsystem terms. Search each facet
@@ -783,6 +784,8 @@ def retrieve_context(
         # cap and preserves the original whole-query ranking at the front.
         merged = list(matches)
         seen_match_ids = {match.node.id for match in merged}
+        merged_positions = {match.node.id: index for index, match in enumerate(merged)}
+        semantic_terminals: list[Match] = []
         for facet_label, facet_terms in facets:
             for facet_query in facet_stage.facet_search_queries(facet_label, facet_terms):
                 facet_matches = search.search_nodes(
@@ -797,7 +800,50 @@ def retrieve_context(
                     if match.node.id not in seen_match_ids:
                         merged.append(match)
                         seen_match_ids.add(match.node.id)
+                        merged_positions[match.node.id] = len(merged) - 1
+            semantic_candidates = (
+                sorted(
+                    (
+                        node
+                        for node in graph.nodes.values()
+                        if node.active
+                        and is_code_like(node)
+                        and (not scopes or scoping._path_in_scopes(node.path, scopes))
+                        and facet_stage._facet_matches_node(node, facet_terms)
+                    ),
+                    key=lambda node: (
+                        scoping._is_test_node(node),
+                        node.kind != "external",
+                        node.kind not in {"method", "function", "external"},
+                        len(node.path),
+                        node.id,
+                    ),
+                )[:4]
+                if query_class == "multi_hop_path"
+                else []
+            )
+            if semantic_candidates:
+                semantic_terminals.append(
+                    Match(semantic_candidates[0], 1000.0, ("semantic_structural_terminal",))
+                )
+            for node in semantic_candidates:
+                if node.id not in seen_match_ids:
+                    merged.append(Match(node, 1000.0, ("semantic_structural_facet",)))
+                    seen_match_ids.add(node.id)
+                    merged_positions[node.id] = len(merged) - 1
+                else:
+                    position = merged_positions[node.id]
+                    prior = merged[position]
+                    merged[position] = Match(
+                        node,
+                        max(1000.0, prior.score),
+                        tuple(dict.fromkeys((*prior.reasons, "semantic_structural_facet"))),
+                    )
         matches = tuple(merged)
+        if len(semantic_terminals) == len(facets):
+            semantic_terminal_matches = tuple(
+                {match.node.id: match for match in semantic_terminals}.values()
+            )
     if status_constrained:
         # Status is an evidence type, not a ranking preference. Facet searches,
         # source seeds, and path roots may orient an ordinary document query,
@@ -888,6 +934,11 @@ def retrieve_context(
         query=query,
         query_class=query_class,
     )
+    if query_class == "multi_hop_path" and semantic_terminal_matches:
+        # All prose facets compiled to structural terminals. They are the path
+        # constraints; unrelated whole-query lexical hits must not become
+        # additional mandatory roots and defeat the connector optimizer.
+        selected_matches = semantic_terminal_matches[:12]
     negative_abstain = _negative_query_abstain(
         graph,
         query_class=query_class,
@@ -998,6 +1049,50 @@ def retrieve_context(
         nodes = set(starts) | {edge.target for edge in edges}
     if query_class in scoping.STRUCTURAL_QUERY_CLASSES:
         nodes, edges = reservations.prune_unexplained_structural_nodes(nodes, edges, starts)
+    constraint_selection = None
+    if query_class == "multi_hop_path" and facets:
+        # A prose path often yields only one exact anchor even when expansion
+        # has already recovered every named endpoint. Convert facet witnesses
+        # into typed terminal groups and solve for the smallest directed proof
+        # instead of returning the whole two-hop neighborhood.
+        path_coverage = facet_stage.facet_coverage(graph, nodes, facets, roots=facet_roots or starts)
+        if not path_coverage["unfulfilled_required"]:
+            evidence_groups = tuple(
+                tuple(str(node_id) for node_id in item["evidence"])
+                for item in path_coverage["fulfilled"]
+                if item.get("evidence")
+            )
+            connector = obligations.minimal_evidence_connector(
+                nodes,
+                edges,
+                (*evidence_groups, *((node_id,) for node_id in starts)),
+            )
+            if connector is not None:
+                connector_nodes, connector_edges, constraint_selection = connector
+                root_id = str(constraint_selection["root"])
+                root_label = graph.nodes[root_id].label.casefold()
+                lifecycle_edges = []
+                if root_label.startswith(("create", "build", "make", "bootstrap")):
+                    lifecycle_edges = sorted(
+                        (
+                            edge
+                            for edge in graph.edges
+                            if edge.active
+                            and edge.source == root_id
+                            and edge.type in {"calls", "observed_calls"}
+                            and graph.nodes[edge.target].label.casefold()
+                            in {"init", "initialize", "initialise", "setup", "bootstrap"}
+                        ),
+                        key=lambda edge: (-edge.confidence, edge.target, edge.type),
+                    )[:1]
+                for edge in lifecycle_edges:
+                    connector_nodes.add(edge.target)
+                    connector_edges.append(edge)
+                connector_edges.sort(key=lambda edge: (edge.source, edge.target, edge.type))
+                constraint_selection["lifecycle_preconditions"] = [edge.target for edge in lifecycle_edges]
+                constraint_selection["nodes"] = len(connector_nodes)
+                constraint_selection["edges"] = len(connector_edges)
+                nodes, edges = connector_nodes, connector_edges
     if inferred_scope and not (query_class == "multi_hop_path" and exact_anchor_fast_path):
         # A post-hoc top-k scope cap recomputes boundary scores over the current
         # packet, so a newly admitted connector can evict a node returned at a
@@ -1024,6 +1119,8 @@ def retrieve_context(
         effective_scope,
         query_class=query_class,
     )
+    if constraint_selection is not None:
+        metadata["constraint_selection"] = constraint_selection
     if query_class == "doc_summary" and metadata["quality"]["grounded_doc_nodes"] == 0:
         metadata["quality"]["document_warning"] = "doc_summary selected zero grounded document body nodes"
     overload = _exact_overload_disambiguation(graph, query_class, query, selected_matches)

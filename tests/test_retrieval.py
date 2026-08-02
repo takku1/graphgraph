@@ -1600,6 +1600,88 @@ class RetrievalTest(unittest.TestCase):
         self.assertIn(("MID", "TARGET", "calls"), edge_keys)
         self.assertLessEqual(len(nodes), 20)
 
+    def test_prose_multi_hop_path_compiles_to_minimum_facet_connector(self) -> None:
+        graph = Graph(
+            nodes={
+                "CREATE": Node("CREATE", "createApplication", "function", "lib/express.js"),
+                "INIT": Node("INIT", "init", "method", "lib/application.js", parent="APP"),
+                "HANDLE": Node(
+                    "HANDLE",
+                    "handle",
+                    "method",
+                    "lib/application.js",
+                    parent="APP",
+                    summary="app.handle request dispatch",
+                ),
+                "ROUTER": Node("ROUTER", "Router::handle", "external", "npm:router"),
+                **{
+                    f"NOISE_{index}": Node(
+                        f"NOISE_{index}",
+                        f"application helper {index}",
+                        "method",
+                        "lib/application.js",
+                    )
+                    for index in range(20)
+                },
+            },
+            edges=[
+                Edge("CREATE", "HANDLE", "calls", provenance="tree_sitter_type_resolved"),
+                Edge("CREATE", "INIT", "calls", provenance="tree_sitter_type_resolved"),
+                Edge("HANDLE", "ROUTER", "calls", provenance="external_api_summary"),
+                *(Edge("HANDLE", f"NOISE_{index}", "contains") for index in range(20)),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Trace the path from createApplication through app.handle to Router dispatch.",
+            "multi_hop_path",
+            hops=2,
+            max_nodes=24,
+        )
+        paraphrase = retrieve_context(
+            graph,
+            "Show how application creation reaches request handling and router dispatch.",
+            "multi_hop_path",
+            hops=2,
+            max_nodes=24,
+        )
+
+        self.assertEqual(result.nodes, {"CREATE", "INIT", "HANDLE", "ROUTER"})
+        self.assertEqual(
+            {(edge.source, edge.target, edge.type) for edge in result.edges},
+            {
+                ("CREATE", "HANDLE", "calls"),
+                ("CREATE", "INIT", "calls"),
+                ("HANDLE", "ROUTER", "calls"),
+            },
+        )
+        self.assertEqual(result.metadata["answerability"]["status"], "answerable")
+        self.assertEqual(
+            result.metadata["constraint_selection"]["policy"],
+            "minimum_directed_facet_connector_v1",
+        )
+        self.assertEqual(result.metadata["constraint_selection"]["lifecycle_preconditions"], ["INIT"])
+        self.assertEqual(paraphrase.nodes, result.nodes)
+        self.assertEqual(
+            {(edge.source, edge.target, edge.type) for edge in paraphrase.edges},
+            {(edge.source, edge.target, edge.type) for edge in result.edges},
+        )
+        self.assertEqual(paraphrase.metadata["answerability"]["status"], "answerable")
+
+    def test_runtime_observed_call_is_valid_path_evidence(self) -> None:
+        from graphgraph.retrieval.obligations import relationship_obligation_coverage
+
+        evidence = relationship_obligation_coverage(
+            "multi_hop_path",
+            ("START",),
+            [Edge("START", "TARGET", "observed_calls", provenance="runtime_trace")],
+            ("trace", "path"),
+        )
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["status"], "proven")
+
     def test_qualified_multi_hop_path_is_a_monotone_proof_prefix(self) -> None:
         """Exact endpoints pin one call proof before optional lookalikes.
 

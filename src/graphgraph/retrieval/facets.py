@@ -199,6 +199,10 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "including",
         "include",
         "through",
+        "reach",
+        "reaches",
+        "reached",
+        "reaching",
         "chain",
         "every",
         "each",
@@ -256,6 +260,10 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "invokes",
         "invoked",
         "invoking",
+        "dispatch",
+        "dispatches",
+        "dispatched",
+        "dispatching",
         "carry",
         "carries",
         "carried",
@@ -380,7 +388,7 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         "implements",
     }
     for clause in re.split(
-        r"\s*(?:,|;|\band\b|\bplus\b|\bwhich\b)\s*",
+        r"\s*(?:,|;|\band\b|\bplus\b|\bwhich\b|\breach(?:es|ed|ing)?\b)\s*",
         facet_query,
         flags=re.I,
     ):
@@ -388,7 +396,7 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
             clause = re.sub(rf"\b{re.escape(identifier)}\b", " ", clause, flags=re.I)
         for owner, member in qualified:
             clause = re.sub(
-                rf"\b{re.escape(owner)}\s*::\s*{re.escape(member)}\b",
+                rf"\b{re.escape(owner)}\s*(?:::|\.|#)\s*{re.escape(member)}\b",
                 " ",
                 clause,
                 flags=re.I,
@@ -404,6 +412,15 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
 def facet_search_queries(label: str, terms: tuple[str, ...]) -> tuple[str, ...]:
     """Bounded relaxed searches let prose facets reach compound code symbols."""
     queries = [label]
+    search_aliases = {
+        "application": "app",
+        "creation": "create",
+        "handling": "handle",
+        "request": "req",
+    }
+    normalized = " ".join(search_aliases.get(term, term) for term in terms)
+    if normalized and normalized != label:
+        queries.append(normalized)
     if len(terms) >= 3:
         queries.extend(" ".join(terms[index : index + 2]) for index in range(len(terms) - 1))
     return tuple(dict.fromkeys(query for query in queries if query.strip()))
@@ -478,7 +495,19 @@ def facet_coverage(
                 roots=roots,
             )
             if structural_first
-            else [node_id for node_id in sorted(nodes) if _facet_matches_node(graph.nodes[node_id], terms)]
+            else [
+                node_id
+                for node_id in sorted(
+                    nodes,
+                    key=lambda candidate: (
+                        _is_test_node(graph.nodes[candidate]),
+                        not is_code_like(graph.nodes[candidate]),
+                        graph.nodes[candidate].kind != "external",
+                        candidate,
+                    ),
+                )
+                if _facet_matches_node(graph.nodes[node_id], terms)
+            ]
         )
         if not evidence and not structural_first:
             evidence = _facet_structural_evidence(
@@ -700,6 +729,10 @@ def _facet_evidence_terms(terms: tuple[str, ...]) -> tuple[str, ...]:
 def _facet_term_forms(term: str) -> set[str]:
     forms = {term_key(term)}
     aliases = {
+        "application": {"app"},
+        "creation": {"create", "creates", "created", "creating", "constructor", "factory"},
+        "handling": {"handle", "handler", "handles", "handled"},
+        "request": {"req"},
         "sync": {"synchronization", "synchronize", "synchronized", "syncing"},
         "synchronization": {"sync", "synchronize", "synchronized", "syncing"},
         "synchronize": {"sync", "synchronization", "synchronized", "syncing"},
@@ -952,6 +985,11 @@ def reconcile_affected_output_facets(metadata: dict[str, object]) -> tuple[str, 
         {
             "fulfilled": fulfilled,
             "unfulfilled": remaining,
+            "unfulfilled_required": [
+                label
+                for label in coverage.get("unfulfilled_required", ())
+                if str(label) in remaining
+            ],
             "coverage_ratio": round(len(fulfilled) / max(1, total), 4),
             "warning": "unfulfilled query facets" if remaining else "",
         }

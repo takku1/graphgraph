@@ -65,16 +65,29 @@ def _nominal(type_name: str) -> str:
 
 
 _JS_RETURN_NEW = re.compile(r"\breturn\s+new\s+([A-Z][\w$]*)")
+_JS_RETURN_LOCAL = re.compile(r"\breturn\s+([A-Za-z_$][\w$]*)\s*(?:[;}]|$)", re.MULTILINE)
 # `const x = factory()` / `let y = await make()` -- a local bound to a call.
 _JS_LOCAL_CALL = re.compile(
-    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?([A-Za-z_$][\w$]*)\s*\("
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*"
+    r"(?:(?:module\.)?exports\s*=\s*)?(?:await\s+)?([A-Za-z_$][\w$]*)\s*\("
 )
 _THIS_ALIAS = re.compile(
     r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b"
 )
+_OBJECT_ASSIGN = re.compile(
+    r"\bObject\.assign\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)"
+)
+_DEFINE_PROPERTY = re.compile(
+    r"\bObject\.defineProperty\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*"
+    r"['\"]([A-Za-z_$][\w$]*)['\"]\s*,\s*\{(?P<body>.*?)\}\s*\)",
+    re.DOTALL,
+)
 
 
-def _ts_return_type_from_body(body: str) -> str | None:
+def _ts_return_type_from_body(
+    body: str,
+    local_types: dict[str, str] | None = None,
+) -> str | None:
     """Infer a function's return type from ``return new X()`` (the factory shape).
 
     JS has no return annotations, so a body returning exactly one concrete class
@@ -83,8 +96,16 @@ def _ts_return_type_from_body(body: str) -> str | None:
     return-type join already uses.
     """
     types = set(_JS_RETURN_NEW.findall(body))
+    if local_types:
+        types.update(
+            local_types[name]
+            for name in _JS_RETURN_LOCAL.findall(body)
+            if name in local_types
+        )
     if len(types) == 1:
         candidate = next(iter(types))
+        if "::" in candidate:
+            return candidate
         return candidate if _nominal(candidate) else None
     return None
 
@@ -106,6 +127,30 @@ def _ts_local_call_return_types(body: str, return_types: dict[str, str]) -> dict
 def _ts_this_aliases(body: str) -> frozenset[str]:
     """Bindings proven to alias the current structural/class instance."""
     return frozenset(_THIS_ALIAS.findall(body))
+
+
+def _ts_property_copy_types(
+    body: str,
+    source_types: dict[str, str],
+    helper_aliases: frozenset[str],
+) -> dict[str, str]:
+    """Type property-copy targets from proven sources and helper semantics."""
+    pairs = list(_OBJECT_ASSIGN.findall(body))
+    for helper in helper_aliases:
+        pattern = re.compile(
+            rf"\b{re.escape(helper)}\s*\(\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)"
+        )
+        pairs.extend(pattern.findall(body))
+    inferred: dict[str, str] = {}
+    for target, source in pairs:
+        if source_type := source_types.get(source, ""):
+            prior = inferred.get(target)
+            if prior is None:
+                inferred[target] = source_type
+            elif prior != source_type:
+                # Conflicting copy sources are ambiguous receiver evidence.
+                inferred.pop(target, None)
+    return inferred
 
 
 _JS_PARAM_LIST = re.compile(r"\(([^)]*)\)")
@@ -132,6 +177,20 @@ def _ts_parameter_names(body: str) -> set[str]:
     return names
 
 
+def _ts_ordered_parameter_names(body: str) -> tuple[str, ...]:
+    """Ordered bare parameters for protocol-aware callback binding."""
+    signature = body.split("{", 1)[0]
+    match = _JS_PARAM_LIST.search(signature)
+    if not match:
+        return ()
+    names: list[str] = []
+    for part in match.group(1).split(","):
+        token = part.strip().split(":", 1)[0].split("=", 1)[0].strip().lstrip(". ")
+        if token.isidentifier():
+            names.append(token)
+    return tuple(names)
+
+
 def _ts_local_types(body: str) -> dict[str, str]:
     """Receiver types declared in one TypeScript/JavaScript function body."""
     result: dict[str, str] = {}
@@ -154,6 +213,14 @@ def _ts_class_field_types(source: str) -> dict[tuple[str, str], str]:
     assignment says nothing about the field's type.
     """
     result: dict[tuple[str, str], str] = {}
+    for match in _DEFINE_PROPERTY.finditer(source):
+        types = {
+            nominal
+            for raw in re.findall(r"\bnew\s+([A-Z][\w$.]*)", match.group("body"))
+            if (nominal := _nominal(raw))
+        }
+        if len(types) == 1:
+            result[(match.group(1), match.group(2))] = next(iter(types))
     for class_match in re.finditer(r"\bclass\s+([A-Z][\w$]*)[^{]*\{", source):
         owner = class_match.group(1)
         body = source[class_match.end():]

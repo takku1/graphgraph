@@ -206,6 +206,24 @@ with the query; GraphGraph performs one O(named paths) splice, persists it,
 and queries that exact in-memory graph without a second MCP call or disk
 reload. Omitted extraction settings inherit from the saved graph.
 
+For unrestricted read-only questions, use the uniform facade from any surface:
+
+```python
+import graphgraph
+
+result = graphgraph.query("what calls Router::handle?")
+```
+
+```powershell
+graphgraph query "what calls Router::handle?"
+```
+
+MCP exposes the same operation as `query`. Its deterministic compiler routes to
+`relations`, `select`, `search`, `status`, or facet-aware `context` only when the
+request is losslessly representable, returns the chosen plan, and never infers
+a mutation or silently builds a missing graph. Expert operations remain public
+for callers that already know the exact contract they need.
+
 ```json
 {"query":"what should change next?","changed_paths":["src/auth/session.py"],"deleted_paths":["src/auth/legacy.py"]}
 ```

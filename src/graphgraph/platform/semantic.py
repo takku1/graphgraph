@@ -38,6 +38,8 @@ _INDEX_CACHE_LOCK = RLock()
 _INDEX_METADATA_PREFIX_CHARS = 16_384
 _VECTOR_RECORD = struct.Struct("<If")
 _VECTOR_ENCODING = "base85-u32-f32-le"
+_INDEX_VERSION = 4
+_TRANSACTION_POLICY = "graph-version-coupled-v1"
 
 
 class SemanticIndex:
@@ -48,6 +50,8 @@ class SemanticIndex:
         self.dimensions = max(32, dimensions)
         self.vectors: dict[str, dict[int, float]] = {}
         self.signature = ""
+        self.graph_version = ""
+        self.transaction_policy = _TRANSACTION_POLICY
         # Which backend produced these vectors. "hash" is the offline default;
         # any other value is an embedding space and must be queried through the
         # same backend. Set on build/load, checked on query.
@@ -90,6 +94,7 @@ class SemanticIndex:
             }
             self.backend_name = HASH_BACKEND_NAME
         self.signature = _graph_signature(graph)
+        self.graph_version = _graph_version(graph)
         if self.path:
             self.save()
         return self
@@ -128,9 +133,11 @@ class SemanticIndex:
             raise ValueError("SemanticIndex.save requires a path")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "version": 3,
+            "version": _INDEX_VERSION,
             "dimensions": self.dimensions,
             "signature": self.signature,
+            "graph_version": self.graph_version,
+            "transaction_policy": self.transaction_policy,
             "backend": self.backend_name,
             "vector_encoding": _VECTOR_ENCODING,
             "vectors": {
@@ -154,6 +161,8 @@ class SemanticIndex:
         data = json.loads(resolved.read_text(encoding="utf-8"))
         index = cls(path, dimensions=int(data.get("dimensions", 2048)))
         index.signature = str(data.get("signature", ""))
+        index.graph_version = str(data.get("graph_version", ""))
+        index.transaction_policy = str(data.get("transaction_policy", ""))
         # Pre-backend indexes carry no "backend" key; they are hash indexes.
         index.backend_name = str(data.get("backend", HASH_BACKEND_NAME))
         vectors = data.get("vectors", {})
@@ -192,8 +201,12 @@ class SemanticIndex:
         except (OSError, ValueError, json.JSONDecodeError):
             return "invalid"
         current = (
-            bool(metadata.get("signature"))
+            int(metadata.get("version", 0)) >= _INDEX_VERSION
+            and metadata.get("transaction_policy") == _TRANSACTION_POLICY
+            and bool(metadata.get("signature"))
             and str(metadata["signature"]) == _graph_signature(graph)
+            and bool(metadata.get("graph_version"))
+            and str(metadata["graph_version"]) == _graph_version(graph)
             and str(metadata.get("backend", HASH_BACKEND_NAME))
             == active_backend_name()
         )
@@ -219,6 +232,9 @@ class SemanticIndex:
         return (
             bool(self.signature)
             and self.signature == _graph_signature(graph)
+            and bool(self.graph_version)
+            and self.graph_version == _graph_version(graph)
+            and self.transaction_policy == _TRANSACTION_POLICY
             and self.backend_name == active_backend_name()
         )
 
@@ -232,6 +248,47 @@ def _graph_signature(graph: Graph) -> str:
     for node in sorted(graph.nodes.values(), key=lambda item: item.id):
         if node.active:
             digest.update(f"{node.id}\0{_node_text(node)}\n".encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _graph_version(graph: Graph) -> str:
+    """Fingerprint the complete active graph transaction.
+
+    The semantic vectors depend only on node text, but retrieval combines their
+    seeds with graph traversal. Coupling the sidecar to active topology prevents
+    a reader from mixing vectors built for one graph with edges from another.
+    """
+    digest = hashlib.sha256()
+    digest.update(f"nodes:{_graph_signature(graph)}\n".encode("utf-8"))
+    active_nodes = {node.id for node in graph.nodes.values() if node.active}
+    for edge in sorted(
+        (
+            edge
+            for edge in graph.edges
+            if edge.active and edge.source in active_nodes and edge.target in active_nodes
+        ),
+        key=lambda item: (
+            item.source,
+            item.target,
+            item.type,
+            item.weight,
+            item.confidence,
+            item.provenance,
+            item.evidence,
+            item.source_location,
+        ),
+    ):
+        record = (
+            edge.source,
+            edge.target,
+            edge.type,
+            format(edge.weight, ".17g"),
+            format(edge.confidence, ".17g"),
+            edge.provenance,
+            edge.evidence,
+            edge.source_location,
+        )
+        digest.update(("\0".join(record) + "\n").encode("utf-8"))
     return digest.hexdigest()
 
 
