@@ -423,12 +423,24 @@ _NESTED_NAME_PARENT_TYPES = {
 
 
 def _name_node(node: Any) -> Any | None:
-    try:
-        named = node.child_by_field_name("name")
-        if named is not None:
-            return named
-    except Exception:
-        pass
+    for field_name in ("name", "declarator"):
+        try:
+            named = node.child_by_field_name(field_name)
+            if named is None:
+                continue
+            if named.type in _NAME_NODE_TYPES:
+                return named
+            # C/C++ pointer-return functions wrap the function declarator in
+            # one or more pointer_declarator nodes. Following the grammar's
+            # explicit `declarator` field is precise; recursively walking the
+            # whole function_definition instead sees the return type's
+            # `struct redisCommand` identifier first and mislabels the
+            # function as `redisCommand`.
+            nested = _name_node(named)
+            if nested is not None:
+                return nested
+        except Exception:
+            pass
     for child in getattr(node, "named_children", ()):
         if child.type in _NAME_NODE_TYPES:
             return child

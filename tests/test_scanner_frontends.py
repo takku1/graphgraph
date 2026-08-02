@@ -2093,6 +2093,25 @@ class FrontendsScannerTest(unittest.TestCase):
             }
             self.assertNotIn(("MainLoop", "CB2_InitBattle"), calls)
 
+    def test_tree_sitter_extracts_c_pointer_return_function_definition(self) -> None:
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        c_text = (
+            "struct redisCommand *lookupCommand(void **argv, int argc) { return 0; }\n"
+            "int processCommand(void *client) { return lookupCommand(0, 0) != 0; }\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "server.c"
+            path.write_text(c_text, encoding="utf-8")
+            result = select_extractor("tree_sitter").extract_symbols(
+                [SourceFile(path, "server.c", "server_c", c_text)],
+                max_total_symbols=100,
+            )
+
+        labels = {node.label for node in result.nodes.values() if node.kind == "function"}
+        self.assertIn("lookupCommand", labels)
+        self.assertIn("processCommand", labels)
+
     def test_tree_sitter_links_python_keyword_argument_callback(self) -> None:
         if not tree_sitter_available():
             self.skipTest("tree_sitter is not installed")
