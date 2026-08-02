@@ -1,0 +1,23 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "suite_id": "heldout-language-rotation-2026-08-02",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "split_policy": {
+    "unit": "repository",
+    "rule": "The three rotation repositories are unseen by retrieval-policy tuning before the first recorded run; GraphGraph supplies the required training split only.",
+    "train": ["takku1/graphgraph"],
+    "calibration": ["redis/redis"],
+    "test": ["marticliment/UniGetUI", "neo4j/neo4j"]
+  },
+  "projects": [
+    {"tasks": "graphgraph-control.json"},
+    {"tasks": "redis.json"},
+    {"tasks": "unigetui.json"},
+    {"tasks": "neo4j.json"}
+  ]
+}

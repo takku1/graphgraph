@@ -1,0 +1,77 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "redis",
+    "repository": "redis/redis",
+    "commit": "138263a1b480fcd2e756be27f369203a46481d06",
+    "language": "c",
+    "split": "calibration"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_c_function_boundaries_before_first_graph_measurement",
+    "refs": ["src/networking.c:3472-3493", "src/server.c:3588-3620", "src/server.c:3928-4180", "src/server.c:4341-4590"]
+  },
+  "tasks": [
+    {
+      "id": "REDIS-HO-001",
+      "query": "Which stages turn a decoded request into its selected handler before execution?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "heldout", "c"],
+      "expected_facets": {
+        "entry": ["processCommandAndResetClient"],
+        "selection": ["processCommand", "lookupCommand"],
+        "execution": ["call"]
+      },
+      "oracle_refs": ["src/networking.c:3472-3493", "src/server.c:3588-3620", "src/server.c:4391-4590"]
+    },
+    {
+      "id": "REDIS-HO-002",
+      "query": "What calls processCommand?",
+      "query_class": "reverse_lookup",
+      "strata": ["exact", "reverse_lookup", "heldout", "c"],
+      "expected": ["processCommandAndResetClient"],
+      "oracle_refs": ["src/networking.c:3472-3493"]
+    },
+    {
+      "id": "REDIS-HO-003",
+      "query": "What does processCommand call?",
+      "query_class": "direct_lookup",
+      "strata": ["exact", "direct_lookup", "compound", "heldout", "c"],
+      "expected_facets": {
+        "selection": ["lookupCommand"],
+        "execution": ["call"]
+      },
+      "oracle_refs": ["src/server.c:4391-4590"]
+    },
+    {
+      "id": "REDIS-HO-004",
+      "query": "Where is lookupCommand defined?",
+      "query_class": "direct_lookup",
+      "strata": ["exact", "path_oracle", "heldout", "c"],
+      "expected": ["src/server.c"],
+      "oracle_refs": ["src/server.c:3588-3620"]
+    },
+    {
+      "id": "REDIS-HO-005",
+      "query": "Where is addReply defined?",
+      "query_class": "direct_lookup",
+      "strata": ["exact", "path_oracle", "heldout", "c"],
+      "expected": ["src/networking.c"],
+      "oracle_refs": ["src/networking.c:596-613"]
+    },
+    {
+      "id": "REDIS-HO-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control", "heldout", "c"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: no Kubernetes/gRPC service-mesh retry coordinator subsystem"]
+    }
+  ]
+}

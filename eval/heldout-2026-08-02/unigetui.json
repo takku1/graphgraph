@@ -1,0 +1,78 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "unigetui",
+    "repository": "marticliment/UniGetUI",
+    "commit": "5b05b35bedfa5e15927c4e586644a0e40c9aba4a",
+    "language": "csharp",
+    "split": "test"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_csharp_definition_boundaries_before_first_graph_measurement",
+    "refs": ["src/UniGetUI.PackageEngine.PackageEngine/PEInterface.cs:59-129", "src/UniGetUI.PackageEngine.PackageLoader/AbstractPackageLoader.cs:130-244", "src/UniGetUI.PackageEngine.PackageLoader/DiscoverablePackagesLoader.cs:35-78"]
+  },
+  "tasks": [
+    {
+      "id": "UNIGETUI-HO-001",
+      "query": "Which stages assemble provider backends, make them ready, then refresh installed plus upgrade catalogues?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "heldout", "csharp"],
+      "expected_facets": {
+        "assembly": ["CreateManagers"],
+        "loader_setup": ["LoadLoaders"],
+        "initialization": ["LoadManagers"],
+        "refresh": ["ReloadPackages"]
+      },
+      "oracle_refs": ["src/UniGetUI.PackageEngine.PackageEngine/PEInterface.cs:59-129"]
+    },
+    {
+      "id": "UNIGETUI-HO-002",
+      "query": "Where is PEInterface.LoadManagers implemented?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "path_oracle", "heldout", "csharp"],
+      "expected": ["src/UniGetUI.PackageEngine.PackageEngine/PEInterface.cs"],
+      "oracle_refs": ["src/UniGetUI.PackageEngine.PackageEngine/PEInterface.cs:97-129"]
+    },
+    {
+      "id": "UNIGETUI-HO-003",
+      "query": "What does PEInterface.LoadManagers call?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "direct_lookup", "compound", "heldout", "csharp"],
+      "expected_facets": {
+        "initialization": ["Initialize"],
+        "refresh": ["ReloadPackages"]
+      },
+      "oracle_refs": ["src/UniGetUI.PackageEngine.PackageEngine/PEInterface.cs:97-129"]
+    },
+    {
+      "id": "UNIGETUI-HO-004",
+      "query": "Where is DiscoverablePackagesLoader.LoadPackagesFromManager implemented?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "path_oracle", "heldout", "csharp"],
+      "expected": ["src/UniGetUI.PackageEngine.PackageLoader/DiscoverablePackagesLoader.cs"],
+      "oracle_refs": ["src/UniGetUI.PackageEngine.PackageLoader/DiscoverablePackagesLoader.cs:64-76"]
+    },
+    {
+      "id": "UNIGETUI-HO-005",
+      "query": "What does DiscoverablePackagesLoader.LoadPackagesFromManager call?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "direct_lookup", "heldout", "csharp"],
+      "expected": ["FindPackages"],
+      "oracle_refs": ["src/UniGetUI.PackageEngine.PackageLoader/DiscoverablePackagesLoader.cs:64-76"]
+    },
+    {
+      "id": "UNIGETUI-HO-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control", "heldout", "csharp"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: no Kubernetes/gRPC service-mesh retry coordinator subsystem"]
+    }
+  ]
+}

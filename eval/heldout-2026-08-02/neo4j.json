@@ -1,0 +1,81 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "neo4j",
+    "repository": "neo4j/neo4j",
+    "commit": "8f4aa6ad73201a677164bc7664205333ab2847fc",
+    "language": "java",
+    "split": "test"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_with_rg_and_java_method_boundaries_before_first_graph_measurement",
+    "refs": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/KernelTransactionImplementation.java:1158-1335", "community/kernel/src/main/java/org/neo4j/kernel/impl/api/InternalTransactionCommitProcess.java:62-139"]
+  },
+  "tasks": [
+    {
+      "id": "NEO4J-HO-001",
+      "query": "Which stages turn accepted graph changes into a durable journal entry plus updated stored data?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "heldout", "java"],
+      "expected_facets": {
+        "closure": ["closeTransaction"],
+        "conversion": ["commitTransaction"],
+        "durability": ["appendToLog"],
+        "storage": ["applyToStore"]
+      },
+      "oracle_refs": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/KernelTransactionImplementation.java:1158-1335", "community/kernel/src/main/java/org/neo4j/kernel/impl/api/InternalTransactionCommitProcess.java:62-139"]
+    },
+    {
+      "id": "NEO4J-HO-002",
+      "query": "Where is KernelTransactionImplementation.closeTransaction implemented?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "path_oracle", "heldout", "java"],
+      "expected": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/KernelTransactionImplementation.java"],
+      "oracle_refs": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/KernelTransactionImplementation.java:1178-1231"]
+    },
+    {
+      "id": "NEO4J-HO-003",
+      "query": "What does KernelTransactionImplementation.closeTransaction call?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "direct_lookup", "compound", "heldout", "java"],
+      "expected_facets": {
+        "commit": ["commitTransaction"],
+        "rollback": ["rollbackTransaction"]
+      },
+      "oracle_refs": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/KernelTransactionImplementation.java:1178-1231"]
+    },
+    {
+      "id": "NEO4J-HO-004",
+      "query": "Where is InternalTransactionCommitProcess.commit implemented?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "path_oracle", "heldout", "java"],
+      "expected": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/InternalTransactionCommitProcess.java"],
+      "oracle_refs": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/InternalTransactionCommitProcess.java:62-91"]
+    },
+    {
+      "id": "NEO4J-HO-005",
+      "query": "What does InternalTransactionCommitProcess.commit call?",
+      "query_class": "direct_lookup",
+      "strata": ["qualified_member", "direct_lookup", "compound", "heldout", "java"],
+      "expected_facets": {
+        "durability": ["appendToLog"],
+        "storage": ["applyToStore"]
+      },
+      "oracle_refs": ["community/kernel/src/main/java/org/neo4j/kernel/impl/api/InternalTransactionCommitProcess.java:62-107"]
+    },
+    {
+      "id": "NEO4J-HO-RED",
+      "query": "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+      "query_class": "auto",
+      "strata": ["negative", "red_control", "heldout", "java"],
+      "expected_answerable": false,
+      "oracle_refs": ["direct repository search: no Kubernetes/gRPC service-mesh retry coordinator subsystem"]
+    }
+  ]
+}
