@@ -90,7 +90,7 @@ Strict internal member-call rate is
 | AC-04 | Abstention and confidence calibration | Codex | active | 1/3 external red controls abstained; arbitrary self nonsense returned 3,303 tokens | Every red task is unanswerable, confidence <= 0.2, zero nodes, and <= 50 real tokens |
 | AC-05 | Cross-language call topology | Codex | active | Active Python 62.40%, JS 71.58%, Rust 29.48% strict rates; receiver evidence 67.00%, 87.09%, and 34.67% | Per-language volume gates pass with independently checked precision >= 98% |
 | AC-06 | Machine-response token surface | unassigned | todo | Evidence was 45.7% of a 3,783-token broad JSON response | Ordinary response <= 1.15x evidence-packet tokens; diagnostics remain opt-in and complete |
-| AC-07 | Token estimator calibration | unassigned | revalidate | Two broad packets were undercounted by about 12-13% | Mean absolute error <= 5%, p95 <= 10%, no format-ranking inversions on held-out packets |
+| AC-07 | Token estimator calibration | Codex | done | Two broad packets were undercounted by about 12-13% | Mean absolute error <= 5%, p95 <= 10%, no format-ranking inversions on held-out packets |
 | AC-08 | Latency and scale invariance | unassigned | todo | Exact cold CLI about 435 ms; broad path variable; ripgrep eval wall time 12.1 s | Transport-specific absolute and invariance gates pass |
 | AC-09 | Contract and telemetry consistency | unassigned | todo | Global Codex skill stale; answerability labels contradicted oracle outcomes | Capability/contract identity is machine-readable; co-reported state and metrics are internally consistent |
 | AC-10 | Rotating held-out repository panel | Codex | active | Flask, Express, and ripgrep only | Repeatable small panel covers at least five language/runtime strata without one monolithic run |
@@ -275,13 +275,29 @@ Gates:
 Outcome: budgeting and format selection should agree with real model tokenizers
 closely enough that rankings and hard limits do not change.
 
-- [ ] Re-run the calibration corpus after renderer or envelope changes.
-- [ ] Score `o200k_base` and `cl100k_base` independently.
-- [ ] Include broad packets, identifier-heavy packets, negative responses, and
+- [x] Re-run the calibration corpus after renderer or envelope changes.
+- [x] Score `o200k_base` and `cl100k_base` independently.
+- [x] Include broad packets, identifier-heavy packets, negative responses, and
   pretty JSON as separate strata.
-- [ ] Fail when the proxy chooses a different minimum valid format than a real
+- [x] Fail when the proxy chooses a different minimum valid format than a real
   tokenizer.
-- [ ] Round once after additive token-unit accumulation.
+- [x] Round once after additive token-unit accumulation.
+
+The enforceable calibration run covers 108 rendered packet/tokenizer pairs
+(nine formats, six sizes, and two tokenizers). The shipped estimator records
+2.73% mean absolute error, 5.93% p95 absolute error, 7.61% maximum error, a
+6.68-point cross-format mean-error spread, and zero minimum-format inversions
+across 12 tokenizer/size comparisons. Per tokenizer, `o200k_base` records
+3.01% MAE and 6.40% p95; `cl100k_base` records 2.45% MAE and 5.53% p95.
+
+Separate diagnostic strata preserve distinctions the packet fit must not hide:
+compact negative JSON is underestimated by 8%, a real identifier-heavy `gg`
+packet is overestimated by 4.80% (`o200k_base`) and 6.34% (`cl100k_base`), and
+pretty negative JSON is underestimated by 41.03%. Pretty machine envelopes
+therefore require real-token measurement under AC-06 rather than silently
+extending a compact-packet proxy beyond its calibration domain. The existing
+`token_units` contract accumulates an unrounded additive cost and
+`estimate_tokens` rounds once at the boundary.
 
 Gates:
 
@@ -432,6 +448,7 @@ available.
 | 2026-08-02 | SELF-06 | working tree; active GraphGraph graph | GraphGraph train panel and active external panel | in-process evaluator, `source-mode=off` | GraphGraph train panel: conceptual 3/3 full recall, exact/ambiguous positives 2/2 full recall, red control zero nodes/edges/tokens at confidence 0. External hard gate revalidated after the shared fix: conceptual 3/3, named 12/12, negatives 3/3. Saturated facet reservation now replaces weak prose rather than appending then truncating; one qualified witness must supply both evidence type and label quality; projected labels are ranked against their compiled role rather than raw prose. | `retrieval/anchors.py`; `retrieval/context.py`; `retrieval/facets.py`; focused 53-test suite and Ruff | Codex |
 | 2026-08-02 | HELDOUT-07 | task freeze `f0e99f9`; isolated `C:\tmp\heldout-*-20260802.gg` | Redis C, UniGetUI C#, Neo4j Java/Scala | full non-incremental tree-sitter scans; in-process evaluator; `source-mode=off` | First untouched run fails promotion: conceptual 0/3, named 10/12, negatives 3/3. All conceptual misses were incorrectly answerable just above 0.20. Redis exposed a pointer-return C definition extraction gap; UniGetUI exposed missing member-call evidence. Full builds passed structural validation; Neo4j scan 223.9 s and total evaluation wall 217.2 s. | `eval/heldout-2026-08-02/`; isolated graph receipts in `C:\tmp` | Codex |
 | 2026-08-02 | C-FRONTEND-08 | working tree after held-out baseline; no held-out rerun | synthetic C pointer-return fixture | tree-sitter frontend unit and full frontend/grammar suites | Reproduced the extractor defect independently: `struct redisCommand *lookupCommand(...)` was mislabeled `redisCommand` because generic descent visited the return type before the declarator. Following the grammar's explicit `declarator` field restores `lookupCommand` without a C-specific symbol table. Targeted red/green test, full frontend/grammar suite, and Ruff pass. The frozen Redis result remains the published untouched baseline. | `scanner/frontends/syntax.py`; `tests/test_scanner_frontends.py` | Codex |
+| 2026-08-02 | TOKENS-09 | shipped estimator constants `1.2593` / `0.1626`; active GraphGraph packet corpus | nine packet formats at six sizes; `o200k_base` and `cl100k_base`; negative and identifier-heavy diagnostics | in-process renderer plus real tokenizer counts | Enforced gate passes on 108 packet/tokenizer pairs: MAE 2.73%, p95 5.93%, max 7.61%, cross-format spread 6.68 points, and 0/12 minimum-format inversions. Compact negative error is -8%; real identifier-heavy packet errors are +4.80%/+6.34%. Pretty JSON is explicitly out of calibration and measured separately at -41.03%. Ruff passes. | `benchmarks/context_graph/calibrate_token_proxy.py --enforce`; `packets/metrics.py` | Codex |
 | YYYY-MM-DD | RUN-___ |  |  |  |  |  |  |
 
 ## Decision log
@@ -444,6 +461,7 @@ available.
 | 2026-08-02 | Make audit thresholds executable, not report-only | The frozen suite already exposed weak strata but returned success regardless of threshold failure | Revisit when the suite version or task counts intentionally change |
 | 2026-08-02 | Keep calibrated role rewrites bounded and make hybrid retrieval the general conceptual path | Hand aliases can close known lexical gaps but cannot establish cross-domain generality; learned sparse/dense candidates have stronger empirical support, while graph constraints can preserve GraphGraph's precision | Revisit after a resident, transaction-coupled semantic index is benchmarked on a newly frozen held-out repository |
 | 2026-08-02 | Treat the current Express/ripgrep conceptual tasks as seen regression evidence after this run | Their answer keys were inspected while implementing role projections, so their green result proves the mechanism and prevents regression but no longer proves unseen-domain generalization | Replace the held-out claim with AC-10 repositories frozen before their first measurement |
+| 2026-08-02 | Retain the shipped token-proxy coefficients despite least-squares coefficient drift | Prediction gates pass comfortably on both supported tokenizers and every rendered format; coefficient movement alone is not evidence that changing a coupled fit improves held-out prediction | Refit only when an independently frozen corpus fails MAE, p95, cross-format, or ranking gates |
 
 ## Evidence and companion reports
 
