@@ -200,7 +200,7 @@ answer the question.
 - [x] Add random nonsense, plausible out-of-domain, and near-miss negatives.
 - [x] Require answerability state, confidence, node count, and token count to
   agree.
-- [ ] Track Brier score and expected calibration error by query class.
+- [x] Track Brier score and expected calibration error by query class.
 - [x] Test negatives with and without semantic sidecars.
 - [x] Ensure an unresolved expected symbol fails measurement rather than being
   excluded as an unscored success.
@@ -449,6 +449,7 @@ available.
 | 2026-08-02 | HELDOUT-07 | task freeze `f0e99f9`; isolated `C:\tmp\heldout-*-20260802.gg` | Redis C, UniGetUI C#, Neo4j Java/Scala | full non-incremental tree-sitter scans; in-process evaluator; `source-mode=off` | First untouched run fails promotion: conceptual 0/3, named 10/12, negatives 3/3. All conceptual misses were incorrectly answerable just above 0.20. Redis exposed a pointer-return C definition extraction gap; UniGetUI exposed missing member-call evidence. Full builds passed structural validation; Neo4j scan 223.9 s and total evaluation wall 217.2 s. | `eval/heldout-2026-08-02/`; isolated graph receipts in `C:\tmp` | Codex |
 | 2026-08-02 | C-FRONTEND-08 | working tree after held-out baseline; no held-out rerun | synthetic C pointer-return fixture | tree-sitter frontend unit and full frontend/grammar suites | Reproduced the extractor defect independently: `struct redisCommand *lookupCommand(...)` was mislabeled `redisCommand` because generic descent visited the return type before the declarator. Following the grammar's explicit `declarator` field restores `lookupCommand` without a C-specific symbol table. Targeted red/green test, full frontend/grammar suite, and Ruff pass. The frozen Redis result remains the published untouched baseline. | `scanner/frontends/syntax.py`; `tests/test_scanner_frontends.py` | Codex |
 | 2026-08-02 | TOKENS-09 | shipped estimator constants `1.2593` / `0.1626`; active GraphGraph packet corpus | nine packet formats at six sizes; `o200k_base` and `cl100k_base`; negative and identifier-heavy diagnostics | in-process renderer plus real tokenizer counts | Enforced gate passes on 108 packet/tokenizer pairs: MAE 2.73%, p95 5.93%, max 7.61%, cross-format spread 6.68 points, and 0/12 minimum-format inversions. Compact negative error is -8%; real identifier-heavy packet errors are +4.80%/+6.34%. Pretty JSON is explicitly out of calibration and measured separately at -41.03%. Ruff passes. | `benchmarks/context_graph/calibrate_token_proxy.py --enforce`; `packets/metrics.py` | Codex |
+| 2026-08-02 | CALIBRATION-10 | `graphgraph.eval.v1`; existing stratified evaluator | direct lookup, subsystem summary, and negative query classes | evaluator unit contract | Confirmed that each `by_query_class` group independently emits Brier score, ECE, MCE, reliability, resolution, and uncertainty. Exact numeric oracles cover successful, incomplete, and negative outcomes; unresolved expectations remain excluded rather than mislabelled. | `analysis/calibration.py`; `analysis/eval_protocol.py`; `tests/test_eval_protocol.py` | Codex |
 | YYYY-MM-DD | RUN-___ |  |  |  |  |  |  |
 
 ## Decision log

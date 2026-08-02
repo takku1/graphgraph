@@ -216,6 +216,12 @@ def test_stratified_report_keeps_failing_strata_visible() -> None:
     assert report["overall"]["latency_ms"]["cold_runtime"]["samples"] == [20.0]
     assert report["overall"]["latency_ms"]["warm_runtime"]["samples"] == [10.0, 10.0]
     assert report["overall"]["calibration"]["count"] == 3
+    assert report["by_query_class"]["direct_lookup"]["calibration"]["brier"] == pytest.approx(0.04)
+    assert report["by_query_class"]["direct_lookup"]["calibration"]["ece"] == pytest.approx(0.2)
+    assert report["by_query_class"]["subsystem_summary"]["calibration"]["brier"] == pytest.approx(0.49)
+    assert report["by_query_class"]["subsystem_summary"]["calibration"]["ece"] == pytest.approx(0.7)
+    assert report["by_query_class"]["negative_query"]["calibration"]["brier"] == pytest.approx(0.01)
+    assert report["by_query_class"]["negative_query"]["calibration"]["ece"] == pytest.approx(0.1)
     assert report["overall"]["abstention"]["utility_mean"] == pytest.approx(1 / 3)
 
 
