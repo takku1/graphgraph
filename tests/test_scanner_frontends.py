@@ -3203,6 +3203,84 @@ class FrontendsScannerTest(unittest.TestCase):
             f"histogram {histogram} must partition the total",
         )
 
+    def test_cross_language_self_and_non_self_receiver_precision_oracle(self) -> None:
+        fixtures = {
+            ".py": (
+                "class Other:\n"
+                "    def Handle(self): return 1\n"
+                "class Service:\n"
+                "    def Handle(self): return 2\n"
+                "    def Run(self): return self.Handle()\n"
+                "    def RunOther(self, other: Other): return other.Handle()\n",
+                ("Run", "Handle"),
+                ("RunOther", "Handle"),
+                True,
+            ),
+            ".rs": (
+                "struct Other;\n"
+                "impl Other { fn handle(&self) -> i32 { 1 } }\n"
+                "struct Service;\n"
+                "impl Service {\n"
+                "  fn handle(&self) -> i32 { 2 }\n"
+                "  fn run(&self) -> i32 { self.handle() }\n"
+                "  fn run_other(&self, other: &Other) -> i32 { other.handle() }\n"
+                "}\n",
+                ("run", "handle"),
+                ("run_other", "handle"),
+                True,
+            ),
+            ".cs": (
+                "class Other { public int Handle() { return 1; } }\n"
+                "class Service {\n"
+                "  public int Handle() { return 2; }\n"
+                "  public int Run() { return this.Handle(); }\n"
+                "  public int RunOther(Other other) { return other.Handle(); }\n"
+                "}\n",
+                ("Run", "Handle"),
+                ("RunOther", "Handle"),
+                True,
+            ),
+            ".js": (
+                "class Other { Handle() { return 1; } }\n"
+                "class Service {\n"
+                "  Handle() { return 2; }\n"
+                "  Run() { return this.Handle(); }\n"
+                "  RunOther(other) { return other.Handle(); }\n"
+                "}\n",
+                ("Run", "Handle"),
+                ("RunOther", "Handle"),
+                False,
+            ),
+        }
+        for suffix, (text, self_call, other_call, typed_other) in fixtures.items():
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / f"fixture{suffix}"
+                path.write_text(text, encoding="utf-8")
+                result = select_extractor("tree_sitter").extract_symbols(
+                    [SourceFile(path, path.name, f"fixture_{suffix[1:]}", text)],
+                    max_total_symbols=100,
+                )
+                labels = {node_id: node.label for node_id, node in result.nodes.items()}
+                owners = {
+                    node_id: labels.get(node.parent, "")
+                    for node_id, node in result.nodes.items()
+                }
+                calls = {
+                    (labels[edge.source], owners[edge.target], labels[edge.target])
+                    for edge in result.edges
+                    if edge.type == "calls"
+                    and edge.source in labels
+                    and edge.target in labels
+                }
+
+                self.assertIn((self_call[0], "Service", self_call[1]), calls)
+                self.assertNotIn((other_call[0], "Service", other_call[1]), calls)
+                if typed_other:
+                    self.assertIn((other_call[0], "Other", other_call[1]), calls)
+                else:
+                    self.assertNotIn((other_call[0], "Other", other_call[1]), calls)
+                    self.assertGreaterEqual(result.unknown_receiver_member_calls, 1)
+
     def test_inherited_method_resolves_through_the_base_chain(self) -> None:
         # Resolution required the method to be owned by the receiver's exact
         # class, so every inherited call failed with both ends already in the

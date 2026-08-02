@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from graphgraph.analysis.eval_protocol import (
     TASK_RESOLVER_VERSION,
     TOKEN_PROXY_VERSION,
     EvalProtocolError,
+    agent_cycle_gate_report,
     deterministic_result_signature,
     load_eval_manifest,
     paired_bootstrap_comparison,
@@ -215,6 +217,88 @@ def test_stratified_report_keeps_failing_strata_visible() -> None:
     assert report["overall"]["latency_ms"]["warm_runtime"]["samples"] == [10.0, 10.0]
     assert report["overall"]["calibration"]["count"] == 3
     assert report["overall"]["abstention"]["utility_mean"] == pytest.approx(1 / 3)
+
+
+def test_agent_cycle_gate_report_enforces_external_accuracy_contract() -> None:
+    results = []
+    for project in ("flask", "express", "ripgrep"):
+        results.append(
+            _result(
+                f"{project}-concept",
+                query_class="subsystem_summary",
+                split="calibration" if project == "flask" else "test",
+                strata=("conceptual", "lexical_disjoint"),
+                recall=1.0,
+            )
+        )
+        results[-1] = replace(results[-1], project=project)
+        results.append(
+            replace(
+                _result(
+                    f"{project}-negative",
+                    query_class="negative_query",
+                    split="calibration" if project == "flask" else "test",
+                    strata=("negative", "red_control"),
+                    recall=0.0,
+                    confidence=0.1,
+                    expected_answerable=False,
+                ),
+                project=project,
+                node_recall=None,
+                answerability_status="unanswerable",
+                returned_nodes=0,
+                returned_edges=0,
+                token_estimate=0,
+            )
+        )
+    for index in range(12):
+        results.append(
+            replace(
+                _result(
+                    f"named-{index:02d}",
+                    split="calibration" if index < 4 else "test",
+                    strata=("exact",),
+                    recall=1.0,
+                ),
+                project="flask" if index < 4 else "held-out",
+            )
+        )
+
+    passing = agent_cycle_gate_report(results)
+
+    assert passing["passed"] is True
+    assert passing["checks"]["named_task_count"] is True
+    assert passing["checks"]["conceptual_task_count"] is True
+    assert passing["checks"]["negative_fail_closed"] is True
+    assert passing["conceptual"]["full_recall_rate"] == 1.0
+
+    mean_only_results = [
+        replace(result, node_recall=0.8)
+        if {"conceptual", "lexical_disjoint"} <= set(result.strata)
+        else result
+        for result in results
+    ]
+    mean_only = agent_cycle_gate_report(mean_only_results)
+    assert mean_only["conceptual"]["recall_mean"] == 0.8
+    assert mean_only["conceptual"]["full_recall_rate"] == 0.0
+    assert mean_only["checks"]["conceptual_recall"] is False
+
+    failing_results = list(results)
+    failing_results[0] = replace(failing_results[0], node_recall=0.0)
+    failing_results[3] = replace(
+        failing_results[3],
+        answerability_status="incomplete",
+        answerability_confidence=0.7,
+        returned_nodes=7,
+        token_estimate=228,
+    )
+
+    failing = agent_cycle_gate_report(failing_results)
+
+    assert failing["passed"] is False
+    assert failing["conceptual"]["recall_mean"] == pytest.approx(2 / 3)
+    assert failing["conceptual"]["full_recall_rate"] == pytest.approx(2 / 3)
+    assert failing["negative"]["failing_tasks"] == ["express-negative"]
 
 
 def test_paired_bootstrap_requires_a_practical_effect_and_is_deterministic() -> None:

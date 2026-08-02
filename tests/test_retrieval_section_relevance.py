@@ -120,6 +120,272 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         self.assertIn("quantum banana scheduler", result.metadata["facet_coverage"]["unfulfilled"])
         self.assertEqual(result.metadata["mention_coverage"]["coverage_ratio"], 1.0)
 
+    def test_conceptual_process_roles_recover_graph_backed_stages(self) -> None:
+        graph = Graph(
+            nodes={
+                "ENTRY": Node("ENTRY", "wsgi_app", "function", "src/app.py"),
+                "PREPARE": Node("PREPARE", "preprocess_request", "function", "src/app.py"),
+                "EXECUTE": Node("EXECUTE", "dispatch_request", "function", "src/app.py"),
+                "COMPLETE": Node("COMPLETE", "finalize_response", "function", "src/app.py"),
+            },
+            edges=[
+                Edge("ENTRY", "PREPARE", "calls", provenance="tree_sitter"),
+                Edge("PREPARE", "EXECUTE", "calls", provenance="tree_sitter"),
+                Edge("EXECUTE", "COMPLETE", "calls", provenance="tree_sitter"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Which stages prepare an inbound transaction, execute application logic, "
+            "and complete outgoing data?",
+            "subsystem_summary",
+            hops=2,
+            max_nodes=20,
+        )
+
+        self.assertEqual(
+            {"PREPARE", "EXECUTE", "COMPLETE"} - result.nodes,
+            set(),
+            result.metadata,
+        )
+        self.assertNotEqual(result.metadata["answerability"]["status"], "unanswerable")
+        self.assertLessEqual(result.metadata["answerability"]["confidence"], 0.2)
+
+    def test_semantic_seed_cannot_displace_graph_backed_conceptual_roles(self) -> None:
+        graph = Graph(
+            nodes={
+                "PREPARE": Node("PREPARE", "preprocess_request", "function", "src/app.py"),
+                "EXECUTE": Node("EXECUTE", "dispatch_request", "function", "src/app.py"),
+                "COMPLETE": Node("COMPLETE", "finalize_response", "function", "src/app.py"),
+                "DISTRACTOR": Node(
+                    "DISTRACTOR",
+                    "transaction application data guide",
+                    "paragraph",
+                    "docs/database.md",
+                    summary="prepare, execute, and complete a database transaction",
+                ),
+            },
+            edges=[
+                Edge("PREPARE", "EXECUTE", "calls", provenance="tree_sitter"),
+                Edge("EXECUTE", "COMPLETE", "calls", provenance="tree_sitter"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Which stages prepare an inbound transaction, execute application logic, "
+            "and complete outgoing data?",
+            "subsystem_summary",
+            hops=2,
+            max_nodes=20,
+            seed_ids=("DISTRACTOR",),
+        )
+
+        self.assertEqual({"PREPARE", "EXECUTE", "COMPLETE"} - result.nodes, set())
+        self.assertEqual({"PREPARE", "EXECUTE", "COMPLETE"} - set(result.starts), set())
+
+    def test_conceptual_factory_and_routing_roles_recover_connected_modules(self) -> None:
+        graph = Graph(
+            nodes={
+                "FACTORY": Node("FACTORY", "createApplication", "function", "lib/express.js"),
+                "ROUTER": Node("ROUTER", "applicationRouter", "function", "lib/application.js"),
+            },
+            edges=[Edge("FACTORY", "ROUTER", "calls", provenance="tree_sitter")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Which modules connect the framework factory to its routing dependency?",
+            "subsystem_summary",
+            hops=2,
+            max_nodes=20,
+        )
+
+        self.assertEqual({"FACTORY", "ROUTER"} - result.nodes, set(), result.metadata)
+
+    def test_conceptual_production_roles_do_not_root_a_lexical_test_file(self) -> None:
+        graph = Graph(
+            nodes={
+                "FACTORY": Node("FACTORY", "createApplication", "function", "lib/express.js"),
+                "ROUTER": Node("ROUTER", "applicationRouter", "function", "lib/application.js"),
+                "TEST": Node("TEST", "app.router.js", "javascript", "test/app.router.js"),
+            },
+            edges=[Edge("FACTORY", "ROUTER", "calls", provenance="tree_sitter")],
+        )
+
+        result = retrieve_context(
+            graph,
+            "Which modules connect the framework factory to its routing dependency?",
+            "subsystem_summary",
+            hops=2,
+            max_nodes=20,
+        )
+
+        self.assertNotIn("TEST", result.starts)
+        self.assertEqual({"FACTORY", "ROUTER"} - result.nodes, set(), result.metadata)
+
+    def test_conceptual_compile_and_traversal_roles_recover_a_typed_path(self) -> None:
+        nodes = {
+            "MATCHER_FN": Node("MATCHER_FN", "matcher", "method", "src/args.rs"),
+            "RUST_FN": Node("RUST_FN", "matcher_rust", "method", "src/args.rs"),
+            "BUILD": Node("BUILD", "build_many", "function", "src/matcher.rs"),
+            "MATCHER": Node("MATCHER", "PatternMatcher", "struct", "src/matcher.rs"),
+            "SEARCH": Node("SEARCH", "search_path", "method", "src/search.rs"),
+        }
+        nodes.update(
+            {
+                f"WALK_{index}": Node(f"WALK_{index}", label, "method", "src/walk.rs")
+                for index, label in enumerate(
+                    ("fmt", "add", "build", "empty", "hidden", "ignore", "new", "overrides", "sort")
+                )
+            }
+        )
+        graph = Graph(
+            nodes=nodes,
+            edges=[
+                Edge("SEARCH", "MATCHER_FN", "calls", provenance="tree_sitter"),
+                Edge("MATCHER_FN", "RUST_FN", "calls", provenance="tree_sitter"),
+                Edge("RUST_FN", "BUILD", "calls", provenance="tree_sitter"),
+                Edge("BUILD", "MATCHER", "returns", provenance="tree_sitter"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "How does user input become compiled logic and drive filesystem traversal?",
+            "multi_hop_path",
+            hops=3,
+            max_nodes=20,
+        )
+
+        self.assertEqual(
+            {"MATCHER_FN", "RUST_FN", "BUILD", "MATCHER", "SEARCH"} - result.nodes,
+            set(),
+            result.metadata,
+        )
+        self.assertIn("SEARCH", result.starts)
+        self.assertIsNotNone(result.metadata.get("constraint_selection"))
+
+    def test_conceptual_path_without_a_directed_connector_is_incomplete(self) -> None:
+        graph = Graph(
+            nodes={
+                "MATCHER_FN": Node("MATCHER_FN", "matcher", "method", "src/args.rs"),
+                "RUST_FN": Node("RUST_FN", "matcher_rust", "method", "src/args.rs"),
+                "BUILD": Node("BUILD", "build_many", "function", "src/matcher.rs"),
+                "MATCHER": Node("MATCHER", "PatternMatcher", "struct", "src/matcher.rs"),
+                "SEARCH": Node("SEARCH", "search_path", "method", "src/search.rs"),
+            },
+            edges=[
+                Edge("MATCHER_FN", "RUST_FN", "calls", provenance="tree_sitter"),
+                Edge("RUST_FN", "BUILD", "calls", provenance="tree_sitter"),
+                Edge("BUILD", "MATCHER", "returns", provenance="tree_sitter"),
+            ],
+        )
+
+        result = retrieve_context(
+            graph,
+            "How does user input become compiled logic and drive filesystem traversal?",
+            "multi_hop_path",
+            hops=3,
+            max_nodes=20,
+        )
+
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertLessEqual(result.metadata["answerability"]["confidence"], 0.2)
+        self.assertIn("no directed structural connector", result.metadata["answerability"]["reason"])
+
+    def test_direct_lookup_with_only_incidental_word_hits_abstains(self) -> None:
+        graph = Graph(
+            nodes={
+                "RETRY": Node("RETRY", "retry_request", "function", "src/client.py"),
+                "STATUS": Node("STATUS", "service_status", "function", "src/status.py"),
+            }
+        )
+
+        result = retrieve_context(
+            graph,
+            "Where is the Kubernetes gRPC retry scheduler implemented?",
+            "direct_lookup",
+            hops=1,
+        )
+
+        self.assertEqual(result.starts, ())
+        self.assertEqual(result.nodes, set())
+        self.assertEqual(result.metadata["answerability"]["status"], "unanswerable")
+        self.assertEqual(result.metadata["answerability"]["confidence"], 0.0)
+
+    def test_ambiguous_implementation_lookup_prefers_bounded_code_symbols_over_prose(self) -> None:
+        graph = Graph(
+            nodes={
+                "DOC_A": Node(
+                    "DOC_A",
+                    "Where status is implemented",
+                    "paragraph",
+                    "docs/status.md",
+                ),
+                "DOC_B": Node(
+                    "DOC_B",
+                    "Status implementation guide",
+                    "section",
+                    "docs/guide.md",
+                ),
+                "STATUS": Node("STATUS", "status", "method", "src/model.py"),
+                "CMD": Node("CMD", "cmd_status", "function", "src/cli/diagnostics.py"),
+                "DIST": Node(
+                    "DIST",
+                    "distribution_artifact_status",
+                    "function",
+                    "src/distribution.py",
+                ),
+                "TEST": Node("TEST", "test_status", "method", "tests/test_status.py"),
+            }
+        )
+
+        result = retrieve_context(
+            graph,
+            "Where is status implemented?",
+            "direct_lookup",
+            hops=1,
+            max_nodes=8,
+        )
+
+        self.assertIn("CMD", result.starts)
+        self.assertNotIn("DOC_A", result.starts)
+        self.assertNotIn("DOC_B", result.starts)
+        self.assertNotIn("TEST", result.starts)
+
+    def test_random_plausible_and_near_miss_negatives_fail_closed_with_semantic_seeds(self) -> None:
+        graph = Graph(
+            nodes={
+                "RETRY": Node("RETRY", "retry_request", "function", "src/client.py"),
+                "COORDINATOR": Node("COORDINATOR", "coordinator_status", "function", "src/status.py"),
+                "GRPC": Node("GRPC", "grpc_adapter", "class", "src/transport.py"),
+            }
+        )
+        queries = (
+            "Where is the quasar papaya mutex implemented?",
+            "Where is the Kubernetes gRPC service-mesh retry coordinator implemented?",
+            "Where is the distributed retry coordinator implemented?",
+        )
+
+        for query in queries:
+            for seed_ids in ((), ("RETRY",)):
+                with self.subTest(query=query, semantic_seed=bool(seed_ids)):
+                    result = retrieve_context(
+                        graph,
+                        query,
+                        "direct_lookup",
+                        hops=1,
+                        seed_ids=seed_ids,
+                    )
+                    self.assertEqual(result.starts, ())
+                    self.assertEqual(result.nodes, set())
+                    self.assertEqual(result.edges, [])
+                    self.assertEqual(result.metadata["answerability"]["status"], "unanswerable")
+                    self.assertEqual(result.metadata["answerability"]["confidence"], 0.0)
+
     def test_compiler_abstains_on_low_confidence_automatic_route(self) -> None:
         from graphgraph.platform import GraphProgram, GraphRuntime
 
@@ -372,6 +638,47 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
         )
 
         self.assertTrue({"BENCH", "TIMING"} <= {match.node.id for match in reserved})
+
+    def test_saturated_facet_reservation_replaces_weak_prose_with_exact_code(self) -> None:
+        from graphgraph.retrieval.facets import reserve_facet_matches
+        from graphgraph.retrieval.models import Match
+
+        nodes = {
+            **{
+                f"DOC_{index}": Node(
+                    f"DOC_{index}",
+                    f"Route query and render packet note {index}",
+                    "paragraph",
+                    f"docs/note-{index}.md",
+                )
+                for index in range(12)
+            },
+            "ROUTE": Node("ROUTE", "route_query", "function", "src/routing.py"),
+            "RENDER": Node("RENDER", "render_packet", "function", "src/render.py"),
+        }
+        graph = Graph(nodes=nodes)
+        selected = tuple(
+            Match(nodes[f"DOC_{index}"], 100.0 - index, ())
+            for index in range(12)
+        )
+        candidates = (
+            *selected,
+            Match(nodes["ROUTE"], 80.0, ()),
+            Match(nodes["RENDER"], 80.0, ()),
+        )
+
+        reserved = reserve_facet_matches(
+            selected,
+            candidates,
+            (("routing", ("route", "query")), ("serialization", ("render", "packet"))),
+            graph=graph,
+            prefer_code=True,
+            prefer_production=True,
+            limit=12,
+        )
+
+        self.assertTrue({"ROUTE", "RENDER"} <= {match.node.id for match in reserved})
+        self.assertEqual(len(reserved), 12)
 
     def test_multihop_docs_only_mentions_are_reported_as_structurally_incomplete(self) -> None:
         graph = Graph(

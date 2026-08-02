@@ -13,6 +13,7 @@ from pathlib import Path
 
 from graphgraph.analysis.eval import evaluate_graph
 from graphgraph.analysis.eval_protocol import (
+    agent_cycle_gate_report,
     deterministic_result_signature,
     load_eval_manifest,
     stratified_report,
@@ -51,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--calibration-bins", type=int, default=10)
     parser.add_argument("--abstain-threshold", type=float, default=0.5)
     parser.add_argument("--repeat", type=int, default=1, help="Repeat each project and reject non-latency drift.")
+    parser.add_argument(
+        "--enforce-agent-cycle-gates",
+        action="store_true",
+        help="Exit nonzero unless the committed named/conceptual/negative promotion gates pass.",
+    )
     args = parser.parse_args(argv)
     if args.repeat < 1:
         parser.error("--repeat must be >= 1")
@@ -107,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
 
+    gates = agent_cycle_gate_report(results)
     payload = {
         "suite_id": suite.suite_id,
         "measured_at": datetime.now(timezone.utc).isoformat(),
@@ -129,9 +136,10 @@ def main(argv: list[str] | None = None) -> int:
             calibration_bins=args.calibration_bins,
             abstain_threshold=args.abstain_threshold,
         ),
+        "agent_cycle_gates": gates,
     }
     print(json.dumps(payload, indent=2, ensure_ascii=False))
-    return 0
+    return 0 if gates["passed"] or not args.enforce_agent_cycle_gates else 1
 
 
 if __name__ == "__main__":

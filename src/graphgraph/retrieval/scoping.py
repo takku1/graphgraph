@@ -158,7 +158,7 @@ def _is_test_node(node: object) -> bool:
         return str(getattr(node, "kind", "")) in {"function", "method"}
     path = str(getattr(node, "path", ""))
     kind = str(getattr(node, "kind", ""))
-    if _is_test_path(path) and kind in {"function", "method"}:
+    if _is_test_path(path) and kind not in NON_STRUCTURAL_KINDS:
         return True
     source = str(getattr(node, "source", ""))
     line = getattr(node, "line", None)

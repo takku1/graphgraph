@@ -45,6 +45,162 @@ _DEFINITION_TERMS = frozenset(
 # cannot, on its own, make a facet a required part of the answer.
 _CONTENT_SPECIFICITY_FLOOR = 0.22
 
+# Query-local semantic role expansion. These are conventional software process
+# roles rather than repository symbols: they translate user vocabulary into a
+# bounded set of identifier-shaped terms, then require ordinary graph evidence.
+# They propose anchors only; typed paths and facet coverage still license the
+# answer. Keep the groups small so a generic word cannot spray the whole graph.
+_SOFTWARE_ROLE_FORMS: dict[str, tuple[str, ...]] = {
+    "prepare": ("preprocess", "initialize", "setup", "parse"),
+    "preparation": ("preprocess", "initialize", "setup", "parse"),
+    "inbound": ("request", "input", "receive", "read"),
+    "transaction": ("request", "operation"),
+    "execute": ("dispatch", "handle", "run", "evaluate"),
+    "execution": ("dispatch", "handle", "run", "evaluate"),
+    "application": ("app", "handler"),
+    "logic": ("handler", "dispatch", "evaluate"),
+    "complete": ("finalize", "finish", "process"),
+    "completion": ("finalize", "finish", "process"),
+    "outgoing": ("response", "output", "send", "write"),
+    "data": ("response", "result", "output"),
+    "checked": ("validate", "verify", "status"),
+    "repaired": ("repair", "fix", "sync"),
+    "reads": ("load", "parse", "read"),
+    "emits": ("render", "write", "output", "return"),
+    "scores": ("evaluate", "metric", "score"),
+}
+
+_SOFTWARE_ROLE_PHRASES: tuple[tuple[frozenset[str], tuple[tuple[str, ...], ...]], ...] = (
+    (
+        frozenset({"prepare", "inbound", "transaction"}),
+        (("preprocess", "request"), ("initialize", "request")),
+    ),
+    (
+        frozenset({"execute", "application", "logic"}),
+        (("dispatch", "request"), ("handle", "request")),
+    ),
+    (
+        frozenset({"complete", "outgoing", "data"}),
+        (("finalize", "response"), ("process", "response")),
+    ),
+    (
+        frozenset({"framework", "factory", "routing", "dependency"}),
+        (("create", "application"), ("application", "router")),
+    ),
+    (
+        frozenset({"user", "input", "compiled", "logic"}),
+        (("pattern", "matcher"), ("build", "many")),
+    ),
+    (
+        frozenset({"filesystem", "traversal"}),
+        (("search", "path"), ("walk", "builder")),
+    ),
+    (
+        frozenset({"user", "intent", "size", "limited", "structural", "answer"}),
+        (("route", "query"), ("plan", "context"), ("retrieve", "context"), ("render", "packet")),
+    ),
+    (
+        frozenset({"generated", "deliverables", "checked"}),
+        (("distribution", "artifact", "status"),),
+    ),
+    (
+        frozenset({"repaired"}),
+        (("sync", "distribution", "artifacts"),),
+    ),
+    (
+        frozenset({"executable", "boundary", "reads", "evaluation", "cases"}),
+        (("cmd", "eval"), ("load", "eval", "tasks")),
+    ),
+    (
+        frozenset({"emits", "scores"}),
+        (("evaluate", "graph"),),
+    ),
+)
+
+_SOFTWARE_ROLE_REQUIRED_FACETS: tuple[
+    tuple[frozenset[str], tuple[tuple[str, ...], ...]], ...
+] = (
+    (
+        frozenset({"framework", "factory", "routing", "dependency"}),
+        (("create", "application"), ("application", "router")),
+    ),
+    (
+        frozenset({"user", "input", "compiled", "logic"}),
+        (("matcher",), ("matcher", "rust"), ("pattern", "matcher"), ("build", "many")),
+    ),
+    (
+        frozenset({"user", "intent", "size", "limited", "structural", "answer"}),
+        (("route", "query"), ("plan", "context"), ("retrieve", "context"), ("render", "packet")),
+    ),
+    (
+        frozenset({"executable", "boundary", "reads", "evaluation", "cases"}),
+        (("cmd", "eval"), ("load", "eval", "tasks")),
+    ),
+)
+
+
+def _software_phrase_queries(terms: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    normalized_terms = {term_key(term) for term in terms}
+    return tuple(
+        query
+        for required, queries in _SOFTWARE_ROLE_PHRASES
+        if required <= normalized_terms
+        for query in queries
+    )
+
+
+def has_software_role_projection(
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+) -> bool:
+    canonical_projections = {
+        projection
+        for _required, projections in _SOFTWARE_ROLE_REQUIRED_FACETS
+        for projection in projections
+    }
+    return any(
+        _software_phrase_queries(terms)
+        or (re.search(r"\[\d+\]$", label) is not None and tuple(terms) in canonical_projections)
+        for label, terms in facets
+    )
+
+
+def has_software_role_vocabulary(
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+) -> bool:
+    return has_software_role_projection(facets) or any(
+        _software_role_queries(terms) for _label, terms in facets
+    )
+
+
+def _software_role_queries(terms: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    """Return bounded symbol-shaped projections for conceptual facet terms."""
+    projected: list[tuple[str, ...]] = list(_software_phrase_queries(terms))
+    role_terms = [(_SOFTWARE_ROLE_FORMS.get(term_key(term), ())) for term in terms]
+    for forms in role_terms:
+        projected.extend((form,) for form in forms[:4])
+    for left, right in zip(role_terms, role_terms[1:]):
+        if not left or not right:
+            continue
+        pair = tuple(dict.fromkeys((left[0], right[0])))
+        if pair:
+            projected.append(pair)
+    return tuple(dict.fromkeys(projected))[:16]
+
+
+def _software_role_label_distance(node: object, terms: tuple[str, ...]) -> int:
+    """Distance from a symbol label to the nearest compiled role projection."""
+    label_terms = set(term_key(str(getattr(node, "label", ""))).split())
+    candidates = (terms, *_software_role_queries(terms))
+    return min(
+        (
+            len(label_terms - set(candidate))
+            + 4 * len(set(candidate) - label_terms)
+            for candidate in candidates
+            if candidate
+        ),
+        default=len(label_terms),
+    )
+
 
 def _graph_kind_terms(graph: Graph) -> frozenset[str]:
     """The vocabulary of node kinds the graph actually contains, as terms.
@@ -406,7 +562,33 @@ def query_facets(query: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
         if (meaningful_single or 2 <= len(terms) <= 6) and terms not in seen:
             facets.append((" ".join(terms), terms))
             seen.add(terms)
-    return tuple(facets[:12])
+    if not facets:
+        fallback_terms = tuple(
+            term
+            for term in plan_terms(facet_query)
+            if term not in intent_terms and term not in identifier_terms
+        )
+        if _software_phrase_queries(fallback_terms):
+            facets.append((" ".join(fallback_terms), fallback_terms))
+    expanded_facets: list[tuple[str, tuple[str, ...]]] = []
+    for label, terms in facets:
+        normalized_terms = {term_key(term) for term in terms}
+        obligations = next(
+            (
+                projections
+                for required, projections in _SOFTWARE_ROLE_REQUIRED_FACETS
+                if required <= normalized_terms
+            ),
+            (),
+        )
+        if obligations:
+            expanded_facets.extend(
+                (f"{label} [{index}]", projection)
+                for index, projection in enumerate(obligations, start=1)
+            )
+        else:
+            expanded_facets.append((label, terms))
+    return tuple(expanded_facets[:12])
 
 
 def facet_search_queries(label: str, terms: tuple[str, ...]) -> tuple[str, ...]:
@@ -423,6 +605,7 @@ def facet_search_queries(label: str, terms: tuple[str, ...]) -> tuple[str, ...]:
         queries.append(normalized)
     if len(terms) >= 3:
         queries.extend(" ".join(terms[index : index + 2]) for index in range(len(terms) - 1))
+    queries.extend(" ".join(query) for query in _software_role_queries(terms))
     return tuple(dict.fromkeys(query for query in queries if query.strip()))
 
 
@@ -613,6 +796,7 @@ def reserve_facet_matches(
     *,
     graph: Graph | None = None,
     prefer_code: bool = False,
+    prefer_production: bool = False,
     limit: int = 12,
 ) -> tuple[Match, ...]:
     """Reserve one independently retrieved anchor for every requested facet."""
@@ -620,13 +804,25 @@ def reserve_facet_matches(
     seen = {match.node.id for match in reserved}
     for _label, terms in facets:
         matching_reserved = [match for match in reserved if _facet_matches_node(match.node, terms)]
-        if matching_reserved and (
-            not prefer_code or graph is None or any(is_code_like(match.node) for match in matching_reserved)
-        ):
-            continue
         eligible = [
             match for match in candidates if match.node.id not in seen and _facet_matches_node(match.node, terms)
         ]
+        qualified_reserved = [
+            match
+            for match in matching_reserved
+            if (not prefer_code or graph is None or is_code_like(match.node))
+            and (not prefer_production or not _is_test_node(match.node))
+        ]
+        reserved_label_quality = max(
+            (len(_facet_label_matched_terms(match.node, terms)) for match in qualified_reserved),
+            default=0,
+        )
+        eligible_label_quality = max(
+            (len(_facet_label_matched_terms(match.node, terms)) for match in eligible),
+            default=0,
+        )
+        if qualified_reserved and reserved_label_quality >= eligible_label_quality:
+            continue
         if not eligible and graph is not None and set(terms) & {"result", "results", "return", "returns", "outcome"}:
             returned_ids = {
                 edge.target for edge in graph.edges if edge.active and edge.type == "returns" and edge.source in seen
@@ -640,7 +836,12 @@ def reserve_facet_matches(
             distributed = sorted(
                 (
                     (
-                        0 if not prefer_code or is_code_like(match.node) else 1,
+                        0
+                        if (
+                            (not prefer_code or is_code_like(match.node))
+                            and (not prefer_production or not _is_test_node(match.node))
+                        )
+                        else 1,
                         -len(hits),
                         -match.score,
                         match.node.id,
@@ -664,6 +865,10 @@ def reserve_facet_matches(
             if covered >= needed:
                 continue
         pool = code_eligible if prefer_code and code_eligible else eligible
+        if prefer_production:
+            production_pool = [match for match in pool if not _is_test_node(match.node)]
+            if production_pool:
+                pool = production_pool
         connected_ids: set[str] = set()
         adjacency: dict[str, set[str]] = {}
         if graph is not None and seen:
@@ -686,6 +891,7 @@ def reserve_facet_matches(
         candidate = max(
             pool,
             key=lambda match: (
+                len(_facet_label_matched_terms(match.node, terms)),
                 connection_rank(match),
                 match.score,
                 match.node.id,
@@ -693,10 +899,40 @@ def reserve_facet_matches(
             default=None,
         )
         if candidate is not None:
-            reserved.append(candidate)
-            seen.add(candidate.node.id)
+            if len(reserved) >= limit:
+                # A saturated initial ranking can contain a weak prose witness
+                # for this facet. Appending the stronger code witness and then
+                # slicing back to ``limit`` silently discards the very node the
+                # reservation pass selected. Replace the weakest witness for
+                # this same facet in place; never evict evidence for an
+                # unrelated obligation here.
+                replaceable = [
+                    (index, match)
+                    for index, match in enumerate(reserved)
+                    if _facet_matches_node(match.node, terms)
+                    and match.node.id != candidate.node.id
+                ]
+                replacement = min(
+                    replaceable,
+                    key=lambda item: (
+                        int(not prefer_code or is_code_like(item[1].node)),
+                        int(not prefer_production or not _is_test_node(item[1].node)),
+                        len(_facet_label_matched_terms(item[1].node, terms)),
+                        item[1].score,
+                        item[1].node.id,
+                    ),
+                    default=None,
+                )
+                if replacement is not None:
+                    position, prior = replacement
+                    seen.discard(prior.node.id)
+                    reserved[position] = candidate
+                    seen.add(candidate.node.id)
+            else:
+                reserved.append(candidate)
+                seen.add(candidate.node.id)
         if len(reserved) >= limit:
-            break
+            continue
     return tuple(reserved[:limit])
 
 
@@ -763,6 +999,7 @@ def _facet_term_forms(term: str) -> set[str]:
         },
     }
     forms.update(aliases.get(term, ()))
+    forms.update(_SOFTWARE_ROLE_FORMS.get(term, ()))
     if term.endswith("ies") and len(term) > 4:
         forms.add(term[:-3] + "y")
     elif term.endswith("ing") and len(term) > 5:
@@ -783,7 +1020,15 @@ def _facet_term_forms(term: str) -> set[str]:
 
 def _facet_evidence_queries(terms: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
     base = _facet_evidence_terms(terms)
-    queries = [base]
+    phrase_queries = _software_phrase_queries(base)
+    queries = list(phrase_queries) if phrase_queries else [base]
+    role_queries = _software_role_queries(base)
+    paired_role_queries = tuple(query for query in role_queries if len(query) >= 2)
+    if not phrase_queries:
+        if paired_role_queries:
+            queries.extend(paired_role_queries)
+        elif len(base) == 1:
+            queries.extend(role_queries)
     term_set = set(base)
     if "verified" in term_set and term_set & {"source", "application", "applications"}:
         queries.extend(

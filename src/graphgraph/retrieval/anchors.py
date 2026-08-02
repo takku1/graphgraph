@@ -391,6 +391,63 @@ def exact_token_symbol_anchor_matches(
     )
 
 
+def implementation_symbol_anchor_matches(
+    graph: Graph,
+    facets: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    scopes: tuple[str, ...] = (),
+    limit: int = 12,
+) -> tuple[Match, ...]:
+    """Return bounded production symbols for an explicit implementation lookup.
+
+    Natural language such as ``Where is status implemented?`` is deliberately
+    ambiguous, but its evidence type is not: implementation symbols should be
+    offered before prose that merely repeats the question.  Rank by how many
+    independently parsed facets a symbol satisfies, then by the smallest label
+    expansion over those facets.  This exposes a bounded ambiguity set without
+    inventing a repository-specific synonym or silently choosing one meaning.
+    """
+    if not facets:
+        return ()
+    ranked: list[tuple[tuple[object, ...], object]] = []
+    for node in graph.nodes.values():
+        if (
+            not node.active
+            or node.kind in NON_STRUCTURAL_KINDS
+            or _is_test_node(node)
+            or (scopes and not _path_in_scopes(node.path, scopes))
+        ):
+            continue
+        fulfilled = tuple(terms for _label, terms in facets if _facet_matches_node(node, terms))
+        if not fulfilled:
+            continue
+        label_terms = tuple(term_key(node.label).split())
+        requested_terms = set(term for terms in fulfilled for term in terms)
+        excess_terms = len(set(label_terms) - requested_terms)
+        callable_rank = 0 if node.kind in {"function", "method"} else 1
+        ranked.append(
+            (
+                (
+                    -len(fulfilled),
+                    excess_terms,
+                    callable_rank,
+                    len(label_terms),
+                    len(node.path),
+                    node.id,
+                ),
+                node,
+            )
+        )
+    return tuple(
+        Match(
+            node,
+            max(1.0, 72.0 - float(index)),
+            ("implementation_symbol", f"facet_count:{-rank[0]}"),
+        )
+        for index, (rank, node) in enumerate(sorted(ranked, key=lambda item: item[0])[:limit])
+    )
+
+
 def infer_dominant_scope(matches: tuple[Match, ...], query: str) -> str:
     """Infer scope only from high-confidence symbol anchors, never generic words."""
     exact = [match for match in matches[:8] if _is_targeted_symbol_anchor(match)]

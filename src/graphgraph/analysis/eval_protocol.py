@@ -220,6 +220,113 @@ def stratified_report(
     }
 
 
+def agent_cycle_gate_report(
+    results: list[EvalResult],
+    *,
+    conceptual_recall_minimum: float = 0.8,
+    conceptual_project_minimum: float = 0.5,
+    negative_confidence_maximum: float = 0.2,
+) -> dict[str, object]:
+    """Evaluate the cross-repository agent-cycle promotion contract.
+
+    Training tasks remain visible in the normal stratified report but cannot
+    satisfy the deployment gate. The hard accuracy gate uses only calibration
+    and held-out projects, which freezes the audit's 12 named positives, three
+    lexical-disjoint conceptual tasks, and three external red controls.
+    """
+    if not results:
+        raise ValueError("cannot evaluate agent-cycle gates over zero results")
+    for value, label in (
+        (conceptual_recall_minimum, "conceptual_recall_minimum"),
+        (conceptual_project_minimum, "conceptual_project_minimum"),
+        (negative_confidence_maximum, "negative_confidence_maximum"),
+    ):
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"{label} must be in [0, 1]")
+
+    external = [result for result in results if result.split in {"calibration", "test"}]
+    conceptual = [
+        result
+        for result in external
+        if result.expected_answerable is not False
+        and {"conceptual", "lexical_disjoint"} <= set(result.strata)
+    ]
+    named = [
+        result
+        for result in external
+        if result.expected_answerable is not False and "conceptual" not in result.strata
+    ]
+    negatives = [result for result in external if result.expected_answerable is False]
+
+    conceptual_recalls = [float(result.node_recall or 0.0) for result in conceptual]
+    conceptual_by_project: dict[str, list[float]] = {}
+    for result in conceptual:
+        conceptual_by_project.setdefault(result.project or "unspecified", []).append(float(result.node_recall or 0.0))
+    conceptual_project_recall = {
+        project: round(fmean(values), 6) for project, values in sorted(conceptual_by_project.items())
+    }
+    conceptual_full_recall_rate = (
+        round(sum(value >= 1.0 for value in conceptual_recalls) / len(conceptual_recalls), 6)
+        if conceptual_recalls
+        else None
+    )
+    conceptual_failures = sorted(
+        result.task_id or result.query for result in conceptual if float(result.node_recall or 0.0) < 1.0
+    )
+    named_failures = sorted(
+        result.task_id or result.query for result in named if float(result.node_recall or 0.0) < 1.0
+    )
+    negative_failures = sorted(
+        result.task_id or result.query
+        for result in negatives
+        if result.answerability_status != "unanswerable"
+        or float(result.answerability_confidence or 0.0) > negative_confidence_maximum
+        or result.returned_nodes != 0
+        or result.returned_edges != 0
+        or result.token_estimate != 0
+    )
+
+    conceptual_mean = round(fmean(conceptual_recalls), 6) if conceptual_recalls else None
+    checks = {
+        "conceptual_task_count": len(conceptual) == 3,
+        "conceptual_recall": bool(conceptual_recalls)
+        and conceptual_full_recall_rate is not None
+        and conceptual_full_recall_rate >= conceptual_recall_minimum,
+        "conceptual_project_floor": bool(conceptual_project_recall)
+        and all(value >= conceptual_project_minimum for value in conceptual_project_recall.values()),
+        "named_task_count": len(named) == 12,
+        "named_full_recall": bool(named) and not named_failures,
+        "negative_task_count": len(negatives) == 3,
+        "negative_fail_closed": bool(negatives) and not negative_failures,
+    }
+    return {
+        "passed": all(checks.values()),
+        "thresholds": {
+            "conceptual_recall_minimum": conceptual_recall_minimum,
+            "conceptual_project_minimum": conceptual_project_minimum,
+            "negative_confidence_maximum": negative_confidence_maximum,
+            "negative_packet_nodes": 0,
+            "negative_packet_tokens": 0,
+        },
+        "checks": checks,
+        "conceptual": {
+            "count": len(conceptual),
+            "recall_mean": conceptual_mean,
+            "full_recall_rate": conceptual_full_recall_rate,
+            "recall_by_project": conceptual_project_recall,
+            "incomplete_tasks": conceptual_failures,
+        },
+        "named": {
+            "count": len(named),
+            "failing_tasks": named_failures,
+        },
+        "negative": {
+            "count": len(negatives),
+            "failing_tasks": negative_failures,
+        },
+    }
+
+
 def _grouped_summary(
     results: list[EvalResult],
     keys,

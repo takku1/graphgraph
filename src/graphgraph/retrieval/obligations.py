@@ -32,6 +32,11 @@ _PATH_RELATIONS = frozenset(
         "imports_from",
         "reads",
         "writes",
+        "returns",
+        "data_flow",
+        "control_flow",
+        "produces",
+        "consumed_by",
         "implements",
         "uses",
         "references",
@@ -47,6 +52,11 @@ _PATH_RELATION_COST = {
     "imports_from": 1.6,
     "reads": 1.8,
     "writes": 1.8,
+    "returns": 1.2,
+    "data_flow": 1.1,
+    "control_flow": 1.2,
+    "produces": 1.3,
+    "consumed_by": 1.3,
     "uses": 2.0,
     "references": 2.2,
     "contains": 2.5,
@@ -89,7 +99,9 @@ def minimal_evidence_connector(
         bucket.sort(key=lambda edge: (edge.target, edge.type, -edge.confidence, edge.provenance))
 
     roots = tuple(dict.fromkeys(node_id for group in groups for node_id in group))
-    best: tuple[tuple[float, int, tuple[str, ...]], set[str], list[Edge], str] | None = None
+    best: tuple[
+        tuple[float, int, tuple[str, ...]], set[str], list[Edge], str, tuple[str, ...]
+    ] | None = None
     for root in roots:
         distances, previous = _minimum_path_tree(root, outgoing)
         chosen_targets: list[str] = []
@@ -120,17 +132,18 @@ def minimal_evidence_connector(
         for edge in chosen_edges.values():
             connector_nodes.update((edge.source, edge.target))
         score = (round(total_cost, 8), len(connector_nodes), tuple(sorted(connector_nodes)))
-        candidate = (score, connector_nodes, list(chosen_edges.values()), root)
+        candidate = (score, connector_nodes, list(chosen_edges.values()), root, tuple(chosen_targets))
         if best is None or candidate[0] < best[0]:
             best = candidate
 
     if best is None:
         return None
-    _score, connector_nodes, connector_edges, root = best
+    _score, connector_nodes, connector_edges, root, terminals = best
     connector_edges.sort(key=lambda edge: (edge.source, edge.target, edge.type))
     return connector_nodes, connector_edges, {
         "policy": "minimum_directed_facet_connector_v1",
         "root": root,
+        "terminals": list(terminals),
         "facet_groups": len(groups),
         "nodes": len(connector_nodes),
         "edges": len(connector_edges),
