@@ -45,10 +45,11 @@ It separates fixed false negatives from the remaining precision work.
 - [x] Add one read-only `graphgraph.query(text)` / `graphgraph query <text>` /
   MCP `query` facade that routes to typed expert operators and never infers a
   mutation or implicit index build.
-- [ ] Collapse JavaScript affected-test candidates to runnable file/suite
-  boundaries. The current Express result is useful but remains honestly
-  incomplete because 1,171 callable-level transitive candidates exceed the
-  recommendation cap.
+- [x] Collapse affected-test graph nodes through a language-neutral executable
+  command boundary. On Express, 1,178 reverse-reachable callable nodes collapse
+  to 80 proven static file units with zero proven omissions; four import-only
+  units remain explicitly conservative candidates. Expanded evidence stays
+  capped at 12 without misreporting the complete compact inventory as omitted.
 - [ ] Validate runtime coverage ingestion on a real Express test run; fixtures
   prove provenance preservation, not production trace availability.
 - [ ] Repeat receiver precision/recall oracles across held-out repositories and
@@ -59,7 +60,7 @@ It separates fixed false negatives from the remaining precision work.
   repository contract is current; external client state remains an operational
   action, not a source-code correctness claim.
 
-The standard test suite passes (`1050 passed, 4 skipped, 124 subtests passed`),
+The standard test suite passes (`1098 passed, 124 subtests passed`),
 but the following edge cases were reproduced independently. The three Ruff
 findings under `docs/findings/fixtures/` are fixture-formatting issues and are
 not included here as program defects.

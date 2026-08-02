@@ -32,7 +32,7 @@ and adversarial fixtures are the available corroboration.
 | Unknown internal receivers | 6,156 | 195 |
 | Golden request path | incomplete | answerable, 5 nodes / 4 edges / 116 proxy tokens |
 | Equivalent-query core overlap | 5.26% | 100% (same 5 nodes and 4 edges) |
-| `affected_tests(app::handle)` | no evidence, no command | includes `test/app.router.js`; emits `npm test -- test/app.request.js` |
+| `affected_tests(app::handle)` | no evidence, no command | answerable; 80 proven static file units, 4 isolated conservative candidates, 0 proven units omitted |
 | Package status | empty | npm, `express` 5.2.1, manifest-derived test script |
 | Packet choice | static `gg` floor claim | exact rendered minimum among identity-safe valid candidates |
 | Semantic sidecar consistency | node-text signature only | atomic v4 sidecar coupled to full active node/edge graph version |
@@ -47,14 +47,27 @@ with the bounded lifecycle prerequisite
 `minimum_directed_facet_connector_v1`, and packet/receipt semantic validation
 passes.
 
-Affected-test retrieval is materially improved but not finished. It now fuses
-static topology with package-entrypoint import witnesses and preserves evidence
-modes (`direct_static`, `transitive_static`, `runtime_observed`, and conservative
-import combinations). The Express query remains correctly `incomplete`: the
-12-result cap omits 1,171 transitive callable-level candidates. The next test
-precision task is to aggregate JavaScript test evidence at the runnable file or
-suite boundary and incorporate actual runtime coverage, rather than weakening
-the completeness receipt.
+Affected-test retrieval now separates graph callables from executable test
+units. The 1,178 reverse-reachable callable nodes collapse to 80 distinct test
+file commands with static paths to `app::handle`; four additional package-import
+witnesses are isolated as conservative candidates rather than promoted to the
+affected set. The receipt is `answerable`, reports zero omitted proven units,
+keeps the strongest 12 expanded paths, and exposes a complete compact inventory
+for the remaining units. An adversarial callable in the same test file but with
+no evidence path is not absorbed into the unit's membership.
+
+Command generation also checks the package script. Express hardcodes `test/`
+and `test/acceptance/` in `npm test`, so appending a file would still run the
+whole suite. The focused command is instead compiled from the manifest runner
+while replacing its positional targets, for example:
+
+`npm exec -- mocha --require test/support/env --reporter spec --check-leaks test/app.request.js`
+
+The remaining precision frontier is runtime coverage and test-dependence
+provenance, not static inventory completeness. Static paths establish change
+impact; they do not prove that every path executes in a particular run.
+The repository validation after this change is 1,098 passing tests plus 124
+passing subtests; Ruff is clean on every touched Python file.
 
 ### Design decisions checked against prior research
 
@@ -79,10 +92,21 @@ the completeness receipt.
   score calibration, but structural claims still require typed edges and
   receipts: [original RRF publication record](https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/),
   [Elasticsearch RRF contract](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion).
+- Static and dynamic test evidence should remain distinct. A large-scale study
+  found materially different fault-detection sets between static and dynamic
+  techniques, supporting explicit `transitive_static` / `runtime_observed`
+  tiers rather than treating either as a substitute for the other:
+  [Luo, Moran, and Poshyvanyk](https://arxiv.org/abs/1801.05917).
+- A minimal affected set can still be unsafe when tests depend on order or
+  shared state. Dependent-test-aware selection may add prerequisite tests with
+  little average runtime cost, so future runtime provenance should model
+  test-to-test dependencies as well as test-to-code coverage:
+  [Lam et al., ISSTA 2020](https://homes.cs.washington.edu/~mernst/pubs/dependent-tests-issta2020-abstract.html).
 
-Updated overall assessment: **8.3/10 today**, with the same credible **9.4/10
-ceiling**. The concentrated blocker moved from call-path extraction to affected-
-test precision, independent cross-language validation, and runtime provenance.
+Updated overall assessment: **8.6/10 today**, with the same credible **9.4/10
+ceiling**. The concentrated blocker moved from call-path extraction and static
+affected-test completeness to independent cross-language validation, runtime
+coverage, and test-dependence provenance.
 
 ## Baseline executive verdict (pre-fix)
 

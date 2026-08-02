@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import shlex
 from functools import lru_cache
 from pathlib import Path
 
@@ -34,6 +35,31 @@ from .scoping import (
 _TEST_EVIDENCE_RELATIONS = frozenset(
     {"calls", "observed_calls", "references", "tests", "reads", "writes"}
 )
+
+_DETAILED_TEST_UNIT_LIMIT = 12
+_COMPLETE_TEST_UNIT_LIMIT = 128
+
+_NPM_RUNNER_VALUE_OPTIONS = {
+    "mocha": frozenset(
+        {
+            "--config",
+            "--extension",
+            "--file",
+            "--grep",
+            "--node-option",
+            "--package",
+            "--reporter",
+            "--require",
+            "--timeout",
+            "--ui",
+            "-R",
+            "-g",
+            "-r",
+            "-t",
+            "-u",
+        }
+    ),
+}
 
 
 def _source_root(path: str, source: str) -> Path | None:
@@ -74,6 +100,60 @@ def _javascript_imports_package_root(text: str, test_source: Path, root: Path, p
         if resolved == root.resolve():
             return True
     return False
+
+
+def _quote_command_arg(value: str) -> str:
+    escaped = value.replace('"', '\\"')
+    return f'"{escaped}"' if re.search(r"\s|\"", value) else value
+
+
+@lru_cache(maxsize=4096)
+def _npm_test_script_tokens(package_json: str, modified_ns: int) -> tuple[str, ...]:
+    del modified_ns  # cache-key-only freshness witness
+    package = json.loads(Path(package_json).read_text(encoding="utf-8"))
+    script = str(package.get("scripts", {}).get("test", "")).strip()
+    return tuple(shlex.split(script, posix=True))
+
+
+def _focused_npm_test_command(path: str, source: str) -> str:
+    """Compile a manifest test script into an exact file-scoped runner call.
+
+    Appending a path to ``npm test --`` is not necessarily focused: many
+    scripts already contain positional test directories. For recognized
+    runners, preserve runner flags and replace those positional targets with
+    the selected file. Unknown or shell-composed scripts safely fall back to
+    npm's native argument forwarding.
+    """
+    fallback = f"npm test -- {_quote_command_arg(path)}"
+    root = _source_root(path, source)
+    if root is None:
+        return fallback
+    package_json = root / "package.json"
+    try:
+        tokens = _npm_test_script_tokens(str(package_json), package_json.stat().st_mtime_ns)
+    except (OSError, ValueError, TypeError):
+        return fallback
+    if not tokens or any(token in {"&&", "||", ";", "|"} for token in tokens):
+        return fallback
+    runner = Path(tokens[0]).name.casefold()
+    value_options = _NPM_RUNNER_VALUE_OPTIONS.get(runner)
+    if value_options is None:
+        return fallback
+
+    focused = ["npm", "exec", "--", tokens[0]]
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.startswith("-"):
+            index += 1
+            continue
+        focused.append(token)
+        if "=" not in token and token in value_options and index + 1 < len(tokens):
+            focused.append(tokens[index + 1])
+            index += 1
+        index += 1
+    focused.append(path)
+    return " ".join(_quote_command_arg(token) for token in focused)
 
 
 def _npm_import_witnesses(graph: Graph, starts: tuple[str, ...]) -> list[dict[str, object]]:
@@ -378,7 +458,7 @@ def _test_command(
     if normalized.endswith(".py"):
         return f"python -m pytest {normalized}"
     if normalized.endswith((".ts", ".tsx", ".js", ".jsx")):
-        return f"npm test -- {normalized}"
+        return _focused_npm_test_command(normalized, source)
     if normalized.endswith(".cs"):
         project = _dotnet_test_project(normalized, source)
         if project:
@@ -610,7 +690,18 @@ def affected_test_recommendations(
             (float(edge.get("confidence", 0.0)) for edge in evidence if isinstance(edge, dict)),
             default=0.0,
         )
+        mode = str(item.get("evidence_mode", "structural"))
+        evidence_tier = (
+            0
+            if "runtime_observed" in mode
+            else 1
+            if "direct_static" in mode or "transitive_static" in mode
+            else 2
+            if "conservative_import" in mode
+            else 3
+        )
         return (
+            evidence_tier,
             -len(item.get("covers", [])),
             -int(item.get("relevance_score", 0)),
             -max_confidence,
@@ -618,15 +709,171 @@ def affected_test_recommendations(
             str(item.get("label", "")),
         )
 
+    def command_for(item: dict[str, object]) -> str:
+        node = graph.nodes.get(str(item.get("id", "")))
+        if node is None:
+            return ""
+        return _test_command(
+            str(item.get("path", "")),
+            node.source,
+            inline_test=not _is_test_path(str(item.get("path", ""))),
+            test_label=str(item.get("label", "")),
+        )
+
+    def merged_evidence_mode(items: list[dict[str, object]]) -> str:
+        modes = {str(item.get("evidence_mode", "structural")) for item in items}
+        if len(modes) == 1:
+            return next(iter(modes))
+        parts: list[str] = []
+        if any("runtime_observed" in mode for mode in modes):
+            parts.append("runtime_observed")
+        if any("direct_static" in mode for mode in modes):
+            parts.append("direct_static")
+        if any("transitive_static" in mode for mode in modes):
+            parts.append("transitive_static")
+        if any("conservative_import" in mode for mode in modes):
+            parts.append("conservative_import")
+        return "_plus_".join(parts) or "structural_static"
+
+    def aggregate_command_units(
+        direct_items: list[dict[str, object]],
+        transitive_items: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        """Collapse graph callables to the units the test runner executes."""
+        groups: dict[tuple[str, str], list[tuple[str, dict[str, object]]]] = {}
+        for role, items in (("direct", direct_items), ("transitive", transitive_items)):
+            for item in items:
+                command = command_for(item)
+                key = ("command", command) if command else ("node", str(item.get("id", "")))
+                groups.setdefault(key, []).append((role, item))
+
+        aggregated_direct: list[dict[str, object]] = []
+        aggregated_transitive: list[dict[str, object]] = []
+        for (selection_unit, command), members in groups.items():
+            ordered = sorted(
+                members,
+                key=lambda pair: (0 if pair[0] == "direct" else 1, recommendation_rank(pair[1])),
+            )
+            role = "direct" if any(member_role == "direct" for member_role, _item in members) else "transitive"
+            member_items = [item for _member_role, item in ordered]
+            representative = dict(member_items[0])
+            member_ids = sorted({str(item.get("id", "")) for item in member_items if item.get("id")})
+            paths = sorted({str(item.get("path", "")) for item in member_items if item.get("path")})
+
+            covers_by_id: dict[str, dict[str, object]] = {}
+            evidence: list[dict[str, object]] = []
+            root_paths_by_id: dict[str, dict[str, object]] = {}
+            for item in member_items:
+                for covered in item.get("covers", ()):
+                    if isinstance(covered, dict) and covered.get("id"):
+                        covers_by_id.setdefault(str(covered["id"]), covered)
+                for edge in item.get("evidence", ()):
+                    if isinstance(edge, dict) and edge not in evidence:
+                        evidence.append(edge)
+                for root_path in item.get("root_paths", ()):
+                    if not isinstance(root_path, dict):
+                        continue
+                    root = root_path.get("root", {})
+                    root_id = str(root.get("id", "")) if isinstance(root, dict) else ""
+                    if not root_id:
+                        continue
+                    incumbent = root_paths_by_id.get(root_id)
+                    if incumbent is None or len(root_path.get("edges", ())) < len(incumbent.get("edges", ())):
+                        root_paths_by_id[root_id] = root_path
+
+            representative.update(
+                {
+                    "selection_unit": selection_unit,
+                    "command": command if selection_unit == "command" else "",
+                    "member_count": len(member_ids),
+                    "member_sample": member_ids[:8],
+                    "path_count": len(paths),
+                    "path_sample": paths[:8],
+                    "distance": min(int(item.get("distance", 2)) for item in member_items),
+                    "in_packet": any(bool(item.get("in_packet")) for item in member_items),
+                    "evidence": evidence[:8],
+                    "covers": [covers_by_id[root_id] for root_id in sorted(covers_by_id)],
+                    "root_paths": [root_paths_by_id[root_id] for root_id in sorted(root_paths_by_id)],
+                    "evidence_mode": merged_evidence_mode(member_items),
+                    "relevance_score": max(int(item.get("relevance_score", 0)) for item in member_items),
+                }
+            )
+            if len(member_ids) > 1 and len(paths) == 1:
+                representative["label"] = Path(paths[0]).name
+            (aggregated_direct if role == "direct" else aggregated_transitive).append(representative)
+        return aggregated_direct, aggregated_transitive
+
+    direct, transitive = aggregate_command_units(direct, transitive)
     direct.sort(key=recommendation_rank)
     transitive.sort(key=recommendation_rank)
     structural_witnesses.sort(key=recommendation_rank)
-    omitted_direct = max(0, len(direct) - 12)
-    omitted_transitive = max(0, len(transitive) - 12)
-    omitted_structural_witnesses = max(0, len(structural_witnesses) - 12)
-    direct = direct[:12]
-    transitive = transitive[:12]
-    structural_witnesses = structural_witnesses[:12]
+    all_direct = direct
+    all_transitive = transitive
+    detail_omitted_direct = max(0, len(all_direct) - _DETAILED_TEST_UNIT_LIMIT)
+    detail_omitted_transitive = max(0, len(all_transitive) - _DETAILED_TEST_UNIT_LIMIT)
+    confirmed_direct = [
+        item
+        for item in all_direct
+        if "direct_static" in str(item.get("evidence_mode", ""))
+        or "transitive_static" in str(item.get("evidence_mode", ""))
+        or "runtime_observed" in str(item.get("evidence_mode", ""))
+    ]
+    confirmed_transitive = [
+        item
+        for item in all_transitive
+        if "direct_static" in str(item.get("evidence_mode", ""))
+        or "transitive_static" in str(item.get("evidence_mode", ""))
+        or "runtime_observed" in str(item.get("evidence_mode", ""))
+    ]
+    candidate_direct = [item for item in all_direct if item not in confirmed_direct]
+    candidate_transitive = [item for item in all_transitive if item not in confirmed_transitive]
+    omitted_direct = max(0, len(confirmed_direct) - _COMPLETE_TEST_UNIT_LIMIT)
+    omitted_transitive = max(0, len(confirmed_transitive) - _COMPLETE_TEST_UNIT_LIMIT)
+    omitted_candidate_units = max(
+        0,
+        len(candidate_direct) + len(candidate_transitive) - _COMPLETE_TEST_UNIT_LIMIT,
+    )
+    omitted_structural_witnesses = max(0, len(structural_witnesses) - _DETAILED_TEST_UNIT_LIMIT)
+    inventory_direct = confirmed_direct[:_COMPLETE_TEST_UNIT_LIMIT]
+    inventory_transitive = confirmed_transitive[:_COMPLETE_TEST_UNIT_LIMIT]
+    inventory_candidates = [*candidate_direct, *candidate_transitive][:_COMPLETE_TEST_UNIT_LIMIT]
+    direct = all_direct[:_DETAILED_TEST_UNIT_LIMIT]
+    transitive = all_transitive[:_DETAILED_TEST_UNIT_LIMIT]
+    structural_witnesses = structural_witnesses[:_DETAILED_TEST_UNIT_LIMIT]
+
+    def compact_unit(item: dict[str, object], role: str) -> dict[str, object]:
+        return {
+            "id": item.get("id"),
+            "path": item.get("path"),
+            "role": role,
+            "selection_unit": item.get("selection_unit", "node"),
+            "command": item.get("command", ""),
+            "member_count": item.get("member_count", 1),
+            "evidence_mode": item.get("evidence_mode"),
+        }
+
+    runnable_units = [
+        *(compact_unit(item, "direct") for item in inventory_direct),
+        *(compact_unit(item, "transitive") for item in inventory_transitive),
+    ]
+    candidate_units = [
+        compact_unit(item, "direct" if item in candidate_direct else "transitive")
+        for item in inventory_candidates
+    ]
+    complete_commands = list(
+        dict.fromkeys(str(item.get("command", "")) for item in runnable_units if item.get("command"))
+    )
+    candidate_commands = list(
+        dict.fromkeys(str(item.get("command", "")) for item in candidate_units if item.get("command"))
+    )
+    complete_command_index = {command: index for index, command in enumerate(complete_commands)}
+    candidate_command_index = {command: index for index, command in enumerate(candidate_commands)}
+    for unit in runnable_units:
+        command = str(unit.pop("command", ""))
+        unit["command_index"] = complete_command_index.get(command) if command else None
+    for unit in candidate_units:
+        command = str(unit.pop("command", ""))
+        unit["command_index"] = candidate_command_index.get(command) if command else None
 
     # A flattened Python graph may retain a nested helper's call edge without
     # retaining lexical ownership. Attribute it only when the same file has one
@@ -871,6 +1118,8 @@ def affected_test_recommendations(
         "commands_by_role": {
             "direct_behavior_or_contract": selected_commands_covering(direct_ids),
             "transitive_regression": selected_commands_covering(transitive_ids),
+            "complete_affected_set": complete_commands,
+            "conservative_candidates": candidate_commands,
         },
         "command_provenance": selected_command_provenance,
         "command_selection": {
@@ -886,9 +1135,19 @@ def affected_test_recommendations(
             "execution_scope_covered_roots": sorted(execution_scope_covered),
             "covered_direct_tests": sorted(direct_ids & selected_test_ids),
             "uncovered_direct_tests": sorted(uncovered_direct_tests),
+            "complete_unit_count": len(runnable_units),
+            "complete_command_count": len(complete_commands),
+            "complete_units_omitted": omitted_direct + omitted_transitive,
+            "candidate_unit_count": len(candidate_units),
+            "candidate_units_omitted": omitted_candidate_units,
         },
+        "runnable_units": runnable_units,
+        "candidate_units": candidate_units,
+        "detail_omitted_direct": detail_omitted_direct,
+        "detail_omitted_transitive": detail_omitted_transitive,
         "omitted_direct": omitted_direct,
         "omitted_transitive": omitted_transitive,
+        "omitted_candidate_units": omitted_candidate_units,
         "omitted_structural_witnesses": omitted_structural_witnesses,
     }
 
@@ -961,18 +1220,25 @@ def reconcile_semantic_retrieval_receipt(
 
     affected = metadata.get("affected_tests")
     if query_class == "affected_tests" and isinstance(affected, dict):
-        recommendations = [
-            *affected.get("direct", ()),
-            *affected.get("transitive", ()),
-        ]
+        runnable_units = affected.get("runnable_units")
+        recommendations = (
+            list(runnable_units)
+            if isinstance(runnable_units, list)
+            else [*affected.get("direct", ()), *affected.get("transitive", ())]
+        )
+        candidate_units = list(affected.get("candidate_units", ()))
         commands = [str(item) for item in affected.get("commands", ())]
         affected["evidence_status"] = (
-            "attributed" if recommendations else ("candidate_only" if commands else "no_evidence")
+            "confirmed" if recommendations else ("candidate_only" if candidate_units or commands else "no_evidence")
         )
         if not recommendations:
             status = "incomplete"
             abstained = True
-            reasons.append("no affected-test evidence was found")
+            reasons.append(
+                "only conservative affected-test candidates were found"
+                if candidate_units
+                else "no affected-test evidence was found"
+            )
         omitted_direct = int(affected.get("omitted_direct", 0) or 0)
         omitted_transitive = int(affected.get("omitted_transitive", 0) or 0)
         if omitted_direct or omitted_transitive:

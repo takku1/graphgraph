@@ -504,7 +504,12 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     {
                         "name": "express",
                         "main": "index.js",
-                        "scripts": {"test": "mocha test/"},
+                        "scripts": {
+                            "test": (
+                                "mocha --require test/support/env --reporter spec "
+                                "--check-leaks test/ test/acceptance/"
+                            )
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -530,14 +535,120 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             )
 
             affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET"})
+            result = retrieve_context(
+                graph,
+                "Which tests are affected by app::handle?",
+                "affected_tests",
+                hops=2,
+                max_nodes=20,
+            )
+
+            from graphgraph.planning import QueryRoute
+            from graphgraph.retrieval.test_recommendations import reconcile_semantic_retrieval_receipt
+
+            reconcile_semantic_retrieval_receipt(
+                graph,
+                result,
+                route=QueryRoute("affected_tests", 1.0, 1.0, ("explicit query class",)),
+                automatic_route=False,
+            )
 
         self.assertEqual([item["id"] for item in affected["transitive"]], ["TEST"])
         self.assertEqual(affected["transitive"][0]["evidence_mode"], "conservative_import")
-        self.assertEqual(affected["commands"], ["npm test -- test/app.router.js"])
+        focused_command = (
+            "npm exec -- mocha --require test/support/env --reporter spec "
+            "--check-leaks test/app.router.js"
+        )
+        self.assertEqual(affected["commands"], [focused_command])
+        self.assertEqual(affected["runnable_units"], [])
+        self.assertEqual([item["id"] for item in affected["candidate_units"]], ["TEST"])
+        self.assertEqual(affected["commands_by_role"]["complete_affected_set"], [])
+        self.assertEqual(
+            affected["commands_by_role"]["conservative_candidates"],
+            [focused_command],
+        )
         self.assertEqual(
             affected["command_provenance"][0]["evidence_mode"],
             "conservative_import",
         )
+        self.assertEqual(result.metadata["affected_tests"]["evidence_status"], "candidate_only")
+        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
+        self.assertIn("only conservative", result.metadata["answerability"]["reason"])
+
+    def test_affected_tests_aggregates_callable_nodes_by_runnable_command(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        graph = Graph(
+            nodes={
+                "TARGET": Node("TARGET", "handle", "method", "lib/application.js"),
+                "TEST_A": Node("TEST_A", "dispatches GET", "function", "test/app.router.js"),
+                "TEST_B": Node("TEST_B", "dispatches POST", "function", "test/app.router.js"),
+                "UNRELATED": Node("UNRELATED", "unrelated behavior", "function", "test/app.router.js"),
+            },
+            edges=[
+                Edge("TEST_A", "TARGET", "calls", confidence=0.97, provenance="tree_sitter"),
+                Edge("TEST_B", "TARGET", "calls", confidence=0.96, provenance="tree_sitter"),
+            ],
+        )
+
+        affected = affected_test_recommendations(graph, ("TARGET",), {"TARGET"})
+
+        self.assertEqual(len(affected["direct"]), 1)
+        unit = affected["direct"][0]
+        self.assertEqual(unit["selection_unit"], "command")
+        self.assertEqual(unit["command"], "npm test -- test/app.router.js")
+        self.assertEqual(unit["member_count"], 2)
+        self.assertEqual(unit["member_sample"], ["TEST_A", "TEST_B"])
+        self.assertNotIn("UNRELATED", unit["member_sample"])
+        self.assertEqual(len(affected["runnable_units"]), 1)
+        self.assertEqual(
+            affected["commands_by_role"]["complete_affected_set"],
+            ["npm test -- test/app.router.js"],
+        )
+
+    def test_affected_tests_keeps_complete_compact_unit_inventory_beyond_detail_cap(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        nodes = {"TARGET": Node("TARGET", "handle", "method", "lib/application.js")}
+        edges = []
+        for index in range(14):
+            node_id = f"TEST_{index:02d}"
+            nodes[node_id] = Node(
+                node_id,
+                f"case {index:02d}",
+                "function",
+                f"test/app.case-{index:02d}.js",
+            )
+            edges.append(Edge(node_id, "TARGET", "calls", confidence=0.95, provenance="tree_sitter"))
+
+        affected = affected_test_recommendations(Graph(nodes=nodes, edges=edges), ("TARGET",), {"TARGET"})
+
+        self.assertEqual(len(affected["direct"]), 12)
+        self.assertEqual(affected["detail_omitted_direct"], 2)
+        self.assertEqual(len(affected["runnable_units"]), 14)
+        self.assertEqual(affected["omitted_direct"], 0)
+        self.assertEqual(len(affected["commands_by_role"]["complete_affected_set"]), 14)
+
+    def test_affected_tests_reports_omissions_beyond_complete_unit_cap(self) -> None:
+        from graphgraph.retrieval.test_recommendations import affected_test_recommendations
+
+        nodes = {"TARGET": Node("TARGET", "handle", "method", "lib/application.js")}
+        edges = []
+        for index in range(130):
+            node_id = f"TEST_{index:03d}"
+            nodes[node_id] = Node(
+                node_id,
+                f"case {index:03d}",
+                "function",
+                f"test/app.case-{index:03d}.js",
+            )
+            edges.append(Edge(node_id, "TARGET", "calls", confidence=0.95, provenance="tree_sitter"))
+
+        affected = affected_test_recommendations(Graph(nodes=nodes, edges=edges), ("TARGET",), {"TARGET"})
+
+        self.assertEqual(len(affected["runnable_units"]), 128)
+        self.assertEqual(affected["omitted_direct"], 2)
+        self.assertEqual(affected["command_selection"]["complete_units_omitted"], 2)
 
     def test_affected_tests_recognizes_csharp_test_owner_in_shared_source_file(self) -> None:
         from graphgraph.retrieval.test_recommendations import affected_test_recommendations
@@ -689,7 +800,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             {f"STAGE_{index}" for index in range(1, 9)},
         )
 
-    def test_affected_test_candidate_cap_reports_omitted_direct_tests(self) -> None:
+    def test_affected_test_detail_cap_preserves_complete_runnable_unit_inventory(self) -> None:
         nodes = {
             "EXPR": Node("EXPR", "Expr", "enum", "src/expression.rs"),
         }
@@ -733,9 +844,10 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
 
         affected = result.metadata["affected_tests"]
         self.assertEqual(len(affected["direct"]), 12)
-        self.assertEqual(affected["omitted_direct"], 2)
-        self.assertEqual(result.metadata["answerability"]["status"], "incomplete")
-        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertEqual(affected["detail_omitted_direct"], 2)
+        self.assertEqual(len(affected["runnable_units"]), 14)
+        self.assertEqual(affected["omitted_direct"], 0)
+        self.assertNotIn("recommendation cap omitted", result.metadata["answerability"]["reason"])
 
     def test_qualified_direct_lookup_uses_one_owner_exact_anchor_at_large_budget(self) -> None:
         graph = Graph(

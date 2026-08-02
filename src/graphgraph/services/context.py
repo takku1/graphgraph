@@ -752,6 +752,23 @@ def _actionable_receipt(
             if isinstance(item, dict)
         ]
 
+    def compact_runnable_units(role: str) -> list[dict[str, object]]:
+        if not isinstance(affected, dict):
+            return []
+        return [
+            {
+                "id": item.get("id"),
+                "path": item.get("path"),
+                "role": item.get("role"),
+                "selection_unit": item.get("selection_unit"),
+                "command_index": item.get("command_index"),
+                "member_count": item.get("member_count", 1),
+                "evidence_mode": item.get("evidence_mode"),
+            }
+            for item in affected.get(role, ())
+            if isinstance(item, dict)
+        ]
+
     start_ids = set(getattr(result, "starts", ()))
     priority_ids: list[str] = []
     if query_class == "reverse_lookup":
@@ -848,6 +865,8 @@ def _actionable_receipt(
         "tests": {
             "direct": compact_tests("direct"),
             "transitive": compact_tests("transitive"),
+            "runnable_units": compact_runnable_units("runnable_units"),
+            "candidate_units": compact_runnable_units("candidate_units"),
             "commands_by_role": affected.get("commands_by_role", {}) if isinstance(affected, dict) else {},
             "commands": list(affected.get("commands", ())) if isinstance(affected, dict) else [],
         },
