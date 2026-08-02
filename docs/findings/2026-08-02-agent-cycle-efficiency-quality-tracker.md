@@ -93,7 +93,7 @@ Strict internal member-call rate is
 | AC-07 | Token estimator calibration | unassigned | revalidate | Two broad packets were undercounted by about 12-13% | Mean absolute error <= 5%, p95 <= 10%, no format-ranking inversions on held-out packets |
 | AC-08 | Latency and scale invariance | unassigned | todo | Exact cold CLI about 435 ms; broad path variable; ripgrep eval wall time 12.1 s | Transport-specific absolute and invariance gates pass |
 | AC-09 | Contract and telemetry consistency | unassigned | todo | Global Codex skill stale; answerability labels contradicted oracle outcomes | Capability/contract identity is machine-readable; co-reported state and metrics are internally consistent |
-| AC-10 | Rotating held-out repository panel | unassigned | todo | Flask, Express, and ripgrep only | Repeatable small panel covers at least five language/runtime strata without one monolithic run |
+| AC-10 | Rotating held-out repository panel | Codex | active | Flask, Express, and ripgrep only | Repeatable small panel covers at least five language/runtime strata without one monolithic run |
 
 ## AC-01 — Resident agent transport
 
@@ -224,7 +224,7 @@ must have measurable language-specific completeness.
 - [x] Re-run the corrected Express build through normal active discovery.
 - [x] Add hand-labelled positive and adversarial receiver oracles for Python,
   JavaScript/TypeScript, and Rust.
-- [ ] Add at least one held-out Java or C# fixture and one C or C++ fixture.
+- [x] Add at least one held-out Java or C# fixture and one C or C++ fixture.
 - [ ] Preserve explicit abstention where source evidence cannot recover dynamic
   framework behavior safely.
 
@@ -360,11 +360,36 @@ Candidate next rotation:
 | UniGetUI | C# application | properties, fields, and application topology |
 | mathlib4 | Lean project | unsupported/partial-language honesty and docs |
 
-- [ ] Freeze commit and hand-authored answer keys before measuring a new slot.
-- [ ] Use at most three primary repositories per routine cycle.
+- [x] Freeze commit and hand-authored answer keys before measuring a new slot.
+- [x] Use at most three primary repositories per routine cycle.
 - [ ] Rotate one repository at a time so regressions remain localizable.
-- [ ] Keep calibration and held-out task sets separate.
-- [ ] Record scan completeness, exclusions, and frontend identity with results.
+- [x] Keep calibration and held-out task sets separate.
+- [x] Record scan completeness, exclusions, and frontend identity with results.
+
+First untouched rotation (task files committed at `f0e99f9` before any graph
+execution):
+
+| Fixture | Scan profile and shape | Conceptual | Named | Negative |
+| --- | --- | ---: | ---: | ---: |
+| Redis (`138263a`) | C, tree-sitter, full non-incremental, no docs/history; 1,088 files, 7,407 nodes, 25,597 edges; 15.5 s | 0/1 | 3/4 full recall | pass |
+| UniGetUI (`5b05b35`) | C#, tree-sitter, full non-incremental, no docs/history; 1,091 files, 5,921 nodes, 16,150 edges; 9.8 s | 0/1 | 3/4 full recall | pass |
+| Neo4j (`8f4aa6a`) | Java/Scala, tree-sitter, full non-incremental, no docs/history; 12,978 files, 153,522 nodes, 521,602 edges; 223.9 s | 0/1 | 4/4 full recall | pass |
+
+Aggregate first-run gate: conceptual full recall `0/3`, named full recall
+`10/12`, and negative fail-closed `3/3`. The conceptual packets were labeled
+answerable at confidence 0.2185-0.2342 despite zero recall, just above the 0.20
+safety ceiling. Redis's pointer-return definition `struct redisCommand
+*lookupCommand(...)` did not exist in the extracted graph, making both tasks
+that require it explicit extractor-coverage failures rather than retrieval-only
+misses. UniGetUI's failed named task resolves the source expectations but lacks
+the required member-call evidence. The 217.2 s three-project evaluation wall
+time also confirms that large-graph ranked evaluation must remain outside the
+interactive resident-query path.
+
+This panel is now frozen test evidence. Do not add aliases or tune thresholds
+against these three conceptual questions. Diagnose general failures with
+separate synthetic/calibration fixtures and use a future rotation for the next
+unseen generalization claim.
 
 ## Do-not-regress gates
 
@@ -405,6 +430,7 @@ available.
 | 2026-08-02 | RETRIEVAL-04 | working tree; fresh active external graphs; `source-mode=off` | Flask, Express, ripgrep | manifest-backed evaluator | Hard external gate passes: conceptual full-recall rate 3/3, named positives 12/12, negatives 3/3 fail closed with zero evidence. Role facets retain bounded candidate groups, use minimum directed typed connectors when provable, balance roots when topology is partial, and cap unsupported/disconnected confidence at 0.20. | `agent_cycle_gate_report`; 81 focused tests; Ruff | Codex |
 | 2026-08-02 | SEMANTIC-05 | FastEmbed 0.8 / BGE-small v4 sidecar; working-tree role guard | Flask | explicit `source-mode=all` plus structural negative controls | Raw dense candidates preferred database prose for the lifecycle paraphrase. Constraining semantic seeds to proposal evidence preserved the graph-backed role terminals; the conceptual task returned to 1.0 recall while random, plausible OOD, and near-miss negatives remained zero-evidence abstentions with and without semantic seeds. | active Flask `.graphgraph/semantic.json`; `tests/test_retrieval_section_relevance.py` | Codex |
 | 2026-08-02 | SELF-06 | working tree; active GraphGraph graph | GraphGraph train panel and active external panel | in-process evaluator, `source-mode=off` | GraphGraph train panel: conceptual 3/3 full recall, exact/ambiguous positives 2/2 full recall, red control zero nodes/edges/tokens at confidence 0. External hard gate revalidated after the shared fix: conceptual 3/3, named 12/12, negatives 3/3. Saturated facet reservation now replaces weak prose rather than appending then truncating; one qualified witness must supply both evidence type and label quality; projected labels are ranked against their compiled role rather than raw prose. | `retrieval/anchors.py`; `retrieval/context.py`; `retrieval/facets.py`; focused 53-test suite and Ruff | Codex |
+| 2026-08-02 | HELDOUT-07 | task freeze `f0e99f9`; isolated `C:\tmp\heldout-*-20260802.gg` | Redis C, UniGetUI C#, Neo4j Java/Scala | full non-incremental tree-sitter scans; in-process evaluator; `source-mode=off` | First untouched run fails promotion: conceptual 0/3, named 10/12, negatives 3/3. All conceptual misses were incorrectly answerable just above 0.20. Redis exposed a pointer-return C definition extraction gap; UniGetUI exposed missing member-call evidence. Full builds passed structural validation; Neo4j scan 223.9 s and total evaluation wall 217.2 s. | `eval/heldout-2026-08-02/`; isolated graph receipts in `C:\tmp` | Codex |
 | YYYY-MM-DD | RUN-___ |  |  |  |  |  |  |
 
 ## Decision log
