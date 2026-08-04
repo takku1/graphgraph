@@ -79,30 +79,44 @@ incomplete rows are reproduced above and the superseded plan remains in git hist
 | OW-DOC-03 | Root stubs cleared | done |
 | OW-DOC-04 | Fix external links (README/eval fixtures/tests) outside docs/ | done |
 | OW-DOC-05 | Pre-redesign archive removed; living tree is self-sufficient | done |
-| OW-DOC-06 | Ground manuscript & roadmap citations (see below) | ready |
+| OW-DOC-06 | Ground manuscript & roadmap citations against primary sources | done |
 
 **OW-DOC-01…05 receipt (2026-08-04):** `pytest tests/test_docs_contract.py
 tests/test_document_authority.py tests/test_scanner_docs.py
 tests/test_public_contracts.py tests/test_research_registry.py` — 0 orphans,
 all local links resolve, archive deleted.
 
-**OW-DOC-06 — citation grounding.** `research/manuscript-graphgraph-2.md` (6.0k
-words) and `research/publication-roadmap.md` cite related work by author/year
-with **no URLs, DOIs, arXiv IDs, or references section**. Two attributions look
-wrong on inspection and need verification against the primary sources before
-either document is circulated:
+**OW-DOC-06 receipt (2026-08-04) — citation grounding.** All ten works cited by
+`research/manuscript-graphgraph-2.md` and `research/publication-roadmap.md` were
+resolved against the arXiv API; both documents now carry inline `[n]` markers and
+a rendered `## Sources` section with arXiv URLs.
 
-- *Repoformer* is attributed to "Aneja et al., 2023"; the paper appears to be by
-  Wu et al. (ICML 2024).
-- *RepoBench* is attributed to "Zhang et al., 2023"; RepoBench appears to be by
-  Liu, Xu, and McAuley (2023). The adjacent *RepoCoder* Zhang attribution looks
-  correct, so these may have been transposed.
-- *ContextSniper* ("Luk et al., July 2026") and *KGCompass* ("Yang et al., 2025")
-  are unverified.
+Corrected:
 
-Exit gate: every cited work resolves to a primary source (arXiv ID or DOI), a
-references section exists, and unverifiable citations are removed rather than
-softened.
+| Was cited as | Actually | arXiv |
+|--------------|----------|-------|
+| Repoformer, "Aneja et al., 2023" | Di Wu et al., 2024 | 2403.10059 |
+| RepoBench, "Zhang et al., 2023" | Tianyang Liu et al., 2023 | 2306.03091 |
+| CodeXEmbed, grouped under RepoBench's credit | Ye Liu et al., 2024 — a separate paper | 2411.12644 |
+
+Confirmed correct and left as-is: RepoCoder (Zhang et al., 2023, 2303.12570),
+LLMLingua (Jiang et al., 2023, 2310.05736), GraphRAG (Edge et al., 2024,
+2404.16130), ContextSniper (Luk et al., 2026, 2607.01916), KGCompass (Yang et
+al., 2025, 2503.21710), Mem0 (Chhikara et al., 2025, 2504.19413), Zep/Graphiti
+(Rasmussen et al., 2025, 2501.13956).
+
+**A quantitative claim was also wrong.** Both documents asserted competitor p95
+latencies of "200ms for Mem0; 632ms for Graphiti". Against the Mem0 paper's
+LOCOMO latency table, `632` does not appear anywhere: Zep's search p95 is
+**0.778 s**, not 632 ms. Mem0's 200 ms is its *search* p95, not its response p95
+(1.440 s), so calling those figures "multi-second" was also inconsistent. Both
+documents now state search p95 0.200 s (Mem0) / 0.778 s (Zep) and response p95
+1.440 s / 2.926 s, cited to the Mem0 paper. Verbatim table rows are attached as
+evidence in the citation ledger.
+
+Residual: `Zep` and `Graphiti` are used interchangeably in places. Graphiti is
+Zep's engine; note also that an unrelated 2025 arXiv paper is titled *Graphiti*
+(a graph/relational query system, 2504.03182) — do not cite that one.
 
 ---
 

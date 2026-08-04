@@ -134,11 +134,11 @@ We performed an ablation sweep over the same 48-task Locus benchmark suite, maki
 ## 8. Related Work
 
 GraphGraph builds on a rich line of research in structured codebase context retrieval:
-*   **Repoformer** (Aneja et al., 2023: "Repoformer: Selective Retrieval for Repository-Level Code Completion"): Introduces selective retrieval models for repository-level code completion. While Repoformer focuses on the neural decision-making of *when* to retrieve, GraphGraph focuses on the structural planning of *what* to retrieve and *how* to represent it efficiently.
-*   **RepoBench / CodeXEmbed** (Zhang et al., 2023: "RepoBench: Benchmarking Repository-Level Code Auto-Completion"): Set up benchmarks for codebase retrieval, evaluating structural connectivity walks. They typically output verbose JSON structures, ignoring the token cost of the representation format. GraphGraph is orthogonal: it accepts these graphs and optimizes their **prompt serialization format and attention-indirection footprint**.
-*   **RepoCoder** (Zhang et al., 2023: "RepoCoder: Repository-Level Code Completion Through Iterative Retrieval-Generation"): Evaluates iterative code generation. GraphGraph's turn-based spreading activation decay acts as a temporal cache for such iterative setups.
-*   **GraphRAG** (Microsoft, 2024: "From Local to Global: A Graph RAG Approach to Query-Focused Summarization"): Implements global summarization over entity-relation graphs. GraphGraph optimizes local, task-focused serialization rather than global clustering.
-*   **Prompt Compression (e.g., LLMLingua)** (Jiang et al., 2023: "LLMLingua: Compressing Prompts for Accelerated Inference"): General-purpose compressors use token-entropy models to prune text. However, they are blind to graph structures and frequently break topological references, destroying edge relationships. GraphGraph prunes nodes and edges structurally, preserving the integrity of the graph topology.
+*   **Repoformer** — "Repoformer: Selective Retrieval for Repository-Level Code Completion" (Wu et al., 2024).[1] Introduces selective retrieval models for repository-level code completion. While Repoformer focuses on the neural decision-making of *when* to retrieve, GraphGraph focuses on the structural planning of *what* to retrieve and *how* to represent it efficiently.
+*   **RepoBench** — "RepoBench: Benchmarking Repository-Level Code Auto-Completion Systems" (Liu et al., 2023)[2] — and **CodeXEmbed** (Liu et al., 2024).[10] Set up benchmarks and embedding models for codebase retrieval, evaluating structural connectivity walks. They typically output verbose JSON structures, ignoring the token cost of the representation format. GraphGraph is orthogonal: it accepts these graphs and optimizes their **prompt serialization format and attention-indirection footprint**.
+*   **RepoCoder** — "RepoCoder: Repository-Level Code Completion Through Iterative Retrieval and Generation" (Zhang et al., 2023).[3] Evaluates iterative code generation. GraphGraph's turn-based spreading activation decay acts as a temporal cache for such iterative setups.
+*   **GraphRAG** — "From Local to Global: A Graph RAG Approach to Query-Focused Summarization" (Edge et al., 2024).[5] Implements global summarization over entity-relation graphs. GraphGraph optimizes local, task-focused serialization rather than global clustering.
+*   **Prompt Compression (e.g., LLMLingua)** — "LLMLingua: Compressing Prompts for Accelerated Inference of Large Language Models" (Jiang et al., 2023).[4] General-purpose compressors use token-entropy models to prune text. However, they are blind to graph structures and frequently break topological references, destroying edge relationships. GraphGraph prunes nodes and edges structurally, preserving the integrity of the graph topology.
 
 ---
 
@@ -198,3 +198,14 @@ $$\text{avg\_label\_tokens} = \max\left(1.0, \frac{\sum_{v \in V} \text{len}(v.\
 Empirical calibration checks on the Locus suite show:
 *   **Static Multipliers (Baseline)**: Average relative estimation error of **`-17.1%`** for `gg_max`.
 *   **Dynamic Calibration (GraphGraph)**: Average relative estimation error drops to **`+1.3%`** for `gg_max` and **`-0.8%`** for `gg_lex`. This near-perfect calibration (within $\pm 1.5\%$ error) ensures that the planner's budget constraints are tightly enforced without over-pruning.
+
+---
+
+## Sources
+
+[1] https://arxiv.org/abs/2403.10059 — Repoformer: Selective Retrieval for Repository-Level Code Completion (Wu et al., 2024)
+[2] https://arxiv.org/abs/2306.03091 — RepoBench: Benchmarking Repository-Level Code Auto-Completion Systems (Liu et al., 2023)
+[3] https://arxiv.org/abs/2303.12570 — RepoCoder: Repository-Level Code Completion Through Iterative Retrieval and Generation (Zhang et al., 2023)
+[4] https://arxiv.org/abs/2310.05736 — LLMLingua: Compressing Prompts for Accelerated Inference of Large Language Models (Jiang et al., 2023)
+[5] https://arxiv.org/abs/2404.16130 — From Local to Global: A Graph RAG Approach to Query-Focused Summarization (Edge et al., 2024)
+[10] https://arxiv.org/abs/2411.12644 — CodeXEmbed: A Generalist Embedding Model Family for Multilingual and Multi-task Code Retrieval (Liu et al., 2024)
