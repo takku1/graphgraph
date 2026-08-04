@@ -10,7 +10,7 @@ PY="${GRAPHGRAPH_PYTHON:-.venv/Scripts/python.exe}"
 # Only run suites that exist: some targets are still in-flight and uncommitted,
 # and a missing file must not be reported as a passing check.
 TARGETS=()
-for t in test_storage_delta.py test_runtime_factory.py test_sectioned_storage.py; do
+for t in test_storage_delta.py test_runtime_factory.py test_sectioned_storage.py test_io.py; do
   [ -f "tests/$t" ] && TARGETS+=("tests/$t")
 done
 

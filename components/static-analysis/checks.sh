@@ -10,7 +10,7 @@ PY="${GRAPHGRAPH_PYTHON:-.venv/Scripts/python.exe}"
 # Only run suites that exist: some targets are still in-flight and uncommitted,
 # and a missing file must not be reported as a passing check.
 TARGETS=()
-for t in test_scanner.py test_scanner_frontends.py test_scanner_imports.py test_scanner_incremental.py test_scanner_docs.py test_scanner_history.py test_scope_graph.py; do
+for t in test_scanner.py test_scanner_frontends.py test_scanner_imports.py test_scanner_incremental.py test_scanner_docs.py test_scanner_history.py test_scope_graph.py test_receiver_type_resolution.py test_persistent_type_facts.py test_grammar_profiles.py; do
   [ -f "tests/$t" ] && TARGETS+=("tests/$t")
 done
 
