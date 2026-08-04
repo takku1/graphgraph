@@ -125,8 +125,13 @@ def _package_scope(path: str) -> str:
     return "/".join(parts[:-1]) if len(parts) > 1 else ""
 
 
+@lru_cache(maxsize=16384)
 def _is_test_path(path: str) -> bool:
-    """Identify test files without promoting production modules by name alone."""
+    """Identify test files without promoting production modules by name alone.
+
+    Memoized: a pure function of the path string, and retrieval asks it about
+    the same paths repeatedly -- one warm query issued 28,962 calls.
+    """
     normalized = path.replace("\\", "/").strip("/").casefold()
     parts = tuple(part for part in normalized.split("/") if part)
     if not parts:

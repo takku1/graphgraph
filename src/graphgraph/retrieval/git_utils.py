@@ -12,7 +12,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_GIT_DIFF_CACHE_TTL_SECONDS = 1.0
+# Must exceed the duration of a single retrieval, or the cache expires partway
+# through one query and re-spawns `git diff` several times for the same answer:
+# a warm lookup on a 7.5 MB graph spawned four subprocesses under a 1.0 s TTL.
+# This bounds staleness across user actions, not within one of them.
+_GIT_DIFF_CACHE_TTL_SECONDS = 5.0
 _git_diff_cache: dict[Path, tuple[float, dict[str, int]]] = {}
 _git_path_cache: dict[Path, tuple[float, tuple[tuple[str, ...], tuple[str, ...]]]] = {}
 _git_ignore_cache: dict[tuple[Path, tuple[str, ...]], tuple[float, tuple[str, ...]]] = {}
