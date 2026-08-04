@@ -356,7 +356,7 @@ Not tested and therefore not passed:
 
 Persistent report:
 
-- `docs/findings/2026-07-31-critical-graybox-universal-limit.md`
+- `docs/evaluation/graybox-cycles/2026-07-31-critical-graybox-universal-limit.md`
 
 Reproducibility fixture:
 

@@ -13,11 +13,11 @@ MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 
 class DocumentationContractTest(unittest.TestCase):
     def test_every_doc_has_an_inbound_index_link(self) -> None:
-        # T09: docs/README.md is the authoritative map. Every operational and
-        # reference document must be reachable from it (directly or through a
-        # linked index), so nothing rots unlinked. The dated snapshot under
-        # docs/archive/ is the one explicit exception: it is a frozen historical
-        # corpus, deliberately not indexed file-by-file.
+        # T09: docs/README.md is the authoritative map. Every document under
+        # docs/ must be reachable from it (directly or through a linked index),
+        # so nothing rots unlinked. There is no exemption: the pre-redesign
+        # archive was retired in favour of a self-sufficient living tree, and
+        # reintroducing an unindexed corpus should fail this test.
         docs_root = ROOT / "docs"
         readme = (docs_root / "README.md").resolve()
         reachable: set[Path] = set()
@@ -33,31 +33,18 @@ class DocumentationContractTest(unittest.TestCase):
                     continue
                 frontier.append((current.parent / target).resolve())
 
-        archived = {"archive"}
         orphans = [
             doc.relative_to(docs_root).as_posix()
             for doc in sorted(docs_root.rglob("*.md"))
-            if doc.name != "README.md"
-            and doc.relative_to(docs_root).parts[0] not in archived
-            and doc.resolve() not in reachable
+            if doc.name != "README.md" and doc.resolve() not in reachable
         ]
         self.assertEqual(
             orphans, [], f"docs not reachable from docs/README.md: {orphans}"
         )
 
     def test_local_markdown_links_resolve_without_file_uris(self) -> None:
-        # The dated snapshot under docs/archive/ is frozen history: its links are
-        # preserved exactly as they were written and are not rewritten to match
-        # the current tree, so it is excluded here.
         failures: list[str] = []
-        files = [
-            ROOT / "README.md",
-            *(
-                doc
-                for doc in sorted((ROOT / "docs").rglob("*.md"))
-                if doc.relative_to(ROOT / "docs").parts[0] != "archive"
-            ),
-        ]
+        files = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
 
         for document in files:
             text = document.read_text(encoding="utf-8", errors="replace")

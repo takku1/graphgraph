@@ -670,7 +670,7 @@ tests, eval task files, incremental update/remove equivalence, mutation commands
 HTTP resident service, federation, memory, temporal episodes, trace ingestion, install/hooks, or
 security. These are **not passes**.
 
-The existing `docs/findings/fixtures/flask_suite.json` was deliberately not read or used as evidence;
+The existing `docs/evaluation/graybox-cycles/fixtures/flask_suite.json` was deliberately not read or used as evidence;
 the direct source oracle and prior frozen commands were sufficient.
 
 ---

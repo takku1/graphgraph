@@ -383,7 +383,7 @@ To remove:
 - `resources/sympy/.graphgraph/` — **untouched**; the interrupted scan did not overwrite it (verified `STRUCTURAL PASS`, 53,483 nodes, mtime 07/21).
 - `<scratchpad>/diffctl/.code-review-graph/` — created by the differential control.
 
-The 22-file polyglot fixture is worth promoting into `docs/findings/fixtures/` as a permanent regression suite: it exercises 7 languages, 9 edge classes, a precision decoy, and gates 1–4 above in under a second.
+The 22-file polyglot fixture is worth promoting into `docs/evaluation/graybox-cycles/fixtures/` as a permanent regression suite: it exercises 7 languages, 9 edge classes, a precision decoy, and gates 1–4 above in under a second.
 
 ---
 

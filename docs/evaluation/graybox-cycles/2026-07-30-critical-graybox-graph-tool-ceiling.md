@@ -41,9 +41,9 @@ All three builds used the current `tree_sitter` frontend, symbol depth, document
 
 The committed hand-labeled task fixtures are:
 
-- `docs/findings/2026-07-30-flask-graybox-tasks.json`
-- `docs/findings/2026-07-30-express-graybox-tasks.json`
-- `docs/findings/2026-07-30-ripgrep-graybox-tasks.json`
+- `docs/evaluation/graybox-cycles/2026-07-30-flask-graybox-tasks.json`
+- `docs/evaluation/graybox-cycles/2026-07-30-express-graybox-tasks.json`
+- `docs/evaluation/graybox-cycles/2026-07-30-ripgrep-graybox-tasks.json`
 
 ## Instrument validation
 
