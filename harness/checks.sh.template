@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# checks.sh.template — Correctness Backpressure Harness Template
+# Exit code 0 = PASS; Exit code non-zero = FAIL (Blocks keep decision regardless of metric)
+set -euo pipefail
+
+COMPONENT_NAME="${1:-COMPONENT_NAME}"
+echo "[CHECKS] Running correctness backpressure suite for ${COMPONENT_NAME}..."
+
+# --- CORRECTNESS ASSERTIONS ---
+# Run pytest, cargo test, or specific assertions here.
+# Example: pytest tests/test_${COMPONENT_NAME}.py
+
+# Exit 0 on clean pass
+echo "[CHECKS] All assertions passed cleanly."
+exit 0

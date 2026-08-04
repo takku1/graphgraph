@@ -52,3 +52,7 @@ Thumbs.db
 # working data. graphgraph stays self-contained -- never commit third-party
 # graph blobs into this repo.
 eval-fixtures/
+
+# Back-Channel B measurement readings are machine-local; baselines do not
+# transfer between hosts and must be re-recorded rather than shared.
+.measure/**/log.jsonl
