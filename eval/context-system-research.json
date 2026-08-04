@@ -1,10 +1,10 @@
 {
   "version": "1.0",
-  "governance": "docs/context_system_research_tournament.md",
+  "governance": "docs/research/context-system-tournament.md",
   "claims": [
     {
       "claim_id": "GPA-DEF-001",
-      "source": "docs/global_project_attention_research_proposal.md#operational-definition",
+      "source": "docs/research/global-project-attention.md#operational-definition",
       "status": "normative",
       "mechanism": "Every project entity is source-addressable and belongs to exactly one query-conditioned exact or aggregate representation; effective omitted influence is bounded rather than declared merely nonzero.",
       "operating_regime": "all project sizes and model boundaries",
@@ -21,7 +21,7 @@
     },
     {
       "claim_id": "GPA-COVER-001",
-      "source": "docs/global_project_attention_research_proposal.md#coverage-invariant",
+      "source": "docs/research/global-project-attention.md#coverage-invariant",
       "status": "measured",
       "mechanism": "A hierarchy antichain plus disjoint residual exceptions represents every leaf exactly once.",
       "operating_regime": "finite rooted forests",
@@ -43,7 +43,7 @@
     },
     {
       "claim_id": "GPA-REFINE-001",
-      "source": "docs/global_project_attention_research_proposal.md#phase-0-formal-simulator",
+      "source": "docs/research/global-project-attention.md#phase-0-formal-simulator",
       "status": "measured",
       "mechanism": "Exact budgeted tree dynamic programming using oracle cell mass gives the minimum squared field error available under a representation-unit budget.",
       "operating_regime": "small oracle-sized hierarchies with uniform-within-cell reconstruction",
@@ -66,7 +66,7 @@
     },
     {
       "claim_id": "GPA-GREEDY-LIMIT-001",
-      "source": "docs/global_project_attention_research_proposal.md#adaptive-refinement",
+      "source": "docs/research/global-project-attention.md#adaptive-refinement",
       "status": "measured",
       "mechanism": "Immediate value-of-refinement ignores discrete child costs and complementary future refinements, so it need not minimize field error under a unit budget.",
       "operating_regime": "finite hierarchy covers with nonuniform oracle mass",
@@ -89,7 +89,7 @@
     },
     {
       "claim_id": "GPA-METRIC-LIMIT-001",
-      "source": "docs/global_project_attention_research_proposal.md#metamorphic-and-invariant-tests",
+      "source": "docs/research/global-project-attention.md#metamorphic-and-invariant-tests",
       "status": "measured",
       "mechanism": "A cover selected to minimize uniform-cell L2 error need not improve L1 error after the budget increases.",
       "operating_regime": "finite hierarchy covers with objective-specific optimization",
@@ -111,7 +111,7 @@
     },
     {
       "claim_id": "GPA-C1-PATH-001",
-      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "source": "docs/research/context-system-tournament.md#candidate-c1-simplest-multiresolution-cover",
       "status": "rejected",
       "mechanism": "A bounded-arity path hierarchy optimized greedily for L2 reconstruction plus 0.01 times unresolved influence mass transfers an equal-token resolution-recall gain across projects.",
       "operating_regime": "GraphGraph development plus frozen Chess, Express, and Requests project graphs; 16, 32, and 64 representation units",
@@ -135,7 +135,7 @@
     },
     {
       "claim_id": "GPA-MASS-PENALTY-LIMIT-001",
-      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "source": "docs/research/context-system-tournament.md#candidate-c1-simplest-multiresolution-cover",
       "status": "measured",
       "mechanism": "A penalty proportional only to unresolved aggregate mass cancels when one internal cell is replaced entirely by internal children, so its coefficient cannot guide early hierarchy refinement.",
       "operating_regime": "mass-conserving hierarchy partitions",
@@ -157,7 +157,7 @@
     },
     {
       "claim_id": "GPA-LOGRES-TRANSFER-001",
-      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "source": "docs/research/context-system-tournament.md#candidate-c1-simplest-multiresolution-cover",
       "status": "rejected",
       "mechanism": "Penalizing aggregate mass by normalized log cell size rewards every internal refinement and transfers useful resolution across projects.",
       "operating_regime": "GraphGraph, Chess, Express, and Requests development/validation graphs; weights 0.001 through 1.0; 32 and 64 units",
@@ -180,7 +180,7 @@
     },
     {
       "claim_id": "GPA-H1",
-      "source": "docs/global_project_attention_research_proposal.md#rq1-approximation",
+      "source": "docs/research/global-project-attention.md#rq1-approximation",
       "status": "specified",
       "mechanism": "Exact-near and hierarchical-far representation allocates a fixed budget more effectively than flat retrieval.",
       "operating_regime": "oracle-sized and held-out software graphs",
@@ -200,7 +200,7 @@
     },
     {
       "claim_id": "GPA-H2",
-      "source": "docs/global_project_attention_research_proposal.md#rq2-scaling",
+      "source": "docs/research/global-project-attention.md#rq2-scaling",
       "status": "specified",
       "mechanism": "Hierarchy degrades resolution gradually as project size grows under fixed context budget.",
       "operating_regime": "synthetic and real graphs across project-size strata",
@@ -219,7 +219,7 @@
     },
     {
       "claim_id": "GPA-H3",
-      "source": "docs/global_project_attention_research_proposal.md#rq3-dynamic-updates",
+      "source": "docs/research/global-project-attention.md#rq3-dynamic-updates",
       "status": "specified",
       "mechanism": "Residual propagation and hierarchy invalidation confine ordinary edit work to the affected region.",
       "operating_regime": "non-hub edits, hub edits, moves, deletions, and refactors",
@@ -239,7 +239,7 @@
     },
     {
       "claim_id": "GPA-H4",
-      "source": "docs/global_project_attention_research_proposal.md#rq4-rare-but-decisive-evidence",
+      "source": "docs/research/global-project-attention.md#rq4-rare-but-decisive-evidence",
       "status": "specified",
       "mechanism": "Bridge, exception, and uncertainty reserves protect rare decisive evidence from aggregate smoothing.",
       "operating_regime": "bridge, policy, security, rare-test, and lexical-adversary tasks",
@@ -258,7 +258,7 @@
     },
     {
       "claim_id": "GPA-H5",
-      "source": "docs/global_project_attention_research_proposal.md#rq5-downstream-model-utility",
+      "source": "docs/research/global-project-attention.md#rq5-downstream-model-utility",
       "status": "specified",
       "mechanism": "Better evidence approximation improves frozen-agent task outcomes when interpretation is controlled.",
       "operating_regime": "repository completion and issue repair finalists",
@@ -278,7 +278,7 @@
     },
     {
       "claim_id": "GPA-H6",
-      "source": "docs/global_project_attention_research_proposal.md#rq6-calibration",
+      "source": "docs/research/global-project-attention.md#rq6-calibration",
       "status": "specified",
       "mechanism": "Omitted-mass, distortion, and facet-gap receipts predict insufficient context.",
       "operating_regime": "held-out retrieval and frozen-model tasks",
@@ -297,7 +297,7 @@
     },
     {
       "claim_id": "GPA-H7",
-      "source": "docs/global_project_attention_research_proposal.md#rq7-query-adaptivity",
+      "source": "docs/research/global-project-attention.md#rq7-query-adaptivity",
       "status": "specified",
       "mechanism": "Value-of-refinement allocates computation better than fixed hop or node budgets.",
       "operating_regime": "direct, path, blast-radius, summary, change, and negative queries",
@@ -317,7 +317,7 @@
     },
     {
       "claim_id": "GPA-H8",
-      "source": "docs/global_project_attention_research_proposal.md#downstream-agent-evaluation",
+      "source": "docs/research/global-project-attention.md#downstream-agent-evaluation",
       "status": "specified",
       "mechanism": "A model-agnostic core cover and receipt with thin protocol adapters transfers context-policy gains across unrelated model families.",
       "operating_regime": "closed and open-weight model families, multiple context regimes, prompt and tool protocols, and multiple tokenizers",
@@ -337,7 +337,7 @@
     },
     {
       "claim_id": "GPA-FIELD-COUPLING-001",
-      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "source": "docs/research/context-system-tournament.md#candidate-c1-simplest-multiresolution-cover",
       "status": "measured",
       "mechanism": "Personalized PageRank over call/import direction reaches only the forward cone of a seed. Because 62.9% of active entities are directed sinks, the far field receives zero mass, so no multiresolution cover has anything to encode. Treating an edge as coupling both endpoints restores a graded field over the whole project.",
       "operating_regime": "GraphGraph, Chess, Express, and Requests frozen Phase 1 graphs; the six Phase 1 tasks per project; damping 0.85, max_iter 30, tol 1e-7",
@@ -356,13 +356,13 @@
       "evidence": [
         "benchmarks/context_graph/global_attention_phase2_coupling.py",
         "tests/test_attention_field_coupling.py",
-        "docs/findings/2026-07-29-influence-field-coupling.md"
+        "docs/evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md"
       ],
       "decision": "Directed coupling is degenerate on 3 of 4 projects (median support 0.0107%-0.0291%, zero mass outside the top 64 entities). Symmetric coupling is non-degenerate on 4 of 4 (median support 98.46%-99.95%, 62.5% of mass outside the top 64). Phase 1 therefore compared cover formulas over an empty far field on most projects; its formula-level conclusions do not isolate the formula. Re-run C1 and C1-HYBRID-RESERVE-003 under symmetric coupling before treating any cover verdict as final."
     },
     {
       "claim_id": "GPA-COUPLING-RANKING-001",
-      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "source": "docs/research/context-system-tournament.md#candidate-c1-simplest-multiresolution-cover",
       "status": "measured",
       "mechanism": "Symmetric coupling lets influence reach entities that are directed sinks, so field-ranked selection can surface a relevant callee, doc, or concept that forward-only diffusion never assigns any mass.",
       "operating_regime": "GraphGraph, Chess, Express, and Requests frozen Phase 1 graphs; six tasks per project; token budgets 1024/2048/4096; pure field-ranked selection, not production search_nodes",
@@ -379,13 +379,13 @@
       ],
       "evidence": [
         "benchmarks/context_graph/global_attention_phase3_recoupled.py",
-        "docs/findings/2026-07-30-recoupled-cover-verdicts.md"
+        "docs/evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md"
       ],
       "decision": "Symmetric coupling improved the flat baseline from mean exact recall 0.5035 to 0.5694 (median 0.2667 to 0.5000); paired across 72 cases 32 improved and 3 regressed. The reserve's own exact recall rose 0.4319 to 0.5206. Promising as a RETRIEVAL field, but measured on a pure field-ranked baseline, not on production search_nodes, which combines PPR with lexical, semantic, and kind signals and uses localized PPR on large graphs. Do not promote until measured on the production eval."
     },
     {
       "claim_id": "GPA-FIELD-LEVERAGE-001",
-      "source": "docs/context_system_research_tournament.md#candidate-c1-simplest-multiresolution-cover",
+      "source": "docs/research/context-system-tournament.md#candidate-c1-simplest-multiresolution-cover",
       "status": "measured",
       "mechanism": "Production search_nodes combines PPR with lexical scoring, a degree boost, and kind priors. On queries that name their target symbol the lexical term determines the head of the ranking, and PPR only reorders the tail below the first hit.",
       "operating_regime": "21 resolvable labelled tasks across graphgraph-self, graphgraph-calibration, and graphgraph-doc-authority-target, scored on the live graph at limit 20",
@@ -401,7 +401,7 @@
       ],
       "evidence": [
         "benchmarks/context_graph/coupling_production_ranking.py",
-        "docs/findings/2026-07-30-coupling-has-no-production-leverage.md"
+        "docs/evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md"
       ],
       "decision": "Disabling PPR entirely scores identically to every coupling: recall 0.6905, MRR 0.6905. All 21 ranked lists do change, so the term is wired and active -- it reorders the tail, not the head. Field-stage work has no measurable leverage on the tasks this project gates against. Do not tune the field further until a paraphrase/conceptual task set exists that can detect its contribution."
     }
@@ -857,7 +857,7 @@
       "artifacts": [
         "benchmarks/context_graph/global_attention_phase2_coupling.py",
         "tests/test_attention_field_coupling.py",
-        "docs/findings/2026-07-29-influence-field-coupling.md"
+        "docs/evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md"
       ]
     },
     {
@@ -885,7 +885,7 @@
       "stop_condition": "worst-project gain at least 0.02 with no exact-recall loss above 0.02, or the candidate is rejected",
       "artifacts": [
         "benchmarks/context_graph/global_attention_phase3_recoupled.py",
-        "docs/findings/2026-07-30-recoupled-cover-verdicts.md"
+        "docs/evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md"
       ]
     },
     {
@@ -913,7 +913,7 @@
       "stop_condition": "paired per-task comparison across four projects at three budgets",
       "artifacts": [
         "benchmarks/context_graph/global_attention_phase3_recoupled.py",
-        "docs/findings/2026-07-30-recoupled-cover-verdicts.md"
+        "docs/evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md"
       ]
     },
     {
@@ -939,7 +939,7 @@
       "stop_condition": "paired comparison over all resolvable labelled tasks",
       "artifacts": [
         "benchmarks/context_graph/coupling_production_ranking.py",
-        "docs/findings/2026-07-30-coupling-has-no-production-leverage.md"
+        "docs/evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md"
       ]
     }
   ]

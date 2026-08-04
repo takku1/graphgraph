@@ -15,8 +15,9 @@ class DocumentationContractTest(unittest.TestCase):
     def test_every_doc_has_an_inbound_index_link(self) -> None:
         # T09: docs/README.md is the authoritative map. Every operational and
         # reference document must be reachable from it (directly or through a
-        # linked index like findings/), so nothing rots unlinked. Scratch under
-        # docs/notes/ is the one explicit archival exception.
+        # linked index), so nothing rots unlinked. The dated snapshot under
+        # docs/archive/ is the one explicit exception: it is a frozen historical
+        # corpus, deliberately not indexed file-by-file.
         docs_root = ROOT / "docs"
         readme = (docs_root / "README.md").resolve()
         reachable: set[Path] = set()
@@ -32,7 +33,7 @@ class DocumentationContractTest(unittest.TestCase):
                     continue
                 frontier.append((current.parent / target).resolve())
 
-        archived = {"notes"}
+        archived = {"archive"}
         orphans = [
             doc.relative_to(docs_root).as_posix()
             for doc in sorted(docs_root.rglob("*.md"))
@@ -45,8 +46,18 @@ class DocumentationContractTest(unittest.TestCase):
         )
 
     def test_local_markdown_links_resolve_without_file_uris(self) -> None:
+        # The dated snapshot under docs/archive/ is frozen history: its links are
+        # preserved exactly as they were written and are not rewritten to match
+        # the current tree, so it is excluded here.
         failures: list[str] = []
-        files = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
+        files = [
+            ROOT / "README.md",
+            *(
+                doc
+                for doc in sorted((ROOT / "docs").rglob("*.md"))
+                if doc.relative_to(ROOT / "docs").parts[0] != "archive"
+            ),
+        ]
 
         for document in files:
             text = document.read_text(encoding="utf-8", errors="replace")
@@ -71,8 +82,8 @@ class DocumentationContractTest(unittest.TestCase):
 
         self.assertEqual(failures, [], "\n".join(failures))
 
-    def test_start_here_uses_executable_validation_and_snippet_commands(self) -> None:
-        text = (ROOT / "docs" / "start-here.md").read_text(encoding="utf-8")
+    def test_getting_started_uses_executable_validation_and_snippet_commands(self) -> None:
+        text = (ROOT / "docs" / "guides" / "getting-started.md").read_text(encoding="utf-8")
 
         self.assertIn(
             "graphgraph validate-graph --graph .graphgraph/graph.gg",
@@ -102,7 +113,9 @@ class DocumentationContractTest(unittest.TestCase):
                 parser.parse_args(argv)
 
     def test_architecture_uses_current_public_packet_names(self) -> None:
-        text = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+        text = (
+            ROOT / "docs" / "architecture" / "system-architecture.md"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("| `gg` |", text)
         self.assertIn("| `gg_hybrid` |", text)

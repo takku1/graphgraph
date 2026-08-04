@@ -34,7 +34,7 @@ that diff *is* the honesty check for this benchmark.
 ## Scope of this claim
 
 This is one synthetic-corpus benchmark, not the full empirical program. The
-real-project numbers in `docs/empirical-findings.md` (e.g. the promoted shape
+real-project numbers in `docs/evaluation/empirical-evaluation.md` (e.g. the promoted shape
 rule's measured `2.87%` token savings) still depend on external repos checked
 out under `$AIPROJECTS_ROOT` / `resources/`, which aren't part of this repo and
 aren't reproducible from a fresh clone. That gap is real — this file doesn't

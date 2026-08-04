@@ -106,7 +106,7 @@ def identifier_quality_bonus(label: str) -> float:
     """Reward well-formed, multi-segment identifiers over short/generic ones.
 
     From Aider's repo-map PageRank personalization (see
-    docs/prior-art-research.md): a descriptive identifier like
+    docs/research/related-work.md): a descriptive identifier like
     `resolve_modified_node_ids` is far more likely to be what a query
     actually means than a generic single-letter/placeholder name like `x`
     or `tmp`, even when both technically match. Segments a label by

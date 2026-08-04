@@ -121,7 +121,9 @@ class PublicContractParityTest(unittest.TestCase):
         from graphgraph.packets.formats import packet_format_markdown_table
         from graphgraph.planning.routing import query_class_markdown_table
 
-        architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+        architecture = (
+            ROOT / "docs" / "architecture" / "system-architecture.md"
+        ).read_text(encoding="utf-8")
         self.assertIn(packet_format_markdown_table(), architecture)
         self.assertIn(query_class_markdown_table(), architecture)
 

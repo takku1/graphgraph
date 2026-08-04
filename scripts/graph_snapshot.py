@@ -1,6 +1,6 @@
 """Canonical, timestamp-free graph dump used as a byte-identical acceptance gate.
 
-The scan and retrieval optimisation cycles (see `docs/findings/`) each gated
+The scan and retrieval optimisation cycles (see `docs/evaluation/graybox-cycles/`) each gated
 their changes on an ad-hoc dump of this shape, rebuilt from scratch every time.
 This is that dump, committed, so a refactor can be *proved* to be a no-op rather
 than argued to be one.

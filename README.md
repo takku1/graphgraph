@@ -11,7 +11,7 @@ relation opcodes, local adjacency, and only the text a query actually needs.
 The advanced platform follows the same rule: memory, time, federation,
 semantic fallback, runtime traces, inference, and repair context compile into
 the native graph IR and bounded packet pipeline. They are not separate graph
-products hidden behind one CLI. See [LLM-native platform](docs/llm-native-platform.md).
+products hidden behind one CLI. See [LLM-native platform](docs/research/llm-native-platform.md).
 
 ## What it does
 
@@ -238,7 +238,7 @@ same call without another edit is a no-op.
 graphgraph context "what should change next?" --sync git --show-stats
 ```
 
-See [the graph-tool usage audit](docs/graph-tool-usage-audit.md) for the
+See [the graph-tool usage audit](docs/evaluation/external-tool-interoperability-audit.md) for the
 project-loop comparison, selection math, and capability roadmap.
 
 ## Command reference
@@ -284,9 +284,9 @@ It is also currently degenerate on real graphs. Because influence diffuses
 along edge direction and 62.9% of active entities are directed sinks, the far
 field receives no mass — a live compile yields `aggregate_mass 0.0`,
 `refinements 0`, and a single cover line for 98.8% of the project. See
-[the coupling finding](docs/findings/2026-07-29-influence-field-coupling.md)
+[the coupling finding](docs/evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md)
 for the measurement and
-[the tournament](docs/context_system_research_tournament.md) for the promotion
+[the tournament](docs/research/context-system-tournament.md) for the promotion
 rules. Use it to reproduce that result, not to get better context.
 
 If a compiled hybrid packet misses its budget, the packet is withheld and the
@@ -370,30 +370,46 @@ graph contract is defined in
 
 ## Documentation
 
-- `docs/start-here.md` — the default path in six commands; read this first
-- `docs/rigorous-framing.md` — the evidence bar this project holds itself to;
-  what's settled vs. still a hypothesis
-- `docs/planned-work.md` — the open backlog: every unresolved idea/gap
+- [`docs/README.md`](docs/README.md) — documentation index; start here
+- [`docs/guides/getting-started.md`](docs/guides/getting-started.md) — the default path in six commands
+- [`docs/guides/evidence-standards.md`](docs/guides/evidence-standards.md) — the evidence bar this
+  project holds itself to; what's settled vs. still a hypothesis
+- [`docs/open-work.md`](docs/open-work.md) — the open backlog: every unresolved idea/gap
   found so far, prioritized, with what's already ruled out and why
-- `docs/retrieval-confidence-routing.md` — measured grep-vs-graphgraph
-  decision rule, latency breakdown, and the score-gap confidence signal
-- `docs/architecture.md` — system architecture
-- `docs/llm-native-context-graph.md` / `docs/runtime-context-graph.md` — core design
-- `docs/semantic-locality-and-llm-efficiency.md` — corrected latent-space
-  framing and its translation into bounded LLM-native retrieval
-- `docs/semantic-locality-llm-efficiency-paper.md` — research-scoped position
-  paper, evidence boundary, and falsifiable evaluation plan
-- `docs/incremental-update-instruction-set.md` — incremental update primitives, profiling, prior art
-- `docs/relation-ontology.md` — edge types and traversal weights
-- `docs/interpretation-layer.md` — algorithm/concept detection
-- `docs/frontend-ir-strategy.md` — extraction frontends (regex vs. tree-sitter)
-- `docs/source-layout.md` — repo layout
-- `docs/schema-alignment.md` / `docs/integration-surfaces.md` — external graph interop
-- `docs/empirical-findings.md` — benchmark results
-- `docs/prior-art-research.md` — how comparable code-graph/agent-memory
-  systems work, and which of their ideas are already covered vs. worth
-  exploring
-- `docs/hardware_compilation_analogy.md` — assembly/hardware teaching
-  analogy for the packet formats; clearly marks which parts are
+- [`docs/guides/terminology.md`](docs/guides/terminology.md) — academic ↔ legacy term map and doc conventions
+
+**Architecture** — [`docs/architecture/SYSTEM.md`](docs/architecture/SYSTEM.md) is the L0 map; each
+subsystem has a `SYSTEM.md` beneath it.
+
+- [`docs/architecture/system-architecture.md`](docs/architecture/system-architecture.md) — end-to-end narrative
+- [`docs/architecture/information-retrieval/confidence-and-routing.md`](docs/architecture/information-retrieval/confidence-and-routing.md) —
+  measured grep-vs-graphgraph decision rule, latency breakdown, score-gap confidence signal
+- [`docs/architecture/runtime-context-model.md`](docs/architecture/runtime-context-model.md) — runtime context model
+- [`docs/architecture/storage/incremental-update-protocol.md`](docs/architecture/storage/incremental-update-protocol.md) —
+  incremental update primitives, profiling, prior art
+- [`docs/architecture/intermediate-representation/relation-ontology.md`](docs/architecture/intermediate-representation/relation-ontology.md) —
+  edge types and traversal weights; see also interpretation layer and schema alignment alongside it
+- [`docs/architecture/static-analysis/language-frontend-ir.md`](docs/architecture/static-analysis/language-frontend-ir.md) —
+  extraction frontends (regex vs. tree-sitter)
+- [`docs/architecture/package-structure.md`](docs/architecture/package-structure.md) — repo layout
+- [`docs/guides/integration-interfaces.md`](docs/guides/integration-interfaces.md) — external graph interop
+
+**Evaluation**
+
+- [`docs/evaluation/empirical-evaluation.md`](docs/evaluation/empirical-evaluation.md) — benchmark results
+- [`docs/evaluation/graybox-cycles/`](docs/evaluation/graybox-cycles/README.md) — dated gray-box evidence records
+- [`docs/evaluation/defect-ledger.md`](docs/evaluation/defect-ledger.md) — confirmed defects and resolutions
+
+**Research**
+
+- [`docs/research/related-work.md`](docs/research/related-work.md) — how comparable code-graph/agent-memory
+  systems work, and which of their ideas are already covered vs. worth exploring
+- [`docs/research/llm-native-context-representation.md`](docs/research/llm-native-context-representation.md) — core design
+- [`docs/research/semantic-locality-and-llm-efficiency.md`](docs/research/semantic-locality-and-llm-efficiency.md) —
+  corrected latent-space framing and its translation into bounded LLM-native retrieval
+- [`docs/research/semantic-locality-llm-efficiency-paper.md`](docs/research/semantic-locality-llm-efficiency-paper.md) —
+  research-scoped position paper, evidence boundary, falsifiable evaluation plan
+- [`docs/research/hardware-compilation-analogy.md`](docs/research/hardware-compilation-analogy.md) —
+  assembly/hardware teaching analogy for the packet formats; clearly marks which parts are
   implemented vs. still a hypothesis
-- `docs/graphgraph-vs-graphify.md` — how this compares to Graphify
+- [`docs/research/comparisons/graphify.md`](docs/research/comparisons/graphify.md) — how this compares to Graphify
