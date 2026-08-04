@@ -10,7 +10,7 @@ from ..graph.core import Graph, Node
 from ..graph.coupling import EDGE_COUPLINGS, coupled_graph
 from . import git_utils
 from .models import Match
-from .scoping import _is_test_node
+from .scoping import _is_test_material
 from .text import node_search_text, tokenize
 
 # Cached (authority_rank, document_authority, neutral_rank). Loaded lazily: the
@@ -407,7 +407,7 @@ def search_nodes(
         score = 0.0
         reasons: list[str] = []
         matched_terms: set[str] = set()
-        supporting_test = _is_test_node(node) and not test_query
+        supporting_test = _is_test_material(node) and not test_query
         document_node = node.kind in _DOCUMENT_NODE_KINDS
         expanded_label_terms = {
             form for token in label_terms for form in (lexical_forms(token) if document_node else {token})
@@ -573,7 +573,7 @@ def search_nodes(
                 if doc_prior < 1.0:
                     score *= doc_prior
                     reasons.append("document_intent_prior")
-            if _is_test_node(node) and not test_query:
+            if _is_test_material(node) and not test_query:
                 reasons.append("test_context_penalty")
             if _is_generated_node(node) and not generated_query:
                 score *= 0.5
@@ -639,7 +639,7 @@ def search_nodes(
             # Apply this after identifier, topology, and temporal boosts so a
             # tangential test cannot regain primary-anchor rank through those
             # additive signals. Tests remain available through graph traversal.
-            if _is_test_node(node) and not test_query:
+            if _is_test_material(node) and not test_query:
                 score *= 0.30
 
             matches.append(Match(node=node, score=score, reasons=tuple(dict.fromkeys(reasons))))

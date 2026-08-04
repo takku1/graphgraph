@@ -47,6 +47,10 @@ SESSION_CONTEXT_QUERY_CLASSES = {"subsystem_summary", "spreading_activation"}
 
 NON_STRUCTURAL_KINDS = {"concept", "section", "paragraph", "markdown", "rst", "html", "text"}
 
+# Kinds a test runner can execute. A node on a test path only becomes a test
+# case if it is one of these; file, field, and local nodes are not.
+TEST_CASE_KINDS = {"function", "method"}
+
 STRUCTURAL_RELATIONS = {
     "calls",
     "imports",
@@ -148,14 +152,21 @@ def _is_test_path(path: str) -> bool:
     return python_convention and "src" not in directories
 
 
-def _is_test_node(node: object) -> bool:
+def _is_test_material(node: object) -> bool:
+    """True for anything that lives in test code: files, fields, locals, cases.
+
+    This is the breadth a *production* query needs. Test material should not
+    anchor or outrank production code when the question is about production
+    behavior, and that applies to the test file node itself just as much as to
+    the cases inside it.
+    """
     facts = {str(fact).casefold() for fact in (getattr(node, "facts", ()) or ())}
     if facts & {"role:test", "rust_attribute:test"}:
         return True
     parent = str(getattr(node, "parent", ""))
     owner = parent.rsplit("__", 1)[-1]
     if owner.endswith(("Test", "Tests", "Spec", "Specs")):
-        return str(getattr(node, "kind", "")) in {"function", "method"}
+        return str(getattr(node, "kind", "")) in TEST_CASE_KINDS
     path = str(getattr(node, "path", ""))
     kind = str(getattr(node, "kind", ""))
     if _is_test_path(path) and kind not in NON_STRUCTURAL_KINDS:
@@ -163,6 +174,24 @@ def _is_test_node(node: object) -> bool:
     source = str(getattr(node, "source", ""))
     line = getattr(node, "line", None)
     return bool(source and isinstance(line, int) and _source_declares_rust_test(source, line))
+
+
+def _is_test_node(node: object) -> bool:
+    """True only for an executable test case.
+
+    Narrower than :func:`_is_test_material` on purpose. A test *file* node, and
+    the fields and locals declared inside it, share the path but are not
+    independently runnable; counting them as test cases inflates affected-test
+    evidence with things no runner can execute.
+    """
+    if not _is_test_material(node):
+        return False
+    if str(getattr(node, "kind", "")) in TEST_CASE_KINDS:
+        return True
+    # Scanner-marked test facts identify a case even when the node kind is
+    # language-specific rather than `function`/`method`.
+    facts = {str(fact).casefold() for fact in (getattr(node, "facts", ()) or ())}
+    return bool(facts & {"role:test", "rust_attribute:test"})
 
 
 def _is_runnable_test_node(node: object) -> bool:

@@ -12,7 +12,7 @@ from ..planning.budgets import explicit_query_identifiers, plan_terms
 from .models import Match
 from .scoping import (
     STRUCTURAL_RELATIONS,
-    _is_test_node,
+    _is_test_material,
     _qualified_query_symbols,
 )
 
@@ -683,7 +683,7 @@ def facet_coverage(
                 for node_id in sorted(
                     nodes,
                     key=lambda candidate: (
-                        _is_test_node(graph.nodes[candidate]),
+                        _is_test_material(graph.nodes[candidate]),
                         not is_code_like(graph.nodes[candidate]),
                         graph.nodes[candidate].kind != "external",
                         candidate,
@@ -773,9 +773,9 @@ def _facet_structural_evidence(
             }
         )
     if forms & {"exercise", "exercises", "exercised"}:
-        return sorted({edge.source for edge in relation_edges if _is_test_node(graph.nodes[edge.source])})
+        return sorted({edge.source for edge in relation_edges if _is_test_material(graph.nodes[edge.source])})
     if forms & {"case", "cases"} and forms & {"cover", "covers", "covered", "coverage"}:
-        return sorted({edge.source for edge in relation_edges if _is_test_node(graph.nodes[edge.source])})
+        return sorted({edge.source for edge in relation_edges if _is_test_material(graph.nodes[edge.source])})
     if forms & {"register", "registers", "registered", "registration", "registry"}:
         return sorted(
             {
@@ -811,7 +811,7 @@ def reserve_facet_matches(
             match
             for match in matching_reserved
             if (not prefer_code or graph is None or is_code_like(match.node))
-            and (not prefer_production or not _is_test_node(match.node))
+            and (not prefer_production or not _is_test_material(match.node))
         ]
         reserved_label_quality = max(
             (len(_facet_label_matched_terms(match.node, terms)) for match in qualified_reserved),
@@ -839,7 +839,7 @@ def reserve_facet_matches(
                         0
                         if (
                             (not prefer_code or is_code_like(match.node))
-                            and (not prefer_production or not _is_test_node(match.node))
+                            and (not prefer_production or not _is_test_material(match.node))
                         )
                         else 1,
                         -len(hits),
@@ -866,7 +866,7 @@ def reserve_facet_matches(
                 continue
         pool = code_eligible if prefer_code and code_eligible else eligible
         if prefer_production:
-            production_pool = [match for match in pool if not _is_test_node(match.node)]
+            production_pool = [match for match in pool if not _is_test_material(match.node)]
             if production_pool:
                 pool = production_pool
         connected_ids: set[str] = set()
@@ -916,7 +916,7 @@ def reserve_facet_matches(
                     replaceable,
                     key=lambda item: (
                         int(not prefer_code or is_code_like(item[1].node)),
-                        int(not prefer_production or not _is_test_node(item[1].node)),
+                        int(not prefer_production or not _is_test_material(item[1].node)),
                         len(_facet_label_matched_terms(item[1].node, terms)),
                         item[1].score,
                         item[1].node.id,

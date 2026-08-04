@@ -33,7 +33,7 @@ from .scoping import (
     NON_STRUCTURAL_KINDS,
     STRUCTURAL_QUERY_CLASSES,
     STRUCTURAL_RELATIONS,
-    _is_test_node,
+    _is_test_material,
     _package_scope,
     _path_in_scopes,
     _qualified_query_symbols,
@@ -144,7 +144,7 @@ def preferred_path_anchor_matches(
             for node in path_nodes
             if node.kind not in file_node_kinds
             if query_class == "doc_summary" or node.kind not in NON_STRUCTURAL_KINDS
-            if not (query_class == "affected_tests" and _is_test_node(node))
+            if not (query_class == "affected_tests" and _is_test_material(node))
         ]
         candidates: dict[str, Match] = {}
         query_winners: list[str] = []
@@ -376,7 +376,7 @@ def exact_token_symbol_anchor_matches(
             node.active
             and label in terms
             and node.kind not in NON_STRUCTURAL_KINDS
-            and not _is_test_node(node)
+            and not _is_test_material(node)
             and (not scopes or _path_in_scopes(node.path, scopes))
         ):
             by_label.setdefault(label, []).append(node)
@@ -414,7 +414,7 @@ def implementation_symbol_anchor_matches(
         if (
             not node.active
             or node.kind in NON_STRUCTURAL_KINDS
-            or _is_test_node(node)
+            or _is_test_material(node)
             or (scopes and not _path_in_scopes(node.path, scopes))
         ):
             continue
@@ -819,7 +819,7 @@ def packet_priority(
 def _reverse_caller_priority_key(node: object) -> tuple[int, str, str]:
     path = str(getattr(node, "path", "")).replace("\\", "/").strip("/")
     segments = {part.casefold() for part in path.split("/") if part}
-    if _is_test_node(node):
+    if _is_test_material(node):
         role = 2
     elif segments & {"bench", "benchmark", "benchmarks"}:
         role = 1
@@ -980,7 +980,7 @@ def select_anchor_matches(
             for match in matches
             if match.node.kind in production_kinds
             and match.node.kind not in NON_STRUCTURAL_KINDS
-            and not _is_test_node(match.node)
+            and not _is_test_material(match.node)
         ]
         if production:
             return tuple(production[:anchor_limit])
@@ -1008,7 +1008,7 @@ def select_anchor_matches(
         implementation = [
             match
             for match in matches
-            if not _is_test_node(match.node)
+            if not _is_test_material(match.node)
             and match.node.kind not in NON_STRUCTURAL_KINDS
             and not _unrequested_identifier_sibling(match.node.label, explicit)
         ]

@@ -312,7 +312,7 @@ def _affected_tests_metadata(
             if start in graph.nodes
             and graph.nodes[start].kind not in scoping.NON_STRUCTURAL_KINDS
             and graph.nodes[start].kind in {"function", "method", "class", "struct", "trait", "enum", "field"}
-            and not scoping._is_test_node(graph.nodes[start])
+            and not scoping._is_test_material(graph.nodes[start])
         )[:1]
         if compound_test_roots:
             affected = test_recommendations.affected_test_recommendations(
@@ -439,8 +439,16 @@ def _semantic_novelty_result(
     inferred_scope: str,
     effective_anchor_limit: int,
     anchor_paths: tuple[str, ...],
+    mention_fulfilled: frozenset[str] = frozenset(),
 ) -> RetrievalResult:
-    """Return a zero-packet reject receipt for a complete semantic miss."""
+    """Return a zero-packet reject receipt for a complete semantic miss.
+
+    ``mention_fulfilled`` names required facets that *documentation* covers
+    while code and structural evidence miss. That is a weaker outcome than an
+    answer but a stronger one than silence: the corpus does discuss the thing,
+    it just has no code to point at. Reporting it as ``unanswerable`` told the
+    caller nothing was found, which is wrong and hides the doc that was.
+    """
     effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
     metadata = quality.packet_quality_metadata(
         graph,
@@ -471,9 +479,15 @@ def _semantic_novelty_result(
             # decision. A real exact anchor (for example ``Flask``) does not
             # support an answer when every required compound facet misses.
             "answerability": {
-                "status": "unanswerable",
+                "status": "incomplete" if mention_fulfilled else "unanswerable",
                 "abstained": True,
-                "reason": ("no code or structural graph evidence covers any required query facet"),
+                "reason": (
+                    "only documentation mentions cover the required query facets "
+                    f"({', '.join(sorted(mention_fulfilled))}); no code or structural "
+                    "graph evidence"
+                    if mention_fulfilled
+                    else "no code or structural graph evidence covers any required query facet"
+                ),
                 "confidence": 0.0,
             },
         }
@@ -680,7 +694,16 @@ def retrieve_context(
                 for reason in match.reasons
             )
         )
-    if query_class in {"direct_lookup", "reverse_lookup"} and facets and not preflight_exact_matches:
+    # Explicit `anchor_paths` are a caller directive, not a guess: the caller
+    # has already located the evidence. The feasibility preflight exists to
+    # avoid ranked searches for entities that do not exist anywhere, so letting
+    # it veto a pinned path turns a precise request into an empty answer.
+    if (
+        query_class in {"direct_lookup", "reverse_lookup"}
+        and facets
+        and not preflight_exact_matches
+        and not anchor_paths
+    ):
         # A collection-wide evidence-facet feasibility pass is cheaper than eight
         # ranked searches for a query whose required entities do not exist.
         # It uses the same matcher and IDF requiredness contract as final
@@ -706,7 +729,25 @@ def retrieve_context(
                     for node_id in evidence_nodes
                 )
             }
-            if required_labels - individually_fulfilled:
+            missing_required = required_labels - individually_fulfilled
+            if missing_required:
+                # Before declaring a total miss, ask whether the corpus mentions
+                # these facets anywhere outside code. A documented-but-unbuilt
+                # convention is an incomplete answer, not an absent one.
+                mention_nodes = {
+                    node_id
+                    for node_id, node in graph.nodes.items()
+                    if node.active and node_id not in evidence_nodes
+                }
+                mention_fulfilled = frozenset(
+                    label
+                    for label, terms in facets
+                    if label in missing_required
+                    and any(
+                        facet_stage._facet_matches_node(graph.nodes[node_id], terms)
+                        for node_id in mention_nodes
+                    )
+                )
                 return _semantic_novelty_result(
                     graph,
                     query_class=query_class,
@@ -719,6 +760,7 @@ def retrieve_context(
                     inferred_scope="",
                     effective_anchor_limit=plan.anchor_limit,
                     anchor_paths=anchor_paths,
+                    mention_fulfilled=mention_fulfilled,
                 )
         if not global_coverage.get("fulfilled") and global_coverage.get("unfulfilled_required"):
             return _semantic_novelty_result(
@@ -887,13 +929,13 @@ def retrieve_context(
                             and is_code_like(node)
                             and (
                                 query_class != "subsystem_summary"
-                                or not scoping._is_test_node(node)
+                                or not scoping._is_test_material(node)
                             )
                             and (not scopes or scoping._path_in_scopes(node.path, scopes))
                             and facet_stage._facet_matches_node(node, facet_terms)
                         ),
                         key=lambda node: (
-                            scoping._is_test_node(node),
+                            scoping._is_test_material(node),
                             facet_stage._software_role_label_distance(node, facet_terms),
                             node.kind not in {"method", "function", "external"},
                             len(node.path),
@@ -1084,11 +1126,11 @@ def retrieve_context(
             prefer_production=query_class == "subsystem_summary",
         )
         if query_class == "subsystem_summary" and any(
-            is_code_like(match.node) and not scoping._is_test_node(match.node)
+            is_code_like(match.node) and not scoping._is_test_material(match.node)
             for match in selected_matches
         ):
             selected_matches = tuple(
-                match for match in selected_matches if not scoping._is_test_node(match.node)
+                match for match in selected_matches if not scoping._is_test_material(match.node)
             )
     if path_matches:
         # Exact edited paths are an explicit ANCHOR instruction. They define

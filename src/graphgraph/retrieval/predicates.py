@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Literal
 
 from ..graph.core import Graph, Node
-from .scoping import _is_test_node
+from .scoping import _is_test_material
 
 # Kinds that name a callable symbol. Files, docs, and concepts are not
 # candidates for "does this have a caller".
@@ -219,7 +219,7 @@ def caller_counts(graph: Graph) -> tuple[dict[str, int], dict[str, int]]:
         all_callers.setdefault(edge.target, set()).add(edge.source)
         cached = is_test.get(edge.source)
         if cached is None:
-            cached = _is_test_node(source)
+            cached = _is_test_material(source)
             is_test[edge.source] = cached
         if not cached:
             production.setdefault(edge.target, set()).add(edge.source)
@@ -246,7 +246,7 @@ def _matches(
         return False
     if criteria.label_contains and criteria.label_contains.casefold() not in node.label.casefold():
         return False
-    if not criteria.include_tests and _is_test_node(node):
+    if not criteria.include_tests and _is_test_material(node):
         return False
     if criteria.production_callers is not None and not criteria.production_callers.matches(prod_count):
         return False
@@ -302,7 +302,7 @@ def select_symbols(
                 "line": node.line,
                 "callers": all_counts.get(node.id, 0),
                 "production_callers": prod_counts.get(node.id, 0),
-                "is_test": _is_test_node(node),
+                "is_test": _is_test_material(node),
             }
             for index, node in enumerate(matched, start=1)
         ]
