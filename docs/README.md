@@ -49,6 +49,10 @@ Superseded pre-redesign documents were retired; their history is in git.
 | [architecture/platform/](architecture/platform/) | Optional evidence / CPG / inference |
 | [architecture/agent-interfaces/](architecture/agent-interfaces/) | Cold CLI vs resident MCP |
 | [architecture/project-atlas/](architecture/project-atlas/) | Orientation, memory, navigation benchmark |
+| [architecture/acceptance/](architecture/acceptance/SYSTEM.md) | Black-box acceptance & qualification |
+| [architecture/evaluation-analysis/](architecture/evaluation-analysis/SYSTEM.md) | Calibration, authority, eval protocol |
+| [architecture/research/](architecture/research/SYSTEM.md) | Unpromoted research candidates |
+| [architecture/representation/](architecture/representation/SYSTEM.md) | Project representation (flat vs hybrid) |
 | [architecture/runtime-context-model.md](architecture/runtime-context-model.md) | Runtime context model |
 
 **Terminology:** *scan* → corpus extraction; *packet* → context packet; *blast radius* → change-impact neighborhood; *anchors* → retrieval anchors. Full map: [guides/terminology.md](guides/terminology.md).

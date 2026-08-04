@@ -46,7 +46,7 @@ Two consequences for how work is gated here:
 | Component | Metric | Baseline | Note |
 |-----------|--------|---------:|------|
 | storage | `graph_load_warm_ms` | 0.1403 ms | cold load 213 ms reported alongside |
-| information-retrieval | `retrieval_query_warm_ms` | 2017.7 ms | **see T-B01 — this is slow** |
+| information-retrieval | `retrieval_query_warm_ms` | 1125.7 ms | was 2017.7; T-B01 removed 44% |
 | context-packets | `packet_token_units` | 1070.4 | two-query fixed workload |
 
 Baselines are machine-local. Re-record on a new host before trusting a delta.
@@ -94,10 +94,10 @@ hiding that in a total is how a project talks itself into believing it is done.
 | platform | 7/7 | 1/3 | 66% | measure.sh + baseline |
 | agent-interfaces | 7/7 | 1/3 | 60% | measure.sh + baseline |
 | project-atlas | 7/7 | 1/3 | **33%** | measure.sh + baseline; weakest evidence |
-| **acceptance** | **0/7** | **0/3** | — | **entire component** |
-| **evaluation-analysis** | **0/7** | **0/3** | — | **entire component** |
-| **research** | **0/7** | **0/3** | — | **entire component** |
-| **representation** | **0/7** | **0/3** | — | **entire component** |
+| acceptance | 7/7 | 1/3 | 60% | measure.sh + baseline (needs external corpus) |
+| evaluation-analysis | 7/7 | 1/3 | 60% | measure.sh + baseline |
+| research | 7/7 | 1/3 | **100%** | measure.sh + baseline; registry invariant is `Proved` |
+| representation | 7/7 | 1/3 | 50% | measure.sh + baseline; promotion gate unmeasured |
 
 ### What the audit found
 
@@ -119,10 +119,14 @@ the harness that would run that comparison has no contract of its own.
 
 **Signal B — spec bloat.** None. Largest spec is 94 lines against a ~150 threshold.
 
-**Signal C — test seams.** 39 of 57 suites are now wired to a component gate,
-up from 29. The remaining 18 map almost exactly onto the four missing
-components, which is corroboration that the Signal A boundary is real and not
-an artifact of how the packages happen to be named.
+**Signal C — test seams.** 51 of 57 suites are wired to a component gate, up
+from 29 at the start of the audit. The 18 orphans that remained after widening
+the existing gates mapped almost exactly onto the four missing components —
+corroboration that the Signal A boundary was real and not an artifact of package
+naming. Speccing those four took orphans to 6, all genuinely cross-cutting:
+`test_docs_contract`, `test_module_boundaries`, `test_surface_constants`,
+`test_distribution_artifacts`, `test_benchmark`, `test_cycle5_regressions`.
+Those belong to repo-wide contracts rather than to any one subsystem.
 
 **Signal D — metric drift.** Three baselines recorded, no regressions yet.
 `retrieval_query_warm_ms = 2017 ms` is the outstanding concern (T-B01).
@@ -138,7 +142,7 @@ long before this work. Repointed to the surviving
 
 ### Type B — research/measure first
 
-- [ ] **[T-B01]** Warm `direct_lookup` costs **2.0 s** on the graphgraph graph
+- [x] **[T-B01]** Warm `direct_lookup` costs **2.0 s** on the graphgraph graph
   - **Signal:** first harness baseline, stdev 41 ms across 9 runs — stable, so not noise.
   - **Why it matters:** [agent-interfaces/SYSTEM.md](../../docs/architecture/agent-interfaces/SYSTEM.md) advertises sub-ms resident retrieval against a Flask-scale graph. Either that figure does not generalize to a 7.5 MB graph, or this query misses the exact fast path and falls into ranked search. Find out which before optimizing.
   - **Target:** [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
@@ -208,7 +212,7 @@ long before this work. Repointed to the surviving
   - **Gate:** ≥5 language/runtime strata.
   - **Blocked By:** `T-B02`
 
-- [ ] **[T-A06]** Spec the `acceptance/` subsystem — **highest-value gap**
+- [x] **[T-A06]** Spec the `acceptance/` subsystem — **highest-value gap**
   - **Why first:** 3,735 LOC across 21 modules, and it is the qualification
     layer. ADR-006 makes head-to-head measurement the standard of proof; this is
     the harness that would carry it, and it currently has no interface contract,
@@ -219,7 +223,7 @@ long before this work. Repointed to the surviving
   - **Candidate metric:** acceptance gate pass-rate at fixed corpus (`direction: higher`).
   - **Blocked By:** none
 
-- [ ] **[T-A07]** Spec the `analysis/` evaluation subsystem
+- [x] **[T-A07]** Spec the `analysis/` evaluation subsystem
   - **Scope:** calibration, document authority, eval protocol, metrics (~1,600 LOC
     beyond the already-specced `navigation.py`). Suites: `test_calibration.py`,
     `test_document_authority.py`, `test_eval_harness.py`, `test_eval_protocol.py`.
@@ -227,13 +231,13 @@ long before this work. Repointed to the surviving
     the two-child minimum and distinct-failure-mode guards both apply.
   - **Blocked By:** none
 
-- [ ] **[T-A08]** Spec the `research/` subsystem
+- [x] **[T-A08]** Spec the `research/` subsystem
   - **Scope:** `attention_field.py`, `registry.py`, `static_cover.py`. The claim
     registry is already mechanically gated by `test_research_registry.py`, which
     is a stronger invariant than most of the tree carries — record it as `Proved`.
   - **Blocked By:** none
 
-- [ ] **[T-A09]** Spec the `representation/` subsystem
+- [x] **[T-A09]** Spec the `representation/` subsystem
   - **Scope:** `hybrid.py` / `hybrid_reserve_v1`. This is the live opt-in
     candidate from the global-attention line; the default stays flat. Its
     promotion status belongs in a spec, not in a benchmark script's comments.

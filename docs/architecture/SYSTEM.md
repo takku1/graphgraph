@@ -58,6 +58,10 @@ External graph tools are **ingestion interoperability** only; they are not the r
 | Platform & evidence | CPG evidence, inference, temporal, memory | `platform/` | [platform/SYSTEM.md](./platform/SYSTEM.md) |
 | Agent interfaces | CLI cold-start vs resident MCP transport | `cli/`, `mcp/` | [agent-interfaces/SYSTEM.md](./agent-interfaces/SYSTEM.md) |
 | Project atlas | Orientation, navigation benchmark, project memory | `services/project_atlas`, `analysis/navigation` | [project-atlas/SYSTEM.md](./project-atlas/SYSTEM.md) |
+| Acceptance & qualification | Black-box gates, sealed ground truth, scoreboard | `acceptance/` | [acceptance/SYSTEM.md](./acceptance/SYSTEM.md) |
+| Evaluation analysis | Calibration, authority, versioned suites, metrics | `analysis/` | [evaluation-analysis/SYSTEM.md](./evaluation-analysis/SYSTEM.md) |
+| Research laboratory | Unpromoted candidates, executable claim registry | `research/` | [research/SYSTEM.md](./research/SYSTEM.md) |
+| Project representation | Flat vs multiresolution project shaping | `representation/` | [representation/SYSTEM.md](./representation/SYSTEM.md) |
 
 Package inventory narrative: [package-structure.md](./package-structure.md).  
 End-to-end narrative (legacy detail): [system-architecture.md](./system-architecture.md).
