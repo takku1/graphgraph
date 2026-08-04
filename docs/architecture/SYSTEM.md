@@ -8,6 +8,27 @@ Core research question:
 
 > What is the cheapest context representation an LLM can reliably interpret?
 
+**The design bet.** The context packet is a **compiled artifact whose target is
+the model**, not a document for a person. Human legibility is not a design
+constraint — it is a cost the system declines to pay. The compiler analogy is
+load-bearing rather than decorative: corpus extraction is the frontend, the
+graph IR is the intermediate representation, retrieval and planning are the
+optimizer, and packet encoding is code generation against a target whose
+instruction set is however the model actually consumes tokens.
+
+Two obligations follow, and both are gates rather than aspirations:
+
+- **The cost model must track the real target.** A format is chosen by measured
+  tokens against a real tokenizer, never by how tidy it looks. This is why an
+  uncalibrated estimator with 47% cross-format spread was a project-level
+  defect: the compiler was optimizing against a cost model that did not
+  describe its target ([token proxy recalibration](../evaluation/graybox-cycles/2026-07-30-token-proxy-recalibration.md)).
+- **"Better" is comparative or it is nothing.** The goal is to beat comparable
+  context-graph and agent-memory systems on token cost first, with latency and
+  content coverage as constraints that must not regress. Absolute numbers in
+  isolation do not establish that; head-to-head measurement does, and it is
+  tracked as a first-class deliverable, not a closing flourish.
+
 ## 2. Pipeline (textbook stages)
 
 ```text
@@ -61,8 +82,10 @@ End-to-end narrative (legacy detail): [system-architecture.md](./system-architec
 
 - **ADR-001:** Prefer deterministic extraction; score any LLM extraction separately.
 - **ADR-002:** Resident MCP process is the interactive transport; CLI is cold-start / scripting.
-- **ADR-003:** Academic terminology in living docs; informal aliases documented in [archive/README.md](../guides/terminology.md).
+- **ADR-003:** Academic terminology in living docs; informal aliases documented in [terminology.md](../guides/terminology.md).
 - **ADR-004:** Expand a subsystem node only when interface seams justify it (recursive modular decomposition).
+- **ADR-005:** The packet targets the model, not a reader. Human readability is not a design constraint, and a format is never preferred for looking cleaner. Consequence: any format claim requires a measurement against a real tokenizer, and the estimator that stands in for one is itself held to a calibration gate.
+- **ADR-006:** Superiority claims are head-to-head or withdrawn. Comparative tables built from other projects' published numbers on their own benchmarks are background, not evidence; the claim is established by running one task set through both systems on one machine, and by reporting the axes where GraphGraph loses.
 
 ## 7. Open work
 
