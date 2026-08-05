@@ -375,6 +375,25 @@ def _add_retrieval_commands(sub) -> None:
 
 
 def _add_status_command(sub) -> None:
+    orient = sub.add_parser(
+        "orient",
+        help="Build a source-grounded project atlas: system card, subsystems, coupling, tests, and coverage receipts.",
+    )
+    orient.add_argument("--directory", "-d", help="Project root directory (default: cwd).")
+    orient.add_argument("--graph", help="Graph path. Auto-detected from native .graphgraph if omitted.")
+    orient.add_argument("--max-subsystems", type=int, help="Optional hard cap; default is budget-selected.")
+    orient.add_argument("--representatives", type=int, default=1, help="Grounded API representatives per subsystem.")
+    orient.add_argument("--max-couplings", type=int, help="Optional hard cap; default is budget-selected.")
+    orient.add_argument(
+        "--evidence-budget-chars",
+        type=int,
+        default=8000,
+        help="Exact serialized evidence-view budget used by dynamic coverage selection (default: 8000).",
+    )
+    orient.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    orient.add_argument("--pretty", action="store_true", help="Indent --json output for human inspection.")
+    orient.set_defaults(func=_lazy_cmd("diagnostics", "cmd_orient"))
+
     status = sub.add_parser(
         "status", help="Summarize graph validity, code/doc balance, package metadata, and optional runtime probes."
     )
@@ -595,6 +614,16 @@ def _add_compare_command(sub) -> None:
 
 
 def _add_eval_command(sub) -> None:
+    navigation = sub.add_parser(
+        "navigation-eval",
+        help="Score rg/source-read, GraphGraph, or hybrid navigation traces under equal line/action/token/time budgets.",
+    )
+    navigation.add_argument("--tasks", required=True, help="Frozen task/qrel JSON.")
+    navigation.add_argument("--runs", required=True, help="Recorded strategy trace JSON.")
+    navigation.add_argument("--profile", help="Optional explicit navigation-loss weight profile JSON.")
+    navigation.add_argument("--pretty", action="store_true")
+    navigation.set_defaults(func=_lazy_cmd("evaluation", "cmd_navigation_eval"))
+
     eval_cmd = sub.add_parser("eval", help="Evaluate retrieval recall and packet token cost against task expectations.")
     eval_cmd.add_argument("--graph", required=True)
     eval_cmd.add_argument("--tasks", required=True)

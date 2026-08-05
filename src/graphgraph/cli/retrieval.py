@@ -22,6 +22,7 @@ from ..retrieval import (
     encode_relation_micro,
     packet_priority,
     query_relations,
+    query_saved_relations,
 )
 from ..runtime.cache import TopologicalKVCache, compute_cache_key
 from ..services import (
@@ -332,9 +333,10 @@ def cmd_relations(args: argparse.Namespace) -> None:
             "fresh": freshness == "fresh",
         }
     else:
-        graph = load_any(graph_path)
-    result = query_relations(
-        graph,
+        graph = None
+    query = query_relations if graph is not None else query_saved_relations
+    result = query(
+        graph if graph is not None else graph_path,
         args.target,
         direction=args.direction,
         limit=args.limit,

@@ -70,7 +70,7 @@ BASELINE_TOOL_CHARS = {
     "full_graph": 898,
     "query_context": 4217,
     "query_relations": 900,
-    "project_status": 547,
+    "project_status": 356,
     "validate_packet": 611,
     "source_snippets": 831,
     "build_graph": 2514,
@@ -139,6 +139,7 @@ class McpMachineContractTest(unittest.TestCase):
                     "sync": ("none", "git"),
                     "format": ("compact", "detailed"),
                 },
+                "project_status": {"view": ("status", "atlas")},
                 "query_relations": {
                     "direction": ("callers", "callees"),
                     "format": ("micro", "detailed"),
@@ -180,6 +181,7 @@ class McpMachineContractTest(unittest.TestCase):
                     "source_mode": "auto",
                 },
                 "query_context": {"query_class": "auto", "format": "compact"},
+                "project_status": {"view": "status"},
                 "query_relations": {
                     "limit": 20,
                     "include_tests": False,

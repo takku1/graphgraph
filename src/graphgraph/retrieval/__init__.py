@@ -4,7 +4,7 @@ from .budgeting import budget_edges, enrich_runtime_context
 from .context import retrieve_context
 from .expansion import expand_context
 from .models import Match, RetrievalResult
-from .relations import encode_relation_micro, query_relations
+from .relations import encode_relation_micro, query_relations, query_saved_relations
 from .search import search_nodes
 from .test_recommendations import (
     reconcile_retrieval_receipt,
@@ -30,6 +30,7 @@ __all__ = [
     "reconcile_semantic_retrieval_receipt",
     "retrieve_context",
     "query_relations",
+    "query_saved_relations",
     "search_nodes",
     "tokenize",
 ]

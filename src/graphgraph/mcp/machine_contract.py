@@ -13,7 +13,7 @@ MACHINE_TOOL_DESCRIPTIONS = {
     "query_context": "ACT:natural-language when node IDs unknown; OUT:anchors,packet,receipts; MAY:refresh.",
     "query": "ACT:any read-only natural-language query; ROUTE:typed expert operator or context fallback; OUT:plan,result,receipt; NEVER:index implicitly.",
     "query_relations": "ACT:one-hop callers/callees; OUT:micro IR; SAFE:complete_within_graph,call_topology_status; MAY:sync=git; tests opt-in.",
-    "project_status": "ACT:report project graph status; OUT:validity,shape,freshness,packages,runtime probes.",
+    "project_status": "ACT:status|orient; OUT:validity or atlas:subsystems,coupling,tests,coverage.",
     "validate_packet": "ACT:validate packet or saved graph; OUT:ok,format,node_count,edge_count,errors.",
     "source_snippets": "ACT:read bounded source/code lines for node IDs,labels,or paths; USE:after retrieval when exact text is needed.",
     "build_graph": "ACT:scan/ingest and save graph; OUT:mutation+validation receipt; SAFE:built-in exclusions plus skip_dirs/exclude_dirs.",
@@ -34,7 +34,7 @@ MACHINE_TOOL_DESCRIPTIONS = {
 }
 
 # The additive natural-language facade costs 1,473 recurring schema characters
-# while preserving every expert tool. Keep the complete 24-tool surface below
+# while preserving every expert tool. Keep the complete tool surface below
 # a round 3,000-token proxy instead of hiding advanced controls in prose.
 MACHINE_CONTRACT_CHAR_CEILING = 12_000
 

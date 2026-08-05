@@ -1,8 +1,8 @@
-"""GraphGraph native binary storage.
+"""GraphGraph native binary storage and legacy migration readers.
 
-The promoted ``.gg`` store is a full-fidelity binary format for scanned
-GraphGraph graphs. It is dictionary-coded, sequential to load, and intentionally
-does not carry generic object-map overhead from JSON/msgpack/SQL rows.
+New writes use the sectioned full-fidelity GGB4 codec. GGB3 and GGB2 remain
+read-only migration formats here so an existing store can be loaded once and
+atomically rewritten without carrying multiple production writers.
 
 Legacy text ``.gg`` adjacency files are still readable through ``io.load_gg``;
 the brief GGB2/``.ggb`` bake-off format remains readable for explicit
@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 from ..graph.core import Edge, Graph, Node
+from .sectioned import GGB4_MAGIC, load_sectioned_graph, save_sectioned_graph
 
 _PAGERANK_ALGORITHM = "pagerank"
 _GGB_MAGIC = b"GGB3"
@@ -34,7 +35,7 @@ def is_binary_gg(path: Path) -> bool:
         # store into memory just to inspect 4 bytes, doubling the I/O of
         # every load (the caller reads the file again immediately after).
         with path.open("rb") as fh:
-            return fh.read(4) in {_GGB_MAGIC, b"GGB2"}
+            return fh.read(4) in {GGB4_MAGIC, _GGB_MAGIC, b"GGB2"}
     except OSError:
         return False
 
@@ -53,6 +54,14 @@ def _read_u32(data: bytes, offset: int) -> tuple[int, int]:
 
 
 def save_graph_binary(graph: Graph, path: Path) -> None:
+    """Write only the promoted GGB4 format."""
+
+    save_sectioned_graph(graph, path)
+
+
+def _save_graph_binary_v3(graph: Graph, path: Path) -> None:
+    """Legacy GGB3 writer retained only for migration tests/benchmarks."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     strings: dict[str, int] = {}
 
@@ -162,8 +171,11 @@ def save_graph_binary(graph: Graph, path: Path) -> None:
 
 
 def load_graph_binary(path: Path) -> Graph:
+    with path.open("rb") as handle:
+        magic = handle.read(4)
+    if magic == GGB4_MAGIC:
+        return load_sectioned_graph(path)
     data = path.read_bytes()
-    magic = data[:4]
     try:
         if magic == b"GGB2":
             return _load_ggb2(data)

@@ -13,6 +13,7 @@ from ..io import (
 )
 from ..scanner import DEFAULT_SCAN_MAX_NODES
 from ..scanner.frontends import available_frontends
+from ..services.project_atlas import build_project_atlas
 from ..services.project_status import build_project_status
 
 
@@ -342,6 +343,54 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     ):
         print("  [!] No client has the graphgraph MCP server registered.")
         print("      In a Claude Code session, MCP tools will be unavailable; use the `graphgraph` CLI instead.")
+
+
+def cmd_orient(args: argparse.Namespace) -> None:
+    report = build_project_atlas(
+        directory=Path(args.directory) if args.directory else Path("."),
+        graph_path=Path(args.graph) if args.graph else None,
+        max_subsystems=int(args.max_subsystems) if args.max_subsystems is not None else None,
+        representatives_per_subsystem=int(args.representatives),
+        max_couplings=int(args.max_couplings) if args.max_couplings is not None else None,
+        evidence_budget_chars=int(args.evidence_budget_chars),
+    )
+    if args.json:
+        print(json.dumps(
+            report,
+            indent=2 if args.pretty else None,
+            ensure_ascii=False,
+            separators=None if args.pretty else (",", ":"),
+        ))
+        return
+    print("GraphGraph Project Atlas")
+    print("========================")
+    if report.get("status") != "ready":
+        print(report["message"])
+        return
+    project = report["project"]
+    languages = report["languages"]
+    print(f"Project: {project['name']} {project['version']} ({project['root']})")
+    print("Languages: " + ", ".join(f"{row['language']}={row['files']}" for row in languages))
+    if report["entry_points"]:
+        print("Entry points:")
+        for row in report["entry_points"]:
+            print(f"  {row['name']}: {row['target']} [{row['kind']}]")
+    print("Subsystems:")
+    for row in report["subsystems"]:
+        representatives = ", ".join(
+            f"{item['label']}@{item['path']}" for item in row["representatives"]
+        )
+        print(f"  {row['name']} ({row['symbols']} symbols): {representatives or 'no representative'}")
+    if report["couplings"]:
+        print("Strongest cross-subsystem coupling:")
+        for row in report["couplings"]:
+            relations = ", ".join(f"{name}={count}" for name, count in row["relations"].items())
+            print(f"  {row['from']} -> {row['to']}: {row['edges']} ({relations})")
+    tests = report["tests"]
+    commands = ", ".join(item["command"] for item in tests["commands"])
+    print(f"Tests: {tests['files']} indexed file(s)" + (f"; candidates: {commands}" if commands else ""))
+    limitations = report["coverage"]["limitations"]
+    print("Coverage: " + ("; ".join(limitations) if limitations else "no recorded truncation or staleness"))
 
 
 def cmd_status(args: argparse.Namespace) -> None:

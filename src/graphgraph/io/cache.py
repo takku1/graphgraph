@@ -15,8 +15,11 @@ from .core import clear_graph_load_cache, load_any, remember_loaded_graph
 
 
 def clear_graph_cache() -> int:
-    """Clear the process graph cache and return the number of entries removed."""
-    return clear_graph_load_cache()
+    """Clear full-graph and sectioned relation-view caches."""
+
+    from ..retrieval.relations import clear_relation_view_cache
+
+    return clear_graph_load_cache() + clear_relation_view_cache()
 
 
 def load_any_cached(path: Path) -> Graph:

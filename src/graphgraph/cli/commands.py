@@ -8,8 +8,10 @@ from .diagnostics import _installed_skill_artifact_status as _installed_skill_ar
 from .diagnostics import _project_skill_artifact_status as _project_skill_artifact_status
 from .diagnostics import _skill_root_artifact_status as _skill_root_artifact_status
 from .diagnostics import cmd_doctor as cmd_doctor
+from .diagnostics import cmd_orient as cmd_orient
 from .diagnostics import cmd_status as cmd_status
 from .evaluation import cmd_eval as cmd_eval
+from .evaluation import cmd_navigation_eval as cmd_navigation_eval
 from .graph_io import cmd_compare as cmd_compare
 from .graph_io import cmd_export as cmd_export
 from .graph_io import cmd_ingest as cmd_ingest

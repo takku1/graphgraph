@@ -21,6 +21,7 @@ from .eval import (
     results_with_calibration_to_json,
 )
 from .metrics import GraphComparison, GraphSummary, compare_graphs, summarize_graph
+from .navigation import NavigationEvalError, evaluate_navigation, evaluate_navigation_files
 
 __all__ = [
     "EvalResult",
@@ -28,12 +29,15 @@ __all__ = [
     "CalibrationReport",
     "GraphComparison",
     "GraphSummary",
+    "NavigationEvalError",
     "ReliabilityBin",
     "apply_isotonic",
     "calibration_pairs",
     "calibration_report",
     "compare_graphs",
     "evaluate_graph",
+    "evaluate_navigation",
+    "evaluate_navigation_files",
     "load_eval_tasks",
     "ndcg_at_k",
     "rank_nodes_by_subgraph_pagerank",

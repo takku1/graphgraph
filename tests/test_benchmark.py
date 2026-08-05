@@ -38,20 +38,12 @@ NON_ENGINE_SOURCE_FILES = frozenset(
         "graphgraph/live_validation.py",
     }
 )
-# Re-measured after the language-general scope-resolution framework
-# (2026-08-01), which added the scope graph and uniform local/field provider
-# registries. This is a versioned growth guard, not a packet budget: two percent
-# permits small maintenance changes while forcing intentional remeasurement for
-# expansion.
-#
-# The previous baseline (151_006, measured 2026-07-30) had been consumed to 126
-# tokens of slack by the time this work started, so it was firing on any
-# addition at all rather than on unusual growth. Re-derive it when that happens
-# again; a guard with no headroom measures nothing.
-# Re-measured after the additive query compiler, JavaScript external summaries,
-# and graph-version-coupled semantic index landed on 2026-08-01.
-SOURCE_GRAPH_TOKEN_BASELINE = 163_748
-SOURCE_GRAPH_TOKEN_HEADROOM_RATIO = 0.02
+# This guard measures representation density instead of freezing the total size
+# of a growing repository. The 2026-08-02 baseline was 1.0189 naive graph tokens
+# per whitespace-delimited source word; 1.05 is the explicit density SLO. Adding
+# ordinary source now grows both sides of the equation, while an extractor that
+# starts duplicating records or payload fields still trips the guard.
+SOURCE_GRAPH_TOKEN_DENSITY_LIMIT = 1.05
 
 
 class BenchmarkExtractionTest(unittest.TestCase):
@@ -200,13 +192,16 @@ class BenchmarkExtractionTest(unittest.TestCase):
         g = Graph(nodes=symbol_nodes, edges=symbol_edges)
 
         token_est = estimate_token_size(g)
-        # Soft sanity ceiling on the full source-graph size (naive JSON word
-        # count), derived from a dated measured baseline rather than an
-        # unexplained absolute cap.
-        token_ceiling = int(
-            SOURCE_GRAPH_TOKEN_BASELINE * (1 + SOURCE_GRAPH_TOKEN_HEADROOM_RATIO)
+        # Normalize by the actual input size: a fixed repository-total ceiling
+        # naturally fails whenever useful source is added and says nothing
+        # about extraction efficiency.
+        source_word_proxy = sum(len(text.split()) for _path, _rel, _id, text in files)
+        token_ceiling = int(source_word_proxy * SOURCE_GRAPH_TOKEN_DENSITY_LIMIT)
+        self.assertLess(
+            token_est,
+            token_ceiling,
+            f"Graph/source token density too high: {token_est / source_word_proxy:.4f}",
         )
-        self.assertLess(token_est, token_ceiling, f"Token estimate too high: {token_est}")
 
         # Extraction-quality floor (path-to-10 "adopt first" gate).
         # calls_per_symbol -- resolved call edges per callable symbol -- is the

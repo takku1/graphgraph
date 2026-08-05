@@ -1,6 +1,7 @@
 """Compatibility facade for the decomposed native service domains."""
 
 from . import freshness as _freshness
+from . import project_atlas as _project_atlas
 from . import project_status as _project_status
 from . import runtime_probes as _runtime_probes
 from .lifecycle import (
@@ -27,10 +28,12 @@ _member_call_snapshot = _project_status._member_call_snapshot
 _parse_receiver_classes = _project_status._parse_receiver_classes
 _symbol_extraction_status = _project_status._symbol_extraction_status
 build_project_status = _project_status.build_project_status
+build_project_atlas = _project_atlas.build_project_atlas
 graph_shape = _project_status.graph_shape
 
 __all__ = [
     "GraphBuildStatus",
+    "build_project_atlas",
     "build_project_status",
     "ensure_native_graph",
     "graph_shape",

@@ -14,7 +14,7 @@ from ..io import (
 from ..packets import packet_format_schema
 from ..packets.validation import validate_any
 from ..planning import plan_context, query_class_schema
-from ..retrieval import encode_relation_micro, query_relations, search_nodes
+from ..retrieval import encode_relation_micro, query_relations, query_saved_relations, search_nodes
 from ..scanner import DEFAULT_SCAN_MAX_NODES
 from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
 from ..services.freshness import (
@@ -26,6 +26,7 @@ from ..services.freshness import (
 from ..services.lifecycle import (
     refresh_saved_graph,
 )
+from ..services.project_atlas import build_project_atlas
 from ..services.project_status import build_project_status
 from ..services.query import execute_query
 from .descriptions import (
@@ -314,6 +315,7 @@ TOOLS = [
                 },
                 "graph_path": {"type": "string", "description": "Graph JSON path. Auto-detected if omitted."},
                 "probe": {"type": "boolean", "description": "Run lightweight python -m/import probes. Default: false."},
+                "view": {"type": "string", "enum": ["status", "atlas"], "default": "status"},
             },
         },
     },
@@ -766,7 +768,21 @@ def handle_source_snippets(args: dict[str, Any]) -> str:
     )
 
 
+def handle_project_atlas(args: dict[str, Any]) -> str:
+    report = build_project_atlas(
+        directory=Path(str(args.get("directory") or ".")),
+        graph_path=Path(str(args["graph_path"])) if args.get("graph_path") else None,
+        max_subsystems=int(args["max_subsystems"]) if args.get("max_subsystems") is not None else None,
+        representatives_per_subsystem=int(args.get("representatives") or 1),
+        max_couplings=int(args["max_couplings"]) if args.get("max_couplings") is not None else None,
+        evidence_budget_chars=int(args.get("evidence_budget_chars") or 8000),
+    )
+    return _json(report)
+
+
 def handle_project_status(args: dict[str, Any]) -> str:
+    if str(args.get("view") or "status") == "atlas":
+        return handle_project_atlas(args)
     directory = Path(str(args.get("directory") or "."))
     graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else None
     report = build_project_status(
@@ -858,9 +874,10 @@ def handle_query_relations(args: dict[str, Any]) -> str:
             "fresh": freshness == "fresh",
         }
     else:
-        graph = load_any(graph_path)
-    result = query_relations(
-        graph,
+        graph = None
+    query = query_relations if graph is not None else query_saved_relations
+    result = query(
+        graph if graph is not None else graph_path,
         str(args["target"]),
         direction=str(args["direction"]),  # type: ignore[arg-type]
         limit=int(args["limit"]) if args.get("limit") is not None else 20,

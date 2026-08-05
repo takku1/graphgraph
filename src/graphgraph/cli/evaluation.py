@@ -20,6 +20,7 @@ from ..analysis.eval_protocol import (
     paired_bootstrap_comparison,
     stratified_report,
 )
+from ..analysis.navigation import NavigationEvalError, evaluate_navigation_files
 
 
 def cmd_eval(args: argparse.Namespace) -> None:
@@ -71,4 +72,17 @@ def cmd_eval(args: argparse.Namespace) -> None:
     print(results_to_json(results))
 
 
-__all__ = ["cmd_eval"]
+def cmd_navigation_eval(args: argparse.Namespace) -> None:
+    try:
+        payload = evaluate_navigation_files(
+            Path(args.tasks),
+            Path(args.runs),
+            profile_path=Path(args.profile) if args.profile else None,
+        )
+    except NavigationEvalError as exc:
+        raise SystemExit(f"graphgraph navigation-eval: {exc}") from exc
+    print(json.dumps(payload, indent=2 if args.pretty else None, ensure_ascii=False,
+                     separators=None if args.pretty else (",", ":")))
+
+
+__all__ = ["cmd_eval", "cmd_navigation_eval"]

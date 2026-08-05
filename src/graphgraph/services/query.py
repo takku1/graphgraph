@@ -166,16 +166,14 @@ def execute_query(
             "write": status.built,
             "fresh": freshness == "fresh",
         }
-    if graph is None:
-        graph = load_any(resolved_graph)
-
     operator = plan.operator
     result: Any
     if operator is QueryOperator.RELATIONS:
-        from ..retrieval import encode_relation_micro, query_relations
+        from ..retrieval import encode_relation_micro, query_relations, query_saved_relations
 
-        relation = query_relations(
-            graph,
+        query = query_relations if graph is not None else query_saved_relations
+        relation = query(
+            graph if graph is not None else resolved_graph,
             str(plan.arguments["target"]),
             direction=str(plan.arguments["direction"]),  # type: ignore[arg-type]
             limit=limit,
@@ -187,6 +185,8 @@ def execute_query(
             operator = QueryOperator.CONTEXT
         else:
             result = encode_relation_micro(relation)
+    if graph is None and operator is not QueryOperator.RELATIONS:
+        graph = load_any(resolved_graph)
     if operator is QueryOperator.SELECT:
         from ..retrieval.predicates import parse_criteria, select_symbols
 
