@@ -25,6 +25,17 @@
 
 Receipts: [archive findings agent-cycle tracker](evaluation/graybox-cycles/2026-08-02-agent-cycle-efficiency-quality-tracker.md).
 
+**Sequencing (2026-08-04).** Claimable tickets and their dependency order live on
+the execution frontier: [`.scratch/wayfinder-map/MAP.md`](../.scratch/wayfinder-map/MAP.md).
+The critical path is `T-H01 → T-B02 → {T-B04, T-A05, T-A03} → remaining
+measurement seams`. **OW-AC-03's task set (T-B02) is the keystone** — four
+tickets, the representation promotion gate, and one component's metric are all
+waiting on it, which makes it the highest-leverage item on the board despite not
+being the most visible.
+
+Component-level completion status (spec, gate, metric per subsystem) is tracked
+in the same map rather than duplicated here.
+
 ---
 
 ## B. Defect follow-ups

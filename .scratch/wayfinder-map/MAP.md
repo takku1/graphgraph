@@ -161,6 +161,61 @@ measurement that exists.
 
 ---
 
+## Execution Order
+
+Sequenced by dependency first, then by distance to the destination. Two rules
+decide ties: **token cost outranks latency** (it is the primary axis), and
+**anything that unblocks two or more tickets outranks anything that unblocks
+none**.
+
+**Critical path:** `T-H01 → T-B02 → {T-B04, T-A05, T-A03} → T-B03-rest`.
+T-B02 is the keystone — four separate tickets and the representation promotion
+gate are all waiting on one labelled task set that does not exist.
+
+### Wave 0 — clear the ground (no dependencies, both cheap)
+
+| # | Ticket | Why now |
+|---|--------|---------|
+| 1 | **T-H01** Commit or discard the in-flight modules | Two component gates are greener than they look; a false green at the base of a measurement programme poisons everything above it. Cheapest item on the board. |
+| 2 | **T-B02** Paraphrase/conceptual task set | The keystone. Unblocks T-B04, T-A05, T-A03's red controls, the representation promotion gate, and evaluation-analysis's metric. Nothing else on this list unblocks more than one thing. |
+
+### Wave 1 — the destination axis (token cost)
+
+| # | Ticket | Why here |
+|---|--------|----------|
+| 3 | **T-B05** Score formats against current production tokenizers | Independent of T-B02, so it runs in parallel. Token cost is the primary axis and the proxy is fitted against only two tokenizers; if it has drifted, every format decision above it is mis-ranked. |
+| 4 | **T-B04** Head-to-head against named alternatives | The destination metric. Needs T-B02 so neither system is measured on a task set it was tuned against. |
+| 5 | **Representation promotion measurement** | Settles the 2.65–3.75x finding: is the coarse map buying proportional quality, or is the candidate simply more expensive? Needs T-B02 to score both arms at fixed recall. |
+
+### Wave 2 — latency (the constraint that must not regress)
+
+| # | Ticket | Why here |
+|---|--------|----------|
+| 6 | **T-B06** `search_nodes` runs 6x and PPR 2x per query | The remaining 1.1 s after T-B01. Structural rather than a missing cache, so it needs a design decision, not a patch. |
+| 7 | **T-A01** Resident exact-query p95 gate (OW-AC-01) | Unblocked now that T-B01 has landed. Best done after T-B06 so the gate is set against the intended architecture, not a number about to move. |
+
+### Wave 3 — answer quality gates
+
+| # | Ticket | Why here |
+|---|--------|----------|
+| 8 | **T-A03** Abstention & confidence red controls (OW-AC-04) | Needs T-B02's unanswerable cases. Note the taxonomy changed on 2026-08-04: doc-only corpora now report `incomplete`, so the controls must be written against the new contract. |
+| 9 | **T-A04** Cross-language call-graph topology (OW-AC-05) | Independent; ≥98% precision per language with volume reported. |
+| 10 | **T-A02** Active graph publication & freshness (OW-AC-02) | Independent; correctness-of-answer rather than quality-of-answer. |
+
+### Wave 4 — close the coverage gap
+
+| # | Ticket | Unblocked by |
+|---|--------|--------------|
+| 11 | **T-A05** Rotating held-out panel (OW-AC-10) | T-B02 |
+| 12 | **T-B03-rest** the four blocked measurement seams | one asset each: acceptance ← external corpus · evaluation-analysis ← T-B02 · project-atlas ← T-A05 · platform ← an experiment design |
+
+### Not scheduled
+
+- **SWE-bench protocol** — a different question (end-to-end patch success) from the one this project measures (representation cost). Keep as a separate protocol, not a wave.
+- **Further influence-field tuning** — refuted; see ADR-RE-003. Do not reopen without a task set that could detect a field contribution at all.
+
+---
+
 ## Open Frontier Tickets (Claimable)
 
 ### Type B — research/measure first
@@ -203,6 +258,16 @@ measurement that exists.
   - **Scope:** score the shipped formats against current production tokenizers;
     re-run `benchmarks/context_graph/calibrate_token_proxy.py` and record drift.
   - **Target:** [context-packets/SYSTEM.md](../../docs/architecture/context-packets/SYSTEM.md)
+  - **Blocked By:** none
+
+- [ ] **[T-B06]** `search_nodes` runs six times and PPR twice per query
+  - **Signal:** after T-B01 removed 44%, the residual 1.1 s is dominated by six
+    `search_nodes` calls (2.12 s cumulative under profiler) and two
+    `personalized_pagerank` calls (0.85 s) for a single query.
+  - **Question:** is six searches per query intended (facet preflight, anchors,
+    expansion each searching independently) or accidental duplication? The
+    answer decides whether this is a caching fix or a pipeline restructure.
+  - **Target:** [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** none
 
 - [~] **[T-B03]** Define measurement seams for the seven unmetered components
