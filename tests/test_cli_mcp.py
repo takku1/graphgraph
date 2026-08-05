@@ -1461,6 +1461,74 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(cli.returncode, 0, cli.stderr)
         self.assertIn("No changes detected", cli.stdout)
 
+    def test_update_and_remove_report_wall_ms_on_both_transports(self) -> None:
+        # Graybox finding (2026-08-05, flask-corpus-benchmark-vs-peers): build_graph
+        # self-reports a phase_profile with wall_ms; update_graph_files and
+        # remove_graph_files reported no timing at all, making the tool's core
+        # "cheap incremental update" claim unverifiable by the caller. Both MCP
+        # handlers and both CLI commands now report wall_ms.
+        import subprocess
+
+        from graphgraph.mcp.server import handle_remove_graph_files, handle_update_graph_files
+        from graphgraph.services.native import scan_validated_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "worker.py"
+            source.write_text("def worker():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols", docs=False)
+
+            source.write_text("def worker():\n    return 2\n", encoding="utf-8")
+            update_mcp = json.loads(
+                handle_update_graph_files(
+                    {
+                        "directory": str(root),
+                        "output_path": str(graph_path),
+                        "paths": ["worker.py"],
+                        "depth": "symbols",
+                        "docs": False,
+                    }
+                )
+            )
+            remove_mcp = json.loads(
+                handle_remove_graph_files(
+                    {
+                        "directory": str(root),
+                        "output_path": str(graph_path),
+                        "paths": ["worker.py"],
+                        "depth": "symbols",
+                        "docs": False,
+                    }
+                )
+            )
+
+            update_cli = subprocess.run(
+                [
+                    sys.executable, "-m", "graphgraph", "update",
+                    "--directory", str(root), "--output", str(graph_path),
+                    "--files", "worker.py", "--depth", "symbols", "--no-docs",
+                ],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            remove_cli = subprocess.run(
+                [
+                    sys.executable, "-m", "graphgraph", "remove",
+                    "--directory", str(root), "--output", str(graph_path),
+                    "--files", "worker.py", "--depth", "symbols",
+                ],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+
+        self.assertIn("wall_ms", update_mcp)
+        self.assertGreaterEqual(update_mcp["wall_ms"], 0.0)
+        self.assertIn("wall_ms", remove_mcp)
+        self.assertGreaterEqual(remove_mcp["wall_ms"], 0.0)
+        self.assertEqual(update_cli.returncode, 0, update_cli.stderr)
+        self.assertIn("Wall time", update_cli.stdout)
+        self.assertEqual(remove_cli.returncode, 0, remove_cli.stderr)
+        self.assertIn("Wall time", remove_cli.stdout)
+
     def test_update_and_remove_resolve_the_graph_against_directory_not_cwd(self) -> None:
         # `update`/`remove` defaulted to a bare `.graphgraph/graph.gg`, which is
         # relative to the *current* directory. Running them with `--directory`

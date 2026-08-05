@@ -265,10 +265,12 @@ def cmd_update(args: argparse.Namespace) -> None:
         if getattr(args, "docs", None) is None
         else args.docs
     )
+    started = time.perf_counter()
     try:
         status = _run_update(args, root, output_path, docs)
     except GraphShrinkRefused as exc:
         raise SystemExit(f"graphgraph update: {exc}") from exc
+    wall_ms = (time.perf_counter() - started) * 1000.0
     graph = status.graph
     validation = status.validation
     assert validation is not None
@@ -286,6 +288,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         f"  Structural validation: PASS {validation.format} "
         f"nodes={validation.node_count} edges={validation.edge_count}"
     )
+    print(f"  Wall time    : {wall_ms:.1f} ms")
     if status.repaired:
         print(
             "  Repair       : no prior graph/manifest (or targeted update was invalid); "
@@ -321,6 +324,7 @@ def cmd_remove(args: argparse.Namespace) -> None:
             prior_nodes = len(load_any(output_path).nodes)
         except Exception:  # noqa: BLE001 - handled by the service layer
             prior_nodes = None
+    started = time.perf_counter()
     try:
         status = remove_paths_validated_graph(
             directory=root,
@@ -335,6 +339,7 @@ def cmd_remove(args: argparse.Namespace) -> None:
         )
     except (GraphShrinkRefused, RemovalMatchedNothing) as exc:
         raise SystemExit(f"graphgraph remove: {exc}") from exc
+    wall_ms = (time.perf_counter() - started) * 1000.0
     graph = status.graph
     validation = status.validation
     assert validation is not None
@@ -347,6 +352,7 @@ def cmd_remove(args: argparse.Namespace) -> None:
         f"  Structural validation: PASS {validation.format} "
         f"nodes={validation.node_count} edges={validation.edge_count}"
     )
+    print(f"  Wall time    : {wall_ms:.1f} ms")
     if status.repaired:
         print(
             "  Repair       : no prior graph/manifest (or removal was invalid); "

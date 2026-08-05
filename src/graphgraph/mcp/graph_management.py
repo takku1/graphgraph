@@ -312,6 +312,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
     output_path = Path(args.get("output_path") or ".graphgraph/graph.gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     paths = _require_paths(args, "update_graph_files")
+    started = time.perf_counter()
     status = update_paths_validated_graph(
         directory=directory,
         output_path=output_path,
@@ -322,6 +323,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
         docs=bool(args.get("docs", False)),
         history=bool(args.get("history", False)),
     )
+    wall_ms = (time.perf_counter() - started) * 1000.0
     graph = status.graph
     validation = status.validation
     assert validation is not None
@@ -335,6 +337,7 @@ def handle_update_graph_files(args: dict[str, Any]) -> str:
         "edges": len(graph.edges),
         "repaired": status.repaired,
         "validation": {"ok": validation.ok, "format": validation.format},
+        "wall_ms": round(wall_ms, 3),
     }
     if graph.metadata.get("symbols_truncated") == "true":
         result["symbols_truncated"] = True
@@ -347,6 +350,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
     output_path = Path(args.get("output_path") or ".graphgraph/graph.gg")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     paths = _require_paths(args, "remove_graph_files")
+    started = time.perf_counter()
     status = remove_paths_validated_graph(
         directory=directory,
         output_path=output_path,
@@ -357,6 +361,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
         docs=bool(args.get("docs", False)),
         history=bool(args.get("history", False)),
     )
+    wall_ms = (time.perf_counter() - started) * 1000.0
     graph = status.graph
     validation = status.validation
     assert validation is not None
@@ -369,6 +374,7 @@ def handle_remove_graph_files(args: dict[str, Any]) -> str:
             "edges": len(graph.edges),
             "repaired": status.repaired,
             "validation": {"ok": validation.ok, "format": validation.format},
+            "wall_ms": round(wall_ms, 3),
         }
     )
 
