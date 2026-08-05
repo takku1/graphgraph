@@ -70,10 +70,32 @@ Supported packets: `gg`, `gg_hybrid`, `gg_lex`, `gg_lex_hybrid`.
 
 | | |
 |--|--|
-| **Primary metric** | Packet tokens at fixed recall, hybrid versus flat (`direction: lower`) |
-| **Promotion gate** | Becomes the default only on a measured token win with no recall regression — the comparison that ADR-RP-001 exists to keep honest |
-| **Harness path** | `components/representation/measure.sh` — **not yet implemented** (T-B03) |
+| **Primary metric** | `hybrid_vs_flat_token_ratio` (`direction: lower`) — the promotion gate's own number, from a real two-arm render |
+| **Baseline (2026-08-04)** | **2.6505** — hybrid costs **2.65x** the tokens of flat on `subsystem_summary` |
+| **Promotion gate** | Becomes the default only on a measured token win with no recall regression |
+| **Harness path** | `components/representation/measure.sh` |
 | **Correctness backpressure** | `tests/test_representation_hybrid.py` |
+
+**The candidate is currently more expensive, not less.** Rendering the same
+query through both arms on the project's own graph:
+
+| Query class | flat | hybrid | ratio |
+|-------------|-----:|-------:|------:|
+| `subsystem_summary` | 1,544.9 | 4,094.6 | **2.65x** |
+| `direct_lookup` | 1,102.7 | 4,022.6 | **3.65x** |
+| `blast_radius` | 1,068.3 | 4,000.4 | **3.75x** |
+
+Reproducible across all three classes, so this is not a single-query artifact.
+
+**What this does and does not establish.** Hybrid emits a project-wide coarse
+map *in addition to* local detail, so a higher token count is expected by
+construction — the arms are not delivering the same thing. What is unmeasured
+is whether the extra 2.6–3.7x buys proportionally more answer quality. Until
+that is measured the ratio cannot condemn the candidate outright, but it does
+place the promotion gate a long way from passing, and it means any claim that
+the multiresolution representation is *cheaper* is currently contradicted by
+the only measurement that exists. Closing this needs the paraphrase/conceptual
+task set (T-B02) so both arms can be scored at fixed recall.
 
 ## 8. Technology resolution
 

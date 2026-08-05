@@ -45,9 +45,16 @@ Two consequences for how work is gated here:
 
 | Component | Metric | Baseline | Note |
 |-----------|--------|---------:|------|
-| storage | `graph_load_warm_ms` | 0.1403 ms | cold load 213 ms reported alongside |
+| storage | `graph_load_warm_ms` | 0.1403 ms | cold load 213 ms alongside |
 | information-retrieval | `retrieval_query_warm_ms` | 1125.7 ms | was 2017.7; T-B01 removed 44% |
 | context-packets | `packet_token_units` | 1070.4 | two-query fixed workload |
+| static-analysis | `scan_fixture_ms` | 125.8 ms | bounded corpus (`concepts/`) |
+| intermediate-representation | `expand_context_ms` | 1.673 ms | 2-hop, 25 starts |
+| query-planning | `plan_latency_us` | 9.8 us | 600 samples |
+| application-services | `context_compile_warm_ms` | 654.4 ms | end-to-end render |
+| agent-interfaces | `cli_cold_start_ms` | 56.3 ms | interpreter + import only |
+| research | `registry_dangling_sources` | 0 | zero-tolerance invariant |
+| representation | `hybrid_vs_flat_token_ratio` | **2.6505** | **hybrid is 2.65x more expensive — see below** |
 
 Baselines are machine-local. Re-record on a new host before trusting a delta.
 
@@ -87,17 +94,17 @@ hiding that in a total is how a project talks itself into believing it is done.
 | storage | 7/7 | 3/3 | 80% | — **10/10** |
 | information-retrieval | 7/7 | 3/3 | 75% | — **10/10** |
 | context-packets | 7/7 | 3/3 | 60% | — **10/10** |
-| static-analysis | 7/7 | 1/3 | 80% | measure.sh + baseline |
-| intermediate-representation | 7/7 | 1/3 | 75% | measure.sh + baseline |
-| query-planning | 7/7 | 1/3 | 60% | measure.sh + baseline |
-| application-services | 7/7 | 1/3 | 75% | measure.sh + baseline |
-| platform | 7/7 | 1/3 | 66% | measure.sh + baseline |
-| agent-interfaces | 7/7 | 1/3 | 60% | measure.sh + baseline |
-| project-atlas | 7/7 | 1/3 | **33%** | measure.sh + baseline; weakest evidence |
-| acceptance | 7/7 | 1/3 | 60% | measure.sh + baseline (needs external corpus) |
-| evaluation-analysis | 7/7 | 1/3 | 60% | measure.sh + baseline |
-| research | 7/7 | 1/3 | **100%** | measure.sh + baseline; registry invariant is `Proved` |
-| representation | 7/7 | 1/3 | 50% | measure.sh + baseline; promotion gate unmeasured |
+| static-analysis | 7/7 | 3/3 | 80% | measure.sh + baseline |
+| intermediate-representation | 7/7 | 3/3 | 75% | measure.sh + baseline |
+| query-planning | 7/7 | 3/3 | 60% | measure.sh + baseline |
+| application-services | 7/7 | 3/3 | 75% | measure.sh + baseline |
+| platform | 7/7 | 2/3 | 66% | measure.sh blocked: needs experiment design |
+| agent-interfaces | 7/7 | 3/3 | 60% | measure.sh + baseline |
+| project-atlas | 7/7 | 2/3 | **33%** | measure.sh blocked: needs held-out panel (T-A05) |
+| acceptance | 7/7 | 2/3 | 60% | measure.sh blocked: needs external corpus |
+| evaluation-analysis | 7/7 | 2/3 | 60% | measure.sh blocked: needs labelled set |
+| research | 7/7 | 3/3 | **100%** | measure.sh + baseline; registry invariant is `Proved` |
+| representation | 7/7 | 3/3 | 50% | measure.sh + baseline; promotion gate unmeasured |
 
 ### What the audit found
 
@@ -135,6 +142,22 @@ Those belong to repo-wide contracts rather than to any one subsystem.
 `docs/bugs/2026-07-19-graphgraph-10-11-acceptance-spec.md`, deleted in `5860911`
 long before this work. Repointed to the surviving
 `docs/evaluation/acceptance-evaluation-harness.md`.
+
+
+### Finding: the multiresolution candidate is more expensive, not less
+
+`hybrid_vs_flat_token_ratio` was implemented as a real two-arm render and
+immediately produced the sharpest result of the audit: hybrid costs **2.65x**
+(subsystem_summary), **3.65x** (direct_lookup) and **3.75x** (blast_radius) the
+tokens of flat, on this project's own graph.
+
+Hybrid emits a project-wide coarse map *plus* local detail, so more tokens is
+expected by construction — the arms do not deliver the same thing. Whether the
+extra 2.6–3.7x buys proportionally more answer quality is unmeasured, and that
+is exactly what T-B02's task set would settle. What can be said now: the
+promotion gate is a long way from passing, and any claim that the
+multiresolution representation is *cheaper* is contradicted by the only
+measurement that exists.
 
 ---
 
@@ -182,7 +205,7 @@ long before this work. Repointed to the surviving
   - **Target:** [context-packets/SYSTEM.md](../../docs/architecture/context-packets/SYSTEM.md)
   - **Blocked By:** none
 
-- [ ] **[T-B03]** Define measurement seams for the seven unmetered components
+- [~] **[T-B03]** Define measurement seams for the seven unmetered components
   - **Scope:** static-analysis, intermediate-representation, query-planning, application-services, platform, agent-interfaces, project-atlas.
   - **Rule:** a real metric or none. Do not add a `measure.sh` that emits a placeholder — the gate treats a fabricated number as Measured evidence.
   - **Blocked By:** none
