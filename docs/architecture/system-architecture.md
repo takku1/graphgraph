@@ -132,7 +132,7 @@ Current public packet targets:
 | Packet | Relative tokens | Use |
 | --- | ---: | --- |
 | `lowlevel` | 1.03x | XML-tagged adjacency; a readable structural fallback. |
-| `sql` | 1.38x+ | Table-row layout for models that prefer relational structure. |
+| `sql` | ~0.7x | Table-row layout for models that prefer relational structure. |
 | `hybrid` | ~2.3x | Readable Markdown node and edge lists with higher token overhead. |
 | `semantic_arrow` | 1.49x | SVO arrows; preferred for zero-edge structural results. |
 | `gg` | 1.00x | Measured token floor for non-empty structural graph packets. |

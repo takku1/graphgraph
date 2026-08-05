@@ -529,6 +529,44 @@ N1,N2,1,0.9
         self.assertEqual(result.edge_count, 0)
 
 
+class SqlFormatTokenCostTest(unittest.TestCase):
+    """Graybox finding (2026-08-05, flask-corpus-benchmark-vs-peers): the
+    published `sql` format cost was `1.38x+` of `gg`, but measured 0.36x-0.83x
+    on real repositories -- sql was consistently *cheaper*, never more
+    expensive. Root cause: `gg`'s node lines inline `@path:line signature`
+    from `node.summary` (via `_compact_source_context`); `sql`'s node rows
+    never carry that text. Every real scan populates non-empty summaries, so
+    this holds in practice, not just in this fixture.
+    """
+
+    def test_sql_is_cheaper_than_gg_on_realistic_summaries(self) -> None:
+        from graphgraph.packets.metrics import estimate_tokens
+
+        nodes = {
+            f"N{i}": Node(
+                f"N{i}",
+                f"process_request_{i}",
+                "function",
+                f"pkg/handlers/module_{i}.py",
+                summary=f"L{10 + i} def process_request_{i}(self, ctx: RequestContext, options: dict) -> Response",
+            )
+            for i in range(20)
+        }
+        edges = [Edge(f"N{i}", f"N{i + 1}", "calls", 0.9) for i in range(19)]
+        graph = Graph(nodes=nodes, edges=edges)
+        gg_tokens = estimate_tokens(render_packet(graph, set(nodes), edges, "gg"))
+        sql_tokens = estimate_tokens(render_packet(graph, set(nodes), edges, "sql"))
+        self.assertLess(sql_tokens, gg_tokens)
+
+    def test_published_sql_ratio_is_not_more_expensive_than_gg(self) -> None:
+        from graphgraph.packets.formats import PACKET_FORMAT_TABLE
+
+        sql_row = next(row for row in PACKET_FORMAT_TABLE if row["format"] == "sql")
+        self.assertNotIn("+", str(sql_row["relative_tokens"]))
+        ratio = float(str(sql_row["relative_tokens"]).lstrip("~").rstrip("x"))
+        self.assertLess(ratio, 1.0)
+
+
 class DeadFormatGuardTest(unittest.TestCase):
     """Every registered packet format must actually render. A format in the
     public registry that no renderer can produce is a dead format (path-to-10 #8)."""

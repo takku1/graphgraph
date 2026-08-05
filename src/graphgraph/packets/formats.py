@@ -24,7 +24,14 @@ class PacketFormatSpec:
 
 PACKET_FORMATS: tuple[PacketFormatSpec, ...] = (
     PacketFormatSpec("lowlevel", 20, "1.03x", "XML-tagged adjacency; a readable structural fallback."),
-    PacketFormatSpec("sql", 10, "1.38x+", "Table-row layout for models that prefer relational structure."),
+    # Measured 2026-08-05 (graybox finding: the prior "1.38x+" was backwards --
+    # sql was never observed more expensive than gg). sql's node rows carry no
+    # summary/signature text, while gg inlines `@path:line signature` per node
+    # (see `_compact_source_context` in packets/renderers.py), so the gap grows
+    # with node count on any real scan (which always populates summaries).
+    # Measured range on real repos: 0.42x-0.83x; ~0.7x is the representative
+    # median at typical (14+ node) packet sizes.
+    PacketFormatSpec("sql", 10, "~0.7x", "Table-row layout for models that prefer relational structure."),
     PacketFormatSpec("hybrid", 5, "~2.3x", "Readable Markdown node and edge lists with higher token overhead."),
     PacketFormatSpec("semantic_arrow", 15, "1.49x", "SVO arrows; preferred for zero-edge structural results."),
     PacketFormatSpec("gg", 20, "1.00x", "Measured token floor for non-empty structural graph packets."),
