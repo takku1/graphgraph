@@ -214,6 +214,32 @@ gate are all waiting on one labelled task set that does not exist.
 - **SWE-bench protocol** — a different question (end-to-end patch success) from the one this project measures (representation cost). Keep as a separate protocol, not a wave.
 - **Further influence-field tuning** — refuted; see ADR-RE-003. Do not reopen without a task set that could detect a field contribution at all.
 
+
+### Finding: conceptual retrieval scores zero on held-out tasks
+
+T-B02 built `eval/retrieval-v1/locus.json` — 7 conceptual/lexically-disjoint
+tasks plus a red control, oracled by source inspection against a held-out Rust
+corpus (766 files, pinned commit). Held-out conceptual coverage went from 2
+tasks to 10.
+
+Running it: **0.00 recall and 0.00 facet completeness on all seven.** The gate
+(OW-AC-03) is ≥0.80.
+
+A differential control isolates the cause — same graph, same system, only the
+phrasing differs. Querying `EvidenceStage`, `Advisor` and `strassen_recursive`
+by name hits every time; querying the same concepts in lexically-disjoint
+English misses every time. All nine expected symbols are in the graph at the
+paths the oracle cites, so the task set is sound and the failure is retrieval's.
+
+Five of the seven are worse than a miss: they returned 14–48 nodes and
+546–1,609 tokens containing none of the expected symbols. That is confident
+wrong context, and it means the abstention path (OW-AC-04) does not fire on a
+conceptual miss — it fires only when retrieval finds nothing at all.
+
+This is the single largest gap between the project's destination and its
+measured behavior. A context graph that answers only when the query already
+contains the answer's name is a lexical index with extra steps.
+
 ---
 
 ## Open Frontier Tickets (Claimable)
@@ -226,7 +252,7 @@ gate are all waiting on one labelled task set that does not exist.
   - **Target:** [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** none
 
-- [ ] **[T-B02]** Build a paraphrase/conceptual labelled task set
+- [x] **[T-B02]** Build a paraphrase/conceptual labelled task set
   - **Why:** ADR-IR-001 — the current tasks are lexically easy, so no field-stage candidate can be evaluated at all. This blocks OW-AC-03 and any ranking work.
   - **Target:** [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** none

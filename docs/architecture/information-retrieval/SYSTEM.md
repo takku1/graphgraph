@@ -41,6 +41,19 @@ Academic framing: **ad hoc IR over a code/document graph** with hard structural 
 ## 4. ADRs
 
 - **ADR-IR-001:** Lexical matching carries the current labelled task set; the personalized-PageRank term reorders the tail (ranks 4–20) that recall@20 and first-hit MRR cannot see. Building a paraphrase/conceptual task set is a prerequisite for evaluating any field-stage candidate at all — not a follow-up.
+  - **Now measured (2026-08-04).** The task set exists (T-B02, `eval/retrieval-v1/locus.json`, held-out Rust corpus). **Conceptual retrieval scores 0.00 on all seven held-out lexically-disjoint tasks** — mean facet completeness 0.000 against an OW-AC-03 gate of ≥0.80.
+
+    A differential control isolates the cause. Same graph, same system, only the phrasing changes:
+
+    | Expected symbol | Query = the symbol name | Query = semantically equivalent, lexically disjoint |
+    |---|---|---|
+    | `EvidenceStage` | **hit** | miss |
+    | `Advisor` | **hit** | miss |
+    | `strassen_recursive` | **hit** | miss |
+
+    All nine expected symbols are present in the graph at the exact paths the oracle cites, so this is a retrieval failure, not a corpus or task defect.
+
+    **Worse than a miss on five of seven.** C01 and C03 returned nothing (an honest abstention). C02, C04, C05, C06 and C07 returned 14–48 nodes and 546–1,609 tokens containing **none** of the expected symbols — confident wrong context, which is the exact failure OW-AC-04's abstention gate exists to prevent. The abstention path is not firing on conceptual misses.
 - **ADR-IR-002:** Semantic embeddings are an **opt-in** backend. The default offline hash index is lexical in disguise, so a paraphrase claim requires the real model to be installed and its provenance recorded.
 - **ADR-IR-003:** Structural constraints (paths, change-impact neighborhoods) are hard filters, not score terms — a wrong answer with a good score is still wrong.
 

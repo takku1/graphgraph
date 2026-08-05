@@ -10,14 +10,33 @@
   "split_policy": {
     "unit": "repository",
     "rule": "No repository may occur in more than one split.",
-    "train": ["takku1/graphgraph"],
-    "calibration": ["pallets/flask"],
-    "test": ["expressjs/express", "BurntSushi/ripgrep"]
+    "train": [
+      "takku1/graphgraph"
+    ],
+    "calibration": [
+      "pallets/flask"
+    ],
+    "test": [
+      "expressjs/express",
+      "BurntSushi/ripgrep",
+      "takku1/locus"
+    ]
   },
   "projects": [
-    {"tasks": "graphgraph.json"},
-    {"tasks": "flask.json"},
-    {"tasks": "express.json"},
-    {"tasks": "ripgrep.json"}
+    {
+      "tasks": "graphgraph.json"
+    },
+    {
+      "tasks": "flask.json"
+    },
+    {
+      "tasks": "express.json"
+    },
+    {
+      "tasks": "ripgrep.json"
+    },
+    {
+      "tasks": "locus.json"
+    }
   ]
 }
