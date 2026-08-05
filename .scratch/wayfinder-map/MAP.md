@@ -272,6 +272,22 @@ stage gets a turn at all.
     doc-only corpora.
   - **Blocked By:** none. This is the highest-value retrieval fix on the board.
 
+
+**Measured cost of doc capture (quiet machine, 2026-08-05).** The scan gate
+**reverts**: `scan_fixture_ms` 125.8 -> 159.7, a 26.9% regression against a 20%
+tolerance (runs ranged 144-160ms, so it is near the line but consistently over).
+The earlier 82% reading was contention and is discarded.
+
+`packet_token_units` reads NEUTRAL at 1070.4, but that is not yet informative:
+graphgraph's own graph has not been rescanned, so it carries no doc text. The
+real token cost lands after a rescan and must be re-measured then.
+
+So the honest trade is **+27% corpus-extraction time for 0.000 -> 0.357
+conceptual recall**, with the packet-token cost still unmeasured. Signal D is
+logged. Whether that trade is acceptable is a decision, not a measurement --
+and the cheaper alternative (extract the doc comment only for symbol kinds, or
+cap it harder than 200 chars) has not been tried.
+
 ---
 
 ## Open Frontier Tickets (Claimable)
