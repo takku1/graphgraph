@@ -271,6 +271,17 @@ stage gets a turn at all.
     available. Note the same branch already had to be corrected once for
     doc-only corpora.
   - **Blocked By:** none. This is the highest-value retrieval fix on the board.
+  - **2026-08-05 receipt:** both obvious fixes tried and falsified against the
+    real held-out fixture plus the existing near-miss red control — see
+    [2026-08-05 T-B07 preflight-veto fix falsified](../../docs/evaluation/graybox-cycles/2026-08-05-tb07-preflight-veto-fix-falsified.md).
+    Caller-supplied `seed_ids` bypassing the veto, and corroborating with
+    either lexical `search_nodes` score or real `fastembed`/bge-small cosine
+    similarity, all rescue the adversarial "distributed retry coordinator"
+    red control along with the real answer -- no absolute threshold
+    separates them (near-miss cosine 0.758 vs. genuine-match range
+    0.66-0.78). Needs compound-facet-aware re-ranking or margin/contrastive
+    scoring, not a cutoff. Still blocked by: none, but no longer "just wire
+    it up" -- it is calibration research.
 
 
 **Measured cost of doc capture (quiet machine, 2026-08-05).** The scan gate

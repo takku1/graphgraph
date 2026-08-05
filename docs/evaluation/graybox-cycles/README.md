@@ -18,6 +18,7 @@ influence-field arc below for the clearest example.
 | Record | Result |
 |--------|--------|
 | [2026-08-05 gray-box cycle](2026-08-05-graybox-cycle.md) | **Critical:** a single-file JS `update` silently deleted ~65% of cross-file `calls` edges. Root-caused and fixed: external nodes carry a synthetic `npm:` locator, so the update's retain-by-owning-file test dropped every external belonging to an untouched file. Also: `status --probe` casing, and `orient` omitting subdirectories. |
+| [2026-08-05 T-B07 preflight-veto fix falsified](2026-08-05-tb07-preflight-veto-fix-falsified.md) | Two candidate fixes for the conceptual-query preflight veto both rescue the adversarial near-miss red control along with the real answer — neither lexical-score nor raw-cosine-embedding corroboration has a safe threshold. Nothing shipped; needs compound-facet-aware re-ranking or margin scoring, not a cutoff. |
 
 ## Methodology and instrument validity
 
