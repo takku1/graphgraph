@@ -342,7 +342,7 @@ cap it harder than 200 chars) has not been tried.
   - **Target:** [context-packets/SYSTEM.md](../../docs/architecture/context-packets/SYSTEM.md), [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** `T-B02` (needs a task set neither system was tuned on)
 
-- [ ] **[T-B05]** Measure what the *model* actually costs, not what the proxy estimates
+- [x] **[T-B05]** Measure what the *model* actually costs, not what the proxy estimates
   - **Why:** the calibrated proxy is whitespace-blind and validated against
     `cl100k_base`/`o200k_base` only. If the packet is a compiled artifact
     targeting the model, the compiler's cost model must track the real
@@ -351,6 +351,10 @@ cap it harder than 200 chars) has not been tried.
     re-run `benchmarks/context_graph/calibrate_token_proxy.py` and record drift.
   - **Target:** [context-packets/SYSTEM.md](../../docs/architecture/context-packets/SYSTEM.md)
   - **Blocked By:** none
+  - **2026-08-05 receipt:** re-ran with `--enforce`; all four gates pass with
+    headroom (MAE 2.73% vs 2.78% baseline, p95 5.93%, spread 6.68%, 0
+    inversions) — no meaningful drift, constants not touched. Evidence
+    folded into context-packets/SYSTEM.md §4 directly.
 
 - [ ] **[T-B06]** `search_nodes` runs six times and PPR twice per query
   - **Signal:** after T-B01 removed 44%, the residual 1.1 s is dominated by six
