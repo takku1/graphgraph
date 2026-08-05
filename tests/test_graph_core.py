@@ -596,6 +596,32 @@ class GraphCoreTest(unittest.TestCase):
             matches = search_nodes(graph, "Target", personalize=True)
         self.assertEqual(matches[0].node.id, "N0")
 
+    def test_large_graph_split_identifier_query_uses_local_ppr(self) -> None:
+        # `tokenize("retrieve_context")` keeps the underscore-joined term
+        # alongside its split words, so that spelling satisfies the
+        # exact-seed check directly. A query that spells the same identifier
+        # with a space instead -- exactly what facet-search variants
+        # deliberately generate to catch prose mentions -- tokenizes to only
+        # the split words, and previously fell through to the expensive
+        # full-graph PPR despite naming the same real symbol. Reconstructing
+        # the joined form closes that gap.
+        from graphgraph.retrieval import search_nodes
+
+        graph = Graph(
+            nodes={
+                f"N{i}": Node(f"N{i}", "retrieve_context" if i == 0 else f"Node {i}")
+                for i in range(600)
+            },
+            edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(599)],
+        )
+        with patch.object(
+            graph,
+            "personalized_pagerank",
+            side_effect=AssertionError("full personalized PageRank ran for a split-identifier query"),
+        ):
+            matches = search_nodes(graph, "retrieve context", personalize=True)
+        self.assertEqual(matches[0].node.id, "N0")
+
     def test_large_graph_broad_query_does_not_use_local_ppr(self) -> None:
         from graphgraph.retrieval import search_nodes
 

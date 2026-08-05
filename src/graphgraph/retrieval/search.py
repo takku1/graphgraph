@@ -368,6 +368,17 @@ def search_nodes(
         for node_id, weight in session_weights.items():
                 personalization[node_id] = personalization.get(node_id, 0.0) + weight
 
+        # `tokenize` keeps an underscore-joined identifier as its own term
+        # alongside its split words (`retrieve_context` -> `retrieve_context`,
+        # `retrieve`, `context`), so a query already written with the
+        # underscore satisfies the per-term check below directly. A query
+        # that instead spells the same identifier with spaces (a facet-search
+        # variant deliberately generated to catch that prose form, or a user
+        # typing it that way) tokenizes to only the split words -- no single
+        # term ever equals the joined label, even though the words are the
+        # exact same identifier. Reconstructing the joined form here closes
+        # that gap without touching how anything actually scores or matches.
+        joined_terms = "_".join(terms)
         exact_seed = any(
             any(
                 term == row.node_id
@@ -375,6 +386,7 @@ def search_nodes(
                 for term in terms
             )
             or (len(terms) == 1 and terms[0] == row.path_stem)
+            or (len(terms) > 1 and (joined_terms == row.node_id or joined_terms == row.label))
             for row in rows
         )
         use_local_ppr = ppr_mode == "local" or (

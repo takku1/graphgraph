@@ -381,6 +381,33 @@ cap it harder than 200 chars) has not been tried.
     eval harness to validate against. Left for a session that can pair the
     restructure with `eval/retrieval-v1/*.json` regression scoring, not just
     the latency gate.
+  - **2026-08-05 follow-up — one real sub-fix landed.** Tracing which PPR
+    variant each of the six calls used (not just how many ran) found a
+    genuine bug in the `exact_seed` gate that picks full vs. localized PPR:
+    `tokenize()` keeps an underscore-joined identifier as its own term
+    (`retrieve_context` -> `retrieve_context`, `retrieve`, `context`), so a
+    query spelled with the underscore satisfies the exact-match check and
+    gets the cheap localized approximation -- but a facet-search variant of
+    the *same identifier* spelled with a space (exactly what
+    `facet_search_queries` deliberately generates to catch prose mentions)
+    tokenizes to only the split words, never matches, and silently fell back
+    to full O(N) power-iteration PPR on a 13,812-node graph. Fixed in
+    `retrieval/search.py` by reconstructing the joined form before the
+    exact-seed check (`src/graphgraph/retrieval/search.py`); regression test
+    `test_large_graph_split_identifier_query_uses_local_ppr` in
+    `tests/test_graph_core.py` fails on the old code and passes on the new
+    one. Verified zero drift on `eval/retrieval-v1/graphgraph.json`
+    (node_recall/MRR/NDCG@10/facet_completeness bit-for-bit identical,
+    6/6 tasks) and the full suite stays green. **Honest result:** on this
+    session's representative benchmark query the traced call count dropped
+    from 2 full-PPR calls to 1, but wall-clock on
+    `retrieval_query_warm_ms` did not move outside noise (849.1ms ->
+    852.8ms, stdev ~20-40ms) -- full PPR converges fast enough on this
+    graph/query shape that removing one call wasn't the dominant cost here.
+    Kept anyway: it is unconditionally wasted computation eliminated with a
+    provably safe, narrowly-scoped condition, and should matter more on
+    larger graphs or multi-facet queries that stack several such calls. The
+    broader 6x/2x pipeline-restructure question above is still open.
 
 - [~] **[T-B03]** Define measurement seams for the seven unmetered components
   - **Scope:** static-analysis, intermediate-representation, query-planning, application-services, platform, agent-interfaces, project-atlas.
