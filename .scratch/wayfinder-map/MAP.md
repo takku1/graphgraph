@@ -408,6 +408,37 @@ cap it harder than 200 chars) has not been tried.
     provably safe, narrowly-scoped condition, and should matter more on
     larger graphs or multi-facet queries that stack several such calls. The
     broader 6x/2x pipeline-restructure question above is still open.
+  - **2026-08-05 second follow-up — memoization, also correctness-neutral
+    but not a measured win.** Re-profiled with the PPR fix landed: with
+    `sort_stats('tottime')`, `search_nodes`'s own per-row scoring loop
+    dominates self-time, and three of its per-row helper calls
+    (`_is_test_material`, `identifier_quality_bonus`, `_is_generated_node`,
+    `_is_benchmark_node`) are pure functions of a single hashable node/label
+    called once per candidate row per personalized call -- the exact
+    un-cached siblings of `lexical_forms`/`_is_test_path`, which already
+    carry `@lru_cache` in these same files with the identical
+    justification. Added the same decorator to all four
+    (`retrieval/search.py`, `retrieval/scoping.py`). Isolated A/B (git
+    stash of just those two files, idle machine, no background jobs) shows
+    **no measurable difference**: ~780-794ms either way, both readings
+    inside each other's noise band. Kept anyway for the same reason as the
+    PPR fix -- provably eliminates real repeated computation under an
+    already-established, low-risk pattern -- but recorded as unproven on
+    latency, not claimed as a win.
+  - **Where the actual cost lives (still unresolved).** After both fixes,
+    `search_nodes`'s own body remains the dominant self-time, concentrated
+    in the per-row `expanded_label_terms`/`expanded_path_terms`/
+    `expanded_haystack_terms` set-comprehensions (lines ~424-433) that
+    union `lexical_forms(token)` per document-kind row -- genuinely
+    query-dependent (can't be cached across calls the way the four helpers
+    above could) and scaling with candidate-row count, which itself looked
+    large (~2,495 rows for one narrow compound-identifier facet variant on
+    this graph). Shrinking that candidate pool for narrow/high-precision
+    queries is a ranking-affecting change, not a safe no-op refactor --
+    it needs the eval harness across more than the graphgraph self-graph
+    (express/flask/ripgrep splits at minimum) before it can be trusted, and
+    was not attempted this cycle. This -- not the call count itself -- is
+    now the concrete next target for whoever picks this back up.
 
 - [~] **[T-B03]** Define measurement seams for the seven unmetered components
   - **Scope:** static-analysis, intermediate-representation, query-planning, application-services, platform, agent-interfaces, project-atlas.
