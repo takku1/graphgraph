@@ -458,13 +458,29 @@ cap it harder than 200 chars) has not been tried.
 
 ### Type A — implement
 
-- [ ] **[T-A01]** Resident transport exact-query p95 gate — **OW-AC-01**
+- [x] **[T-A01]** Resident transport exact-query p95 gate — **OW-AC-01**
   - **Target:** [agent-interfaces/SYSTEM.md](../../docs/architecture/agent-interfaces/SYSTEM.md)
   - **Blocked By:** `T-B01`
+  - **2026-08-05 receipt:** `components/agent-interfaces/measure.sh` was
+    gating `cli_cold_start_ms` (the documented *secondary* metric) while
+    the declared *primary* metric had no script at all. Rewrote it to gate
+    `resident_exact_query_p95_ms` instead (warm-process `query_relations`
+    exact lookups, 300 samples); `cli_cold_start_ms` still computed and
+    logged to stderr for humans per ADR-AI-001, just not the harness
+    payload. First reading: **p95 0.06-0.07ms** across three runs. This is
+    the first baseline recorded for the metric; no prior number to compare
+    against.
 
-- [ ] **[T-A02]** Active graph publication & freshness — **OW-AC-02**
+- [x] **[T-A02]** Active graph publication & freshness — **OW-AC-02**
   - **Target:** [application-services/SYSTEM.md](../../docs/architecture/application-services/SYSTEM.md)
   - **Blocked By:** none
+  - **2026-08-05 receipt:** verified already implemented, no code changed.
+    `inspect_saved_graph_freshness` correctly computes "empty delta =>
+    fresh"; `build_project_status` reports it with existing test coverage
+    (`test_mcp_project_status.py`). The hypothesized gap (`find_graph_path`
+    hard-erroring on multiple candidates instead of selecting) is
+    unreachable dead code — zero production call sites ever pass
+    `include_external=True`.
 
 - [ ] **[T-A03]** Abstention & confidence red controls — **OW-AC-04**
   - **Gate:** unanswerable ⇒ confidence ≤0.2 and ≤50 real tokens.

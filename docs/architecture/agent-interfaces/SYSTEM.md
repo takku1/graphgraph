@@ -31,7 +31,7 @@ Measured illustration (Flask-scale one-hop relations): CLI end-to-end ~250 ms vs
 - **[Ubiquitous]** Read-only query tools SHALL NOT imply mutation or silent full reindex.
   - `EvidenceStage: Observed`.
 - **[Conditional]** IF reporting agent-cycle performance THEN resident transport SHALL be the primary gate (OW-AC-01).
-  - `EvidenceStage: Sampled` — resident exact-query p95 gate still open.
+  - `EvidenceStage: Measured` (2026-08-05) — `components/agent-interfaces/measure.sh` now gates `resident_exact_query_p95_ms` (previously the script gated only the secondary `cli_cold_start_ms`, and nothing measured the declared primary metric at all). Warm-process `query_relations(direction=callers)` on 300 uniformly-sampled real exact node ids from this project's own ~14k-node graph: **p95 0.06-0.07ms** across three repeated runs (median ~0.015-0.017ms, max 0.18-0.35ms), consistent with the Flask-scale "~0.26ms resident" illustration above. No formal gate threshold recorded yet — this receipt establishes the first baseline for `hypothesis_runner.py` to compare future changes against.
 - **[Ubiquitous]** Capability identity SHALL be machine-readable so a client can tell which contract it is talking to (OW-AC-09).
   - `EvidenceStage: Sampled` — `tests/test_mcp_machine_contract.py`.
 - **[Conditional]** IF an external client's installed skill lags this repository THEN THE SYSTEM SHALL be described by `graphgraph status`, not by the stale copy.
@@ -55,7 +55,7 @@ Measured illustration (Flask-scale one-hop relations): CLI end-to-end ~250 ms vs
 
 | | |
 |--|--|
-| **Primary metric** | Resident exact-query p95 latency (`direction: lower`, OW-AC-01) |
+| **Primary metric** | Resident exact-query p95 latency (`direction: lower`, OW-AC-01). Measured 2026-08-05: **p95 0.06-0.07ms** (`components/agent-interfaces/measure.sh`, `resident_exact_query_p95_ms`). See §4 invariant above. |
 | **Reported separately** | Cold-start process latency — interpreter spawn and import, not graph work |
 | **Invariance gate** | Transport-specific absolute budgets plus scale invariance (OW-AC-08) |
 | **Response surface** | Machine response ≤1.15x evidence-packet tokens (OW-AC-06) |
