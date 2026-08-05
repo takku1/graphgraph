@@ -240,6 +240,38 @@ This is the single largest gap between the project's destination and its
 measured behavior. A context graph that answers only when the query already
 contains the answer's name is a lexical index with extra steps.
 
+
+### Finding: doc capture moved conceptual recall 0.000 -> 0.357, and found the next blocker
+
+Embedding a symbol's own doc comment (commit c27751a) raised held-out
+conceptual facet completeness from **0.000 to 0.357**, with two of seven tasks
+now perfect (C05, C06) and one partial (C07). The OW-AC-03 gate is 0.80.
+
+The four that still score zero split cleanly, and the split is the diagnosis:
+
+- **C01, C03 return zero nodes.** They are vetoed by the *lexical* facet
+  feasibility preflight in `retrieval/context.py`, which reports "no code or
+  structural graph evidence covers any required query facet" and returns a
+  zero-packet reject **before semantic retrieval is ever consulted**. The
+  doc-enriched index ranks `EvidenceStage` first for C01 in isolation -- the
+  answer is right there, and the preflight refuses to look.
+- **C02, C04 return 24-48 nodes** with none of the expected symbols: retrieval
+  ran and picked wrong.
+
+C05 differs from C01 only in that its query words lexically overlap the docs, so
+it survives the preflight and then succeeds. That is the controlled comparison:
+same pipeline, same index, and lexical overlap decides whether the semantic
+stage gets a turn at all.
+
+- [ ] **[T-B07]** The lexical facet preflight vetoes conceptual queries
+  - **Fix direction:** the preflight exists to skip ranked search for entities
+    that exist nowhere. That reasoning does not hold when a semantic backend
+    could still answer, so it must either consult semantic evidence before
+    declaring a total miss, or decline to veto when a current semantic index is
+    available. Note the same branch already had to be corrected once for
+    doc-only corpora.
+  - **Blocked By:** none. This is the highest-value retrieval fix on the board.
+
 ---
 
 ## Open Frontier Tickets (Claimable)
