@@ -758,6 +758,85 @@ audit found the actionable boundaries. This is skill-routing evidence, not a
 reason to add Graphify to GraphGraph. No Graphify code, wrapper, dependency,
 fallback, or runtime integration was added.
 
+## Head-to-Head: GraphGraph vs. `code-review-graph` (T-B04, 2026-08-05)
+
+The destination claim ("beats every other context graph") had never been
+tested head-to-head against a named, runnable alternative on the same
+machine — every prior comparison was against a competitor's *published*
+numbers on *their* benchmark. `code-review-graph` (an MCP server available
+in this environment, same category: tree-sitter-parsed code knowledge graph
+exposed to an agent) is a fair, runnable comparand.
+
+**Protocol.** `eval/retrieval-v1/flask.json` — 6 held-out, source-verified
+tasks (`pallets/flask@954f568`, the project's own *calibration* split,
+untuned against by either system). Both systems scanned/built against the
+exact pinned commit. Neither had semantic/embedding indexing enabled
+(GraphGraph: `--source-mode off`; `code-review-graph`: no local embedding
+model installed and no cloud-provider credentials configured in this
+environment — its `semantic_search_nodes` tool degrades to FTS5 keyword
+matching, itself a reportable finding, not a workaround). `code-review-graph`
+was given its best-suited tool per task (`callers_of`/`callees_of` for
+relational questions, `semantic_search_nodes` for lookups and conceptual
+questions) rather than forced through one operation, so the comparison
+credits each system's own design rather than a mismatched interface.
+Token cost for both sides denominated in GraphGraph's own calibrated
+proxy (`estimate_tokens`), applied identically to both systems' raw
+response JSON.
+
+| Task | Query shape | GraphGraph | `code-review-graph` |
+|---|---|---|---|
+| FLASK-CAL-001 | reverse lookup (`callers_of`) | recall 1.0, 78 tok | recall 1.0, 272 tok |
+| FLASK-CAL-002 | compound direct lookup (`callees_of`) | recall 1.0, 124 tok | recall 1.0, 1006 tok |
+| FLASK-CAL-003 | conceptual, lexically disjoint | recall 1.0, 1703 tok | **recall 0.0, 0 results** |
+| FLASK-CAL-004 | direct lookup (path) | recall 1.0, 124 tok | recall 1.0, 215 tok |
+| FLASK-CAL-005 | conceptual (partial lexical overlap) | recall 1.0, 1547 tok, 1 query | recall 1.0, 1987 tok, **3 queries needed** |
+| FLASK-CAL-RED | red control (unanswerable) | abstained, 0 tok, explicit `unanswerable` status | 0 results, 126 tok, **no abstention signal** |
+
+Token counts on the `code-review-graph` side are the exact raw JSON tool
+response, scored through GraphGraph's own calibrated `estimate_tokens` —
+same proxy applied to both systems, no summarization applied to either
+side's output before counting.
+
+**Where GraphGraph wins.** On the 5 tasks both systems actually answered
+(001, 002, 004, 005, and the red control — excluding 003, where
+`code-review-graph` returned nothing), GraphGraph cost **1,873 tokens total
+vs. 3,606** for `code-review-graph` — 48% cheaper at matched recall
+(`code-review-graph` cost 1.93x as many tokens for the same answers). Full-sentence natural-language queries
+worked first try; `code-review-graph`'s FTS-backed search needed the query
+collapsed to a single bare keyword (`"session"`) before task 5 returned
+anything — the two full-sentence and short-phrase attempts before that
+returned zero results and are counted in its total above, because a real
+caller pays for those failed attempts too. Task 3's full sentence never
+worked in any phrasing tried. GraphGraph also returns a typed, explicit
+`answerability` status (`unanswerable`/`incomplete`/`answerable` with a
+confidence score); `code-review-graph`'s empty-result-list has no
+distinguishing signal between "this doesn't exist" and "my search missed
+it," which is exactly the failure mode that produced task 3's silent miss.
+
+**Where `code-review-graph` is genuinely strong, and where GraphGraph has
+a real weakness here.** Its `callers_of`/`callees_of` tools are a clean,
+deterministic graph traversal with no ranking/threshold tuning involved at
+all — task 1's answer is exact by construction, not by a scoring function
+that happens to rank the right node first. That is a real design advantage
+for well-specified relational questions, and it is more legible to a human
+auditing the answer. Separately, task 4 — a full-recall, oracle-matching
+answer on both systems — earned GraphGraph's own confidence gate an
+`incomplete` status rather than `answerable`; the confidence signal doesn't
+track raw recall as tightly as its own receipts imply, worth investigating
+independently of this comparison.
+
+**What this does not settle.** One repository, six tasks, one competitor,
+no embedding-backed comparison on either side (the fairest *available*
+comparison in this environment, not the fairest *possible* one — a
+future pass with `code-review-graph[embeddings]` installed could change
+task 3's and 5's numbers materially), no latency measurement (the MCP
+transport in this environment doesn't expose clean per-call timing the way
+a direct benchmark harness would), and no update-cost comparison (axis 4
+of the destination metric, unmeasured on both sides). This is a first real
+data point against a named, runnable competitor — not the full T-B04
+promotion study, which per the wayfinder map needs multiple repositories
+and comparands before the destination claim is fully backed.
+
 ## What Is Still Unproven
 
 The remaining major proof is live model-answer scoring:

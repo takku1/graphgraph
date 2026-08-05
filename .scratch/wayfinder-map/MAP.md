@@ -341,6 +341,28 @@ cap it harder than 200 chars) has not been tried.
     says so.
   - **Target:** [context-packets/SYSTEM.md](../../docs/architecture/context-packets/SYSTEM.md), [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** `T-B02` (needs a task set neither system was tuned on)
+  - **2026-08-05 receipt (first real data point, not the full study):**
+    ran `eval/retrieval-v1/flask.json`'s 6 held-out oracled tasks through
+    both GraphGraph and `code-review-graph` (an MCP server available in
+    this environment, same category, tree-sitter-parsed) on the pinned
+    `pallets/flask@954f568` commit. Full writeup with the per-task table:
+    [empirical-evaluation.md](../../docs/evaluation/empirical-evaluation.md)
+    § "Head-to-Head: GraphGraph vs. code-review-graph". Result: GraphGraph
+    6/6 correct (including the conceptual/lexically-disjoint task and the
+    red control); `code-review-graph` 5/6 (missed the conceptual task
+    outright — 0 results, no embeddings available in this environment) and
+    needed 3 query reformulations for a second conceptual task where
+    GraphGraph succeeded on the natural-language question first try. On
+    the 5 matched-recall tasks, GraphGraph cost 1,873 tokens vs.
+    `code-review-graph`'s 3,606 (48% cheaper). Reported honestly per the
+    rule above: `code-review-graph`'s `callers_of`/`callees_of` are a
+    genuinely cleaner, deterministic answer for well-specified relational
+    questions with zero ranking/threshold involved — a real design
+    strength GraphGraph doesn't have an equivalent for. **Not measured:**
+    latency (no clean per-call timing available through this MCP
+    transport), update cost, any embedding-backed comparison, and only one
+    repository / one comparand — the full T-B04 promotion study needs
+    more of both before the destination claim is fully backed.
 
 - [x] **[T-B05]** Measure what the *model* actually costs, not what the proxy estimates
   - **Why:** the calibrated proxy is whitespace-blind and validated against
