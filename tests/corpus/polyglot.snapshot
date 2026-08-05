@@ -125,7 +125,7 @@ N {"active":true,"confidence":0.95,"facts":[],"id":"helper_php__Assist","kind":"
 N {"active":true,"confidence":0.95,"facts":[],"id":"helper_php__Middle","kind":"function","label":"Middle","parent":"","path":"helper.php","scope":"","source":"helper.php","summary":"L6 function Middle() {"}
 N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_py","kind":"python","label":"helper.py","parent":"","path":"helper.py","scope":"","source":"","summary":""}
 N {"active":true,"confidence":0.95,"facts":[],"id":"helper_py__Assist","kind":"function","label":"Assist","parent":"","path":"helper.py","scope":"","source":"helper.py","summary":"L1 def Assist():"}
-N {"active":true,"confidence":0.95,"facts":[],"id":"helper_py__Middle","kind":"function","label":"Middle","parent":"","path":"helper.py","scope":"","source":"helper.py","summary":"L5 def Middle():"}
+N {"active":true,"confidence":0.95,"facts":[],"id":"helper_py__Middle","kind":"function","label":"Middle","parent":"","path":"helper.py","scope":"","source":"helper.py","summary":"L5 def Middle(): Decoy: same name as core.Middle, never called."}
 N {"active":true,"confidence":1.0,"facts":["project:polyglot"],"id":"helper_rb","kind":"ruby","label":"helper.rb","parent":"","path":"helper.rb","scope":"","source":"","summary":""}
 N {"active":true,"confidence":0.95,"facts":[],"id":"helper_rb__Assist","kind":"method","label":"Assist","parent":"","path":"helper.rb","scope":"","source":"helper.rb","summary":"L1 def Assist"}
 N {"active":true,"confidence":0.95,"facts":[],"id":"helper_rb__Middle","kind":"method","label":"Middle","parent":"","path":"helper.rb","scope":"","source":"helper.rb","summary":"L5 def Middle"}

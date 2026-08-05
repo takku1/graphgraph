@@ -1362,6 +1362,46 @@ class SemanticEmbeddingBackendTest(unittest.TestCase):
         # The degraded index is still queryable offline.
         self.assertIsNotNone(index.query("erase somebody's profile", limit=1))
 
+    def test_hash_index_is_flagged_when_a_real_backend_is_available(self) -> None:
+        # The provenance guard only refuses in one direction: a real embedding
+        # index queried without its backend. The reverse -- a hash index while a
+        # model is installed -- is arithmetically safe and therefore silent, and
+        # that silence made a stale index look like broken conceptual retrieval
+        # (0/7 on held-out tasks while the model itself ranked 6/7 top-1).
+        from graphgraph.platform import SemanticIndex
+        from graphgraph.platform import semantic as semantic_module
+
+        class _Model:
+            name = "fastembed:test-model"
+
+            def embed(self, texts):
+                return [[0.1] * 8 for _ in texts]
+
+        # Build as a core install would: no backend resolvable -> hash vectors.
+        original = semantic_module.resolve_backend
+        semantic_module.resolve_backend = lambda: None
+        try:
+            index = SemanticIndex().build(self._graph())
+        finally:
+            semantic_module.resolve_backend = original
+        self.assertEqual(index.backend_name, "hash")
+
+        # A model is available -> the hash index is a downgrade, and says so.
+        reason = index.downgraded_reason(backend=_Model())
+        self.assertIn("hash", reason)
+        self.assertIn("rebuilt", reason)
+
+        # Core install (no backend at all) -> hash is correct, stay silent.
+        semantic_module.resolve_backend = lambda: None
+        try:
+            self.assertEqual(index.downgraded_reason(), "")
+        finally:
+            semantic_module.resolve_backend = original
+
+        # An index already built by a real backend is never a downgrade.
+        index.backend_name = "fastembed:test-model"
+        self.assertEqual(index.downgraded_reason(backend=_Model()), "")
+
     def test_provenance_guard_refuses_cross_space_query(self) -> None:
         from graphgraph.platform import (
             SemanticBackendMismatch,

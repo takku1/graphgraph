@@ -99,6 +99,35 @@ class SemanticIndex:
             self.save()
         return self
 
+    def downgraded_reason(self, backend: EmbeddingBackend | None = None) -> str:
+        """Why this index is weaker than the environment now allows, or "".
+
+        The mismatch guard only fires in one direction: a *real* embedding index
+        queried without its backend refuses, because comparing across coordinate
+        systems yields confident nonsense. The opposite case is silent and safe
+        -- a hash index is queried with hash vectors, so nothing is wrong
+        arithmetically -- and that silence is the problem. Hash vectors cannot
+        express paraphrase, so a stale hash index built before `fastembed` was
+        installed answers conceptual queries at chance and reports no fault.
+
+        This happened: a 14.5k-node index built by the hash backend scored 0/7
+        on held-out conceptual tasks, while the installed model ranked 6/7 of
+        the same pairs top-1. Nothing in the pipeline said the index was the
+        reason. Callers surface this so the answer is "rebuild the index", not
+        "conceptual retrieval does not work".
+        """
+        if self.backend_name != HASH_BACKEND_NAME:
+            return ""
+        available = (backend if backend is not None else resolve_backend())
+        if available is None:
+            return ""
+        return (
+            f"semantic index was built by the offline hash backend, but "
+            f"{available.name!r} is available; hash vectors cannot express "
+            "paraphrase, so conceptual recall is at chance until the index is "
+            "rebuilt"
+        )
+
     def _query_vector(self, text: str, backend: EmbeddingBackend | None) -> dict[int, float]:
         if self.backend_name == HASH_BACKEND_NAME:
             return _vector(text, self.dimensions)

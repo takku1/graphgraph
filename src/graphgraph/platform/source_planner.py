@@ -191,6 +191,15 @@ class QuerySourcePlanner:
                 else:
                     warnings.append(f"semantic:index_{semantic_index_state}")
                 if semantic is not None:
+                    # A hash index queried while a real embedding backend is
+                    # installed is arithmetically fine and semantically useless:
+                    # it answers paraphrase at chance and reports no fault. Say
+                    # so, or the receipt blames conceptual retrieval for a stale
+                    # artifact.
+                    downgraded = semantic.downgraded_reason()
+                    if downgraded:
+                        semantic_index_state = "downgraded_hash"
+                        warnings.append("semantic:index_downgraded_hash")
                     semantic_ids = _balanced_semantic_seeds(
                         semantic.query(query, limit=max_semantic * 4),
                         current,
