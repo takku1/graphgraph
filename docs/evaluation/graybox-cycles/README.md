@@ -13,6 +13,12 @@ confirmed defects in [../defect-ledger.md](../defect-ledger.md).
 supersedes an earlier one, the later record says so explicitly — see the
 influence-field arc below for the clearest example.
 
+## 2026-08-05 cycle
+
+| Record | Result |
+|--------|--------|
+| [2026-08-05 gray-box cycle](2026-08-05-graybox-cycle.md) | **Critical:** a single-file JS `update` silently deleted ~65% of cross-file `calls` edges. Root-caused and fixed: external nodes carry a synthetic `npm:` locator, so the update's retain-by-owning-file test dropped every external belonging to an untouched file. Also: `status --probe` casing, and `orient` omitting subdirectories. |
+
 ## Methodology and instrument validity
 
 | Record | Result |

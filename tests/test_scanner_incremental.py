@@ -20,6 +20,7 @@ from graphgraph.runtime.manifest import MANIFEST_VERSION, extractor_fingerprint
 from graphgraph.scanner.frontends import (
     tree_sitter_available,
 )
+from graphgraph.storage.backends import save_graph_binary
 
 
 class ManifestDeferralTest(unittest.TestCase):
@@ -61,6 +62,77 @@ class ManifestDeferralTest(unittest.TestCase):
 
 class IncrementalScannerTest(unittest.TestCase):
     """scanner/core.py incremental paths and runtime/manifest.py."""
+
+    def test_single_file_update_preserves_other_files_external_calls(self) -> None:
+        # Editing one JS file used to delete the external-dependency calls of
+        # every *other* file. External nodes carry a synthetic locator
+        # ("npm:http") rather than a repository path, so the update's
+        # retain-if-owning-file-is-active test failed for all of them, and only
+        # externals re-extracted from the touched file survived. On express that
+        # collapsed 47 external nodes to 3 and about 65% of `calls` edges --
+        # silently, on the tool's flagship edit-loop command.
+        #
+        # The gate is calls-edge parity between a full scan and a one-file
+        # update over the same source.
+        if not tree_sitter_available():
+            self.skipTest("tree_sitter is not installed")
+        util_lines = [
+            "const path = require('path');",
+            "function formatName(x) { return path.basename(String(x)); }",
+            "module.exports = { formatName };",
+        ]
+        # `http` is required only here, by the file the update does NOT touch.
+        router_lines = [
+            "const http = require('http');",
+            "const { formatName } = require('./util');",
+            "function serve(u) { return http.createServer(function () { formatName(u); }); }",
+            "module.exports = { serve };",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "util.js").write_text("\n".join(util_lines) + "\n", encoding="utf-8")
+            (root / "router.js").write_text("\n".join(router_lines) + "\n", encoding="utf-8")
+            graph_path = root / "graph.gg"
+            manifest_path = root / "manifest.json"
+            baseline = scan_directory(
+                root,
+                depth="symbols",
+                frontend="tree_sitter",
+                manifest_path=manifest_path,
+                previous_graph_path=graph_path,
+            )
+            save_graph_binary(baseline, graph_path)
+
+            def calls_edges(graph):
+                return {
+                    (edge.source, edge.target)
+                    for edge in graph.edges
+                    if edge.type == "calls"
+                }
+
+            before = calls_edges(baseline)
+            self.assertTrue(
+                any("http" in target for _, target in before),
+                "fixture must produce an external http call for this gate to mean anything",
+            )
+
+            (root / "util.js").write_text(
+                "\n".join(util_lines + ["// probe comment"]) + "\n",
+                encoding="utf-8",
+            )
+            updated = update_paths(
+                root,
+                ["util.js"],
+                depth="symbols",
+                frontend="tree_sitter",
+                manifest_path=manifest_path,
+                previous_graph_path=graph_path,
+            )
+            self.assertEqual(
+                before - calls_edges(updated),
+                set(),
+                "a one-file update dropped calls edges belonging to untouched files",
+            )
 
     def test_identical_exact_path_update_is_graph_identity_noop(self) -> None:
         if not tree_sitter_available():

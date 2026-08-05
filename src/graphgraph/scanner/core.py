@@ -590,6 +590,33 @@ def _promote_type_fact_dependents(
     )
 
 
+# External dependencies carry a synthetic locator (``npm:http``) rather than a
+# repository path: they name a package, not a file this scan owns.
+_SYNTHETIC_PATH_PREFIXES = ("npm:",)
+
+
+def _is_synthetic_path(path: str) -> bool:
+    """Whether a node's ``path`` names a package rather than a scanned file.
+
+    Incremental update retains a node when its owning file is still active.
+    A synthetic locator has no owning file, so that test failed for every
+    external node and dropped it unless the touched file happened to
+    re-extract it -- editing one file deleted the external calls belonging to
+    every *other* file.
+
+    Reproduced minimally: a 4-file JS fixture where editing `lib/util.js`
+    deleted `external_js_http_module_createServer` and the
+    `lib/router.js::serve -> http.createServer` edge, because only
+    `router.js` (untouched, therefore not re-extracted) required `http`.
+    At corpus scale this is the reported collapse from 47 external nodes to 3
+    and ~65% of `calls` edges on a single-file update.
+
+    These nodes are shared, like pathless semantic nodes: they survive unless
+    nothing references them.
+    """
+    return path.startswith(_SYNTHETIC_PATH_PREFIXES)
+
+
 def update_paths(
     root: Path,
     paths: list[str],
@@ -1247,7 +1274,11 @@ def _build_graph_from_split(
                 # resurrects the exact base-node leak seen in `remove`.
                 # Path-bearing nodes are owned by that path; only active paths
                 # may restore them. Pathless semantic nodes remain shared.
-                owns_active_path = not previous_node.path or previous_node.path in active_rels
+                owns_active_path = (
+                    not previous_node.path
+                    or _is_synthetic_path(previous_node.path)
+                    or previous_node.path in active_rels
+                )
                 if previous_node.path not in dirty_rels and owns_active_path:
                     nodes[nid] = previous_node
                     if _context_symbol_node(previous_node):
