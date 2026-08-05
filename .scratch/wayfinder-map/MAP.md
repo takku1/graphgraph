@@ -354,6 +354,33 @@ cap it harder than 200 chars) has not been tried.
     answer decides whether this is a caching fix or a pipeline restructure.
   - **Target:** [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** none
+  - **2026-08-05 receipt (question answered — not accidental duplication).**
+    `components/information-retrieval/measure.sh` currently reads
+    `retrieval_query_warm_ms = 849.1ms` (samples=9, stdev=20.7) on this
+    machine, healthy against the recorded 1125.7ms T-B01 baseline (no
+    regression from the GGB4 storage promotion this session). Direct call
+    tracing (wrap `search.search_nodes` / `Graph.personalized_pagerank`,
+    real query "where is retrieve_context defined") on the six/two counts:
+    the six `search_nodes` calls have **six different (query_text, limit,
+    exact flags) tuples** — two exact-fast-path identity checks (preflight's
+    `identifiers[0]` vs. the later stage's `anchor_query`, which
+    `scoping.structural_anchor_query` returns unchanged for `direct_lookup`
+    by design, so the two texts are not equal), one broader exact-path
+    anchor search, and three ranked facet-evidence-query variants from
+    `facet_search_queries` (compound-identifier split forms). The two PPR
+    calls carry different personalization vectors (559 vs. 8 seeds) tied to
+    two different search stages, not the same computation run twice. A
+    per-call memoization cache would have a 0% hit rate on this trace — the
+    map's own "caching fix or pipeline restructure" question resolves to
+    **restructure**, confirmed empirically rather than asserted. Not
+    attempted this cycle: every candidate merge point inspected turned out
+    to be intentionally scoped for a correctness reason (exact-match
+    robustness, multi-tokenization recall), and `.measure/information-retrieval/log.jsonl`
+    already shows one recent hypothesis on this exact metric reverted
+    (`-21.27%`, Signal D) — a blind merge risks repeating that without the
+    eval harness to validate against. Left for a session that can pair the
+    restructure with `eval/retrieval-v1/*.json` regression scoring, not just
+    the latency gate.
 
 - [~] **[T-B03]** Define measurement seams for the seven unmetered components
   - **Scope:** static-analysis, intermediate-representation, query-planning, application-services, platform, agent-interfaces, project-atlas.
