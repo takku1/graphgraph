@@ -36,6 +36,8 @@ Turn a repository (and optional documents) into **graph intermediate representat
   - `EvidenceStage: Observed`.
 - **[Event-driven]** WHEN scanning incrementally THE SYSTEM SHALL re-join only affected fact keys when persistent facts are enabled (OW-Q02-C).
   - `EvidenceStage: Measured` — [2026-07-31 Q02-C persistent type facts](../../evaluation/graybox-cycles/2026-07-31-q02c-persistent-type-facts.md).
+- **[Ubiquitous]** Receiver-type-resolved member-call edges SHALL hold ≥98% independently-verified precision, per language (OW-AC-05).
+  - `EvidenceStage: Measured` (2026-08-05) — the 7-language `polyglot-scope-2026-07-31` fixture (0 automated test previously wired to it) re-run by hand: 0/7 false positives on its `helper::Middle` precision oracle, all 7 languages still resolving the three historically-hardest edge classes (self-recursion, same-file collision, receiver-typed member call). A random 15-edge sample of `tree_sitter_type_resolved` calls from a fresh scan of `takku1/locus@76d80f9` (Rust, 396 files) was grep-verified against real source one edge at a time: 15/15 (100%) correct. Not yet covered: a real-repo independent sample for the other 6 languages, and a per-language call-volume table.
 - **[Conditional]** IF a tree-sitter grammar cannot be loaded THEN THE SYSTEM SHALL record the reason and skip that language rather than abort the scan.
   - `EvidenceStage: Observed` — `_LANGUAGE_LOAD_ERRORS` in `scanner/frontends/languages.py:112-152`.
 
@@ -58,7 +60,7 @@ Turn a repository (and optional documents) into **graph intermediate representat
 
 | | |
 |--|--|
-| **Primary metric** | Receiver-resolution precision — target **≥98%**, independently scored (`direction: higher`, OW-AC-05) |
+| **Primary metric** | Receiver-resolution precision — target **≥98%**, independently scored (`direction: higher`, OW-AC-05). Measured 2026-08-05: **100% (15/15)** grep-verified on real Rust source; **0/7 false positives** on the 7-language synthetic oracle. See §4 invariant above. |
 | **Secondary metric** | Scan wall time (`direction: lower`); profiled via `cProfile` over `graphgraph scan --depth symbols` |
 | **Correctness backpressure** | The scanner test surface above, plus a canonical timestamp-free graph dump — byte-identity is the gate that let the hot-path work land safely |
 | **Receipts** | [2026-07-31 scan hot path](../../evaluation/graybox-cycles/2026-07-31-scan-hot-path-optimization.md) · [2026-07-31 remaining language coverage](../../evaluation/graybox-cycles/2026-07-31-remaining-language-coverage.md) |

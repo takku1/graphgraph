@@ -468,10 +468,22 @@ cap it harder than 200 chars) has not been tried.
   - **Target:** [information-retrieval/SYSTEM.md](../../docs/architecture/information-retrieval/SYSTEM.md)
   - **Blocked By:** none
 
-- [ ] **[T-A04]** Cross-language call-graph topology — **OW-AC-05**
+- [x] **[T-A04]** Cross-language call-graph topology — **OW-AC-05**
   - **Gate:** per-language volume plus independent precision ≥98%.
   - **Target:** [static-analysis/SYSTEM.md](../../docs/architecture/static-analysis/SYSTEM.md)
   - **Blocked By:** none
+  - **2026-08-05 receipt:** gate met, no code changed — full evidence folded
+    into [static-analysis/SYSTEM.md](../../docs/architecture/static-analysis/SYSTEM.md)
+    §4 invariant directly rather than a dated graybox file.
+    The 7-language `polyglot-scope-2026-07-31` fixture was never wired into
+    an automated test; re-ran it by hand and got 0/7 false positives plus
+    7/7 languages resolving all three historically-hardest edge classes
+    (self-recursion, same-file collision, receiver-typed member call) --
+    no regression since freezing. Independently verified 15/15 (100%)
+    `tree_sitter_type_resolved` member-call edges against real source on
+    `takku1/locus` (Rust, 396 files), grep-checked one by one. Per-language
+    volume table and a real-repo sample for the other 6 languages were not
+    built this cycle -- see the receipt's coverage section.
 
 - [ ] **[T-A05]** Rotating held-out repository panel — **OW-AC-10**
   - **Gate:** ≥5 language/runtime strata.
