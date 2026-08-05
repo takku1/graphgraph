@@ -271,17 +271,24 @@ stage gets a turn at all.
     available. Note the same branch already had to be corrected once for
     doc-only corpora.
   - **Blocked By:** none. This is the highest-value retrieval fix on the board.
-  - **2026-08-05 receipt:** both obvious fixes tried and falsified against the
-    real held-out fixture plus the existing near-miss red control — see
+  - **2026-08-05 receipt (two sessions, four falsified hypotheses):** see
     [2026-08-05 T-B07 preflight-veto fix falsified](../../docs/evaluation/graybox-cycles/2026-08-05-tb07-preflight-veto-fix-falsified.md).
-    Caller-supplied `seed_ids` bypassing the veto, and corroborating with
-    either lexical `search_nodes` score or real `fastembed`/bge-small cosine
-    similarity, all rescue the adversarial "distributed retry coordinator"
-    red control along with the real answer -- no absolute threshold
-    separates them (near-miss cosine 0.758 vs. genuine-match range
-    0.66-0.78). Needs compound-facet-aware re-ranking or margin/contrastive
-    scoring, not a cutoff. Still blocked by: none, but no longer "just wire
-    it up" -- it is calibration research.
+    Session 1: caller-supplied `seed_ids` bypassing the veto, and
+    corroborating with lexical `search_nodes` score or real `fastembed`/
+    bge-small cosine similarity, all rescue the adversarial "distributed
+    retry coordinator" red control along with the real answer -- no
+    absolute threshold separates them. Session 2 (same day, persisted
+    semantic index, proper adversarial sample of 5 absent queries vs. 7
+    genuine): tried the record's own follow-up suggestions --
+    margin/relative-to-corpus scoring, and semantic-candidate lexical-facet
+    re-ranking -- and falsified both too. The real corpus-native red
+    control (`LOC-TEST-R01`) scored the *highest* facet-coverage fraction
+    of all twelve samples, adversarial or genuine. Four single/paired-signal
+    formulations are now eliminated with concrete counter-examples; what's
+    left is a learned re-ranker or a materially different embedding model,
+    not another hand-tuned formula over the same embedding scores. Still
+    blocked by: none, but this is a research-grade calibration problem, not
+    an implementation gap.
 
 
 **Measured cost of doc capture (quiet machine, 2026-08-05).** The scan gate

@@ -64,7 +64,82 @@ separate "this vocabulary is semantically close" from "this is actually
 implemented" on short code-identifier text — the red control's queries were
 built to be exactly this kind of adversarial near-miss.
 
-## Verdict
+## Update, 2026-08-05 (later same day) — margin scoring and facet-coverage re-ranking, both also falsified
+
+Follow-up session tried the two candidates this record's original "what a
+real fix needs" section proposed, using the same locus semantic index (now
+persisted) plus a properly sized adversarial sample instead of the single
+red-control query above. Four additional plausible-but-absent queries were
+constructed in the same adversarial style as the project's own red control
+(a real system concept, phrased naturally, that locus genuinely does not
+implement: distributed retry coordination, Kubernetes service mesh, OAuth
+token refresh, websocket heartbeat) and scored alongside all seven
+`LOC-TEST-C0*` conceptual tasks and the corpus's own red control
+(`LOC-TEST-R01`, "GraphQL subscription transport", `expected_answerable:
+false`).
+
+**Hypothesis 3 — margin over the query's own top-K score distribution.**
+`top1_score - mean(top30_scores)` on a single spot check (R01 alone) looked
+promising: genuine matches clustered at 0.035-0.039, R01 at 0.022. Adding
+the four adversarial queries broke it immediately:
+
+| Query | Genuine? | margin(top1 vs mean-of-30) |
+|---|---|---:|
+| C02 | yes | 0.0266 |
+| R01 (red control) | no | 0.0218 |
+| ADV-1 "distributed retry coordinator" | no | **0.0369** |
+| C01 | yes | 0.0349 |
+| C03 | yes | 0.0357 |
+| ADV-3 "OAuth token refresh" | no | **0.0436** |
+| C05 | yes | 0.0385 |
+
+Sorted, the two classes overlap across the entire middle of the range
+(genuine min 0.0266, absent max 0.0436) — no threshold separates them.
+ADV-1 and ADV-3 score *higher* than three of the seven genuine matches.
+`margin(top1 - top2)` was tried too and shows the same overlap.
+
+**Hypothesis 4 — require semantic candidates to also carry lexical facet
+coverage** (the "compound-facet-aware re-ranking" idea from the original
+list below): for each query, extract `query_facets()`'s required terms, take
+the *best* lexical-term-coverage fraction achieved by any of the top-15
+semantic candidates (not just the top-1, since the correct symbol is often
+buried — `EvidenceStage` was rank 6 for C01, `LocusEngine` rank 3 for C06).
+This is strictly more informed than either prior hypothesis: it should be
+the "combine both signals properly" answer.
+
+It is not. `LOC-TEST-R01` — the project's own real, corpus-native red
+control — scored `best_frac_top15 = 0.40`, the **highest of all twelve
+samples**, genuine or adversarial. Several genuine queries (C02, C04, C05,
+C06) scored `0.00` because `query_facets()` extracted zero required terms
+for those phrasings in the first place, so there was nothing for any
+candidate to cover. The signal is not merely noisy here; on this fixture it
+points backwards.
+
+## Verdict (revised)
+
+Three independent fix hypotheses, four scoring formulations, tried against
+both a toy adversarial fixture and a proper adversarial sample on the real
+held-out corpus: absolute lexical score, absolute cosine similarity, margin/
+relative cosine scoring, and semantic-candidate lexical-coverage re-ranking.
+All four failed with concrete counter-examples, not just "insufficient
+evidence." This is stronger than the original verdict below, not merely a
+repeat of it: T-B07 is not "under-explored," it is a genuinely hard
+calibration problem on this fixture/model combination, and no patch was
+shipped for it in either session. `fastembed` remains a local dev-environment
+install only.
+
+**What would still be worth trying, now that four single/paired-signal
+formulations are eliminated:** a learned re-ranker or cross-encoder trained
+on labelled pairs (not a hand-picked formula over embeddings already
+computed independently per-candidate); or accepting a materially larger/
+different embedding model and re-running this exact twelve-query protocol
+before trying another hand-tuned formula, since it is not yet known whether
+`bge-small` specifically is the ceiling or whether the *approach* (any
+single/paired embedding-derived signal) is.
+
+---
+
+## Original verdict (superseded in scope, not overturned)
 
 Both obvious fixes are unsafe: they trade a false-negative bug (vetoing a
 real answer) for a false-positive one (answering over nothing), and this
@@ -74,31 +149,26 @@ patch was shipped; the repository is unchanged by this cycle except for this
 record. `fastembed` was installed in the local dev environment only (not a
 project dependency change).
 
-## What a real fix needs
+## What a real fix needs (original list — items 1 and 2 now tried and falsified above)
 
-Not a threshold on any single score. Candidates worth trying, in order of
-how directly they attack the actual failure (a near-miss on individual
-terms beating a genuine paraphrase on the whole facet):
-
-1. **Compound-facet-aware re-ranking of semantic candidates**, not a bare
-   top-K cosine cutoff: require the union of top semantic hits to cover
-   the query's required facet terms the way `facet_coverage` already does
-   for lexical evidence, instead of trusting one node's raw score.
-2. **Margin/contrastive scoring** — score relative to the query's own
-   corpus-wide score distribution (e.g. z-score or percentile) rather than
-   an absolute cosine value, since "0.76" means different things on
-   different corpora and query lengths.
-3. A dedicated **adversarial-vs-conceptual calibration set** (this cycle's
-   red-control + `eval/retrieval-v1/locus.json` conceptual tasks, scored
-   together) before promoting any threshold — exactly the kind of paired
-   task set OW-AC-03/04 already call for and do not yet have.
+1. ~~**Compound-facet-aware re-ranking of semantic candidates**~~ — tried
+   2026-08-05 as Hypothesis 4 above; falsified (`LOC-TEST-R01` scored
+   highest of all twelve samples).
+2. ~~**Margin/contrastive scoring**~~ — tried 2026-08-05 as Hypothesis 3
+   above; falsified (adversarial queries score inside the genuine range).
+3. A dedicated **adversarial-vs-conceptual calibration set** — this update
+   built exactly that (7 conceptual + 5 adversarial/red, scored together)
+   and it is what falsified items 1 and 2. Worth preserving as a fixture
+   for whoever tries a learned re-ranker next, rather than rebuilding it.
 
 ## Coverage — what this cycle did not test
 
 - Whether a larger/different embedding model (not `bge-small`) separates
-  these cases better — only one model was tried.
-- Any margin/contrastive scoring approach — only absolute-value thresholds
-  were tested, and both failed, but a relative approach was not built.
+  these cases better — only one model was tried, across both sessions.
+- A learned re-ranker/cross-encoder rather than a hand-derived formula over
+  independently-computed embedding scores.
 - The other three fixture repos in `eval/retrieval-v1/` (express, flask,
-  ripgrep) — only the locus conceptual split and the in-repo red control
-  were exercised.
+  ripgrep) — only the locus conceptual split and red control were exercised.
+- Whether the four adversarial queries built this session are representative
+  in difficulty of the kind of near-miss a real user would type, versus
+  being unusually hard by construction.
