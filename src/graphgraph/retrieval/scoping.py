@@ -157,6 +157,7 @@ def _is_test_path(path: str) -> bool:
     return python_convention and "src" not in directories
 
 
+@lru_cache(maxsize=65536)
 def _is_test_material(node: object) -> bool:
     """True for anything that lives in test code: files, fields, locals, cases.
 
@@ -164,6 +165,15 @@ def _is_test_material(node: object) -> bool:
     anchor or outrank production code when the question is about production
     behavior, and that applies to the test file node itself just as much as to
     the cases inside it.
+
+    Memoized: pure in *node*, and every retrieval call site above scores this
+    across the same candidate rows. `search_nodes` alone calls it up to three
+    times per row across its two personalized-scoring passes, on graphs with
+    thousands of matching rows -- easily tens of thousands of calls for a
+    node population that is orders of magnitude smaller. `Node` is a frozen,
+    all-hashable-field dataclass, so it works as an `lru_cache` key directly;
+    every call site above passes a real `Node` (or `Match.node`), never a
+    plain-object stand-in, so caching on identity-by-value is safe.
     """
     facts = {str(fact).casefold() for fact in (getattr(node, "facts", ()) or ())}
     if facts & {"role:test", "rust_attribute:test"}:

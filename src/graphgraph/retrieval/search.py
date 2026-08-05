@@ -102,6 +102,7 @@ def saturating_boost(value: float, cap: float) -> float:
     return cap * math.tanh(value / cap)
 
 
+@lru_cache(maxsize=65536)
 def identifier_quality_bonus(label: str) -> float:
     """Reward well-formed, multi-segment identifiers over short/generic ones.
 
@@ -113,6 +114,11 @@ def identifier_quality_bonus(label: str) -> float:
     snake_case or camelCase word boundaries and scales the bonus with
     segment count, capped so it can never dominate an exact match (still
     an order of magnitude below `label_exact_terms`'s +36).
+
+    Memoized like `lexical_forms` above: pure in *label*, and the per-row
+    scoring loop in `search_nodes` calls it once per candidate row on every
+    personalized search -- a repository's vocabulary of distinct labels is
+    far smaller than the number of times a warm session re-scores it.
     """
     if not label:
         return 0.0
@@ -740,7 +746,10 @@ def _search_token_index(graph: Graph) -> dict[str, tuple[str, ...]]:
     return cached
 
 
+@lru_cache(maxsize=65536)
 def _is_generated_node(node: Node) -> bool:
+    # Memoized like `_is_test_material`: pure in *node*, one call per
+    # candidate row per personalized search.
     path = node.path.replace("\\", "/").lower() if node.path else ""
     if not path:
         return False
@@ -750,6 +759,7 @@ def _is_generated_node(node: Node) -> bool:
     return any(marker in name for marker in _GENERATED_NAME_MARKERS)
 
 
+@lru_cache(maxsize=65536)
 def _is_benchmark_node(node: Node) -> bool:
     path = node.path.replace("\\", "/").lower() if node.path else ""
     return bool(set(path.split("/")) & {"benchmark", "benchmarks", "bench"})
