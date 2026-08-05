@@ -505,9 +505,25 @@ cap it harder than 200 chars) has not been tried.
     volume table and a real-repo sample for the other 6 languages were not
     built this cycle -- see the receipt's coverage section.
 
-- [ ] **[T-A05]** Rotating held-out repository panel — **OW-AC-10**
+- [~] **[T-A05]** Rotating held-out repository panel — **OW-AC-10**
   - **Gate:** ≥5 language/runtime strata.
   - **Blocked By:** `T-B02`
+  - **2026-08-05 receipt (panel half done, promotion study still open):**
+    5-language panel now real: Python (`flask`), JavaScript (`express`),
+    Rust (`locus`, `ripgrep`), Go (`chartr`, new), Java (`neo4j`'s
+    `community/values` module, new). Cross-language testing during panel
+    construction found and fixed 3 real bugs invisible on this project's
+    mostly-Python/JS/Rust dev corpus: Go had zero ecosystem/module
+    detection, zero binary entry-point rule, and `_test.go` missing from
+    the test-suffix allowlist (17/61 real test files were invisible on a
+    real 108-file Go app). Fixed and committed. **Not done:** the actual
+    orientation-task-success promotion protocol (paired primitive-agent
+    vs. atlas-assisted traces per stratum, H1 statistical test per
+    `navigation-benchmark.md`'s "Promotion gates still open" list) needs
+    real recorded agent traces under budget, which this pass did not
+    attempt — that is substantially more work than establishing the panel
+    itself and was explicitly out of scope this cycle to avoid fabricating
+    evidence.
 
 - [x] **[T-A06]** Spec the `acceptance/` subsystem — **highest-value gap**
   - **Why first:** 3,735 LOC across 21 modules, and it is the qualification

@@ -19,7 +19,7 @@ Higher-level **repository orientation**: compact atlas artifacts, navigation ben
 ## 3. Invariants (EARS + Epistemic Stage)
 
 - **[Ubiquitous]** Atlas APIs SHALL be promoted only with held-out navigation tasks and evidence standards.
-  - `EvidenceStage: Unknown` — the held-out panel is open work (OW-AC-10); this invariant currently constrains promotion rather than describing a passed gate.
+  - `EvidenceStage: Sampled` (2026-08-05, up from `Unknown`) — the ≥5-language panel is now real, not aspirational: Python (`flask`, held-out calibration split), JavaScript (`express`), Rust (`locus`, `ripgrep`), Go (`chartr`, newly added), Java (`neo4j`'s `community/values` module, newly added). Cross-language testing during panel construction found and fixed three real bugs invisible on the single-language corpus this project mostly develops against — Go had no ecosystem/module detection, no binary entry-point rule, and `_test.go` was missing from the test-file suffix allowlist, so a real 108-file Go application showed 0 entry points and 17/61 of its real test files. Still open: the full promotion protocol (below) needs paired primitive-agent-vs-atlas traces per stratum with real budgets, which this pass did not attempt — this receipt closes the panel-existence half of OW-AC-10, not the H1 promotion test.
 - **[Conditional]** IF atlas claims reduce tokens THEN quality on orientation tasks SHALL NOT regress.
   - `EvidenceStage: Sampled` — `tests/test_navigation_eval.py`.
 - **[Ubiquitous]** An orientation answer SHALL cite graph evidence rather than summarizing from file names alone.
@@ -44,7 +44,7 @@ Higher-level **repository orientation**: compact atlas artifacts, navigation ben
 |--|--|
 | **Primary metric** | Orientation-task success on a held-out repository panel (`direction: higher`) |
 | **Cost metric** | Tokens to first useful orientation (`direction: lower`) |
-| **Panel gate** | ≥5 language/runtime strata, rotating (OW-AC-10) |
+| **Panel gate** | ≥5 language/runtime strata, rotating (OW-AC-10). Panel established 2026-08-05: Python/JavaScript/Rust ×2/Go/Java. See §3 invariant above — orientation-task success itself is not yet scored across it. |
 | **Caution** | Orientation quality is the metric most exposed to lexically-easy task sets; see [ADR-IR-001](../information-retrieval/SYSTEM.md) — a panel where the query names the answer measures very little |
 
 ## 7. Technology resolution
