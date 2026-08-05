@@ -150,5 +150,53 @@ class ProjectAtlasTest(unittest.TestCase):
         self.assertEqual(mcp_payload["subsystems"], cli_payload["subsystems"])
 
 
+class GoEcosystemAtlasTest(unittest.TestCase):
+    """T-A05: found scanning a real Go repo (chartr) as part of building the
+    held-out cross-language panel. Go was silently invisible on three axes at
+    once -- no ecosystem/module detection (only pyproject.toml/package.json/
+    Cargo.toml were read), no entry-point detection (only Rust's src/main.rs
+    had a rule), and _test.go files were not recognized as tests (the suffix
+    allowlist had _test.py/.test.js/.test.ts but not Go's own convention) --
+    even though the underlying scan correctly extracted every node.
+    """
+
+    def _go_project(self, root: Path) -> Path:
+        (root / "go.mod").write_text(
+            "module github.com/example/widget\n\ngo 1.22\n",
+            encoding="utf-8",
+        )
+        graph = Graph(
+            nodes={
+                "main_file": Node("main_file", "main.go", "go", "cmd/widget/main.go"),
+                "main_fn": Node("main_fn", "main", "function", "cmd/widget/main.go", "L5"),
+                "run_fn": Node("run_fn", "Run", "function", "internal/app/run.go", "L3"),
+                "test_file": Node("test_file", "run_test.go", "go", "internal/app/run_test.go"),
+                "test_fn": Node("test_fn", "TestRun", "function", "internal/app/run_test.go", "L4"),
+            },
+            edges=[Edge("main_fn", "run_fn", "calls")],
+        )
+        graph_path = root / ".graphgraph" / "graph.gg"
+        graph_path.parent.mkdir()
+        save_graph(graph, graph_path)
+        return graph_path
+
+    def test_go_module_binary_and_tests_are_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = self._go_project(root)
+            result = build_project_atlas(directory=root, graph_path=graph_path)
+
+        self.assertEqual(result["project"]["name"], "widget")
+        self.assertEqual(result["project"]["version"], "1.22")
+        self.assertEqual(len(result["entry_points"]), 1)
+        self.assertEqual(result["entry_points"][0]["target"], "cmd/widget/main.go")
+        self.assertEqual(result["entry_points"][0]["kind"], "go_binary")
+        self.assertEqual(result["tests"]["files"], 1)
+        self.assertIn(
+            "go test ./...",
+            {row["command"] for row in result["tests"]["commands"]},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

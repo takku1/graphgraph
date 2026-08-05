@@ -66,6 +66,7 @@ def _read_package_status(directory: Path) -> dict[str, object]:
     pyproject = directory / "pyproject.toml"
     cargo_manifest = directory / "Cargo.toml"
     npm_manifest = directory / "package.json"
+    go_manifest = directory / "go.mod"
     src_layout = (directory / "src").is_dir()
     package: dict[str, object] = {
         "ecosystem": "python" if pyproject.exists() else "",
@@ -73,6 +74,7 @@ def _read_package_status(directory: Path) -> dict[str, object]:
         "pyproject": str(pyproject) if pyproject.exists() else "",
         "cargo_manifest": str(cargo_manifest) if cargo_manifest.exists() else "",
         "package_json": str(npm_manifest) if npm_manifest.exists() else "",
+        "go_manifest": str(go_manifest) if go_manifest.exists() else "",
         "name": "",
         "version": "",
         "module": "",
@@ -141,6 +143,34 @@ def _read_package_status(directory: Path) -> dict[str, object]:
                 package["version"] = rust["version"]
         except Exception as exc:  # noqa: BLE001 - status reports parse failures.
             package["cargo_error"] = f"failed to parse Cargo.toml: {exc}"
+    if go_manifest.exists():
+        try:
+            module_path = ""
+            go_version = ""
+            for line in go_manifest.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if module_path == "" and stripped.startswith("module "):
+                    module_path = stripped[len("module "):].strip()
+                elif go_version == "" and stripped.startswith("go "):
+                    go_version = stripped[len("go "):].strip()
+                if module_path and go_version:
+                    break
+            go = {
+                "kind": "module",
+                "module": module_path,
+                "name": module_path.rsplit("/", 1)[-1] if module_path else directory.name,
+                "version": go_version,
+            }
+            package["go"] = go
+            ecosystems = list(package["ecosystems"])
+            ecosystems.append("go")
+            package["ecosystems"] = ecosystems
+            package["ecosystem"] = "mixed" if len(ecosystems) > 1 else "go"
+            if not pyproject.exists() and not npm_manifest.exists() and not cargo_manifest.exists():
+                package["name"] = go["name"]
+                package["version"] = go_version
+        except Exception as exc:  # noqa: BLE001 - status reports parse failures.
+            package["go_error"] = f"failed to parse go.mod: {exc}"
     if not pyproject.exists():
         return package
     try:

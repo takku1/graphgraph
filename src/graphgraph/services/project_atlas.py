@@ -307,6 +307,15 @@ def _entry_points(package: dict[str, object], graph: Graph) -> list[dict[str, ob
             rows.append({"name": PurePosixPath(path).parent.parent.name or "main", "target": path,
                          "kind": "rust_binary", "evidence": path})
             known_targets.add(path)
+        elif path.endswith(".go") and node.kind == "function" and node.label == "main":
+            # Go has no fixed binary-entry path (unlike Rust's src/main.rs), so
+            # the reliable signal is the symbol itself: a package-level `main`
+            # function is exactly what `go build`/`go run` requires.
+            rows.append({
+                "name": PurePosixPath(path).parent.name or "main", "target": path,
+                "kind": "go_binary", "evidence": path,
+            })
+            known_targets.add(path)
     return rows
 
 
@@ -320,7 +329,9 @@ def _test_surfaces(package: dict[str, object], graph: Graph) -> dict[str, object
         parts = PurePosixPath(path).parts
         filename = parts[-1].casefold()
         test_index = next((i for i, part in enumerate(parts[:-1]) if part.casefold() in _TEST_PARTS), None)
-        is_test = test_index is not None or filename.startswith("test_") or filename.endswith(("_test.py", ".test.js", ".test.ts"))
+        is_test = test_index is not None or filename.startswith("test_") or filename.endswith(
+            ("_test.py", ".test.js", ".test.ts", "_test.go")
+        )
         if not is_test:
             continue
         test_files.add(path)
@@ -347,6 +358,12 @@ def _test_surfaces(package: dict[str, object], graph: Graph) -> dict[str, object
             "command": "python -m pytest",
             "basis": "Python package with indexed test files",
             "confidence": "candidate",
+        })
+    if "go" in ecosystems:
+        commands.append({
+            "command": "go test ./...",
+            "basis": "go.mod module",
+            "confidence": "manifest_default",
         })
     return {
         "files": len(test_files),
