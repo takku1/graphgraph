@@ -235,14 +235,19 @@ def code_query_alias_forms(term: str) -> set[str]:
 class SearchIndexRow:
     node: Node
     haystack: str
-    haystack_terms: set[str]
+    #: Frozen, not `set`, because the scoring loop aliases these directly for
+    #: non-document rows instead of rebuilding an identical copy per row. These
+    #: live on the process-cached search index, so a stray mutation would
+    #: corrupt every later query on this graph; `frozenset` makes that
+    #: impossible to write rather than merely discouraged by a comment.
+    haystack_terms: frozenset[str]
     node_id: str
     label: str
     path: str
-    label_terms: set[str]
+    label_terms: frozenset[str]
     label_term_sequence: tuple[str, ...]
     label_exact_sequence: tuple[str, ...]
-    path_name_terms: set[str]
+    path_name_terms: frozenset[str]
     path_name_sequence: tuple[str, ...]
     path_name_exact_sequence: tuple[str, ...]
     path_stem: str
@@ -427,15 +432,21 @@ def search_nodes(
         matched_terms: set[str] = set()
         supporting_test = _is_test_material(node) and not test_query
         document_node = node.kind in _DOCUMENT_NODE_KINDS
-        expanded_label_terms = {
-            form for token in label_terms for form in (lexical_forms(token) if document_node else {token})
-        }
-        expanded_path_terms = {
-            form for token in path_name_terms for form in (lexical_forms(token) if document_node else {token})
-        }
-        expanded_haystack_terms = {
-            form for token in haystack_terms for form in (lexical_forms(token) if document_node else {token})
-        }
+        # Only prose gets inflection expansion; a code identifier is matched
+        # literally. The non-document branch used to rebuild each set from
+        # singleton `{token}` copies -- set-equal to the original, at one
+        # allocation per token per row, three sets per row, over thousands of
+        # rows per facet-variant search. Aliasing the row's own sets is safe by
+        # construction: they are `frozenset` on the index row, so the process
+        # cache cannot be corrupted from here even by a future edit.
+        if document_node:
+            expanded_label_terms = {form for token in label_terms for form in lexical_forms(token)}
+            expanded_path_terms = {form for token in path_name_terms for form in lexical_forms(token)}
+            expanded_haystack_terms = {form for token in haystack_terms for form in lexical_forms(token)}
+        else:
+            expanded_label_terms = label_terms
+            expanded_path_terms = path_name_terms
+            expanded_haystack_terms = haystack_terms
         for term in terms:
             alias_forms = set() if document_node else code_query_alias_forms(term)
             term_forms = (
@@ -799,12 +810,12 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
         path_name_sequence = tuple(tokenize(path_name, keep_stopwords=True))
         # Also tokenize the full path (directories) for the path_name_terms index
         path_dir_terms = set(tokenize(path_dir_segments, keep_stopwords=True)) if path_dir_segments else set()
-        haystack_terms = set(tokenize(full_haystack, keep_stopwords=True))
+        haystack_terms = frozenset(tokenize(full_haystack, keep_stopwords=True))
         node_id_lower = node.id.lower()
         label_lower = node.label.lower()
         path_lower = norm_path.lower()
-        label_terms = set(label_term_sequence)
-        path_name_terms = set(path_name_sequence) | path_dir_terms
+        label_terms = frozenset(label_term_sequence)
+        path_name_terms = frozenset(path_name_sequence) | path_dir_terms
         rows.append(
             SearchIndexRow(
                 node=node,
