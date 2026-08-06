@@ -14,6 +14,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10.
     import tomli as tomllib
 
+from .ecosystems import detect_ecosystems
+
 
 def _resolve_cargo_workspace_members(
     directory: Path,
@@ -68,9 +70,14 @@ def _read_package_status(directory: Path) -> dict[str, object]:
     npm_manifest = directory / "package.json"
     go_manifest = directory / "go.mod"
     src_layout = (directory / "src").is_dir()
+    # Ecosystem identity comes from the shared registry rather than from one
+    # branch per manifest, so an ecosystem the registry knows about is
+    # detected here even when no bespoke parser exists to read its manifest.
+    # The parsers below only add detail (name, version, workspace shape).
+    detected = [spec.name for spec in detect_ecosystems(directory)]
     package: dict[str, object] = {
-        "ecosystem": "python" if pyproject.exists() else "",
-        "ecosystems": ["python"] if pyproject.exists() else [],
+        "ecosystem": "mixed" if len(detected) > 1 else (detected[0] if detected else ""),
+        "ecosystems": detected,
         "pyproject": str(pyproject) if pyproject.exists() else "",
         "cargo_manifest": str(cargo_manifest) if cargo_manifest.exists() else "",
         "package_json": str(npm_manifest) if npm_manifest.exists() else "",
@@ -107,10 +114,6 @@ def _read_package_status(directory: Path) -> dict[str, object]:
                 "workspaces": npm.get("workspaces") or [],
             }
             package["javascript"] = javascript
-            ecosystems = list(package["ecosystems"])
-            ecosystems.append("npm")
-            package["ecosystems"] = ecosystems
-            package["ecosystem"] = "mixed" if len(ecosystems) > 1 else "npm"
             if not pyproject.exists():
                 package["name"] = javascript["name"]
                 package["version"] = javascript["version"]
@@ -134,10 +137,6 @@ def _read_package_status(directory: Path) -> dict[str, object]:
                 ],
             }
             package["rust"] = rust
-            ecosystems = list(package["ecosystems"])
-            ecosystems.append("rust")
-            package["ecosystems"] = ecosystems
-            package["ecosystem"] = "mixed" if len(ecosystems) > 1 else "rust"
             if not pyproject.exists() and not npm_manifest.exists():
                 package["name"] = rust["name"]
                 package["version"] = rust["version"]
@@ -162,10 +161,6 @@ def _read_package_status(directory: Path) -> dict[str, object]:
                 "version": go_version,
             }
             package["go"] = go
-            ecosystems = list(package["ecosystems"])
-            ecosystems.append("go")
-            package["ecosystems"] = ecosystems
-            package["ecosystem"] = "mixed" if len(ecosystems) > 1 else "go"
             if not pyproject.exists() and not npm_manifest.exists() and not cargo_manifest.exists():
                 package["name"] = go["name"]
                 package["version"] = go_version

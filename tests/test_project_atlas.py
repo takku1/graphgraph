@@ -190,12 +190,78 @@ class GoEcosystemAtlasTest(unittest.TestCase):
         self.assertEqual(result["project"]["version"], "1.22")
         self.assertEqual(len(result["entry_points"]), 1)
         self.assertEqual(result["entry_points"][0]["target"], "cmd/widget/main.go")
-        self.assertEqual(result["entry_points"][0]["kind"], "go_binary")
+        self.assertEqual(result["entry_points"][0]["kind"], "go_entry")
         self.assertEqual(result["tests"]["files"], 1)
         self.assertIn(
             "go test ./...",
             {row["command"] for row in result["tests"]["commands"]},
         )
+
+
+class UnparsedEcosystemAtlasTest(unittest.TestCase):
+    """The Go fix above was originally written as one more hand-added branch,
+    which would have left Java/C#/Ruby/PHP/Kotlin/Scala/Swift/C/C++ failing
+    identically -- discoverable only by someone happening to scan one. These
+    ecosystems have no bespoke manifest parser and still must be detected,
+    still must recognize their own test-file conventions, and still must
+    surface a runnable test command.
+    """
+
+    def _java_project(self, root: Path) -> Path:
+        (root / "pom.xml").write_text(
+            "<project><artifactId>widget</artifactId></project>", encoding="utf-8"
+        )
+        graph = Graph(
+            nodes={
+                "app": Node("app", "App", "class", "src/main/java/com/example/App.java", "L5"),
+                "main_fn": Node("main_fn", "main", "method", "src/main/java/com/example/App.java", "L7"),
+                # Java's convention is a `*Test.java` suffix, not a `test_`
+                # prefix or a `tests/` directory -- neither of the rules that
+                # existed before the registry would have caught this file.
+                "test": Node("test", "AppTest", "class", "src/main/java/com/example/AppTest.java", "L4"),
+            },
+            edges=[],
+        )
+        graph_path = root / ".graphgraph" / "graph.gg"
+        graph_path.parent.mkdir()
+        save_graph(graph, graph_path)
+        return graph_path
+
+    def test_java_maven_project_is_not_invisible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = self._java_project(root)
+            result = build_project_atlas(directory=root, graph_path=graph_path)
+
+        self.assertIn("maven", result["project"]["ecosystems"])
+        self.assertIn("mvn test", {row["command"] for row in result["tests"]["commands"]})
+        self.assertEqual(result["tests"]["files"], 1)
+        self.assertEqual(
+            [row["target"] for row in result["entry_points"]],
+            ["src/main/java/com/example/App.java"],
+        )
+
+    def test_dotnet_solution_is_detected_by_suffix_not_exact_filename(self) -> None:
+        # .NET has no single fixed manifest name -- the marker is any
+        # *.sln/*.csproj -- so exact-filename matching alone cannot see it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Widget.csproj").write_text("<Project/>", encoding="utf-8")
+            graph = Graph(
+                nodes={
+                    "svc": Node("svc", "Service", "class", "src/Service.cs", "L3"),
+                    "test": Node("test", "ServiceTests", "class", "src/ServiceTests.cs", "L4"),
+                },
+                edges=[],
+            )
+            graph_path = root / ".graphgraph" / "graph.gg"
+            graph_path.parent.mkdir()
+            save_graph(graph, graph_path)
+            result = build_project_atlas(directory=root, graph_path=graph_path)
+
+        self.assertIn("dotnet", result["project"]["ecosystems"])
+        self.assertIn("dotnet test", {row["command"] for row in result["tests"]["commands"]})
+        self.assertEqual(result["tests"]["files"], 1)
 
 
 if __name__ == "__main__":

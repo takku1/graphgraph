@@ -11,6 +11,7 @@ from ..graph.core import Graph, Node
 from ..io import find_graph_path, load_any, project_root_for_graph
 from ..packets.validation import validate_graph_object
 from ..retrieval.subsystems import build_subsystem_map, subsystem_for_path
+from .ecosystems import ECOSYSTEMS, entry_point_kind, is_test_filename
 from .freshness import inspect_saved_graph_freshness
 from .runtime_probes import _read_package_status
 
@@ -303,19 +304,19 @@ def _entry_points(package: dict[str, object], graph: Graph) -> list[dict[str, ob
         path = node.path.replace("\\", "/")
         if not node.active or path in known_targets:
             continue
-        if path.endswith("/src/main.rs") or path == "src/main.rs":
-            rows.append({"name": PurePosixPath(path).parent.parent.name or "main", "target": path,
-                         "kind": "rust_binary", "evidence": path})
-            known_targets.add(path)
-        elif path.endswith(".go") and node.kind == "function" and node.label == "main":
-            # Go has no fixed binary-entry path (unlike Rust's src/main.rs), so
-            # the reliable signal is the symbol itself: a package-level `main`
-            # function is exactly what `go build`/`go run` requires.
-            rows.append({
-                "name": PurePosixPath(path).parent.name or "main", "target": path,
-                "kind": "go_binary", "evidence": path,
-            })
-            known_targets.add(path)
+        # Entry-point conventions are declared per language in
+        # services/ecosystems.py rather than branched on here, so a language
+        # the scanner parses cannot report zero entry points merely because
+        # nobody wrote its `elif`.
+        kind = entry_point_kind(path, node.label, node.kind)
+        if not kind:
+            continue
+        parent = PurePosixPath(path).parent
+        # `src/main.rs` names its crate one level up; a symbol-derived entry
+        # point names its own directory (Go's package dir, C#'s project dir).
+        name = (parent.parent.name if parent.name == "src" else parent.name) or "main"
+        rows.append({"name": name, "target": path, "kind": kind, "evidence": path})
+        known_targets.add(path)
     return rows
 
 
@@ -327,11 +328,11 @@ def _test_surfaces(package: dict[str, object], graph: Graph) -> dict[str, object
         if not node.active or not path:
             continue
         parts = PurePosixPath(path).parts
-        filename = parts[-1].casefold()
         test_index = next((i for i, part in enumerate(parts[:-1]) if part.casefold() in _TEST_PARTS), None)
-        is_test = test_index is not None or filename.startswith("test_") or filename.endswith(
-            ("_test.py", ".test.js", ".test.ts", "_test.go")
-        )
+        # Filename conventions come from the per-language registry, not a
+        # literal tuple that only ever grew when someone scanned a repo and
+        # noticed its tests were missing.
+        is_test = test_index is not None or is_test_filename(parts[-1])
         if not is_test:
             continue
         test_files.add(path)
@@ -341,29 +342,28 @@ def _test_surfaces(package: dict[str, object], graph: Graph) -> dict[str, object
             roots[str(PurePosixPath(path).parent)] += 1
 
     commands: list[dict[str, str]] = []
+    # An exact `scripts.test` beats any registry default: it is what the
+    # project itself declares, not a convention we inferred.
     scripts = package.get("scripts") or {}
     if isinstance(scripts, dict) and "test" in scripts:
         commands.append({"command": "npm test", "basis": "package.json scripts.test", "confidence": "exact"})
     ecosystems = set(str(item) for item in package.get("ecosystems", []))
-    if "rust" in ecosystems:
-        rust = package.get("rust") or {}
-        workspace = isinstance(rust, dict) and rust.get("kind") == "workspace"
+    for spec in ECOSYSTEMS:
+        if spec.name not in ecosystems or not spec.test_command:
+            continue
+        if spec.name == "npm" and any(row["confidence"] == "exact" for row in commands):
+            continue  # the declared scripts.test above already covers this
+        command, basis = spec.test_command, spec.test_command_basis
+        if spec.name == "rust":
+            rust = package.get("rust") or {}
+            if isinstance(rust, dict) and rust.get("kind") == "workspace":
+                command, basis = "cargo test --workspace", "Cargo.toml workspace"
+        elif spec.name == "python" and not test_files:
+            # Python's command is inferred from indexed tests existing, not
+            # from the manifest alone; without them there is nothing to claim.
+            continue
         commands.append({
-            "command": "cargo test --workspace" if workspace else "cargo test",
-            "basis": "Cargo.toml workspace" if workspace else "Cargo.toml package",
-            "confidence": "manifest_default",
-        })
-    if "python" in ecosystems and test_files:
-        commands.append({
-            "command": "python -m pytest",
-            "basis": "Python package with indexed test files",
-            "confidence": "candidate",
-        })
-    if "go" in ecosystems:
-        commands.append({
-            "command": "go test ./...",
-            "basis": "go.mod module",
-            "confidence": "manifest_default",
+            "command": command, "basis": basis, "confidence": spec.test_command_confidence,
         })
     return {
         "files": len(test_files),
