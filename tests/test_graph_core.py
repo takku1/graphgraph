@@ -568,6 +568,63 @@ class GraphCoreTest(unittest.TestCase):
             self.assertTrue(256 <= max_nodes <= 8192)
             self.assertTrue(1024 <= max_pushes <= 65536)
 
+    def test_ppr_topology_cache_invalidates_on_in_place_mutation(self) -> None:
+        # `_ppr_topology` caches the active node list and transition table --
+        # 56% of a full PPR on a 15k-node graph. Keyed by mutation_revision,
+        # so an in-place edit must be seen by the next call; serving stale
+        # topology would rank a deactivated node that expand() then drops,
+        # producing a degraded packet with no explanation.
+        #
+        # The mutation must happen on the *same* Graph object. Going through
+        # `expire_node` proves nothing here: it returns a new Graph whose
+        # cache is empty anyway, so that version of this test passed even with
+        # invalidation deliberately removed.
+        from dataclasses import replace
+
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"n{i}") for i in range(4)},
+            edges=[Edge("N0", "N1", "calls"), Edge("N1", "N2", "calls"), Edge("N2", "N3", "calls")],
+        )
+        before = graph.personalized_pagerank({"N0": 1.0})
+        self.assertIn("N2", before)
+
+        graph.nodes["N2"] = replace(graph.nodes["N2"], active=False)
+        after = graph.personalized_pagerank({"N0": 1.0})
+        self.assertNotIn("N2", after)
+
+    def test_ppr_topology_cache_invalidates_when_an_edge_is_added(self) -> None:
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"n{i}") for i in range(4)},
+            edges=[Edge("N0", "N1", "calls")],
+        )
+        before = graph.personalized_pagerank({"N0": 1.0})
+        graph.edges.append(Edge("N1", "N2", "calls"))
+        after = graph.personalized_pagerank({"N0": 1.0})
+        self.assertNotEqual(before["N2"], after["N2"])
+
+    def test_ppr_topology_cache_respects_damping(self) -> None:
+        # damping is folded into the stored transition factors, so it is part
+        # of the cache key -- a second call at a different damping must not be
+        # served the first one's table.
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"n{i}") for i in range(4)},
+            edges=[Edge("N0", "N1", "calls"), Edge("N1", "N2", "calls"), Edge("N2", "N3", "calls")],
+        )
+        low = graph.personalized_pagerank({"N0": 1.0}, damping=0.5)
+        high = graph.personalized_pagerank({"N0": 1.0}, damping=0.95)
+        self.assertNotEqual(low, high)
+        # ...and re-asking for the first damping still returns the first answer.
+        self.assertEqual(graph.personalized_pagerank({"N0": 1.0}, damping=0.5), low)
+
+    def test_repeated_ppr_calls_are_identical(self) -> None:
+        graph = Graph(
+            nodes={f"N{i}": Node(f"N{i}", f"n{i}") for i in range(6)},
+            edges=[Edge(f"N{i}", f"N{i + 1}", "calls") for i in range(5)],
+        )
+        seeds = {"N0": 1.0, "N3": 0.5}
+        first = graph.personalized_pagerank(seeds)
+        self.assertEqual(graph.personalized_pagerank(seeds), first)
+
     def test_localized_ppr_auto_params_match_explicit_derivation(self) -> None:
         from graphgraph.graph.core import adaptive_local_ppr_params
 
