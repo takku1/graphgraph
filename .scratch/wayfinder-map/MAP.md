@@ -363,6 +363,22 @@ cap it harder than 200 chars) has not been tried.
     transport), update cost, any embedding-backed comparison, and only one
     repository / one comparand — the full T-B04 promotion study needs
     more of both before the destination claim is fully backed.
+  - **2026-08-05 second repository (express, JavaScript):** same protocol,
+    `eval/retrieval-v1/express.json`. GraphGraph 5/5; `code-review-graph`
+    **2/5** — worse than flask, and for a bigger reason than missing
+    embeddings: its own stats tool reports 88 `Function` nodes for the
+    whole 141-file repo, zero `Class`/`Method` nodes at all. Plain
+    top-level `function x() {}` declarations extract correctly;
+    prototype-assigned (`X.prototype.y = function(){}`) and
+    property-assigned (`app.handle = function handle(){}`) methods do
+    not, on this codebase's real style — verified directly (`dispatch`
+    and `handle`, both real production methods, return zero results;
+    `lib/router/route.js` has zero nodes at all). GraphGraph found 2,951
+    code symbols on the same files. Full writeup:
+    [empirical-evaluation.md](../../docs/evaluation/empirical-evaluation.md)
+    § "Second repository: express". Coverage now beats a token-cost
+    argument on the two matched tasks (316 vs. GraphGraph's 552) --
+    reported as not meaningful given it excludes 3 outright misses.
 
 - [x] **[T-B05]** Measure what the *model* actually costs, not what the proxy estimates
   - **Why:** the calibrated proxy is whitespace-blind and validated against

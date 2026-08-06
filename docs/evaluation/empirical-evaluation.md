@@ -837,6 +837,40 @@ data point against a named, runnable competitor — not the full T-B04
 promotion study, which per the wayfinder map needs multiple repositories
 and comparands before the destination claim is fully backed.
 
+### Second repository: express (JavaScript), same protocol
+
+Same protocol against `eval/retrieval-v1/express.json` (5 held-out tasks,
+`expressjs/express@18e5985`, the project's own *test* split): GraphGraph
+5/5 correct (4 scored tasks at recall 1.0, red control correctly abstained).
+`code-review-graph` **2/5** — a materially worse showing than on flask
+(5/6), and for a different, more fundamental reason than the missing
+embeddings on the conceptual task.
+
+`code-review-graph`'s own stats tool reports **88 `Function` nodes for the
+entire 141-file repository**, zero `Class`/`Method` nodes at all
+(`list_graph_stats_tool`: `{"File": 141, "Function": 88}`). Verified
+directly: `createApplication` — a plain top-level `function
+createApplication() {}` declaration — is found correctly. `dispatch`
+(`Route.prototype.dispatch = function (...) {}` in `lib/router/route.js`)
+and `handle` (`app.handle = function handle(...) {}` in
+`lib/application.js`) are **not found at all**, and `lib/router/route.js`
+itself has zero nodes (`file_summary` returns empty) despite being a real,
+~270-line, core production file. The pattern is consistent: plain function
+*declarations* are extracted; prototype-assigned and property-assigned
+methods are not, on this codebase's actual style. This is not a niche
+pattern — pre-ES6 JavaScript (much of the Node ecosystem, including
+Express itself) is written exactly this way. GraphGraph found 2,951 code
+symbols (2,861 functions + 90 methods) on the same 141 files.
+
+Token cost on the 2 tasks `code-review-graph` did answer (createApplication,
+red control) came out *cheaper* for `code-review-graph` (316 vs.
+GraphGraph's 552 tokens) — but drawing a token-cost conclusion from a 2-task
+matched set that excludes 3 outright misses would be exactly the "token
+cost at fixed answer quality" failure mode this protocol exists to avoid.
+The real finding here is coverage, not cost: an extraction gap this large
+on a common, non-exotic JS authoring style is a bigger practical problem
+for an agent than any packet-format efficiency difference.
+
 ## What Is Still Unproven
 
 The remaining major proof is live model-answer scoring:
