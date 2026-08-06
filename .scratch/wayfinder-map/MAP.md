@@ -46,7 +46,7 @@ Two consequences for how work is gated here:
 | Component | Metric | Baseline | Note |
 |-----------|--------|---------:|------|
 | storage | `graph_load_warm_ms` | 0.1403 ms | cold load 213 ms alongside |
-| information-retrieval | `retrieval_query_warm_ms` | 1125.7 ms | was 2017.7; T-B01 removed 44% |
+| information-retrieval | `retrieval_query_warm_ms` | **561.6 ms** | 2017.7 → 1125.7 (T-B01, −44%) → 561.6 (T-B06 PPR topology cache, **−72% cumulative**) |
 | context-packets | `packet_token_units` | 1070.4 | two-query fixed workload |
 | static-analysis | `scan_fixture_ms` | 125.8 ms | bounded corpus (`concepts/`) |
 | intermediate-representation | `expand_context_ms` | 1.673 ms | 2-hop, 25 starts |
@@ -505,6 +505,25 @@ cap it harder than 200 chars) has not been tried.
     optimization attempt should go, and shrinking the candidate pool (still
     ranking-affecting, still needs the eval gate) matters mainly because it
     shrinks PPR's input, not because the scoring loop is expensive.
+  - **2026-08-06 — acting on that, T-B06's headline result.** Everything
+    `personalized_pagerank` did before its first iteration (active node list,
+    index map, out-weight sums, dangling set, index-space transition table)
+    depends only on active topology and `damping`; the personalization vector
+    never enters it. It was rebuilt on every call, two or three times per
+    query. Cached on the graph as `_ppr_topology`, keyed by
+    `mutation_revision` + `damping`, following the existing
+    `_search_index_cache` precedent. **56% off every PPR after the first**
+    (locus, 14,968 nodes / 55,105 edges, warm edge indexes: 271.5 → 119.9 ms).
+    End-to-end with git state held constant across both arms: flask
+    `direct_lookup` 370 → 179 ms (−51%), locus `reverse_lookup` 1088 → 825 ms
+    (−24%). `hypothesis_runner.py` verdict **KEEP, improved 72.17%** against
+    the recorded 2017.7 ms baseline. Bit-identical to the pre-change
+    implementation (max abs difference 0.0) and byte-identical retrieval on
+    all four held-out repos. Invalidation is covered by tests proven by
+    mutation — break the cache key and they fail.
+  - **Still open on this ticket:** the candidate-pool size feeding PPR. That
+    remains ranking-affecting and still needs the eval gate; the cache made
+    each PPR cheaper without making its input smaller.
   - **Trap for the next person, cost us a wrong answer once:** do not A/B a
     retrieval change with `git stash`. Stashing the file under test also
     makes the worktree clean, and `search_nodes` personalizes on
