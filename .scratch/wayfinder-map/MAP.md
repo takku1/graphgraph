@@ -263,7 +263,7 @@ it survives the preflight and then succeeds. That is the controlled comparison:
 same pipeline, same index, and lexical overlap decides whether the semantic
 stage gets a turn at all.
 
-- [ ] **[T-B07]** The lexical facet preflight vetoes conceptual queries
+- [x] **[T-B07]** The lexical facet preflight vetoes conceptual queries
   - **Fix direction:** the preflight exists to skip ranked search for entities
     that exist nowhere. That reasoning does not hold when a semantic backend
     could still answer, so it must either consult semantic evidence before
@@ -289,6 +289,31 @@ stage gets a turn at all.
     not another hand-tuned formula over the same embedding scores. Still
     blocked by: none, but this is a research-grade calibration problem, not
     an implementation gap.
+  - **2026-08-06 — FIXED, and the four falsified hypotheses were all
+    attacking the wrong thing.** Each of them tried to find a signal strong
+    enough to *override* the veto. The fifth asked instead what the veto is
+    entitled to treat as proof, and the answer is much narrower than what it
+    was doing. Deciding a query is unanswerable because no single node
+    matches every facet term at once conflates three cases: (1) a term that
+    occurs nowhere in the corpus -- real absence; (2) a doc node satisfying
+    the facet with no code behind it -- documented-but-unbuilt, already
+    reported as `incomplete`; (3) all terms present but scattered across
+    nodes, which is just what a paraphrase looks like. Only 1 and 2 justify
+    abstaining. Absence is now proven only by `facet_terms_absent_from_corpus`
+    (a term missing in every form, dictionary lookups on the cached token
+    index).
+    **Held-out locus, semantic on: recall 0.357 → 0.500, facet 0.357 →
+    0.500, MRR 0.193 → 0.318; C01 0.0 → 1.0.** Structural-only: 0.0 → 0.143,
+    C03 0.0 → 1.0. All five red controls still abstain at zero nodes;
+    flask/express/ripgrep show no metric change at all. It works precisely
+    because it scores and thresholds nothing -- the earlier four all had to
+    rank a real match above an adversarial near-miss, which no single
+    embedding-derived signal could do on this fixture.
+  - **Still short of the OW-AC-03 gate (≥0.80).** C02 and C04 return nodes
+    but the wrong ones, and C07 is half right; those are ranking failures
+    downstream of the preflight, not veto failures, and they are what the
+    remaining 0.500 → 0.80 needs. The four falsified re-ranking hypotheses
+    still stand for *that* problem.
 
 
 **Measured cost of doc capture (quiet machine, 2026-08-05).** The scan gate
