@@ -1332,6 +1332,33 @@ def retrieve_context(
             edges,
             {match.node.id for match in status_matches},
         )
+    # An anchor admitted on lexical similarity that then touched no edge in the
+    # finished packet spent budget to say nothing. `anchor_contribution` has
+    # always measured this and nothing acted on it. Explicit `anchor_paths` are
+    # a caller directive -- the same reasoning the feasibility preflight above
+    # applies -- so a pinned packet is never second-guessed here.
+    pruned_anchors: tuple[str, ...] = ()
+    if not anchor_paths:
+        protected_anchors = {
+            match.node.id
+            for match in selected_matches
+            if anchors._is_high_confidence_exact_anchor(match)
+            or set(match.reasons) & quality.INJECTED_ANCHOR_REASONS
+        }
+        # Edges are not the only way an anchor earns its place: a node whose
+        # text covers a required facet is real evidence even when it is
+        # structurally isolated, and dropping it degrades the answerability
+        # diagnosis from "no directed connector" to the weaker "facet has no
+        # evidence" -- a worse answer about the same graph.
+        protected_anchors.update(
+            node_id
+            for node_id in starts
+            if node_id in graph.nodes
+            and any(facet_stage._facet_matches_node(graph.nodes[node_id], terms) for _label, terms in facets)
+        )
+        nodes, starts, pruned_anchors = quality.prune_unsupported_anchors(
+            nodes, edges, starts, frozenset(protected_anchors),
+        )
     effective_scope = scopes[0] if len(scopes) == 1 else inferred_scope
     metadata = quality.packet_quality_metadata(
         graph,
@@ -1341,6 +1368,8 @@ def retrieve_context(
         effective_scope,
         query_class=query_class,
     )
+    if pruned_anchors:
+        metadata["quality"]["pruned_unsupported_anchors"] = list(pruned_anchors)
     if constraint_selection is not None:
         metadata["constraint_selection"] = constraint_selection
     if query_class == "doc_summary" and metadata["quality"]["grounded_doc_nodes"] == 0:

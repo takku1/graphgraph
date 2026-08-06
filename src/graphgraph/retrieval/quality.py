@@ -16,6 +16,75 @@ from .scoping import (
 )
 
 
+#: Reasons that mark an anchor as *deliberately placed* by a typed stage
+#: rather than proposed by generic ranked lexical search: an explicitly
+#: changed path, a source-planner seed, a semantic terminal, a document
+#: section named by the query, a file-level fallback, an exact fast-path hit.
+#: Isolation means something different for these -- a doc paragraph or a
+#: federated foreign node legitimately has no edges in this graph and is still
+#: exactly the evidence the caller asked for.
+INJECTED_ANCHOR_REASONS = frozenset({
+    "basename_stem_exact",
+    "exact_changed_path",
+    "exact_changed_path_terms",
+    "exact_fast_path",
+    "file_fallback",
+    "section_title_in_query",
+    "semantic_structural_facet",
+    "semantic_structural_terminal",
+    "source_planner",
+})
+
+
+def prune_unsupported_anchors(
+    nodes: set[str],
+    edges: list[Edge],
+    starts: tuple[str, ...],
+    protected: frozenset[str],
+) -> tuple[set[str], tuple[str, ...], tuple[str, ...]]:
+    """Drop anchors that entered on name similarity and then proved nothing.
+
+    An anchor that touches no edge in the finished packet contributed exactly
+    one thing: itself, isolated. When the query named a real symbol that is
+    genuinely a leaf, that lone node *is* the answer and must stay. When the
+    anchor merely shares a name prefix with the thing asked about -- the
+    ``FlaskGroup``/``FlaskClient``/``FlaskCliRunner`` case, which inherit from
+    click and werkzeug and have no structural relationship to ``Flask`` at all
+    -- it is padding bought with the caller's token budget.
+
+    Three guards keep the distinction honest, because the cost of being wrong
+    here is dropping a correct answer, which is worse than carrying a spare
+    node. ``protected`` covers the first two and is built by the caller:
+
+    * an anchor with exact-match evidence is never pruned, however isolated;
+    * neither is one a typed stage deliberately injected
+      (:data:`INJECTED_ANCHOR_REASONS`) -- an explicitly pinned path, a
+      semantic terminal, a doc section the query named. Isolation is normal
+      and expected for those, not evidence of padding;
+    * pruning only runs when some *other* anchor did contribute, so a packet
+      whose anchors are all isolated is left exactly as it was rather than
+      emptied.
+
+    Returns the surviving nodes, the surviving starts, and the pruned ids
+    (which the caller reports rather than discarding silently).
+    """
+    covered = {endpoint for edge in edges for endpoint in (edge.source, edge.target)}
+    if not any(start in covered for start in starts):
+        return nodes, starts, ()
+    pruned = tuple(
+        start for start in starts
+        if start not in covered and start not in protected
+    )
+    if not pruned:
+        return nodes, starts, ()
+    dropped = set(pruned)
+    return (
+        {node_id for node_id in nodes if node_id not in dropped},
+        tuple(start for start in starts if start not in dropped),
+        pruned,
+    )
+
+
 def packet_quality_metadata(
     graph: Graph,
     nodes: set[str],

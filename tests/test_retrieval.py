@@ -428,6 +428,98 @@ class AnswerabilityFacetCalibrationTest(unittest.TestCase):
         self.assertNotEqual(partial.nodes, set())
 
 
+class UnsupportedAnchorPruningTest(unittest.TestCase):
+    """Graybox finding (2026-08-05): anchors admitted on name-prefix similarity
+    padded packets with structurally unrelated symbols -- querying "the Flask
+    class" pulled in FlaskGroup/FlaskClient/FlaskCliRunner, which inherit from
+    click and werkzeug and have no relationship to Flask at all. Measured
+    across the five frozen eval sets, 25 of 137 anchors touched no edge in the
+    finished packet.
+
+    The guards below are what keep this from dropping real answers: the cost
+    of over-pruning (losing a correct answer) is worse than the cost of
+    under-pruning (a spare node). A first, blunter version of this rule --
+    prune any isolated non-exact anchor -- broke six existing tests by
+    discarding evidence that legitimately has no edges: explicitly pinned
+    ``anchor_paths``, federated foreign nodes, semantic terminals, and doc
+    sections. Those cases are protected by ``INJECTED_ANCHOR_REASONS`` and by
+    the caller skipping the prune entirely when paths are pinned.
+
+    The subtlest correction is not unit-testable here because the pure
+    function never sees facets: an isolated node whose *text* covers a
+    required facet is real evidence, and pruning it degraded an abstention
+    diagnosis from "no directed structural connector" to the vaguer "facet has
+    no evidence". `retrieve_context` therefore protects facet-matching anchors
+    too, and
+    ``test_retrieval_section_relevance.py::...conceptual_path_without_a_directed_connector_is_incomplete``
+    is the regression that catches it.
+    """
+
+    def _edges(self) -> list[Edge]:
+        return [Edge("REAL", "NEIGHBOR", "calls")]
+
+    def test_isolated_lexical_anchor_is_pruned(self) -> None:
+        from graphgraph.retrieval.quality import prune_unsupported_anchors
+
+        nodes, starts, pruned = prune_unsupported_anchors(
+            {"REAL", "NEIGHBOR", "PREFIX_MATCH"},
+            self._edges(),
+            ("REAL", "PREFIX_MATCH"),
+            frozenset(),
+        )
+        self.assertEqual(pruned, ("PREFIX_MATCH",))
+        self.assertEqual(nodes, {"REAL", "NEIGHBOR"})
+        self.assertEqual(starts, ("REAL",))
+
+    def test_exact_anchor_is_never_pruned_however_isolated(self) -> None:
+        # A query naming a real leaf symbol: the answer is one isolated node,
+        # and pruning it would turn a correct answer into an empty packet.
+        from graphgraph.retrieval.quality import prune_unsupported_anchors
+
+        nodes, starts, pruned = prune_unsupported_anchors(
+            {"REAL", "NEIGHBOR", "EXACT_LEAF"},
+            self._edges(),
+            ("REAL", "EXACT_LEAF"),
+            frozenset({"EXACT_LEAF"}),
+        )
+        self.assertEqual(pruned, ())
+        self.assertIn("EXACT_LEAF", nodes)
+        self.assertEqual(starts, ("REAL", "EXACT_LEAF"))
+
+    def test_packet_of_only_isolated_anchors_is_left_intact(self) -> None:
+        # No anchor contributed, so there is no evidence that any of them is
+        # padding rather than the answer. Emptying the packet here would be
+        # strictly worse than returning it.
+        from graphgraph.retrieval.quality import prune_unsupported_anchors
+
+        nodes, starts, pruned = prune_unsupported_anchors(
+            {"A", "B"}, [], ("A", "B"), frozenset(),
+        )
+        self.assertEqual(pruned, ())
+        self.assertEqual(nodes, {"A", "B"})
+        self.assertEqual(starts, ("A", "B"))
+
+    def test_pruned_anchors_are_reported_not_silently_dropped(self) -> None:
+        graph = Graph(
+            nodes={
+                "REAL": Node("REAL", "handler", "function", "src/app.py", "L1"),
+                "NEIGHBOR": Node("NEIGHBOR", "helper", "function", "src/app.py", "L9"),
+                "PAD": Node("PAD", "handler_unrelated", "function", "src/other.py", "L3"),
+            },
+            edges=[Edge("REAL", "NEIGHBOR", "calls")],
+        )
+        from graphgraph.retrieval.quality import packet_quality_metadata, prune_unsupported_anchors
+
+        nodes, starts, pruned = prune_unsupported_anchors(
+            set(graph.nodes), list(graph.edges), ("REAL", "PAD"), frozenset(),
+        )
+        metadata = packet_quality_metadata(graph, nodes, list(graph.edges), starts, "")
+        metadata["quality"]["pruned_unsupported_anchors"] = list(pruned)
+        self.assertEqual(metadata["quality"]["pruned_unsupported_anchors"], ["PAD"])
+        # The surviving anchor's contribution is still reported for the caller.
+        self.assertEqual(metadata["quality"]["anchor_contribution"], {"REAL": 1})
+
+
 class RetrievalConfidenceTest(unittest.TestCase):
     """retrieval_confidence must reflect the evidence, not the query class."""
 
