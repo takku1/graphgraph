@@ -488,6 +488,32 @@ cap it harder than 200 chars) has not been tried.
     (express/flask/ripgrep splits at minimum) before it can be trusted, and
     was not attempted this cycle. This -- not the call count itself -- is
     now the concrete next target for whoever picks this back up.
+  - **2026-08-06 — the set-comprehension half is done; the candidate-pool
+    half is the remaining target.** Built the missing instrument first (a
+    cross-repo A/B over all five frozen task sets, external repos at pinned
+    commits), which is what "needs the eval harness across more than the
+    self-graph" was waiting on. With it: the three per-row comprehensions
+    only *expand* for document rows; code rows were rebuilding a set with
+    identical contents, so code rows now alias the row's own sets, and
+    `SearchIndexRow`'s term fields are `frozenset` so that alias is safe by
+    construction rather than by convention. Byte-identical retrieval on all
+    four held-out repos. **No measurable wall-clock win** -- profiler shows
+    `search_nodes` tottime 0.378 -> 0.313, but real timing differences sit
+    inside stdev because `personalized_pagerank` (~1.0s tottime) dominates.
+    So the honest conclusion has flipped: the per-row comprehensions were
+    *not* where the cost lives. **PPR is.** That is where the next
+    optimization attempt should go, and shrinking the candidate pool (still
+    ranking-affecting, still needs the eval gate) matters mainly because it
+    shrinks PPR's input, not because the scoring loop is expensive.
+  - **Trap for the next person, cost us a wrong answer once:** do not A/B a
+    retrieval change with `git stash`. Stashing the file under test also
+    makes the worktree clean, and `search_nodes` personalizes on
+    git-modified files -- the stashed arm silently skips
+    `resolve_modified_node_ids` (0.181s here) and the change under test
+    looks 80% slower than it is. Keep the file dirty in both arms, or
+    compare two committed states. The same class of contamination invalidates
+    graphgraph's own eval tasks on a dirty tree (`subsystem_summary` injects
+    modified files as anchors).
 
 - [~] **[T-B03]** Define measurement seams for the seven unmetered components
   - **Scope:** static-analysis, intermediate-representation, query-planning, application-services, platform, agent-interfaces, project-atlas.
