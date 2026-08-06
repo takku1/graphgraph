@@ -730,24 +730,44 @@ def retrieve_context(
                 )
             }
             missing_required = required_labels - individually_fulfilled
-            if missing_required:
-                # Before declaring a total miss, ask whether the corpus mentions
-                # these facets anywhere outside code. A documented-but-unbuilt
-                # convention is an incomplete answer, not an absent one.
-                mention_nodes = {
-                    node_id
-                    for node_id, node in graph.nodes.items()
-                    if node.active and node_id not in evidence_nodes
-                }
-                mention_fulfilled = frozenset(
-                    label
-                    for label, terms in facets
-                    if label in missing_required
-                    and any(
-                        facet_stage._facet_matches_node(graph.nodes[node_id], terms)
-                        for node_id in mention_nodes
-                    )
+            # A facet that no code node satisfies has three quite different
+            # explanations, and the preflight used to treat all of them as the
+            # same total miss:
+            #
+            # 1. A term occurs nowhere in the corpus at all ("GraphQL"). The
+            #    concept is genuinely absent and abstaining is correct.
+            # 2. A *documentation* node satisfies the whole facet but no code
+            #    does. Documented-but-unbuilt: an `incomplete` answer, which
+            #    the mention pass below already reports.
+            # 3. Every term exists somewhere, but scattered across nodes so no
+            #    single one carries them all. That is simply what a
+            #    paraphrased question looks like, and it is not evidence of
+            #    anything. Measured on the held-out locus corpus, the correct
+            #    symbol for such a query was the source planner's rank-1
+            #    semantic seed while this branch returned an empty packet.
+            #
+            # Only 1 and 2 justify abstaining. 3 must fall through so ranked
+            # and semantic retrieval get their turn.
+            mention_nodes = {
+                node_id
+                for node_id, node in graph.nodes.items()
+                if node.active and node_id not in evidence_nodes
+            }
+            mention_fulfilled = frozenset(
+                label
+                for label, terms in facets
+                if label in missing_required
+                and any(
+                    facet_stage._facet_matches_node(graph.nodes[node_id], terms)
+                    for node_id in mention_nodes
                 )
+            )
+            provably_absent = {
+                label
+                for label, terms in facets
+                if label in missing_required and facet_stage.facet_terms_absent_from_corpus(graph, terms)
+            }
+            if provably_absent or mention_fulfilled:
                 return _semantic_novelty_result(
                     graph,
                     query_class=query_class,
@@ -762,7 +782,16 @@ def retrieve_context(
                     anchor_paths=anchor_paths,
                     mention_fulfilled=mention_fulfilled,
                 )
-        if not global_coverage.get("fulfilled") and global_coverage.get("unfulfilled_required"):
+        provably_absent = any(
+            facet_stage.facet_terms_absent_from_corpus(graph, terms)
+            for label, terms in facets
+            if label in set(global_coverage.get("unfulfilled_required", ()))
+        )
+        if (
+            not global_coverage.get("fulfilled")
+            and global_coverage.get("unfulfilled_required")
+            and provably_absent
+        ):
             return _semantic_novelty_result(
                 graph,
                 query_class=query_class,

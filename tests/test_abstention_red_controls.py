@@ -89,6 +89,49 @@ class AbstentionRedControlTest(unittest.TestCase):
         self.assertLessEqual(answerability["confidence"], 0.2)
         self.assertEqual(result.nodes, set())
 
+    def test_scattered_facet_terms_do_not_abstain_as_if_absent(self) -> None:
+        # T-B07. The feasibility preflight used to prove absence by asking
+        # whether any single node matched every term of a facet at once. A
+        # paraphrased question never satisfies that even when the answer is
+        # present, because the words are spread across nodes -- so the packet
+        # came back empty for a question the graph could answer.
+        #
+        # Here every term of "queued payment settlement record" exists in the
+        # graph -- "queued" only in WorkQueue, the rest only in
+        # PaymentProcessor -- so no one node carries them all. That is not
+        # evidence of absence and must not abstain.
+        graph = Graph(
+            nodes={
+                "IMPL": Node(
+                    "IMPL", "PaymentProcessor", "class", "src/app.py",
+                    summary="Handles payment settlement for each record.",
+                ),
+                "QUEUE": Node(
+                    "QUEUE", "WorkQueue", "class", "src/queue.py",
+                    summary="Holds queued work items awaiting processing.",
+                ),
+            },
+        )
+        for i in range(10):
+            graph.nodes[f"F{i}"] = Node(f"F{i}", f"helper_{i}", "function", "src/helpers.py",
+                                        summary=f"Utility number {i}.")
+        result = retrieve_context(graph, "queued payment settlement record", "direct_lookup", 2)
+        self.assertFalse(result.metadata["answerability"]["abstained"])
+        self.assertTrue(result.nodes, "a scattered-term query must still return evidence")
+
+    def test_a_term_absent_from_the_whole_corpus_still_abstains(self) -> None:
+        # The other half of the same rule, and the reason the loosening is
+        # safe: a term occurring nowhere in the corpus is a real proof of
+        # absence. This is the shape of every red control in
+        # eval/retrieval-v1 ("Kubernetes gRPC service-mesh retry
+        # coordinator"), and it must keep failing closed.
+        graph = _requiredness_graph()
+        result = retrieve_context(
+            graph, "kubernetes grpc servicemesh retry coordinator", "direct_lookup", 2
+        )
+        self.assertTrue(result.metadata["answerability"]["abstained"])
+        self.assertEqual(result.nodes, set())
+
 
 if __name__ == "__main__":
     unittest.main()

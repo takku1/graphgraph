@@ -638,6 +638,36 @@ def _symbol_identity_terms(node: object) -> set[str]:
     )
 
 
+def facet_terms_absent_from_corpus(graph: Graph, terms: tuple[str, ...]) -> tuple[str, ...]:
+    """Terms of a facet that appear nowhere in the graph, in any form.
+
+    This is the only honest basis for proving a facet *cannot* be satisfied.
+    The feasibility preflight previously proved absence a different way -- it
+    asked whether any single node matched every term of the facet at once --
+    which conflates two very different situations:
+
+    * "GraphQL" occurs zero times in this repository. The concept is genuinely
+      absent, and abstaining is correct.
+    * No one node contains all of "tool", "record", "sure", "conclusion" and
+      "holds". Every one of those words *is* in the corpus; they are simply
+      spread across different nodes, which is what a paraphrased question
+      looks like. Abstaining there threw away an answer the retriever had
+      already found -- measured on the held-out locus corpus, the correct
+      symbol for that exact query was the source planner's rank-1 semantic
+      seed while the packet came back empty.
+
+    Uses the cached search token index, so this is dictionary lookups over the
+    facet's own terms rather than a scan of the graph.
+    """
+    from .search import _search_token_index
+
+    index = _search_token_index(graph)
+    return tuple(
+        term for term in terms
+        if not any(form in index for form in _facet_term_forms(term))
+    )
+
+
 def facet_coverage(
     graph: Graph,
     nodes: set[str],
