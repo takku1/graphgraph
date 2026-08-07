@@ -69,4 +69,5 @@ def create_graph_runtime(
         source_planner=source_planner,
         source_mode=source_mode,
         memory_scopes=memory_scopes,
+        graph_path=resolved,
     )

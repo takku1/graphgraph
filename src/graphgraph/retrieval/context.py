@@ -27,6 +27,22 @@ from . import (
 from . import facets as facet_stage
 from .models import Match, RetrievalResult
 
+#: Upper bound on the headroom granted to `reserve_facet_matches` above the
+#: 12-start packet cap, so it can still reserve facet evidence when ranked
+#: selection has already filled the cap. Whatever it reserves then displaces the
+#: weakest ranked anchors (see `_seat_facet_reservations`); the packet never
+#: grows.
+#:
+#: This is a safety bound, not a fitted parameter. The actual headroom asked for
+#: is `min(len(anchor_facets), this)`, and reservation stops as soon as each
+#: facet's obligation is covered -- so it is self-limiting and the bound does not
+#: bind on any task in the held-out panel: 2, 4 and 12 give byte-identical
+#: results across all 22 external tasks (flask/express/ripgrep/locus). It exists
+#: only so that a pathological query carrying the parser's full twelve facets
+#: cannot evict the entire ranked root set, which is the failure the semantic
+#: terminal balancer already guards against on its own path.
+_FACET_ANCHOR_RESERVATION = 4
+
 _OVERLOAD_DEF_KINDS = frozenset(
     {
         "function",
@@ -39,6 +55,32 @@ _OVERLOAD_DEF_KINDS = frozenset(
         "type",
     }
 )
+
+
+def _seat_facet_reservations(
+    ranked: tuple[Match, ...],
+    reserved: tuple[Match, ...],
+    *,
+    limit: int,
+) -> tuple[Match, ...]:
+    """Fit facet reservations inside the anchor cap by displacing ranked tail.
+
+    ``reserve_facet_matches`` preserves its input as a prefix and appends what
+    it newly reserved, so anything past ``len(ranked)`` is a facet reservation.
+    Truncating the result at the cap would therefore delete exactly the anchors
+    the facet stage went and found -- the failure this exists to prevent. Trim
+    the *ranked* tail instead, keeping ranked order otherwise intact, and never
+    drop a reservation to keep a merely well-scoring lexical hit.
+
+    A run that reserved nothing returns its input unchanged, so a query whose
+    facets were already satisfied keeps the full ranked budget.
+    """
+    additions = reserved[len(ranked):]
+    if not additions or len(reserved) <= limit:
+        return reserved[:limit] if len(reserved) > limit else reserved
+    kept_additions = additions[: max(0, limit)]
+    keep_ranked = max(0, limit - len(kept_additions))
+    return (*ranked[:keep_ranked], *kept_additions)
 
 
 def _named_project_coverage(graph: Graph, query: str, nodes: set[str]) -> dict[str, object] | None:
@@ -624,6 +666,7 @@ def retrieve_context(
     scope_mode: str = "strict",
     seed_ids: tuple[str, ...] = (),
     anchor_paths: tuple[str, ...] = (),
+    activation_state_path: Path | None = None,
 ) -> RetrievalResult:
     if scope_mode not in {"strict", "expand"}:
         raise ValueError(f"unknown scope mode: {scope_mode}")
@@ -1146,6 +1189,15 @@ def retrieve_context(
             if query_class == "affected_tests"
             else facets
         )
+        # Source seeds can widen the ranked anchor budget all the way to the
+        # packet's start cap, and reservation only ever *appends* -- so when the
+        # cap is already full the facet stage silently reserves nothing and the
+        # packet loses the one anchor retrieved specifically to answer a facet.
+        # Give reservation room to run, then let what it found displace the
+        # weakest ranked anchors rather than be truncated away: an anchor
+        # retrieved for a requested facet outranks one that merely scored well
+        # on the whole query.
+        ranked_matches = selected_matches
         selected_matches = facet_stage.reserve_facet_matches(
             selected_matches,
             matches,
@@ -1153,6 +1205,12 @@ def retrieve_context(
             graph=graph,
             prefer_code=query_class in {"multi_hop_path", "subsystem_summary"},
             prefer_production=query_class == "subsystem_summary",
+            limit=12 + min(len(anchor_facets), _FACET_ANCHOR_RESERVATION),
+        )
+        selected_matches = _seat_facet_reservations(
+            ranked_matches,
+            selected_matches,
+            limit=12,
         )
         if query_class == "subsystem_summary" and any(
             is_code_like(match.node) and not scoping._is_test_material(match.node)
@@ -1234,13 +1292,18 @@ def retrieve_context(
     if query_class == "spreading_activation":
         from .activation import ActivationStateCache, spreading_activation
 
-        cache = ActivationStateCache()
+        # Callers that know where the graph lives pass its state path; without
+        # one this falls back to the CWD-relative default, so a query against
+        # an explicit foreign --graph would otherwise read and write the
+        # *calling* project's turn history.
+        cache = ActivationStateCache(activation_state_path)
         prev_state = cache.load()
         nodes, edges = spreading_activation(
             graph,
             list(starts),
             max_nodes=plan.node_budget or 120,
             previous_activation=prev_state,
+            cache=cache,
         )
     else:
         expansion_scopes = scopes if scope_mode == "strict" else ()

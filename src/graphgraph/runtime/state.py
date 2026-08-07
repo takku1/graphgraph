@@ -92,7 +92,7 @@ def file_lock(
                 os.close(descriptor)
 
 
-def _replace_with_retry(temp_path: Path, path: Path, *, timeout: float = 2.0) -> None:
+def replace_with_retry(temp_path: Path, path: Path, *, timeout: float = 2.0) -> None:
     """Commit a staged temp file over *path*, tolerating Windows sharing.
 
     ``file_lock`` serializes writers against other writers, but readers take
@@ -100,6 +100,10 @@ def _replace_with_retry(temp_path: Path, path: Path, *, timeout: float = 2.0) ->
     PermissionError while any handle is open on the destination, so a reader
     landing in that window would otherwise lose the write outright and strand
     the temp file next to the target.
+
+    Public because every durable writer in the project needs this rule, not
+    just this module: the graph store learned the same lesson independently
+    after a transient reader could destroy a completed scan.
     """
     started = time.monotonic()
     while True:
@@ -137,7 +141,7 @@ def atomic_write_text(path: Path, text: str, *, lock: bool = True) -> None:
         handle.flush()
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
-    _replace_with_retry(temp_path, path)
+    replace_with_retry(temp_path, path)
 
 
 def atomic_write_json(

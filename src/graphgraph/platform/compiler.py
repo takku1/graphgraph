@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..graph.core import Graph
@@ -29,6 +30,7 @@ from ..retrieval import (
     retrieve_context,
     search_nodes,
 )
+from ..runtime.cache import activation_state_file_for_graph
 from .contracts import CapabilityReceipt, EvidenceProvider, ProviderRegistry
 from .source_planner import QuerySourcePlanner, receipt_data
 
@@ -122,6 +124,7 @@ class GraphRuntime:
         source_planner: QuerySourcePlanner | None = None,
         source_mode: str = "auto",
         memory_scopes: tuple[str, ...] = ("project", "session"),
+        graph_path: Path | None = None,
     ) -> None:
         self.graph = graph
         self.providers = ProviderRegistry(providers)
@@ -131,6 +134,11 @@ class GraphRuntime:
         self.source_planner = source_planner
         self.source_mode = source_mode
         self.memory_scopes = memory_scopes
+        #: Where this graph is persisted, used to resolve the per-graph
+        #: artifacts GraphGraph writes beside it. None when the caller supplied
+        #: a resident Graph with no path, in which case that state falls back
+        #: to its CWD-relative default.
+        self.graph_path = graph_path
 
     def apply_evidence(
         self,
@@ -256,6 +264,11 @@ class GraphRuntime:
             scope_mode=program.scope_mode,
             seed_ids=source_seed_ids,
             anchor_paths=program.anchor_paths,
+            activation_state_path=(
+                activation_state_file_for_graph(self.graph_path)
+                if self.graph_path is not None
+                else None
+            ),
         )
         retrieval.metadata["sources"] = source_receipt
         semantic_errors = reconcile_semantic_retrieval_receipt(

@@ -78,7 +78,10 @@ addopts = "-q"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-extend-exclude = ["tmp", "benchmarks", "graphify-out", ".graphgraph", "docs/notes"]
+# `docs/evaluation/**/fixtures` holds frozen scanner *inputs* captured during
+# graybox cycles. Their import order and layout are part of the recorded repro:
+# reformatting them would silently change what the fixture reproduces.
+extend-exclude = ["tmp", "benchmarks", "graphify-out", ".graphgraph", "docs/notes", "docs/evaluation/**/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

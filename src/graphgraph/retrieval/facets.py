@@ -887,7 +887,20 @@ def reserve_facet_matches(
             for _kind_rank, _hit_rank, _score_rank, _node_id, match, hits in distributed:
                 if not (hits - covered):
                     continue
-                reserved.append(match)
+                # Tag the reservation. A node reaches this branch by covering the
+                # facet's evidence terms *between* several nodes, which is a
+                # weaker predicate than `_facet_matches_node` -- so the anchor
+                # protection downstream, which re-derives facet evidence with
+                # that stricter test, does not recognize what this stage just
+                # deliberately reserved and prunes it back out as unsupported.
+                # Saying so in the reason keeps the two stages from disagreeing.
+                reserved.append(
+                    Match(
+                        match.node,
+                        match.score,
+                        tuple(dict.fromkeys((*match.reasons, "facet_distributed_evidence"))),
+                    )
+                )
                 seen.add(match.node.id)
                 covered.update(hits)
                 if covered >= needed or len(reserved) >= limit:

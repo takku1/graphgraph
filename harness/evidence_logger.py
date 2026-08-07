@@ -4,11 +4,11 @@ evidence_logger.py — Mochi-Swarm & Locus compliant JSONL logger for RSS Back-C
 Appends append-only evidence events to .measure/<component>/log.jsonl
 """
 
+import datetime
+import json
 import os
 import sys
-import json
-import datetime
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 EVIDENCE_STAGES = [
     "Unknown", "Observed", "Sampled", "Inferred", "Measured", "Proved", "Refuted"

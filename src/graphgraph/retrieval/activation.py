@@ -5,10 +5,18 @@ from pathlib import Path
 
 from ..graph.core import Edge, Graph
 from ..graph.ontology import traversal_strength
+from ..runtime.state import atomic_write_json
 
 
 class ActivationStateCache:
-    """Saves and loads node activation state across turns in .graphgraph/activation_state.json."""
+    """Saves and loads node activation state across turns in .graphgraph/activation_state.json.
+
+    The default path is resolved against the process CWD, so a query against an
+    explicit foreign ``--graph`` reads and writes the *calling* project's
+    activation state. Callers that know the graph's location should pass
+    ``cache_path`` explicitly; ``graphgraph cache --recompute-centrality``
+    already clears the graph-relative file, so the two disagree by default.
+    """
 
     def __init__(self, cache_path: Path | None = None):
         self.cache_path = cache_path or Path(".graphgraph") / "activation_state.json"
@@ -24,7 +32,12 @@ class ActivationStateCache:
     def save(self, state: dict[str, float]) -> None:
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            # Staged write: a plain write_text truncates the existing state
+            # first, so an interrupted turn left a half-written file that
+            # load() then silently discarded as unparseable -- resetting every
+            # node's accumulated activation instead of keeping the last good
+            # turn.
+            atomic_write_json(self.cache_path, state)
         except Exception:
             pass
 
@@ -37,6 +50,7 @@ def spreading_activation(
     steps: int = 2,
     decay: float = 0.6,
     previous_activation: dict[str, float] | None = None,
+    cache: ActivationStateCache | None = None,
 ) -> tuple[set[str], list[Edge]]:
     """Spreads relevance scores starting from initial anchors through AST/Doc edges.
 
@@ -133,6 +147,10 @@ def spreading_activation(
     # Save active state to cache for next turns
     # Filter to save only nodes with significant energy
     save_state = {nid: score for nid, score in sorted_nodes[:200] if score > 0.05 and nid in graph.nodes}
-    ActivationStateCache().save(save_state)
+    # Write through the caller's cache. Constructing a fresh default here meant
+    # the save could land in a different file than the load it was continuing
+    # from, so a caller that pointed the load at a graph-relative path still
+    # had its next turn's state written to the process CWD.
+    (cache or ActivationStateCache()).save(save_state)
 
     return selected_nodes, selected_edges

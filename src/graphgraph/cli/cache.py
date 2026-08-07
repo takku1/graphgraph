@@ -6,16 +6,25 @@ import argparse
 from pathlib import Path
 
 from ..io import find_graph_path, load_any, save_validated_graph
-from ..runtime.cache import TopologicalKVCache
+from ..runtime.cache import (
+    TopologicalKVCache,
+    activation_state_file_for_graph,
+    cache_file_for_graph,
+)
 
 
 def cmd_cache(args: argparse.Namespace) -> None:
     graph_path = Path(args.graph) if getattr(args, "graph", None) else None
-    cache_file = (
-        graph_path.parent / "kv_cache.json"
-        if graph_path
-        else Path(".graphgraph") / "kv_cache.json"
-    )
+    # Resolve through the same rule the query paths use, so `cache --clear`
+    # and `cache` stats always report the file those paths actually read.
+    # Discovery raises when no graph exists yet; reporting an empty cache at
+    # the default location is friendlier than failing a read-only status call.
+    if graph_path is None:
+        try:
+            graph_path = find_graph_path()
+        except (FileNotFoundError, RuntimeError):
+            graph_path = Path(".graphgraph") / "graph.gg"
+    cache_file = cache_file_for_graph(graph_path)
     cache = TopologicalKVCache(cache_file)
     if getattr(args, "recompute_centrality", False):
         resolved_graph_path = graph_path or find_graph_path()
@@ -23,7 +32,7 @@ def cmd_cache(args: argparse.Namespace) -> None:
         scores = graph.recompute_centrality()
         validation = save_validated_graph(graph, resolved_graph_path)
         count = cache.clear()
-        activation_file = resolved_graph_path.parent / "activation_state.json"
+        activation_file = activation_state_file_for_graph(resolved_graph_path)
         if activation_file.exists():
             activation_file.unlink()
         print(

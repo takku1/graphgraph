@@ -25,7 +25,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from graphgraph.runtime.cache import TopologicalKVCache
+from graphgraph.runtime.cache import TopologicalKVCache, cache_file_for_graph
 from graphgraph.services.native import render_native_context
 
 from .model import FAIL, NA, PASS, CaseResult, GateResult, Task
@@ -156,7 +156,7 @@ def run_cache_latency(
     graph_path = Path(graph_path)
 
     # Cold means cold: drop the packet cache co-located with this graph.
-    TopologicalKVCache(graph_path.parent / "kv_cache.json").clear()
+    TopologicalKVCache(cache_file_for_graph(graph_path)).clear()
 
     gates: list[GateResult] = []
     cold_samples: list[float] = []

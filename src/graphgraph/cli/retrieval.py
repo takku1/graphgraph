@@ -24,7 +24,12 @@ from ..retrieval import (
     query_relations,
     query_saved_relations,
 )
-from ..runtime.cache import TopologicalKVCache, compute_cache_key
+from ..runtime.cache import (
+    TopologicalKVCache,
+    cache_file_for_graph,
+    compute_cache_key,
+    runtime_cache_fingerprint,
+)
 from ..services import (
     FullGraphTooLargeError,
     render_final_packet,
@@ -59,12 +64,18 @@ def cmd_render(args: argparse.Namespace) -> None:
         direction=plan.direction,
     )
     plan = refine_plan_for_subgraph(plan, compute_subgraph_stats(graph, nodes, edges))
-    cache = TopologicalKVCache()
+    cache = TopologicalKVCache(cache_file_for_graph(graph_path))
     cache_key = compute_cache_key(
-        args.starts,
+        starts,
         args.query_class,
         plan.hops,
-        f"{plan.packet}|render|{plan.planner_version}|{plan.node_budget}|{plan.direction}",
+        # A packet is derived from GraphGraph's own rendering code as well as
+        # from the graph, and the entry's graph hash cannot see a renderer
+        # change. Without the runtime fingerprint `render` keeps replaying a
+        # packet built by superseded code for as long as the graph file stays
+        # byte-identical.
+        f"{plan.packet}|render|{plan.planner_version}|{plan.node_budget}|{plan.direction}|"
+        f"runtime={runtime_cache_fingerprint()}",
     )
     cached_packet = cache.get(graph_path, cache_key)
     if cached_packet:

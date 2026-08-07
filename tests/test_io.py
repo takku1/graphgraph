@@ -846,6 +846,99 @@ class IOTest(unittest.TestCase):
 
             self.assertLessEqual(len(cache.cache_data), 3)
 
+    def test_cache_file_is_colocated_with_its_graph_not_the_cwd(self) -> None:
+        """A foreign --graph must not read or write the CWD project's cache."""
+        import os
+
+        from graphgraph.runtime.cache import cache_file_for_graph
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            here = tmp / "here" / ".graphgraph"
+            other = tmp / "other" / ".graphgraph"
+            here.mkdir(parents=True)
+            other.mkdir(parents=True)
+
+            cwd = os.getcwd()
+            os.chdir(tmp / "here")
+            try:
+                resolved = cache_file_for_graph(other / "graph.gg")
+            finally:
+                os.chdir(cwd)
+
+            self.assertEqual(resolved, other / "kv_cache.json")
+            self.assertNotEqual(resolved.resolve(), (here / "kv_cache.json").resolve())
+
+    def test_render_cache_key_changes_when_graphgraph_code_changes(self) -> None:
+        """A packet is derived from the renderer too, so a code change must miss.
+
+        The entry's graph hash cannot see a renderer change, so without the
+        runtime fingerprint in the key `render` replays a packet built by
+        superseded code for as long as the graph file stays byte-identical.
+        """
+        from graphgraph.runtime import cache as cache_module
+
+        def key_for(fingerprint: str) -> str:
+            return cache_module.compute_cache_key(
+                ["A"],
+                "direct_lookup",
+                1,
+                f"gg|render|planner_v1|48|both|runtime={fingerprint}",
+            )
+
+        self.assertNotEqual(key_for("aaaa1111"), key_for("bbbb2222"))
+
+    def test_stable_skeleton_ordering_is_independent_of_insertion_order(self) -> None:
+        """Tied PageRank scores must not let node insertion order reshuffle the skeleton."""
+        scores = {"alpha": 0.5, "beta": 0.5, "gamma": 0.5, "delta": 0.9}
+
+        def top(pr: dict[str, float], limit: int) -> list[str]:
+            return sorted(pr, key=lambda node_id: (-pr[node_id], node_id))[:limit]
+
+        forward = top(scores, 3)
+        reversed_insertion = top({k: scores[k] for k in reversed(list(scores))}, 3)
+
+        self.assertEqual(forward, reversed_insertion)
+        self.assertEqual(forward, ["delta", "alpha", "beta"])
+
+    def test_kv_cache_get_does_not_clobber_another_process_entries(self) -> None:
+        """An invalidating read must not publish a stale whole-file snapshot.
+
+        The MCP server, CLI, and hooks share one kv_cache.json. `get` can
+        refresh an entry's stat marker; writing this instance's load-time
+        snapshot back would drop every entry another process committed since,
+        discarding warm packets that are still perfectly valid.
+        """
+        from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            graph_path = tmp / "graph.json"
+            graph_path.write_text("{}", encoding="utf-8")
+            cache_file = tmp / "kv_cache.json"
+
+            key_a = compute_cache_key(["A"], "direct_lookup", 1, "gg")
+            key_b = compute_cache_key(["B"], "direct_lookup", 1, "gg")
+
+            first = TopologicalKVCache(cache_file)
+            first.set(graph_path, key_a, "packet-a")
+
+            # A second process warms an unrelated entry after `first` loaded.
+            second = TopologicalKVCache(cache_file)
+            second.set(graph_path, key_b, "packet-b")
+
+            # Byte-identical rewrite: stat changes, content hash does not, so
+            # `first` takes the stat-refresh branch and persists.
+            graph_path.write_text("{}", encoding="utf-8")
+            self.assertEqual(first.get(graph_path, key_a), "packet-a")
+
+            observer = TopologicalKVCache(cache_file)
+            self.assertEqual(
+                observer.get(graph_path, key_b),
+                "packet-b",
+                "a concurrently written cache entry was destroyed by an unrelated read",
+            )
+
     def test_kv_cache_clear(self) -> None:
         from graphgraph.runtime.cache import TopologicalKVCache, compute_cache_key
 

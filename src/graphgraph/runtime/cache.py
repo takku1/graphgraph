@@ -5,7 +5,7 @@ import json
 from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .manifest import compute_file_hash
 from .state import STATE_VERSION, atomic_write_json, file_lock
@@ -43,6 +43,31 @@ def compute_cache_key(anchors: list[str] | set[str], query_class: str, hops: int
     return hashlib.md5(raw_str.encode("utf-8")).hexdigest()
 
 
+def cache_file_for_graph(graph_path: Path) -> Path:
+    """Locate the packet cache that belongs to ``graph_path``.
+
+    The cache is co-located with the graph it caches rather than resolved
+    against the process CWD. A CWD-relative default meant that querying another
+    project's graph wrote entries into whichever directory the command happened
+    to run from -- polluting and evicting that project's warm cache, and leaving
+    `graphgraph cache --clear --graph X` pointed at a file that was never in
+    use. Every caller must route through here so that rule cannot drift apart
+    between the CLI and service entry points again.
+    """
+    return graph_path.parent / "kv_cache.json"
+
+
+def activation_state_file_for_graph(graph_path: Path) -> Path:
+    """Locate the spreading-activation state that belongs to ``graph_path``.
+
+    Same rule as `cache_file_for_graph`, for the same reason: the activation
+    state is per-graph turn history. `graphgraph cache --recompute-centrality`
+    already clears the graph-relative file, so a CWD-relative default meant the
+    writer and the invalidator disagreed about which file was live.
+    """
+    return graph_path.parent / "activation_state.json"
+
+
 class TopologicalKVCache:
     """LRU packet cache keyed by query fingerprint and exact graph state.
 
@@ -78,12 +103,44 @@ class TopologicalKVCache:
             self.cache_data = OrderedDict()
 
     def save(self) -> None:
+        """Publish this instance's entries into the shared cache file.
+
+        Merges under the lock rather than overwriting. A straight snapshot
+        write silently dropped whatever another process had committed since
+        this instance loaded, which is why `get` no longer uses one.
+        """
+        pending = dict(self.cache_data)
+
+        def merge(entries: OrderedDict[str, dict[str, Any]]) -> None:
+            entries.update(pending)
+            while len(entries) > self.max_entries:
+                entries.popitem(last=False)
+
+        self._commit(merge)
+
+    def _commit(self, mutate: Callable[[OrderedDict[str, dict[str, Any]]], object]) -> None:
+        """Apply a mutation to the shared cache file under its lock.
+
+        `save()` publishes this instance's in-memory snapshot, which was taken
+        when the object loaded. That is safe for `set`, which reloads inside
+        the lock first, but not for the mutations `get` performs: the MCP
+        server, CLI, and hooks all share one kv_cache.json, so writing a
+        load-time snapshot back silently dropped every entry another process
+        had committed in the meantime -- discarding warm packets that were
+        still valid. Reload inside the lock so the mutation lands on current
+        state instead of replacing it.
+        """
         try:
-            atomic_write_json(
-                self.cache_file,
-                {"version": PLATFORM_STATE_VERSION, "entries": dict(self.cache_data)},
-            )
+            with file_lock(self.cache_file):
+                self.load()
+                mutate(self.cache_data)
+                atomic_write_json(
+                    self.cache_file,
+                    {"version": PLATFORM_STATE_VERSION, "entries": dict(self.cache_data)},
+                    lock=False,
+                )
         except Exception:
+            # Matches save(): a cache write failure must never fail the query.
             pass
 
     def get(self, graph_path: Path, key: str) -> str | None:
@@ -93,8 +150,7 @@ class TopologicalKVCache:
 
         entry = self.cache_data[key]
         if not graph_path.exists():
-            del self.cache_data[key]
-            self.save()
+            self._commit(lambda entries: entries.pop(key, None))
             self._misses += 1
             return None
 
@@ -104,15 +160,25 @@ class TopologicalKVCache:
             current_hash = compute_file_hash(graph_path)
             if current_hash and current_hash == entry.get("graph_hash", ""):
                 entry["graph_stat"] = list(current_stat)
-                self.save()
+                stat_row = list(current_stat)
+
+                def refresh(entries: OrderedDict[str, dict[str, Any]]) -> None:
+                    # Only refresh the marker if the entry still exists and
+                    # still describes the same content we just validated.
+                    stored = entries.get(key)
+                    if isinstance(stored, dict) and stored.get("graph_hash", "") == current_hash:
+                        stored["graph_stat"] = stat_row
+
+                self._commit(refresh)
             else:
-                del self.cache_data[key]
-                self.save()
+                self._commit(lambda entries: entries.pop(key, None))
                 self._misses += 1
                 return None
 
-        # Move to end (most-recently-used)
-        self.cache_data.move_to_end(key)
+        # Move to end (most-recently-used). The reload inside _commit can drop
+        # the key if another process evicted it, so this must stay guarded.
+        if key in self.cache_data:
+            self.cache_data.move_to_end(key)
         self._hits += 1
         return entry.get("packet")
 

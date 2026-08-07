@@ -14,7 +14,7 @@
 |----|------------|--------|---------------------|
 | OW-AC-01 | Resident process transport (MCP vs cold CLI) | active | Resident exact-query p95; tools exposed in agent session |
 | OW-AC-02 | Active graph publication & freshness | active | Discovery selects validated build; empty delta ⇒ fresh |
-| OW-AC-03 | Conceptual / lexically disjoint retrieval | active | ≥80% full recall on conceptual tasks. 0.00 (2026-08-04) → 0.357 (doc capture) → **0.500 (2026-08-06, T-B07 preflight fix)**; remaining gap is downstream ranking, not the veto |
+| OW-AC-03 | Conceptual / lexically disjoint retrieval | active | ≥80% full recall on conceptual tasks. 0.00 (2026-08-04) → 0.357 (doc capture) → 0.500 (T-B07 preflight fix) → **0.643 (2026-08-06, T-B08 facet-reservation seating)**; cross-repo held-out recall 0.841 → 0.886. Remaining gap is downstream ranking, not the veto |
 | OW-AC-04 | Abstention & confidence calibration | active | Red controls: unanswerable, conf ≤0.2, ≤50 real tokens. **5 of 7 conceptual misses emitted 546–1,609 tokens instead of abstaining** |
 | OW-AC-05 | Cross-language call-graph topology | active | Per-language volume + independent precision ≥98% |
 | OW-AC-06 | Machine-response token surface | ready | Response ≤1.15× evidence-packet tokens |

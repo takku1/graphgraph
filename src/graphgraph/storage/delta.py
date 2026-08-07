@@ -54,7 +54,7 @@ from pathlib import Path
 from ..graph.core import Edge, Graph, Node
 from ..io.core import load_any, save_graph, save_validated_graph
 from ..packets.validation import ValidationResult, validate_graph_object
-from ..runtime.state import file_lock
+from ..runtime.state import file_lock, replace_with_retry
 
 _DELTA_MAGIC = b"GGD1"
 _RECORD_HEADER = struct.Struct("<4sII")  # magic, payload_len, crc32
@@ -372,7 +372,10 @@ def compact(base_path: Path) -> Graph:
         )
         try:
             save_graph(merged, tmp)
-            tmp.replace(base_path)
+            # Same reader-vs-rename hazard as the graph writer: on Windows a
+            # reader holding the base .gg open makes a bare replace raise, and
+            # the handler below would then discard the already-merged result.
+            replace_with_retry(tmp, base_path)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise

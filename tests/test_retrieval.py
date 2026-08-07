@@ -717,24 +717,80 @@ class RetrievalTest(unittest.TestCase):
         from graphgraph.retrieval.activation import ActivationStateCache
         from graphgraph.retrieval.context import retrieve_context
 
-        cache = ActivationStateCache()
-        if cache.cache_path.exists():
+        # Route the turn state into a temp dir. Defaulting it resolved against
+        # the process CWD, so this test used to unlink and rewrite the real
+        # .graphgraph/activation_state.json of whatever project pytest ran in.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "activation_state.json"
+            cache = ActivationStateCache(state_path)
+
+            result = retrieve_context(
+                graph,
+                "auth service",
+                "spreading_activation",
+                hops=2,
+                max_nodes=5,
+                activation_state_path=state_path,
+            )
+            self.assertIn("N1", result.nodes)
+            self.assertIn("N2", result.nodes)
+            self.assertIn("N3", result.nodes)
+
+            state = cache.load()
+            self.assertIn("N1", state)
+
+            result2 = retrieve_context(
+                graph,
+                "audit log",
+                "spreading_activation",
+                hops=2,
+                max_nodes=5,
+                activation_state_path=state_path,
+            )
+            self.assertIn("N3", result2.nodes)
+            self.assertIn("N1", result2.nodes)
+
+    def test_activation_state_follows_the_graph_not_the_cwd(self) -> None:
+        """Turn state must be written beside its graph, both on load and save.
+
+        `spreading_activation` used to construct its own default cache when it
+        saved, so even a caller that pointed the *load* at a graph-relative
+        path had the next turn's state written to the process CWD -- and
+        `cache --recompute-centrality` clears the graph-relative file, so the
+        writer and the invalidator disagreed about which file was live.
+        """
+        import os
+
+        from graphgraph.retrieval.context import retrieve_context
+        from graphgraph.runtime.cache import activation_state_file_for_graph
+
+        graph = sample_graph()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            here = root / "here"
+            other = root / "other" / ".graphgraph"
+            here.mkdir(parents=True)
+            other.mkdir(parents=True)
+            state_path = activation_state_file_for_graph(other / "graph.gg")
+
+            cwd = os.getcwd()
+            os.chdir(here)
             try:
-                cache.cache_path.unlink()
-            except Exception:
-                pass
+                retrieve_context(
+                    graph,
+                    "auth service",
+                    "spreading_activation",
+                    hops=2,
+                    max_nodes=5,
+                    activation_state_path=state_path,
+                )
+            finally:
+                os.chdir(cwd)
 
-        result = retrieve_context(graph, "auth service", "spreading_activation", hops=2, max_nodes=5)
-        self.assertIn("N1", result.nodes)
-        self.assertIn("N2", result.nodes)
-        self.assertIn("N3", result.nodes)
-
-        state = cache.load()
-        self.assertIn("N1", state)
-
-        result2 = retrieve_context(graph, "audit log", "spreading_activation", hops=2, max_nodes=5)
-        self.assertIn("N3", result2.nodes)
-        self.assertIn("N1", result2.nodes)
+            self.assertTrue(state_path.exists(), "state was not written beside its graph")
+            self.assertIn("N1", json.loads(state_path.read_text(encoding="utf-8")))
+            stray = here / ".graphgraph" / "activation_state.json"
+            self.assertFalse(stray.exists(), f"state leaked into the calling project at {stray}")
 
     def test_spreading_activation_filters_stale_cached_nodes(self) -> None:
         graph = sample_graph()
@@ -2799,3 +2855,94 @@ Find the AuthService implementation.
             # must render regardless of size.
             packet = render_full_graph(graph_path, max_tokens=None)
             self.assertIn("node_number_0_with_a_longer_label", packet)
+
+
+class FacetReservationSeatingTest(unittest.TestCase):
+    """Facet reservations must survive a saturated anchor budget.
+
+    Source seeds (semantic/memory/federated) widen the ranked anchor limit up
+    to the 12-start packet cap. `reserve_facet_matches` only ever *appends*, so
+    once ranked selection filled the cap the facet stage reserved nothing and a
+    plain truncation would have discarded whatever it did find. Measured on the
+    held-out locus set: the `Advisor` trait -- the literal answer to "which
+    contract lets a new lens of inspection be registered" -- was retrieved by
+    the facet stage and then dropped, scoring 0.0 recall with semantic
+    retrieval on while scoring 1.0 with it off. The same query is the reason
+    both halves below exist.
+    """
+
+    def _match(self, node_id: str, reasons: tuple[str, ...] = ()):
+        from graphgraph.retrieval.models import Match
+
+        return Match(Node(node_id, node_id, "function"), 1.0, reasons)
+
+    def test_reservations_displace_ranked_tail_rather_than_being_truncated(self) -> None:
+        from graphgraph.retrieval.context import _seat_facet_reservations
+
+        ranked = tuple(self._match(f"R{i}") for i in range(12))
+        reserved = (*ranked, self._match("FACET_EVIDENCE"))
+
+        seated = _seat_facet_reservations(ranked, reserved, limit=12)
+
+        self.assertEqual(len(seated), 12)
+        # The reservation is kept and the weakest ranked anchor gives way. A
+        # plain `reserved[:12]` returns `ranked` unchanged and fails here.
+        self.assertIn("FACET_EVIDENCE", [match.node.id for match in seated])
+        self.assertNotIn("R11", [match.node.id for match in seated])
+        # Ranked order is otherwise preserved.
+        self.assertEqual([match.node.id for match in seated[:11]], [f"R{i}" for i in range(11)])
+
+    def test_a_run_that_reserved_nothing_keeps_the_full_ranked_budget(self) -> None:
+        # Queries whose facets were already satisfied must not pay for this:
+        # shrinking their ranked budget demoted a correct rank-1 answer to
+        # rank 7 on express (EXPRESS-TEST-002) when the fix was first written
+        # as an unconditional holdback instead of a displacement.
+        from graphgraph.retrieval.context import _seat_facet_reservations
+
+        ranked = tuple(self._match(f"R{i}") for i in range(12))
+
+        seated = _seat_facet_reservations(ranked, ranked, limit=12)
+
+        self.assertEqual(seated, ranked)
+
+    def test_distributed_facet_evidence_is_tagged_and_survives_anchor_pruning(self) -> None:
+        """The reserving stage and the protecting stage must agree.
+
+        `reserve_facet_matches` can seat a node that covers a facet's evidence
+        terms *between* several nodes, which is weaker than
+        `_facet_matches_node`. Anchor protection re-derives facet evidence with
+        that stricter test, so without an explicit tag it does not recognize
+        the reservation and prunes it straight back out as unsupported.
+        """
+        from graphgraph.retrieval.facets import reserve_facet_matches
+        from graphgraph.retrieval.models import Match
+        from graphgraph.retrieval.quality import INJECTED_ANCHOR_REASONS, prune_unsupported_anchors
+
+        facets = (("registered inspection contract", ("registered", "inspection", "contract")),)
+        ranked = (self._match("UNRELATED"),)
+        candidates = (
+            *ranked,
+            Match(Node("EVIDENCE", "registered_inspection_registry", "function"), 5.0, ("label_partial",)),
+        )
+
+        reserved = reserve_facet_matches(ranked, candidates, facets)
+        seated = [match for match in reserved if match.node.id == "EVIDENCE"]
+        self.assertTrue(seated, "facet stage did not reserve the distributed evidence node")
+        self.assertIn("facet_distributed_evidence", seated[0].reasons)
+        self.assertIn("facet_distributed_evidence", INJECTED_ANCHOR_REASONS)
+
+        # Now the isolated reservation must survive pruning, which is what the
+        # tag buys. Dropping the tag from either side makes this fail.
+        protected = frozenset(
+            match.node.id
+            for match in reserved
+            if set(match.reasons) & INJECTED_ANCHOR_REASONS
+        )
+        _nodes, starts, pruned = prune_unsupported_anchors(
+            {"UNRELATED", "NEIGHBOR", "EVIDENCE"},
+            [Edge("UNRELATED", "NEIGHBOR", "calls")],
+            ("UNRELATED", "EVIDENCE"),
+            protected,
+        )
+        self.assertEqual(pruned, ())
+        self.assertIn("EVIDENCE", starts)

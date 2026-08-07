@@ -28,7 +28,6 @@ from baseline import (  # noqa: E402
 )
 from evidence_logger import log_event  # noqa: E402
 
-
 # --- direction resolution ---------------------------------------------------
 
 

@@ -15,7 +15,6 @@ from .scoping import (
     _path_in_scopes,
 )
 
-
 #: Reasons that mark an anchor as *deliberately placed* by a typed stage
 #: rather than proposed by generic ranked lexical search: an explicitly
 #: changed path, a source-planner seed, a semantic terminal, a document
@@ -28,6 +27,7 @@ INJECTED_ANCHOR_REASONS = frozenset({
     "exact_changed_path",
     "exact_changed_path_terms",
     "exact_fast_path",
+    "facet_distributed_evidence",
     "file_fallback",
     "section_title_in_query",
     "semantic_structural_facet",

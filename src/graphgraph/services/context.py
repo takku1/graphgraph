@@ -27,7 +27,12 @@ from ..representation import (
     compile_hybrid_representation,
 )
 from ..retrieval import apply_shape_budget, expand_context, packet_priority, retrieve_context  # noqa: F401
-from ..runtime.cache import TopologicalKVCache, compute_cache_key, runtime_cache_fingerprint
+from ..runtime.cache import (
+    TopologicalKVCache,
+    cache_file_for_graph,
+    compute_cache_key,
+    runtime_cache_fingerprint,
+)
 from .control import GATE_ORDER, ControlReceipt, choose_next_action, render_control_ir
 
 QUERY_RESPONSE_CACHE_VERSION = "request_v19_affected_test_witness_attribution"
@@ -50,7 +55,13 @@ def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100,
     resolved_graph_path = graph_path or find_graph_path()
     graph = load_any_cached(resolved_graph_path)
     pr = graph.pagerank()
-    top_nodes = sorted(pr, key=pr.get, reverse=True)[:max_nodes]
+    # Ties are broken by node id, not by dict insertion order. This packet's
+    # whole purpose is to be a byte-stable prompt-cache prefix, and PageRank
+    # ties are common in flat graphs -- ordering them by insertion meant a
+    # rescan that produced an equivalent graph in a different order could
+    # reshuffle the skeleton, or swap which tied node survived the max_nodes
+    # cut, breaking the cache prefix it exists to hold steady.
+    top_nodes = sorted(pr, key=lambda node_id: (-pr[node_id], node_id))[:max_nodes]
     top_set = set(top_nodes)
     skeleton_edges = [edge for edge in graph.edges if edge.active and edge.source in top_set and edge.target in top_set]
     return render_packet(graph, top_set, skeleton_edges, packet)
@@ -132,7 +143,7 @@ def render_final_packet(
     # directory the command happened to run from -- polluting and evicting
     # that project's warm cache, and leaving `graphgraph cache --clear
     # --graph X` clearing a file that was never the one in use.
-    cache = TopologicalKVCache(resolved_graph_path.parent / "kv_cache.json")
+    cache = TopologicalKVCache(cache_file_for_graph(resolved_graph_path))
     cache_key = compute_cache_key(
         starts,
         query_class,
@@ -389,7 +400,7 @@ def render_query_context(
     # directory the command happened to run from -- polluting and evicting
     # that project's warm cache, and leaving `graphgraph cache --clear
     # --graph X` clearing a file that was never the one in use.
-    cache = TopologicalKVCache(resolved_graph_path.parent / "kv_cache.json")
+    cache = TopologicalKVCache(cache_file_for_graph(resolved_graph_path))
     cache_key = compute_cache_key(
         [query],
         query_class,

@@ -57,6 +57,48 @@ class SectionedStorageTest(unittest.TestCase):
         self.assertEqual(loaded.edges, graph.edges)
         self.assertEqual(loaded.metadata, graph.metadata)
 
+    def test_save_survives_a_transient_reader_holding_the_destination(self) -> None:
+        """A reader must not be able to destroy a completed scan.
+
+        Readers of a .gg take no lock. On Windows os.replace raises
+        PermissionError while any handle is open on the destination, and the
+        writer's cleanup handler deletes the staged temp file -- so a bare
+        replace turned a momentary read into permanent loss of the graph.
+        """
+        import dataclasses
+        from unittest import mock
+
+        from graphgraph.storage import sectioned
+
+        graph = _graph()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg"
+            save_graph(graph, path)
+            original = path.read_bytes()
+
+            calls: list[int] = []
+            real_replace = Path.replace
+
+            def flaky_replace(self: Path, target):  # type: ignore[no-untyped-def]
+                calls.append(1)
+                if len(calls) == 1:
+                    raise PermissionError(32, "The process cannot access the file")
+                return real_replace(self, target)
+
+            updated = _graph()
+            updated.nodes["TARGET"] = dataclasses.replace(
+                updated.nodes["TARGET"], summary="rewritten after contention"
+            )
+
+            with mock.patch.object(Path, "replace", flaky_replace):
+                sectioned.save_sectioned_graph(updated, path)
+
+            self.assertGreater(len(calls), 1, "expected the writer to retry the rename")
+            self.assertNotEqual(path.read_bytes(), original)
+            self.assertEqual(load_any(path).nodes["TARGET"].summary, "rewritten after contention")
+            leftovers = [p.name for p in Path(tmp).iterdir() if p.name.endswith(".tmp")]
+            self.assertEqual(leftovers, [], "staged temp file was left behind")
+
     def test_partial_relation_view_matches_resident_graph(self) -> None:
         graph = _graph()
         cases = [

@@ -10,6 +10,7 @@ maintaining a duplicate database or sidecar index.
 from __future__ import annotations
 
 import io
+import os
 import struct
 import tempfile
 import zlib
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..graph.core import Edge, Graph, Node
+from ..runtime.state import replace_with_retry
 
 GGB4_MAGIC = b"GGB4"
 _HEADER = struct.Struct("<4sHHI")  # magic, section count, flags, directory crc
@@ -269,7 +271,18 @@ def save_sectioned_graph(graph: Graph, path: Path) -> None:
             handle.write(directory)
             for _kind, payload, _count in raw_sections:
                 handle.write(payload)
-        temp_path.replace(path)
+            # Force the payload to disk before the rename publishes it. Without
+            # this the directory entry can land ahead of the section bytes on a
+            # crash, leaving a file whose header and CRCs promise data the store
+            # does not actually contain.
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Readers of a .gg take no lock, and on Windows os.replace fails with
+        # PermissionError while any reader holds a handle open. A bare replace
+        # meant a scan that took minutes to build could be destroyed by a
+        # transient reader: the except below would delete the staged file and
+        # re-raise, losing the completed graph rather than the reader's read.
+        replace_with_retry(temp_path, path)
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise

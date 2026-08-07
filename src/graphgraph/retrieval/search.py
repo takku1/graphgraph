@@ -787,6 +787,16 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
     if graph._search_index_cache and graph._search_index_cache[0] == key:
         return graph._search_index_cache[1]  # type: ignore[return-value]
     rows: list[SearchIndexRow] = []
+    # Every path-derived field below depends only on node.path, and a
+    # repository has far fewer distinct paths than nodes -- 13.8k nodes over
+    # 510 distinct basenames and 59 distinct directories on this graph, so the
+    # basename tokenization was repeating at a 96% rate and the directory one
+    # at 99.6%. Deriving them once per distinct path removes that work from
+    # every index build. Deliberately local rather than an lru_cache on
+    # tokenize: the haystack strings are unique per node (76% of the tokenized
+    # volume, 0% reuse), so a global cache would retain megabytes to serve no
+    # hits, and this dict cannot outlive the build or pin nodes.
+    path_cache: dict[str, tuple] = {}
     for node in graph.nodes.values():
         if not node.active:
             # Consistent with pagerank/expand/degree elsewhere in the graph:
@@ -798,24 +808,41 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
             # explanation of why.
             continue
         haystack = node_search_text(node)
-        norm_path = node.path.replace("\\", "/") if node.path else ""
-        path_name = norm_path.rsplit("/", 1)[-1] if norm_path else ""
-        path_stem = path_name.rsplit(".", 1)[0].lower() if path_name else ""
-        # Include ALL intermediate directory segments in haystack so that
-        # queries like "featherwaight" find src/featherwaight/cli.py even
-        # when only the basename ("cli.py") was previously indexed.
-        path_dir_segments = "/".join(norm_path.split("/")[:-1]) if "/" in norm_path else ""
+        derived = path_cache.get(node.path)
+        if derived is None:
+            norm_path = node.path.replace("\\", "/") if node.path else ""
+            path_name = norm_path.rsplit("/", 1)[-1] if norm_path else ""
+            path_stem = path_name.rsplit(".", 1)[0].lower() if path_name else ""
+            # Include ALL intermediate directory segments in haystack so that
+            # queries like "featherwaight" find src/featherwaight/cli.py even
+            # when only the basename ("cli.py") was previously indexed.
+            path_dir_segments = "/".join(norm_path.split("/")[:-1]) if "/" in norm_path else ""
+            path_name_sequence = tuple(tokenize(path_name, keep_stopwords=True))
+            # Also tokenize the full path (directories) for the path_name_terms index
+            path_dir_terms = set(tokenize(path_dir_segments, keep_stopwords=True)) if path_dir_segments else set()
+            derived = (
+                path_stem,
+                path_dir_segments,
+                path_name_sequence,
+                frozenset(path_name_sequence) | path_dir_terms,
+                _exact_identifier_sequence(path_name, path_name_sequence),
+                norm_path.lower(),
+            )
+            path_cache[node.path] = derived
+        (
+            path_stem,
+            path_dir_segments,
+            path_name_sequence,
+            path_name_terms,
+            path_name_exact_sequence,
+            path_lower,
+        ) = derived
         full_haystack = " ".join(filter(None, [haystack, path_dir_segments]))
         label_term_sequence = tuple(tokenize(node.label, keep_stopwords=True))
-        path_name_sequence = tuple(tokenize(path_name, keep_stopwords=True))
-        # Also tokenize the full path (directories) for the path_name_terms index
-        path_dir_terms = set(tokenize(path_dir_segments, keep_stopwords=True)) if path_dir_segments else set()
         haystack_terms = frozenset(tokenize(full_haystack, keep_stopwords=True))
         node_id_lower = node.id.lower()
         label_lower = node.label.lower()
-        path_lower = norm_path.lower()
         label_terms = frozenset(label_term_sequence)
-        path_name_terms = frozenset(path_name_sequence) | path_dir_terms
         rows.append(
             SearchIndexRow(
                 node=node,
@@ -829,7 +856,7 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
                 label_exact_sequence=_exact_identifier_sequence(node.label, label_term_sequence),
                 path_name_terms=path_name_terms,
                 path_name_sequence=path_name_sequence,
-                path_name_exact_sequence=_exact_identifier_sequence(path_name, path_name_sequence),
+                path_name_exact_sequence=path_name_exact_sequence,
                 path_stem=path_stem,
                 search_tokens=_search_tokens_for(
                     node.kind,

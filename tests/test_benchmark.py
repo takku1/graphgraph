@@ -44,6 +44,20 @@ NON_ENGINE_SOURCE_FILES = frozenset(
 # ordinary source now grows both sides of the equation, while an extractor that
 # starts duplicating records or payload fields still trips the guard.
 SOURCE_GRAPH_TOKEN_DENSITY_LIMIT = 1.05
+# Extraction throughput ceiling, normalized by input size for the same reason
+# as the density limit above: a flat repository-total budget says nothing about
+# extraction speed and fails purely because src/ grew.
+#
+# This is a change of denominator, not a re-baseline. The former flat 10.0s
+# budget was written against a 1.8437 MiB engine tree, i.e. exactly 5.42 s/MiB,
+# so an extractor that slows down trips this at the same throughput it always
+# did.
+#
+# 2026-08-06 baseline, idle machine, 3 runs: 2.13-2.34 s/MiB (median 2.25),
+# i.e. ~2.4x headroom. NOTE: this is wall-clock and therefore load-sensitive --
+# the same tree measured 3.7-6.6 s/MiB while a second agent was running heavy
+# work on this host. Re-run idle before treating a failure as a regression.
+SOURCE_EXTRACTION_SECONDS_PER_MIB_LIMIT = 5.42
 
 
 class BenchmarkExtractionTest(unittest.TestCase):
@@ -186,7 +200,20 @@ class BenchmarkExtractionTest(unittest.TestCase):
         # Basic sanity checks
         self.assertGreater(len(symbol_nodes), 0, "No symbols extracted")
         self.assertGreater(len(symbol_edges), 0, "No edges extracted")
-        self.assertLess(elapsed, 10.0, f"Extraction took too long: {elapsed:.2f}s")
+        # Normalized for the same reason as the token ceiling below: a fixed
+        # repository-total wall-clock budget says nothing about extraction
+        # speed and fails purely because src/ grew. The rate is set to exactly
+        # the strictness the 10s/1.8437 MiB ceiling encoded when it was
+        # written, so this is a change of denominator, not a re-baseline -- an
+        # extractor that slows down still trips it at the same throughput.
+        source_mib = sum(len(text) for _path, _rel, _id, text in files) / (1024 * 1024)
+        seconds_per_mib = elapsed / source_mib
+        self.assertLess(
+            seconds_per_mib,
+            SOURCE_EXTRACTION_SECONDS_PER_MIB_LIMIT,
+            f"Extraction too slow: {seconds_per_mib:.2f}s/MiB over {source_mib:.2f} MiB "
+            f"({elapsed:.2f}s total)",
+        )
 
         # Build a temporary graph and estimate token size
         g = Graph(nodes=symbol_nodes, edges=symbol_edges)

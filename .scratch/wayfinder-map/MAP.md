@@ -315,6 +315,75 @@ stage gets a turn at all.
     remaining 0.500 → 0.80 needs. The four falsified re-ranking hypotheses
     still stand for *that* problem.
 
+- [x] **[T-B08]** Semantic seeds starve the facet reservation stage
+  - **How it was found — a differential control the earlier sessions had not
+    run.** Scoring the held-out locus set in *both* source modes and diffing
+    per task, rather than reading the semantic-on column alone: C03 scores
+    **1.000 structurally and 0.000 with semantic retrieval on**. An inversion,
+    not a coverage gap — turning the paraphrase machinery on was deleting an
+    answer that plain structural retrieval already had. C03 asks for the
+    `Advisor` *trait*; semantic seeding returns three `impl Advisor for X::
+    examine` methods, whose node ids literally contain `__Advisor_for_`, and
+    the declaration one edge away never enters the packet.
+  - **Two stages, two independent defects, both about budget rather than
+    ranking.** Traced by instrumenting the pipeline stage by stage:
+    1. **Starvation.** Source seeds widen the ranked anchor limit
+       (`context.py`, `if source_matches:`) up to the same 12 that is the
+       packet's start cap — on C03, 6 seeds + `plan.anchor_limit` 6 = 12. But
+       `reserve_facet_matches` only ever *appends*, so with the cap already
+       full it reserved nothing at all. Structurally the same query ran with
+       `anchor_limit=6`, reservation expanded 6 → 8, and slot 7 was `Advisor`.
+       The facet stage was not outvoted; it was never given a turn.
+    2. **Disagreement.** Once seated, `Advisor` was pruned straight back out by
+       `prune_unsupported_anchors`. Reservation admits a node that covers a
+       facet's evidence terms *distributed across several nodes*; anchor
+       protection re-derives facet evidence with the stricter
+       `_facet_matches_node`, does not recognize what the facet stage just
+       deliberately reserved, and drops it as unsupported padding. The two
+       stages disagreed about what counts as facet evidence.
+  - **Fix.** Reservation is given headroom above the cap and what it finds
+    *displaces* the weakest ranked anchors (`_seat_facet_reservations`) instead
+    of being truncated away; distributed reservations are tagged
+    `facet_distributed_evidence`, which joins `INJECTED_ANCHOR_REASONS` so the
+    protecting stage recognizes the reserving stage's own output. The packet
+    never grows. Neither half scores or thresholds anything — same reason
+    T-B07's fix worked where four calibration attempts failed.
+  - **Note on the first attempt, which is why the design is a displacement.**
+    Written first as an unconditional *holdback* (shrink the ranked limit
+    whenever facets exist), it bought C03 but demoted `EXPRESS-TEST-002`'s
+    correct answer from rank 1 to rank 7 — mean MRR 0.6364 → 0.6070. It paid
+    for facet evidence with queries whose facets were already satisfied.
+    Displacement only fires when reservation actually found something, so
+    those queries keep their full ranked budget and the regression disappears.
+  - **Held-out result, 22 oracled tasks across four external repos at pinned
+    commits (flask, express, ripgrep, locus), semantic on:**
+
+    | metric | before | after |
+    |--------|-------:|------:|
+    | recall | 0.8409 | **0.8864** |
+    | facet completeness | 0.7083 | **0.7917** |
+    | MRR | 0.6364 | **0.6399** |
+
+    Locus conceptual subset alone: recall/facet **0.500 → 0.643**, C03
+    0.0 → 1.0. Four of 22 tasks changed at all; the other three are token
+    deltas within ±210. Structural-only mode is bit-unchanged (0.143), all
+    five red controls still abstain at zero nodes and confidence 0.0, and the
+    full suite is green.
+  - **The reservation bound is not a fitted constant.** `_FACET_ANCHOR_RESERVATION`
+    caps `min(len(anchor_facets), N)`; reservation stops as soon as each facet's
+    obligation is covered, so it is self-limiting. Swept N ∈ {2, 4, 12}: **all
+    three give byte-identical results on all 22 tasks** (0 field diffs). It is
+    shipped at 4 purely as a bound so a query carrying the parser's full twelve
+    facets cannot evict the entire ranked root set — not as a tuned value.
+  - **Still short of the OW-AC-03 gate (≥0.80)**, and the remaining gap is
+    unchanged in character: C02/C04 return the wrong nodes and C07 is half
+    right. Those are genuine ranking failures, and the four falsified
+    re-ranking hypotheses still stand for them. Note also that C03 is recovered
+    at **MRR 0.091** — rank 11 of 12. The answer is in the packet but at the
+    bottom, because a displaced reservation is appended last. Ordering
+    reservations by facet evidence rather than by arrival is untried and is the
+    cheapest next thing on this thread.
+
 
 **Measured cost of doc capture (quiet machine, 2026-08-05).** The scan gate
 **reverts**: `scan_fixture_ms` 125.8 -> 159.7, a 26.9% regression against a 20%
@@ -549,6 +618,16 @@ cap it harder than 200 chars) has not been tried.
   - **Still open on this ticket:** the candidate-pool size feeding PPR. That
     remains ranking-affecting and still needs the eval gate; the cache made
     each PPR cheaper without making its input smaller.
+  - **Second trap, same class, found on 2026-08-06:** `--source-mode auto`
+    silently measures **structural-only** from any cold process. The source
+    planner consults the semantic index only when `mode == "all" or
+    active_backend_is_warm()`, and FastEmbed reports cold until its model has
+    actually been loaded (deliberately — `auto` queries must not hide a model
+    download in their latency). So a fresh `run_eval_suite.py` / `evaluate_graph`
+    run under `auto` reports the no-semantic numbers with no warning: locus
+    conceptual reads 0.143 instead of 0.500. Always pass `--source-mode all`
+    when measuring conceptual retrieval, and treat any conceptual number that
+    matches the structural-only column as unproven until the mode is confirmed.
   - **Trap for the next person, cost us a wrong answer once:** do not A/B a
     retrieval change with `git stash`. Stashing the file under test also
     makes the worktree clean, and `search_nodes` personalizes on
