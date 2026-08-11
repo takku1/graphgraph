@@ -53,6 +53,13 @@ def _query(
         rebuild=rebuild,
         changed_paths=changed,
         deleted_paths=deleted,
+        # Pin the encoding. Left unpinned, the compiler minimizes gg -> svo
+        # (packet_targets: gg declares SelectionPolicy(("svo",))), and svo
+        # carries IdentityModel("label") -- labels but no paths. Every gate
+        # below asserts about paths: which file a definition moved to, and
+        # whether a deleted path left a ghost. On an svo packet those gates do
+        # not read as false, they read as vacuous, which is worse.
+        packet="gg",
     ))
     return json.loads(rendered), status
 

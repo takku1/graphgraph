@@ -54,6 +54,8 @@ Two consequences for how work is gated here:
 | application-services | `context_compile_warm_ms` | 654.4 ms | end-to-end render |
 | agent-interfaces | `cli_cold_start_ms` | 56.3 ms | interpreter + import only |
 | research | `registry_dangling_sources` | 0 | zero-tolerance invariant |
+| acceptance | `acceptance_pass_rate` | **1.0** | 11/11 active on locus; 2 pending, graph stale (2026-08-11) |
+| evaluation-analysis | `answer_confidence_ece` | **0.0627** | 26 labelled predictions, 10 bins, gate ECE<0.10 (2026-08-11) |
 | representation | `hybrid_vs_flat_token_ratio` | **2.6505** | **hybrid is 2.65x more expensive — see below** |
 
 Baselines are machine-local. Re-record on a new host before trusting a delta.
@@ -101,8 +103,8 @@ hiding that in a total is how a project talks itself into believing it is done.
 | platform | 7/7 | 2/3 | 66% | measure.sh blocked: needs experiment design |
 | agent-interfaces | 7/7 | 3/3 | 60% | measure.sh + baseline |
 | project-atlas | 7/7 | 2/3 | **33%** | measure.sh blocked: needs held-out panel (T-A05) |
-| acceptance | 7/7 | 2/3 | 60% | measure.sh blocked: needs external corpus |
-| evaluation-analysis | 7/7 | 2/3 | 60% | measure.sh blocked: needs labelled set |
+| acceptance | 7/7 | 3/3 | 60% | — **10/10** (2026-08-11) |
+| evaluation-analysis | 7/7 | 3/3 | 60% | — **10/10** (2026-08-11) |
 | research | 7/7 | 3/3 | **100%** | measure.sh + baseline; registry invariant is `Proved` |
 | representation | 7/7 | 3/3 | 50% | measure.sh + baseline; promotion gate unmeasured |
 
@@ -176,7 +178,7 @@ gate are all waiting on one labelled task set that does not exist.
 
 | # | Ticket | Why now |
 |---|--------|---------|
-| 1 | **T-H01** Commit or discard the in-flight modules | Two component gates are greener than they look; a false green at the base of a measurement programme poisons everything above it. Cheapest item on the board. |
+| 1 | ~~**T-H01** Commit or discard the in-flight modules~~ **DONE 2026-08-11** (`e466afd`) | 159 files, +5,761/−8,860, landed as one changeset at 1181 passed / ruff clean. The predicted false green was real and had spread further than two gates: **all 14** `checks.sh` skipped absent suites, and `storage` was silently running 3 of its 4 declared targets (`test_runtime_factory.py` was deleted with `platform/runtime.py`). Gates now fail on a declared-but-missing suite. Fixing the *false green* then exposed a **false red**: `acceptance` reported 0.9091 with `GG10-LC-008` failing, but the packet was correct and `_parse_packet` only understood `#gg` while the compiler had adaptively minimized to `#svo` — three gates read vacuous, not false. Pass-rate 0.9091 → **1.0**. |
 | 2 | **T-B02** Paraphrase/conceptual task set | The keystone. Unblocks T-B04, T-A05, T-A03's red controls, the representation promotion gate, and evaluation-analysis's metric. Nothing else on this list unblocks more than one thing. |
 
 ### Wave 1 — the destination axis (token cost)

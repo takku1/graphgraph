@@ -82,6 +82,37 @@ gate passes. This is the only checklist for the migration.
 | OW-Q09-E | Evaluation promotion and scratch retirement | done | Q09-D | Durable findings are represented by architecture, contracts, benchmarks, or tests; superseded `docs/evaluation` scratch artifacts are removed; authority/link tests pass |
 | OW-Q09-F | Terminology and filename audit | active | Q09-E | Remaining generic names are retained only when they name a coherent mathematical/domain abstraction; ambiguous names and aliases are removed; cold-start, token, accuracy, and full-suite gates do not regress |
 
+**OW-Q09 landing + gate de-contamination (2026-08-11).** Stages A–E were
+complete in the working tree but had never been committed. They landed as one
+changeset (`e466afd`, 159 files, +5,761/−8,860) at `1181 passed, 0 failed`,
+Ruff clean, `git diff --check` clean.
+
+The uncommitted tree had already corrupted the measurement programme in both
+directions, which is why "we over-implement or regress" was a fair reading of
+the gate output:
+
+- **False green.** All 14 `components/*/checks.sh` skipped test targets that
+  did not exist, carrying the comment "some targets are still in-flight and
+  uncommitted". `storage` was silently running 3 of its 4 declared suites —
+  `test_runtime_factory.py` went away with `platform/runtime.py` under Q09-A
+  and its `create_server` coverage moved to `test_platform` /
+  `test_context_compiler` / `test_public_contracts`. Every gate now fails on a
+  declared-but-missing suite, so a shrinking gate cannot report green.
+- **False red.** With that fixed, `acceptance` still reported 0.9091 with
+  `GG10-LC-008` failing. The graph and packet were both correct: all three
+  callers and all three `calls` edges were present. `runner._parse_packet`
+  understood only the `#gg` sections `[r]/[n]/[e]`, while the compiler had
+  adaptively minimized `gg` → `svo` (`packet_targets`: gg declares
+  `SelectionPolicy(("svo",))`). It returned empty lists without erroring, so
+  three gates read **vacuous rather than false** — including `no_ghost_nodes`,
+  which "passed" only because the path set it checks was empty. The case now
+  pins `packet="gg"` because it asserts path identity, and `_parse_packet`
+  parses `#svo` and raises on any format it does not recognize.
+
+Acceptance pass-rate **0.9091 → 1.0** (11/11 active). Two cases remain
+`pending` (GG10-LC-001/002) and the locus graph is stale, so `release_ready`
+is still false; neither is folded into the pass-rate.
+
 Every stage uses the same acceptance sequence: focused interface tests, public
 contract parity, Ruff, full pytest, cold-start/token measurements when its hot
 path changes, and an exact-path GraphGraph refresh used only as a secondary

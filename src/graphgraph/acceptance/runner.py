@@ -20,8 +20,67 @@ from .model import CaseResult, PacketEdge, PacketNode, ProbeResult, Task
 from .tokens import count_tokens
 
 
+def _parse_svo(packet: str) -> tuple[dict[str, str], list[PacketNode], list[PacketEdge]]:
+    """Parse the ``#svo`` triple packet.
+
+    svo declares ``IdentityModel("label")``: entities carry an id and a label
+    but no path. Node paths are therefore left empty here rather than guessed.
+    A gate that asserts about paths must pin a path-carrying format instead of
+    reading vacuously-empty paths out of this one.
+    """
+    relations: dict[str, str] = {}
+    nodes: list[PacketNode] = []
+    edges: list[PacketEdge] = []
+    section = ""
+    for raw in packet.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped in ("@entities", "@triples"):
+            section = stripped
+            continue
+        if section == "@entities":
+            local_id, sep, label = stripped.partition(":")
+            if sep:
+                nodes.append(PacketNode(local_id=local_id.strip(), label=label.strip(), path=""))
+        elif section == "@triples":
+            subject, sep, rest = stripped.partition(" -")
+            if not sep:
+                continue
+            relation, arrow, obj = rest.partition("-> ")
+            if not arrow:
+                continue
+            relation = relation.strip()
+            relations[relation] = relation
+            edges.append(
+                PacketEdge(relation=relation, src=subject.strip(), dst=obj.strip())
+            )
+    return relations, nodes, edges
+
+
 def _parse_packet(packet: str) -> tuple[dict[str, str], list[PacketNode], list[PacketEdge]]:
-    """Parse the ``#gg`` compact packet into relations, nodes, and edges."""
+    """Parse a rendered packet into relations, nodes, and edges.
+
+    Dispatches on the format header. The compiler chooses the encoding
+    adaptively when a caller does not pin one (``gg`` minimizes to ``svo``),
+    so assuming a single format here is not safe.
+
+    An unrecognized non-empty packet raises. Returning empty lists instead
+    would report "no nodes found" for a packet that is full of them, which is
+    indistinguishable from a real retrieval miss and turns a parser gap into a
+    silent false failure in every gate downstream.
+    """
+    text = packet.strip()
+    if not text:
+        return {}, [], []
+    header = text.splitlines()[0].strip()
+    if header == "#svo":
+        return _parse_svo(packet)
+    if not (header.startswith("#gg") or header == "[r]" or "[r]" in text):
+        raise ValueError(
+            f"acceptance cannot parse packet format {header!r}; "
+            "add a parser for it or pin a supported format on the request"
+        )
     relations: dict[str, str] = {}
     nodes: list[PacketNode] = []
     edges: list[PacketEdge] = []
