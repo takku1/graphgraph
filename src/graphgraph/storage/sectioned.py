@@ -9,6 +9,7 @@ maintaining a duplicate database or sidecar index.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import struct
@@ -32,6 +33,7 @@ _PAGERANK_HEADER = struct.Struct("<IdII")
 _PAGERANK_SCORE = struct.Struct("<Id")
 _RELATION_HEADER = struct.Struct("<II")
 _CALL = struct.Struct("<IIdIIII")
+_INDEX_REF = struct.Struct("<QI")
 _MAX_SECTIONS = 64
 _PAGERANK_ALGORITHM = "pagerank"
 
@@ -83,6 +85,25 @@ class SectionedRelationView:
     outgoing: dict[int, tuple[RelationCall, ...]]
 
 
+@dataclass(frozen=True, slots=True)
+class PackedRelationView:
+    """Zero-materialization exact-relation view over GGB4 hot sections."""
+
+    topology_status: str
+    topology_detail: str
+    identity: bytes
+    identity_offsets: bytes
+    node_rows: bytes
+    node_count: int
+    exact_index: bytes
+    exact_index_count: int
+    outgoing_calls: bytes
+    outgoing_offsets: bytes
+    incoming_calls: bytes
+    incoming_offsets: bytes
+    relation_strings: tuple[str, ...]
+
+
 def is_sectioned_graph(path: Path) -> bool:
     try:
         with path.open("rb") as handle:
@@ -108,6 +129,39 @@ def _encode_strings(strings: dict[str, int]) -> bytes:
         buffer.write(_U32.pack(len(encoded)))
         buffer.write(encoded)
     return buffer.getvalue()
+
+
+def _encode_string_offsets(strings: dict[str, int]) -> bytes:
+    offsets: list[tuple[int]] = []
+    offset = 0
+    for value in sorted(strings, key=strings.__getitem__):
+        offsets.append((offset,))
+        offset += _U32.size + len(value.encode("utf-8"))
+    return _pack_rows(_U32, offsets)
+
+
+def _index_text(value: str) -> str:
+    return value.replace("\\", "/").strip().strip("/ ").casefold()
+
+
+def _index_hash(namespace: bytes, value: str) -> int:
+    digest = hashlib.blake2b(
+        namespace + b"\0" + value.encode("utf-8"),
+        digest_size=8,
+        person=b"graphgg4",
+    ).digest()
+    return int.from_bytes(digest, "little")
+
+
+def _call_offsets(rows: list[tuple], node_count: int, key_index: int) -> bytes:
+    offsets: list[tuple[int]] = []
+    cursor = 0
+    for node_n in range(node_count):
+        offsets.append((cursor,))
+        while cursor < len(rows) and rows[cursor][key_index] == node_n:
+            cursor += 1
+    offsets.append((cursor,))
+    return _pack_rows(_U32, offsets)
 
 
 def _pack_rows(record: struct.Struct, rows: list[tuple]) -> bytes:
@@ -156,10 +210,18 @@ def save_sectioned_graph(graph: Graph, path: Path) -> None:
     fact_refs: list[tuple[int]] = []
     node_lite_rows: list[tuple] = []
     node_detail_rows: list[tuple] = []
+    exact_index_rows: list[tuple[int, int]] = []
     numeric: dict[str, int] = {}
     for node_n, node in enumerate(graph.nodes.values()):
         if node.active:
             numeric[node.id] = node_n
+            exact_index_rows.extend(
+                (
+                    (_index_hash(b"id", node.id), node_n),
+                    (_index_hash(b"label", node.label.casefold()), node_n),
+                    (_index_hash(b"path", _index_text(node.path)), node_n),
+                )
+            )
         fact_start = len(fact_refs)
         for fact in node.facts:
             fact_refs.append((_put(detail, fact),))
@@ -232,9 +294,14 @@ def save_sectioned_graph(graph: Graph, path: Path) -> None:
         )
         for source_n, target_n, edge, count in _best_calls(graph, numeric)
     ]
+    outgoing_call_rows = sorted(call_rows, key=lambda row: (row[0], row[1]))
+    incoming_call_rows = sorted(call_rows, key=lambda row: (row[1], row[0]))
+    exact_index_rows.sort()
+    node_count = len(node_lite_rows)
 
     raw_sections: list[tuple[bytes, bytes, int]] = [
         (b"IDS0", _encode_strings(identity), len(identity)),
+        (b"IDOF", _encode_string_offsets(identity), len(identity)),
         (b"DTS0", _encode_strings(detail), len(detail)),
         (b"RLS0", _encode_strings(relation), len(relation)),
         (b"META", _pack_rows(_PAIR, metadata_rows), len(metadata_rows)),
@@ -245,7 +312,11 @@ def save_sectioned_graph(graph: Graph, path: Path) -> None:
         (b"PRHD", pagerank_header, 1),
         (b"PRSC", _pack_rows(_PAGERANK_SCORE, pagerank_rows), len(pagerank_rows)),
         (b"RLHD", relation_header, 1),
-        (b"CALL", _pack_rows(_CALL, call_rows), len(call_rows)),
+        (b"XIDX", _pack_rows(_INDEX_REF, exact_index_rows), len(exact_index_rows)),
+        (b"CALL", _pack_rows(_CALL, outgoing_call_rows), len(outgoing_call_rows)),
+        (b"COFF", _call_offsets(outgoing_call_rows, node_count, 0), node_count + 1),
+        (b"CIN0", _pack_rows(_CALL, incoming_call_rows), len(incoming_call_rows)),
+        (b"CIOF", _call_offsets(incoming_call_rows, node_count, 1), node_count + 1),
     ]
     directory_size = len(raw_sections) * _DIRECTORY_ENTRY.size
     offset = _HEADER.size + directory_size
@@ -473,7 +544,68 @@ def load_sectioned_graph(path: Path) -> Graph:
     # compatibility Graph is reconstructed from EDGE.
     for relation_kind in (b"RLS0", b"RLHD", b"CALL"):
         _section(data, directory, relation_kind)
+    for derived_kind in (b"IDOF", b"XIDX", b"COFF", b"CIN0", b"CIOF"):
+        if derived_kind in directory.sections:
+            _section(data, directory, derived_kind)
     return graph
+
+
+def load_packed_relation_view(path: Path) -> PackedRelationView | None:
+    """Load GGB4 exact indexes as raw buffers; return None for older GGB4 files."""
+
+    directory = read_sectioned_directory(path)
+    required = {b"IDOF", b"XIDX", b"COFF", b"CIN0", b"CIOF"}
+    if not required <= directory.sections.keys():
+        return None
+    identity, identity_count = read_section(path, directory, b"IDS0")
+    identity_offsets, offset_count = read_section(path, directory, b"IDOF")
+    if offset_count != identity_count or len(identity_offsets) != identity_count * _U32.size:
+        raise ValueError("invalid GGB4 identity offset index")
+    relation_payload, relation_count = read_section(path, directory, b"RLS0")
+    relation_strings = tuple(_decode_strings(relation_payload, relation_count))
+    relation_header, relation_header_count = read_section(path, directory, b"RLHD")
+    if relation_header_count != 1 or len(relation_header) != _RELATION_HEADER.size:
+        raise ValueError("invalid GGB4 relation header")
+    topology_status, topology_detail = _RELATION_HEADER.unpack(relation_header)
+    if not 0 <= topology_status < len(relation_strings) or not 0 <= topology_detail < len(relation_strings):
+        raise ValueError("invalid GGB4 relation header string index")
+    node_rows, node_count = read_section(path, directory, b"NODE")
+    exact_index, exact_index_count = read_section(path, directory, b"XIDX")
+    outgoing_calls, outgoing_count = read_section(path, directory, b"CALL")
+    outgoing_offsets, outgoing_offset_count = read_section(path, directory, b"COFF")
+    incoming_calls, incoming_count = read_section(path, directory, b"CIN0")
+    incoming_offsets, incoming_offset_count = read_section(path, directory, b"CIOF")
+    if outgoing_count != incoming_count:
+        raise ValueError("GGB4 forward/reverse call counts disagree")
+    if len(node_rows) != node_count * _NODE_LITE.size:
+        raise ValueError("invalid GGB4 packed node section")
+    if len(outgoing_calls) != outgoing_count * _CALL.size:
+        raise ValueError("invalid GGB4 outgoing call section")
+    if len(incoming_calls) != incoming_count * _CALL.size:
+        raise ValueError("invalid GGB4 incoming call section")
+    if outgoing_offset_count != node_count + 1 or incoming_offset_count != node_count + 1:
+        raise ValueError("invalid GGB4 call offset index")
+    if len(exact_index) != exact_index_count * _INDEX_REF.size:
+        raise ValueError("invalid GGB4 exact symbol index")
+    if len(outgoing_offsets) != outgoing_offset_count * _U32.size:
+        raise ValueError("invalid GGB4 outgoing call offsets")
+    if len(incoming_offsets) != incoming_offset_count * _U32.size:
+        raise ValueError("invalid GGB4 incoming call offsets")
+    return PackedRelationView(
+        topology_status=relation_strings[topology_status],
+        topology_detail=relation_strings[topology_detail],
+        identity=identity,
+        identity_offsets=identity_offsets,
+        node_rows=node_rows,
+        node_count=node_count,
+        exact_index=exact_index,
+        exact_index_count=exact_index_count,
+        outgoing_calls=outgoing_calls,
+        outgoing_offsets=outgoing_offsets,
+        incoming_calls=incoming_calls,
+        incoming_offsets=incoming_offsets,
+        relation_strings=relation_strings,
+    )
 
 
 def load_sectioned_relation_view(path: Path) -> SectionedRelationView:
@@ -600,9 +732,11 @@ __all__ = [
     "SectionedDirectory",
     "RelationCall",
     "RelationNode",
+    "PackedRelationView",
     "SectionedRelationView",
     "is_sectioned_graph",
     "load_sectioned_graph",
+    "load_packed_relation_view",
     "load_sectioned_relation_view",
     "read_section",
     "read_sectioned_directory",

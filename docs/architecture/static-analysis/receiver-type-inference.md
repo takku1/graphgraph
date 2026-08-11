@@ -30,7 +30,7 @@ A **36x spread** that an aggregate score hides. The pattern is not language
 quality, it is *idiom*: languages whose dominant call shape is `self.x()` score
 high, and languages whose idiom is `obj.method()` on an untyped local, a field,
 or a builder chain score low. See
-[the multi-language gray-box evaluation](../../evaluation/graybox-cycles/2026-07-30-graybox-multilang-critical.md)
+[the consolidated multi-language campaign](../../evaluation/graybox-cycles/README.md#historical-ceiling-campaigns)
 for the per-symbol oracle behind these numbers.
 
 ## What actually fails

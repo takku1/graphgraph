@@ -9,7 +9,7 @@ from graphgraph.graph.core import Edge, Graph, Node
 from graphgraph.io.core import save_graph
 from graphgraph.retrieval.context import retrieve_context
 from graphgraph.retrieval.subsystems import build_subsystem_map, subsystem_for_path
-from graphgraph.services.context import render_query_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 
 class SubsystemMapTest(unittest.TestCase):
@@ -104,13 +104,13 @@ class SubsystemMapTransportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "graph.gg"
             save_graph(self._graph(), path)
-            payload = json.loads(render_query_context(
+            payload = json.loads(CompilerDriver().compile(DriverRequest(
                 query="what are the main subsystems and what does each do",
                 query_class="subsystem_summary",
                 graph_path=path,
-                json_anchors=True,
+                json_output=True,
                 show_anchors=True,
-            ))
+            ))[0])
         # `actionable` is the one key compact JSON preserves verbatim.
         subsystem_map = payload["actionable"].get("subsystem_map")
         self.assertIsNotNone(subsystem_map)
@@ -122,13 +122,13 @@ class SubsystemMapTransportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "graph.gg"
             save_graph(self._graph(), path)
-            payload = json.loads(render_query_context(
+            payload = json.loads(CompilerDriver().compile(DriverRequest(
                 query="how does retrieve_context work",
                 query_class="direct_lookup",
                 graph_path=path,
-                json_anchors=True,
+                json_output=True,
                 show_anchors=True,
-            ))
+            ))[0])
         self.assertNotIn("subsystem_map", payload["actionable"])
 
 

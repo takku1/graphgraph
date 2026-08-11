@@ -20,7 +20,7 @@ from graphgraph.graph.core import Graph, Node
 from graphgraph.io import save_graph
 from graphgraph.packets import estimate_tokens
 from graphgraph.retrieval import retrieve_context
-from graphgraph.services import render_query_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 
 def _requiredness_graph() -> Graph:
@@ -66,11 +66,11 @@ class AbstentionRedControlTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.gg"
             save_graph(graph, graph_path)
-            packet = render_query_context(
+            packet, _status = CompilerDriver().compile(DriverRequest(
                 query="quantum teleportation relay array",
                 query_class="direct_lookup",
                 graph_path=graph_path,
-            )
+            ))
         self.assertLessEqual(estimate_tokens(packet), 50)
 
     def test_doc_only_coverage_reports_incomplete_not_unanswerable(self) -> None:

@@ -9,7 +9,7 @@ evidence gates prove that required graph evidence is present; they do not prove
 that a particular model will interpret every packet correctly.
 
 The active deployment/retrieval work is tracked by the evidence-gated
-[`2026-08-02 agent-cycle tracker`](../evaluation/graybox-cycles/2026-08-02-agent-cycle-efficiency-quality-tracker.md) (archive).
+[`2026-08-02 agent-cycle tracker`](../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements) (consolidated ledger).
 That checklist supersedes prose-only progress claims for resident transport,
 active graph freshness, conceptual retrieval, abstention, and response/token
 amplification.
@@ -168,7 +168,7 @@ same evaluation signal as the accuracy gates below.
 
 Completed platform hot-path work:
 
-- Production rendering and benchmark gates execute `GraphRuntime.compile`
+- Production rendering and benchmark gates execute `ContextCompiler.compile`
   instead of maintaining parallel route/retrieve/render implementations.
 - Evidence IR uses query-prioritized SQLite partitions with transactional
   incremental refresh and exact aggregate receipts.

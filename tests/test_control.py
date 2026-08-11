@@ -7,13 +7,14 @@ from pathlib import Path
 
 from benchmarks.context_graph.control_receipt_benchmark import evaluate_candidates
 from graphgraph.packets import estimate_tokens
+from graphgraph.services import compiler_driver as drivermod
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 from graphgraph.services.control import (
     ControlReceipt,
     choose_next_action,
     parse_control_ir,
     render_control_ir,
 )
-from graphgraph.services.native import render_native_context
 
 
 class ControlReceiptTest(unittest.TestCase):
@@ -76,14 +77,14 @@ class ControlReceiptTest(unittest.TestCase):
                 "def normalize_rust():\n    return True\n",
                 encoding="utf-8",
             )
-            rendered, _status = render_native_context(
+            rendered, _status = CompilerDriver().compile(DriverRequest(
                 query="where is normalize_rust",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.json",
                 query_class="direct_lookup",
                 json_output=True,
                 max_nodes=20,
-            )
+            ))
 
         payload = json.loads(rendered)
         control = parse_control_ir(payload["control"])
@@ -108,14 +109,14 @@ class ControlReceiptTest(unittest.TestCase):
                 "def normalize_rust():\n    return True\n",
                 encoding="utf-8",
             )
-            rendered, _status = render_native_context(
+            rendered, _status = CompilerDriver().compile(DriverRequest(
                 query="where is normalize_rust",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.json",
                 query_class="direct_lookup",
                 json_output=True,
                 max_nodes=20,
-            )
+            ))
 
         payload = json.loads(rendered)
         gates = dict(parse_control_ir(payload["control"]).gates)
@@ -131,7 +132,7 @@ class ControlReceiptTest(unittest.TestCase):
                 "def normalize_rust():\n    return True\n",
                 encoding="utf-8",
             )
-            rendered, _status = render_native_context(
+            rendered, _status = CompilerDriver().compile(DriverRequest(
                 query="where is normalize_rust",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.json",
@@ -139,7 +140,7 @@ class ControlReceiptTest(unittest.TestCase):
                 json_output=True,
                 json_details=False,
                 max_nodes=20,
-            )
+            ))
 
         payload = json.loads(rendered)
         self.assertNotIn("packet", payload)
@@ -162,16 +163,14 @@ class ControlReceiptTest(unittest.TestCase):
                 "max_nodes": 20,
             }
 
-            first, _status = render_native_context(**arguments)
-            second, _status = render_native_context(**arguments)
+            first, _status = CompilerDriver().compile(DriverRequest(**arguments))
+            second, _status = CompilerDriver().compile(DriverRequest(**arguments))
 
         self.assertEqual(json.loads(first)["workflow"]["cache"]["state"], "miss")
         self.assertEqual(json.loads(second)["workflow"]["cache"]["state"], "hit")
 
     def test_affected_test_command_contract_invalidates_legacy_response_cache(self) -> None:
         from unittest.mock import patch
-
-        from graphgraph.services import context as ctxmod
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -193,22 +192,22 @@ class ControlReceiptTest(unittest.TestCase):
             }
 
             with patch.object(
-                ctxmod,
+                drivermod,
                 "QUERY_RESPONSE_CACHE_VERSION",
                 "request_v17_path_intent_equivalence",
             ):
-                v17_first, _status = render_native_context(**arguments)
-                v17_second, _status = render_native_context(**arguments)
+                v17_first, _status = CompilerDriver().compile(DriverRequest(**arguments))
+                v17_second, _status = CompilerDriver().compile(DriverRequest(**arguments))
 
             with patch.object(
-                ctxmod,
+                drivermod,
                 "QUERY_RESPONSE_CACHE_VERSION",
                 "request_v18_affected_test_command_closure",
             ):
-                v18_first, _status = render_native_context(**arguments)
-                v18_second, _status = render_native_context(**arguments)
+                v18_first, _status = CompilerDriver().compile(DriverRequest(**arguments))
+                v18_second, _status = CompilerDriver().compile(DriverRequest(**arguments))
 
-            current, _status = render_native_context(**arguments)
+            current, _status = CompilerDriver().compile(DriverRequest(**arguments))
 
         self.assertEqual(json.loads(v17_first)["workflow"]["cache"]["state"], "miss")
         self.assertEqual(json.loads(v17_second)["workflow"]["cache"]["state"], "hit")
@@ -227,7 +226,7 @@ class ControlReceiptTest(unittest.TestCase):
         from unittest.mock import patch
 
         from graphgraph.retrieval import git_utils
-        from graphgraph.services import context as ctxmod
+        from graphgraph.services.cache_identity import worktree_signature
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -247,7 +246,7 @@ class ControlReceiptTest(unittest.TestCase):
                 (),
             )
             with patch.object(git_utils, "get_git_worktree_paths", return_value=worktree):
-                sig = ctxmod._session_signature(root)
+                sig = worktree_signature(root)
 
         tracked = {entry[0] for entry in sig}
         self.assertIn("real.py", tracked)
@@ -256,7 +255,7 @@ class ControlReceiptTest(unittest.TestCase):
         self.assertNotIn("semantic.json", tracked)
 
     def test_is_tool_artifact_classification(self) -> None:
-        from graphgraph.services.context import _is_tool_artifact
+        from graphgraph.services.cache_identity import is_generated_artifact
 
         for artifact in (
             ".graphgraph/kv_cache.json",
@@ -268,12 +267,12 @@ class ControlReceiptTest(unittest.TestCase):
             "graph.gg.manifest.json",
             "sub/dir/.graphgraph/anything.json",
         ):
-            self.assertTrue(_is_tool_artifact(artifact), artifact)
+            self.assertTrue(is_generated_artifact(artifact), artifact)
         for real in ("src/app.py", "README.md", "semantic_test.py", "graph_builder.py"):
-            self.assertFalse(_is_tool_artifact(real), real)
+            self.assertFalse(is_generated_artifact(real), real)
 
     def test_query_cache_hits_when_graphgraph_dir_is_not_gitignored(self) -> None:
-        # The end-to-end guard, through render_query_context (the `graphgraph
+        # The end-to-end guard, through CompilerDriver (the `graphgraph
         # query` path where the self-invalidating-cache bug actually lived), in
         # a real git repo whose .gitignore does NOT cover .graphgraph/ -- the
         # reviewer's external-repo scenario. The scan writes .graphgraph/ into
@@ -281,8 +280,8 @@ class ControlReceiptTest(unittest.TestCase):
         # before the fix its per-run mtime busted the key every time.
         import subprocess
 
-        from graphgraph.services.context import render_query_context
-        from graphgraph.services.native import scan_validated_graph
+        from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
+        from graphgraph.services.lifecycle import scan_validated_graph
 
         def git(*args, cwd):
             subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
@@ -308,7 +307,7 @@ class ControlReceiptTest(unittest.TestCase):
                 graph_path=graph_path,
                 cache_namespace="cli_query",
                 show_anchors=True,
-                json_anchors=True,
+                json_output=True,
             )
             # git_utils caches worktree state per-process; clear it so the
             # second call re-derives the signature exactly as a fresh process
@@ -316,9 +315,9 @@ class ControlReceiptTest(unittest.TestCase):
             from graphgraph.retrieval import git_utils
 
             git_utils._git_path_cache.clear()
-            first = render_query_context(**kwargs)
+            first = CompilerDriver().compile(DriverRequest(**kwargs))[0]
             git_utils._git_path_cache.clear()
-            second = render_query_context(**kwargs)
+            second = CompilerDriver().compile(DriverRequest(**kwargs))[0]
 
         self.assertEqual(json.loads(first)["workflow"]["cache"]["state"], "miss")
         self.assertEqual(json.loads(second)["workflow"]["cache"]["state"], "hit")

@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .service import execute_acceptance
+from .execution import execute_acceptance
 
 
 def main(argv: list[str] | None = None) -> int:

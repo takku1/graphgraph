@@ -15,7 +15,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, CaseResult, GateResult, Task
 from .runner import _parse_packet
@@ -41,7 +41,7 @@ def _query(
     changed: tuple[str, ...] = (),
     deleted: tuple[str, ...] = (),
 ):
-    rendered, status = render_native_context(
+    rendered, status = CompilerDriver().compile(DriverRequest(
         query=_QUERY,
         query_class="reverse_lookup",
         directory=directory,
@@ -53,7 +53,7 @@ def _query(
         rebuild=rebuild,
         changed_paths=changed,
         deleted_paths=deleted,
-    )
+    ))
     return json.loads(rendered), status
 
 

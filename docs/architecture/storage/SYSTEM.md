@@ -40,7 +40,7 @@ source → Graph IR → binary graph.gg → selected subgraph → context packet
 - **[Ubiquitous]** Packet `#gg` text SHALL NOT be confused with the binary store encoding.
   - `EvidenceStage: Observed` — distinct code paths (`packets/` vs `storage/backends.py`).
 - **[Ubiquitous]** A cache key SHALL NOT be derived from artifacts the tool itself writes under `.graphgraph/`.
-  - `EvidenceStage: Measured` — a key that fingerprinted the tool's own `kv_cache.json` self-invalidated on every run (0% hit rate on external repositories); excluding it restored the hit path. See [caching and compression prototypes](../../evaluation/graybox-cycles/2026-07-31-caching-and-compression-prototypes.md).
+  - `EvidenceStage: Measured` — a key that fingerprinted the tool's own `kv_cache.json` self-invalidated on every run (0% hit rate on external repositories); excluding it restored the hit path. See [the consolidated cache measurement](../../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements).
 - **[Conditional]** IF a state-file lock is held by a live owner THEN age alone SHALL NOT revoke it.
   - `EvidenceStage: Observed` — defect 1 in the [defect ledger](../../evaluation/defect-ledger.md), fixed.
 
@@ -55,7 +55,7 @@ source → Graph IR → binary graph.gg → selected subgraph → context packet
 | | |
 |--|--|
 | **Implementation** | `storage/backends.py` (GGB2/3/4 read, v4 write), `storage/sectioned.py`, `runtime/state.py`, `runtime/manifest.py`, `io/cache.py`, `io/discovery.py` |
-| **Test surface** | `tests/test_sectioned_storage.py`, `tests/test_storage_delta.py`, `tests/test_runtime_factory.py` |
+| **Test surface** | `tests/test_sectioned_storage.py`, `tests/test_storage_delta.py`, `tests/test_context_compiler.py` |
 | **Determinism gate** | A canonical, timestamp-free graph dump — byte-identity across a change is what makes a storage or scan optimization safe to land |
 
 ## 7. Measurement seams

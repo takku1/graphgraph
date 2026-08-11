@@ -10,6 +10,7 @@ Hypotheses, surveys, math, comparisons, and manuscript drafts. **Not** default r
 | [publication-roadmap.md](publication-roadmap.md) | Path to publishable claims |
 | [manuscript-graphgraph-2.md](manuscript-graphgraph-2.md) | GraphGraph 2.0 manuscript draft |
 | [optimization-research-agenda.md](optimization-research-agenda.md) | Optimization agenda (tasks → open-work) |
+| [extensible-context-compiler.md](extensible-context-compiler.md) | Deep compiler Module, pass architecture, cold-start research, and reuse decisions |
 | [evidence link](../guides/evidence-standards.md) | Promotion rules |
 
 ## Mathematics & representations

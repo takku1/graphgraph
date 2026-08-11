@@ -10,8 +10,7 @@ from pathlib import Path
 from ..graph.core import Graph
 from ..io import load_any
 from ..packets import estimate_tokens
-from .compiler import GraphProgram
-from .runtime import create_graph_runtime
+from .compiler import CompileRequest, ContextCompiler
 
 
 @dataclass(frozen=True)
@@ -189,12 +188,12 @@ def _run_case(
     source_mode: str,
 ) -> dict[str, object]:
     started = time.perf_counter()
-    compiled = create_graph_runtime(
+    compiled = ContextCompiler.open(
         graph_path,
         graph=graph,
         enable_evidence=False,
         source_mode=source_mode,
-    ).compile(GraphProgram(
+    ).compile(CompileRequest(
         query=case.query,
         query_class=case.query_class,
         packet=case.packet,

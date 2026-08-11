@@ -1,9 +1,8 @@
 from .parser import build_parser
 
-# `commands` intentionally not star-imported here: it eagerly aggregates every
-# command handler (and their scanner/services/platform import chains), which the
-# lazy parser dispatch now defers to the invoked subcommand. Callers that want a
-# handler import it from `graphgraph.cli.commands` directly.
+# Command handlers live only in their domain modules. The parser resolves them
+# lazily so importing the CLI interface does not load scanner/services/platform
+# stacks merely to build `--help`.
 
 
 def _configure_stdio() -> None:

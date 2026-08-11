@@ -17,7 +17,7 @@ REPORT_JSON = OUT / "live_query_noise.json"
 REPORT_MD = OUT / "live_query_noise.md"
 
 QUERIES = [
-    ("native_context_status", "graphgraph current status native context command retrieval smoke tests codex skill", "subsystem_summary"),
+    ("compiler_driver_status", "graphgraph current status compiler driver command retrieval smoke tests codex skill", "subsystem_summary"),
     ("retrieval_noise", "subsystem summary retrieval concept doc weak edge noise pruning", "subsystem_summary"),
     ("install_interop", "install codex graphify code-review graph ingest no touch external graph tools", "subsystem_summary"),
     ("doc_usage", "README installation usage graphgraph context", "doc_summary"),

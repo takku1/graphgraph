@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..packet_targets import TARGET_SPECS, target_spec
+
 # Per-packet token surface: (intercept, node_cost, edge_cost). A packet's
 # planning token proxy is intercept + node_cost*nodes + edge_cost*edges;
 # gg_hybrid adds a separate fact-token term at runtime, so its surface is
@@ -13,16 +15,17 @@ from __future__ import annotations
 # zero-edge semantic/gg decision at 100%. Refit whenever packet syntax or the
 # real-project calibration corpus changes.
 PACKET_TOKEN_SURFACE = {
-    "gg": (6.6316, 11.9975, 5.1632),
-    "semantic_arrow": (7.2784, 3.3447, 11.2080),
-    "sql": (17.9379, 15.2861, 10.1090),
-    "lowlevel": (31.7781, 3.3877, 9.2161),
-    "gg_hybrid": (8.1675, 14.3447, 5.0622),
+    spec.name: spec.cost.coefficients
+    for spec in TARGET_SPECS
+    if spec.cost.calibrated
 }
 
 
 def packet_token_surface(packet: str) -> tuple[float, float, float]:
-    return PACKET_TOKEN_SURFACE.get(packet, PACKET_TOKEN_SURFACE["gg"])
+    try:
+        return target_spec(packet).cost.coefficients
+    except ValueError:
+        return target_spec("gg").cost.coefficients
 
 
 def packet_marginal_costs(packet: str) -> tuple[float, float]:

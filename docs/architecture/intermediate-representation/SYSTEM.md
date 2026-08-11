@@ -64,7 +64,7 @@ Loose schema binding exists for **interop ingest**; native persistence is `.grap
 | **Primary metric** | Traversal cost per expansion hop (`direction: lower`) |
 | **Structural gate** | Byte-identical canonical dump across a refactor — the gate that made the scan and retrieval optimizations safe |
 | **Ontology metric** | Edge-type contribution to retrieval quality, ranked under OW-Q04-* |
-| **Caution** | `graph/coupling.py` is production graph coupling; the research coupling line (influence field) is separate and [did not survive production measurement](../../evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md) |
+| **Caution** | `graph/coupling.py` is production graph coupling; the research coupling line (influence field) is separate and [did not survive production measurement](../../evaluation/graybox-cycles/README.md#influence-field-experiment) |
 
 ## 8. Technology resolution
 

@@ -30,6 +30,56 @@ _GO_TYPED_BINDING = re.compile(
 )
 
 
+# `x := NewEngine()` / `x, err := pkg.Open()` -- a local bound to a call's
+# result. The `(` is what separates this from the composite-literal form above;
+# `for i := 0` and `x := y` have no call to type from.
+_GO_CALL_ASSIGNMENT = re.compile(
+    r"\b(?P<variable>[A-Za-z_]\w*)\s*(?:,\s*[A-Za-z_]\w*\s*)*:=\s*"
+    r"(?:[A-Za-z_]\w*\.)?(?P<function>[A-Za-z_]\w*)\s*\("
+)
+
+# A single nominal type: `Engine`, `*Engine`, `pkg.Engine`. Slices, maps and
+# channels deliberately fail to match -- `[]*Widget` does not own `Widget`'s
+# methods, so binding it would manufacture a wrong edge.
+_GO_NOMINAL_TYPE = re.compile(r"^\*?(?:[a-z]\w*\.)?([A-Z]\w*)$")
+
+
+def go_return_type_name(result_text: str) -> str:
+    """The nominal type a Go signature's result names, or "" when it names none.
+
+    Go declares results explicitly, so this is a read of the signature rather
+    than an inference about the body -- the distinction this module's contract
+    turns on. Multi-value results are reduced to their first component, which
+    is what `w, err := Open()` binds; the trailing `error`/`ok` conventionally
+    carries no methods worth resolving.
+    """
+    text = result_text.strip()
+    if not text:
+        return ""
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1].split(",", 1)[0].strip()
+    match = _GO_NOMINAL_TYPE.match(text)
+    return match.group(1) if match else ""
+
+
+def go_local_call_return_types(body: str, return_types: dict[str, str]) -> dict[str, str]:
+    """Receivers typed by the declared result of the function they were bound to.
+
+    `x := NewEngine()` is how Go idiomatically binds almost every local, and it
+    was the tool's single largest unresolved shape: `:=` was only understood in
+    its composite-literal form (`x := Engine{}`). Only names with one concrete
+    return type repo-wide appear in *return_types*, so an overloaded or
+    ambiguous name still resolves to nothing rather than to a guess -- the same
+    rule Rust and TypeScript already apply here.
+    """
+    inferred: dict[str, str] = {}
+    for match in _GO_CALL_ASSIGNMENT.finditer(body):
+        return_type = return_types.get(match.group("function"), "")
+        if return_type:
+            inferred.setdefault(match.group("variable"), return_type)
+    return inferred
+
+
 def go_local_types(body: str) -> dict[str, str]:
     """Receiver types bound in one Go function body.
 

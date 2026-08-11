@@ -42,29 +42,28 @@ class PublicContractParityTest(unittest.TestCase):
     def test_packet_formats_match_cli_mcp_http_dispatch_and_descriptions(self) -> None:
         from graphgraph.cli.parser import build_parser
         from graphgraph.mcp.server import FORMAT_TABLE
-        from graphgraph.packets.formats import PACKET_FORMAT_NAMES
-        from graphgraph.packets.renderers import _PACKET_RENDERERS
-        from graphgraph.platform import service
+        from graphgraph.packet_targets import TARGET_NAMES, TARGET_SPECS
+        from graphgraph.platform import server
 
         parser = build_parser()
         for command in ("final", "query", "context"):
             self.assertEqual(
                 _option_choices(_subparser(parser, command), "--packet"),
-                PACKET_FORMAT_NAMES,
+                TARGET_NAMES,
             )
 
         platform_compile = _subparser(_subparser(parser, "platform"), "compile")
-        self.assertEqual(_option_choices(platform_compile, "--packet"), PACKET_FORMAT_NAMES)
+        self.assertEqual(_option_choices(platform_compile, "--packet"), TARGET_NAMES)
         self.assertEqual(platform_compile.get_default("packet"), "gg")
 
         for tool_name in ("final_packet", "query_context", "compile_context"):
             packet = _property(tool_name, "packet")
-            self.assertEqual(tuple(packet["enum"]), PACKET_FORMAT_NAMES)
+            self.assertEqual(tuple(packet["enum"]), TARGET_NAMES)
         self.assertEqual(_property("compile_context", "packet")["default"], "gg")
 
-        self.assertEqual(tuple(_PACKET_RENDERERS), PACKET_FORMAT_NAMES)
-        self.assertEqual(service.PACKET_FORMAT_NAMES, PACKET_FORMAT_NAMES)
-        self.assertEqual(tuple(row["format"] for row in FORMAT_TABLE), PACKET_FORMAT_NAMES)
+        self.assertTrue(all(target.encoder and target.validator for target in TARGET_SPECS))
+        self.assertEqual(server.TARGET_NAMES, TARGET_NAMES)
+        self.assertEqual(tuple(row["format"] for row in FORMAT_TABLE), TARGET_NAMES)
 
     def test_query_classes_match_cli_mcp_and_domain_behavior(self) -> None:
         from graphgraph.cli.parser import build_parser
@@ -97,8 +96,8 @@ class PublicContractParityTest(unittest.TestCase):
     def test_compiler_passes_match_cli_mcp_http_and_capabilities(self) -> None:
         from graphgraph.cli.parser import build_parser
         from graphgraph.cli.platform import platform_capabilities
-        from graphgraph.platform import service
-        from graphgraph.platform.compiler import COMPILER_PASS_NAMES
+        from graphgraph.platform import server
+        from graphgraph.platform.compiler import COMPILER_PASS_NAMES, compiler_pass_table
 
         parser = build_parser()
         platform = _subparser(parser, "platform")
@@ -114,11 +113,19 @@ class PublicContractParityTest(unittest.TestCase):
         items = passes["items"]
         assert isinstance(items, dict)
         self.assertEqual(tuple(items["enum"]), COMPILER_PASS_NAMES)
-        self.assertEqual(service.COMPILER_PASS_NAMES, COMPILER_PASS_NAMES)
+        self.assertEqual(server.COMPILER_PASS_NAMES, COMPILER_PASS_NAMES)
         self.assertEqual(tuple(platform_capabilities()["passes"]), COMPILER_PASS_NAMES)
+        specs = platform_capabilities()["pass_specs"]
+        self.assertEqual(specs, list(compiler_pass_table()))
+        for spec in specs:
+            self.assertTrue(spec["version"])
+            self.assertTrue(spec["requires"])
+            self.assertTrue(spec["produces"])
+            self.assertIn(spec["cache_scope"], {"none", "compiler"})
+            self.assertTrue(spec["cost"]["complexity"])
 
     def test_architecture_contract_tables_are_generated_from_registries(self) -> None:
-        from graphgraph.packets.formats import packet_format_markdown_table
+        from graphgraph.packet_targets import packet_format_markdown_table
         from graphgraph.planning.routing import query_class_markdown_table
 
         architecture = (

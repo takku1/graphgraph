@@ -17,7 +17,7 @@ from graphgraph.packets import render_packet  # noqa: E402
 from graphgraph.packets.validation import validate_packet  # noqa: E402
 from graphgraph.planning import profile_graph_shape, recommend_node_budget  # noqa: E402
 from graphgraph.scanner import scan_directory  # noqa: E402
-from graphgraph.services import render_query_context  # noqa: E402
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "live"
 GRAPH_PATH = OUT / "live_graph_shape.graph.json"
@@ -90,14 +90,14 @@ def main() -> None:
 
     queries = []
     for query, query_class in DEFAULT_QUERIES:
-        packet_text = render_query_context(
+        packet_text, _status = CompilerDriver().compile(DriverRequest(
             query=query,
             query_class=query_class,
             graph_path=GRAPH_PATH,
             show_anchors=True,
-            json_anchors=True,
+            json_output=True,
             cache_namespace="live_shape",
-        )
+        ))
         data = json.loads(packet_text)
         packet = data.get("packet", "")
         validation = validate_packet(packet) if packet else None

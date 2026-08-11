@@ -377,30 +377,6 @@ def render_gg_lex(
     return render_gg(graph, nodes, edges, relations, lexical=True, facts=hybrid)
 
 
-# Packet name -> renderer. This is dispatch, not policy: a finite, discrete set
-# of named wire formats, so a lookup table is the whole story -- there is nothing
-# continuous to optimize here. The gg family is one renderer parameterized by id
-# scheme and facts; everything else is its own function. (Which format to *pick*
-# for a query is a separate, deliberately piecewise decision in planning/packet.)
-_PACKET_RENDERERS = {
-    "lowlevel": render_lowlevel,
-    "sql": render_sql,
-    "hybrid": render_hybrid,
-    "semantic_arrow": render_semantic_arrow,
-    "gg": render_gg,
-    "gg_hybrid": lambda g, n, e: render_gg(g, n, e, facts=True),
-    "gg_lex": lambda g, n, e: render_gg(g, n, e, lexical=True),
-    "gg_lex_hybrid": lambda g, n, e: render_gg(g, n, e, lexical=True, facts=True),
-    "svo": render_svo,
-    "doc_summary": render_doc_summary,
-}
-
-# gg-family renderers can lead the packet with the query's answer anchors so a
-# direct lookup's own symbol is not buried. Other formats have their own fixed
-# ordering and ignore the hint (passing it would be a no-op at best).
-_PRIORITY_AWARE_FORMATS = {"gg", "gg_hybrid", "gg_lex", "gg_lex_hybrid"}
-
-
 def render_packet(
     graph: Graph,
     nodes: set[str],
@@ -408,19 +384,6 @@ def render_packet(
     packet: str,
     priority: tuple[str, ...] = (),
 ) -> str:
-    try:
-        renderer = _PACKET_RENDERERS[packet]
-    except KeyError:
-        raise ValueError(f"unknown packet format: {packet}") from None
-    if priority and packet in _PRIORITY_AWARE_FORMATS:
-        # Only the base gg renderer takes the kwarg directly; the parameterized
-        # variants are lambdas, so route through render_gg with the right knobs.
-        return render_gg(
-            graph,
-            nodes,
-            edges,
-            lexical="lex" in packet,
-            facts="hybrid" in packet,
-            priority=priority,
-        )
-    return renderer(graph, nodes, edges)
+    from ..packet_targets import target_spec
+
+    return target_spec(packet).encode(graph, nodes, edges, priority=priority)

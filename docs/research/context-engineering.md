@@ -76,7 +76,7 @@ evidence relationships directly, then state where the graph is incomplete.
 | Decision/process traces | **Implemented** | `decision_trace`, `used_input`, and `applied_policy` relations plus runtime pass receipts | A general workflow/approval engine |
 | Temporal graph views | **Partial** | `graph_as_of` filters nodes and edge validity intervals; episodes are append-only | Independent valid-time and transaction-time coordinates |
 | Scoped memory | **Partial** | Scoped records, lexical retrieval, and graph projection | Copy-on-write branches, merge semantics, conflict resolution |
-| Structured query plan | **Implemented** | Natural-language planning and `GraphProgram` select bounded runtime passes | A textual GQL grammar compiled to array operations |
+| Structured query plan | **Implemented** | Natural-language planning and `CompileRequest` constraints select bounded compiler behavior | A textual GQL grammar compiled to array operations |
 | Hierarchy/community hints | **Partial** | Deterministic weighted label propagation and additive community nodes | Louvain optimization and lossy packet coarsening |
 | Binary storage | **Implemented** | GGB4 sections dictionary-code full graph records and embedded numeric call adjacency; exact relations load only hot sections | Section-selective atlas/search and measured memory mapping |
 | Verification | **Implemented** | Packet validation, semantic/freshness receipts, acceptance fixtures, and quality gates | Automatic source rollback or transactional repair |
@@ -224,7 +224,7 @@ insufficient.
 
 GraphGraph already compiles user intent in the practical sense: the planner
 classifies a query, resolves anchors and scope, selects traversal behavior, and
-the `GraphProgram` runtime executes bounded evidence, inference, and hierarchy
+`ContextCompiler` executes bounded evidence, inference, and hierarchy
 passes.
 
 That structured representation is closer to an LLM-native instruction form than
@@ -424,8 +424,8 @@ storage and maintenance cost. Evaluation must include those costs.
 
 ### P4 — Branching and query language
 
-- [ ] Gather concrete workflows that cannot be expressed with scopes and
-  `GraphProgram`.
+- [ ] Gather concrete workflows that cannot be expressed with `CompileRequest`
+  constraints and scopes.
 - [ ] Design copy-on-write overlays only if branch isolation solves those workflows.
 - [ ] Add a textual query language only if a typed AST proves insufficient for
   external clients.

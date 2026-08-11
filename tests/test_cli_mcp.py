@@ -28,14 +28,14 @@ from graphgraph.packets import (
     validate_packet,
 )
 from graphgraph.scanner import scan_directory
-from graphgraph.services.native import (
-    GraphBuildStatus,
-    graph_shape,
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
+from graphgraph.services.freshness import (
     inspect_saved_graph_freshness,
     refresh_receipt,
-    render_native_context,
     scope_freshness,
 )
+from graphgraph.services.lifecycle import GraphBuildStatus
+from graphgraph.services.project_status import graph_shape
 
 
 class CliMcpTest(unittest.TestCase):
@@ -440,7 +440,7 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(data2["top_score_gap_ratio"], 1.0)
 
     def test_cmd_scan_refuses_invalid_graph_without_overwrite(self) -> None:
-        from graphgraph.cli.commands import cmd_scan
+        from graphgraph.cli.lifecycle import cmd_scan
 
         class Args:
             directory = "."
@@ -473,7 +473,7 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(graph_path.read_text(encoding="utf-8"), before)
 
     def test_bare_scan_writes_canonical_gg_despite_legacy_store(self) -> None:
-        from graphgraph.cli.commands import cmd_scan
+        from graphgraph.cli.lifecycle import cmd_scan
 
         class Args:
             directory = "."
@@ -539,7 +539,7 @@ class CliMcpTest(unittest.TestCase):
                 find_graph_path(root)
 
     def test_scan_validated_graph_repairs_invalid_incremental_scan(self) -> None:
-        from graphgraph.services.native import scan_validated_graph
+        from graphgraph.services.lifecycle import scan_validated_graph
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -562,7 +562,7 @@ class CliMcpTest(unittest.TestCase):
 
     def test_custom_scan_output_and_manifest_never_enter_their_own_graph(self) -> None:
         from graphgraph.runtime.manifest import Manifest
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             manifest_path_for_graph,
             scan_validated_graph,
             update_paths_validated_graph,
@@ -934,7 +934,7 @@ class CliMcpTest(unittest.TestCase):
                     return_value=[],
                 ),
                 patch(
-                    "graphgraph.platform.runtime.QuerySourcePlanner",
+                    "graphgraph.platform.compiler.QuerySourcePlanner",
                     wraps=QuerySourcePlanner,
                 ) as planner,
             ):
@@ -1096,7 +1096,7 @@ class CliMcpTest(unittest.TestCase):
             # Keep this file on disk deliberately: deleted_paths is an
             # authoritative graph instruction, not an existence heuristic.
             with patch(
-                "graphgraph.services.context.load_any_cached",
+                "graphgraph.services.compiler_driver.load_any_cached",
                 side_effect=AssertionError("fused query reloaded the just-written graph"),
             ):
                 response = dispatch(
@@ -1124,13 +1124,18 @@ class CliMcpTest(unittest.TestCase):
             data = json.loads(response["result"]["content"][0]["text"])
             self.assertEqual(data["anchors"][0]["label"], "fused_fresh_handler")
             self.assertIn("fused_fresh_handler", data["packet"])
-            self.assertEqual(data["actionable"]["freshness_ref"], "$.freshness")
-            self.assertTrue(data["freshness"]["requested_scope_fresh"])
-            self.assertEqual(data["refresh"]["requested_paths"], ["main.py", "removed.py"])
-            self.assertEqual(data["refresh"]["refreshed_paths"], ["main.py"])
-            self.assertEqual(data["refresh"]["removed_paths"], ["removed.py"])
-            self.assertTrue(data["refresh"]["graph_mutations"]["write_performed"])
-            self.assertEqual(data["freshness"]["remaining_stale_count"], 0)
+            self.assertEqual(data["actionable"]["freshness_ref"], "$.workflow.freshness")
+            self.assertTrue(data["workflow"]["freshness"]["requested_scope_fresh"])
+            self.assertEqual(
+                data["workflow"]["refresh"]["requested_paths"],
+                ["main.py", "removed.py"],
+            )
+            self.assertEqual(data["workflow"]["refresh"]["refreshed_paths"], ["main.py"])
+            self.assertEqual(data["workflow"]["refresh"]["removed_paths"], ["removed.py"])
+            self.assertTrue(
+                data["workflow"]["refresh"]["graph_mutations"]["write_performed"]
+            )
+            self.assertEqual(data["workflow"]["freshness"]["remaining_stale_count"], 0)
 
             refreshed = load_any(graph_path)
             labels = {node.label for node in refreshed.nodes.values()}
@@ -1241,8 +1246,8 @@ class CliMcpTest(unittest.TestCase):
             assert first is not None and second is not None
             first_data = json.loads(first["result"]["content"][0]["text"])
             second_data = json.loads(second["result"]["content"][0]["text"])
-            self.assertEqual(first_data["refresh"]["changed_paths"], ["worker.py"])
-            self.assertEqual(second_data["refresh"]["changed_paths"], [])
+            self.assertEqual(first_data["workflow"]["refresh"]["changed_paths"], ["worker.py"])
+            self.assertEqual(second_data["workflow"]["refresh"]["changed_paths"], [])
             self.assertEqual(first_data["anchors"][0]["label"], "synced_worker")
             self.assertEqual(second_data["anchors"][0]["label"], "synced_worker")
 
@@ -1298,8 +1303,11 @@ class CliMcpTest(unittest.TestCase):
 
             assert response is not None
             data = json.loads(response["result"]["content"][0]["text"])
-            self.assertEqual(data["refresh"]["changed_paths"], [])
-            self.assertEqual(data["refresh"]["deleted_paths"], ["docs/bugs/note.md"])
+            self.assertEqual(data["workflow"]["refresh"]["changed_paths"], [])
+            self.assertEqual(
+                data["workflow"]["refresh"]["deleted_paths"],
+                ["docs/bugs/note.md"],
+            )
             refreshed = load_any(graph_path)
             self.assertFalse(any(node.path == "docs/bugs/note.md" for node in refreshed.nodes.values()))
             self.assertFalse(any(node.path == ".gitignore" for node in refreshed.nodes.values()))
@@ -1407,7 +1415,7 @@ class CliMcpTest(unittest.TestCase):
         import subprocess
 
         from graphgraph.mcp.server import handle_update_graph_files
-        from graphgraph.services.native import scan_validated_graph
+        from graphgraph.services.lifecycle import scan_validated_graph
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1470,7 +1478,7 @@ class CliMcpTest(unittest.TestCase):
         import subprocess
 
         from graphgraph.mcp.server import handle_remove_graph_files, handle_update_graph_files
-        from graphgraph.services.native import scan_validated_graph
+        from graphgraph.services.lifecycle import scan_validated_graph
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1538,7 +1546,7 @@ class CliMcpTest(unittest.TestCase):
         # so it cannot see this; both conditions have to be absent to catch it.
         import subprocess
 
-        from graphgraph.services.native import scan_validated_graph
+        from graphgraph.services.lifecycle import scan_validated_graph
 
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as elsewhere:
             root = Path(tmp)
@@ -1612,7 +1620,7 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("graphgraph", proc.stdout)
 
-    def test_native_context_builds_graph_and_skips_artifacts(self) -> None:
+    def test_compiler_driver_builds_graph_and_skips_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "src").mkdir()
@@ -1621,14 +1629,14 @@ class CliMcpTest(unittest.TestCase):
             (root / "evidence" / "old_status.md").write_text("# Generated status\n", encoding="utf-8")
             graph_path = root / ".graphgraph" / "graph.json"
 
-            packet, status = render_native_context(
+            packet, status = CompilerDriver().compile(DriverRequest(
                 query="run context",
                 directory=root,
                 graph_path=graph_path,
                 rebuild=False,
                 query_class="direct_lookup",
                 max_nodes=20,
-            )
+            ))
 
             self.assertTrue(status.built)
             self.assertTrue(graph_path.exists())
@@ -1639,26 +1647,26 @@ class CliMcpTest(unittest.TestCase):
             shape = graph_shape(status.graph)
             self.assertGreaterEqual(shape["source_nodes"], 1)
 
-            packet2, status2 = render_native_context(
+            packet2, status2 = CompilerDriver().compile(DriverRequest(
                 query="run context",
                 directory=root,
                 graph_path=graph_path,
                 rebuild=False,
                 query_class="direct_lookup",
                 max_nodes=20,
-            )
+            ))
             self.assertFalse(status2.built)
             self.assertEqual(packet2, packet)
 
             (root / "src" / "app.py").write_text("def run_context_clean():\n    return 'ok'\n", encoding="utf-8")
-            packet3, status3 = render_native_context(
+            packet3, status3 = CompilerDriver().compile(DriverRequest(
                 query="run context clean",
                 directory=root,
                 graph_path=graph_path,
                 rebuild=True,
                 query_class="direct_lookup",
                 max_nodes=20,
-            )
+            ))
             self.assertTrue(status3.built)
             self.assertIn("run_context_clean", packet3)
             self.assertNotIn("run_context():", packet3)
@@ -1671,14 +1679,14 @@ class CliMcpTest(unittest.TestCase):
                 "def worker_implementation():\n    return 'wired'\n",
                 encoding="utf-8",
             )
-            packet, _status = render_native_context(
+            packet, _status = CompilerDriver().compile(DriverRequest(
                 query="Where is the nonexistent quantum banana scheduler implemented?",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.json",
                 query_class="negative_query",
                 json_output=True,
                 max_nodes=20,
-            )
+            ))
 
         payload = json.loads(packet)
         self.assertEqual(payload["retrieval"]["answerability"]["status"], "unanswerable")
@@ -1694,14 +1702,14 @@ class CliMcpTest(unittest.TestCase):
                 "def compile_formula():\n    return 'ok'\n",
                 encoding="utf-8",
             )
-            packet, _status = render_native_context(
+            packet, _status = CompilerDriver().compile(DriverRequest(
                 query="where is compile_formula",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.json",
                 query_class="direct_lookup",
                 json_output=True,
                 max_nodes=20,
-            )
+            ))
 
         payload = json.loads(packet)
         validation = payload["workflow"]["packet_validation"]
@@ -1724,7 +1732,7 @@ class CliMcpTest(unittest.TestCase):
                 "def compile_formula():\n    return True\n",
                 encoding="utf-8",
             )
-            packet, _status = render_native_context(
+            packet, _status = CompilerDriver().compile(DriverRequest(
                 query="which direct tests cover compile_formula",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.json",
@@ -1732,7 +1740,7 @@ class CliMcpTest(unittest.TestCase):
                 json_output=True,
                 json_details=False,
                 max_nodes=20,
-            )
+            ))
 
         payload = json.loads(packet)
         self.assertEqual(payload["details"]["included"], False)
@@ -2005,7 +2013,7 @@ class CliMcpTest(unittest.TestCase):
     def test_cmd_install_project(self) -> None:
         import os
 
-        from graphgraph.cli.commands import cmd_install
+        from graphgraph.cli.install import cmd_install
 
         class DummyArgs:
             project = True
@@ -2094,7 +2102,8 @@ class CliMcpTest(unittest.TestCase):
     def test_cmd_install_global_codex_refreshes_published_skill(self) -> None:
         from unittest.mock import patch
 
-        from graphgraph.cli.commands import _installed_skill_artifact_status, cmd_install
+        from graphgraph.cli.diagnostics import _installed_skill_artifact_status
+        from graphgraph.cli.install import cmd_install
 
         class DummyArgs:
             project = False
@@ -2260,7 +2269,10 @@ class CliMcpTest(unittest.TestCase):
             }
         )
         with (
-            patch("graphgraph.services.render_query_context", return_value=response) as render,
+            patch(
+                "graphgraph.services.compiler_driver.CompilerDriver.compile",
+                return_value=(response, SimpleNamespace()),
+            ) as compile_context,
             patch(
                 "graphgraph.packets.validation.validate_packet",
                 return_value=SimpleNamespace(
@@ -2275,7 +2287,8 @@ class CliMcpTest(unittest.TestCase):
             rows = validate_queries(sample_graph(), Path("live.graph.json"), [query])
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(render.call_args.kwargs["query_class"], "auto")
+        request = compile_context.call_args.args[0]
+        self.assertEqual(request.query_class, "auto")
         self.assertEqual(rows[0]["query_class"], "affected_tests")
         self.assertTrue(rows[0]["query_valid"])
         self.assertTrue(rows[0]["actionable_valid"])
@@ -2337,7 +2350,7 @@ class CliMcpTest(unittest.TestCase):
     def test_cmd_install_claude_code_project(self) -> None:
         import os
 
-        from graphgraph.cli.commands import cmd_install
+        from graphgraph.cli.install import cmd_install
 
         class DummyArgs:
             project = True
@@ -2383,7 +2396,7 @@ class CliMcpTest(unittest.TestCase):
         """Re-running install must not duplicate the injected CLAUDE.md rule block."""
         import os
 
-        from graphgraph.cli.commands import cmd_install
+        from graphgraph.cli.install import cmd_install
 
         class DummyArgs:
             project = True
@@ -2569,14 +2582,14 @@ class CliMcpTest(unittest.TestCase):
                 "def target():\n    return 1\n\n\ndef caller():\n    return target()\n",
                 encoding="utf-8",
             )
-            rendered, _status = render_native_context(
+            rendered, _status = CompilerDriver().compile(DriverRequest(
                 query="What calls target?",
                 query_class="reverse_lookup",
                 directory=root,
                 graph_path=root / ".graphgraph" / "graph.gg",
                 json_output=True,
                 json_details=True,
-            )
+            ))
             payload = json.loads(rendered)
 
         arrays: dict[str, tuple[str, ...]] = {}
@@ -2616,7 +2629,7 @@ class CliMcpTest(unittest.TestCase):
                 encoding="utf-8",
             )
             graph_path = root / ".graphgraph" / "graph.gg"
-            from graphgraph.services.native import scan_validated_graph
+            from graphgraph.services.lifecycle import scan_validated_graph
 
             scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
 
@@ -2666,7 +2679,7 @@ class CliMcpTest(unittest.TestCase):
                 encoding="utf-8",
             )
             graph_path = root / ".graphgraph" / "graph.gg"
-            from graphgraph.services.native import scan_validated_graph
+            from graphgraph.services.lifecycle import scan_validated_graph
 
             scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
 
@@ -2704,7 +2717,7 @@ class CliMcpTest(unittest.TestCase):
         import io as _io
 
         from graphgraph.cli.parser import build_parser
-        from graphgraph.services.native import scan_validated_graph
+        from graphgraph.services.lifecycle import scan_validated_graph
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

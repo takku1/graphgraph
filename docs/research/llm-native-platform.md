@@ -16,7 +16,7 @@ agent can inspect without reverse-engineering prose.
 
 ## Platform compiler
 
-`GraphProgram` is the common request contract. `GraphRuntime.compile()` applies
+`CompileRequest` is the compiler request contract. `ContextCompiler.compile()` applies
 bounded graph passes, routes query intent, retrieves the minimum useful
 subgraph, emits a compact packet, and validates it. Optional features do not
 own separate query engines.

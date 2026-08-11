@@ -12,7 +12,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, CaseResult, GateResult, Task
 from .runner import _parse_packet
@@ -29,7 +29,7 @@ _V2 = _V1 + "\ndef third_entry():\n    return normalize_value(3)\n"
 
 
 def _query(directory: Path, graph_path: Path, *, rebuild: bool = False, changed: tuple[str, ...] = ()):
-    rendered, status = render_native_context(
+    rendered, status = CompilerDriver().compile(DriverRequest(
         query=_QUERY,
         query_class="reverse_lookup",
         directory=directory,
@@ -41,7 +41,7 @@ def _query(directory: Path, graph_path: Path, *, rebuild: bool = False, changed:
         packet="gg",
         rebuild=rebuild,
         changed_paths=changed,
-    )
+    ))
     return json.loads(rendered), status
 
 

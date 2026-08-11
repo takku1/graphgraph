@@ -11,7 +11,7 @@ from graphgraph import (
 from graphgraph.scanner.ast import extract_symbols
 from graphgraph.scanner.frontends import (
     RegexExtractor,
-    SourceFile,
+    SourceIR,
     TreeSitterExtractor,
     available_frontends,
     parser_for_suffix,
@@ -58,7 +58,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "response.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "response.js", "response_js", source)],
+                [SourceIR(path, "response.js", "response_js", source)],
                 max_total_symbols=100,
             )
 
@@ -87,7 +87,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "response.test.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "response.test.js", "response_test_js", source)],
+                [SourceIR(path, "response.test.js", "response_test_js", source)],
                 max_total_symbols=100,
             )
 
@@ -121,7 +121,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for rel, text in sources.items():
                 path = Path(tmp) / rel
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
@@ -187,7 +187,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "Store.cs"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "Store.cs", "Store_cs", source)],
+                [SourceIR(path, "Store.cs", "Store_cs", source)],
                 max_total_symbols=100,
             )
 
@@ -225,7 +225,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for rel, text in sources.items():
                 path = Path(tmp) / rel
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         by_provenance = {
@@ -261,7 +261,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = Path(tmp) / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
@@ -312,7 +312,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = Path(tmp) / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
@@ -415,7 +415,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "app.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "app.js", "app_js", source)], max_total_symbols=100
+                [SourceIR(path, "app.js", "app_js", source)], max_total_symbols=100
             )
         resolved = {
             (result.nodes[e.source].label, result.nodes[e.target].label) for e in result.edges if e.type == "calls"
@@ -440,7 +440,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "response.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "response.js", "response_js", source)],
+                [SourceIR(path, "response.js", "response_js", source)],
                 max_total_symbols=100,
             )
 
@@ -469,7 +469,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for name, source in sources.items():
                 path = Path(tmp) / name
                 path.write_text(source, encoding="utf-8")
-                files.append(SourceFile(path, name, name.replace(".", "_"), source))
+                files.append(SourceIR(path, name, name.replace(".", "_"), source))
             result = select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
@@ -509,7 +509,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = Path(tmp) / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, name, name.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, name, name.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(
                 files, max_total_symbols=100
             )
@@ -559,7 +559,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = Path(tmp) / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, name, name.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, name, name.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         calls = {
@@ -622,7 +622,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = Path(tmp) / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, name, name.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, name, name.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=200)
 
         call_targets = {
@@ -650,7 +650,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "local.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "local.js", "local_js", source)],
+                [SourceIR(path, "local.js", "local_js", source)],
                 max_total_symbols=100,
             )
 
@@ -676,7 +676,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for name, text in sources.items():
                 path = Path(tmp) / name
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, name, name.replace(".", "_"), text))
+                files.append(SourceIR(path, name, name.replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(
                 files, max_total_symbols=100
             )
@@ -707,7 +707,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "application.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "application.js", "application_js", source)],
+                [SourceIR(path, "application.js", "application_js", source)],
                 max_total_symbols=100,
             )
 
@@ -736,7 +736,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "application.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "application.js", "application_js", source)],
+                [SourceIR(path, "application.js", "application_js", source)],
                 max_total_symbols=100,
             )
 
@@ -762,7 +762,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "app.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "app.js", "app_js", source)],
+                [SourceIR(path, "app.js", "app_js", source)],
                 max_total_symbols=100,
             )
 
@@ -789,7 +789,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "app.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "app.js", "app_js", source)],
+                [SourceIR(path, "app.js", "app_js", source)],
                 max_total_symbols=100,
             )
 
@@ -811,7 +811,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "nested.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "nested.js", "nested_js", source)],
+                [SourceIR(path, "nested.js", "nested_js", source)],
                 max_total_symbols=100,
             )
 
@@ -829,7 +829,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "store.js"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "store.js", "store_js", source)],
+                [SourceIR(path, "store.js", "store_js", source)],
                 max_total_symbols=100,
             )
 
@@ -854,7 +854,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for name, text in sources.items():
                 path = Path(tmp) / name
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, name, name.replace(".", "_"), text))
+                files.append(SourceIR(path, name, name.replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
         by_provenance = {
             (result.nodes[e.source].label, result.nodes[e.target].label): e.provenance
@@ -890,7 +890,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "Service.java"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "Service.java", "Service_java", source)],
+                [SourceIR(path, "Service.java", "Service_java", source)],
                 max_total_symbols=100,
             )
 
@@ -929,7 +929,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "Service.cs"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "Service.cs", "Service_cs", source)],
+                [SourceIR(path, "Service.cs", "Service_cs", source)],
                 max_total_symbols=100,
             )
         resolved = {
@@ -975,7 +975,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for rel, source in sources.items():
                 path = root / rel
                 path.write_text(source, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace(".", "_"), source))
+                files.append(SourceIR(path, rel, rel.replace(".", "_"), source))
             result = select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
@@ -1023,7 +1023,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for rel, source in sources.items():
                 path = root / rel
                 path.write_text(source, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace(".", "_"), source))
+                files.append(SourceIR(path, rel, rel.replace(".", "_"), source))
             result = select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
@@ -1060,7 +1060,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "Service.java"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "Service.java", "Service_java", source)],
+                [SourceIR(path, "Service.java", "Service_java", source)],
                 max_total_symbols=100,
             )
         resolved = {
@@ -1088,7 +1088,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "service.cpp"
             path.write_text(source, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "service.cpp", "service_cpp", source)],
+                [SourceIR(path, "service.cpp", "service_cpp", source)],
                 max_total_symbols=100,
             )
         callables = [n for n in result.nodes.values() if n.label in {"save", "run"}]
@@ -1216,7 +1216,7 @@ class FrontendsScannerTest(unittest.TestCase):
             f = root / "mod.py"
             f.write_text("def helper(): pass\n", encoding="utf-8")
             result = RegexExtractor().extract_symbols(
-                [SourceFile(f, "mod.py", "mod_py", f.read_text(encoding="utf-8"))],
+                [SourceIR(f, "mod.py", "mod_py", f.read_text(encoding="utf-8"))],
                 max_total_symbols=10,
             )
             self.assertEqual(result.frontend, "regex")
@@ -1245,7 +1245,7 @@ class FrontendsScannerTest(unittest.TestCase):
             source_path = root / "slow.rs"
             text = "pub struct Recovered;\n"
             source_path.write_text(text, encoding="utf-8")
-            source = SourceFile(source_path, "slow.rs", "slow_rs", text)
+            source = SourceIR(source_path, "slow.rs", "slow_rs", text)
             extractor = TreeSitterExtractor(fallback_on_error=True, parse_timeout_micros=1234)
 
             with patch("graphgraph.scanner.frontends.extractors._parser_for_suffix", return_value=TimedOutParser()):
@@ -1269,13 +1269,13 @@ class FrontendsScannerTest(unittest.TestCase):
             def reset(self):
                 return None
 
-        source = SourceFile(Path("broken.rs"), "broken.rs", "broken_rs", "pub struct Broken;\n")
+        source = SourceIR(Path("broken.rs"), "broken.rs", "broken_rs", "pub struct Broken;\n")
         with patch("graphgraph.scanner.frontends.extractors._parser_for_suffix", return_value=BrokenParser()):
             with self.assertRaisesRegex(RuntimeError, "broken.rs"):
                 TreeSitterExtractor().extract_symbols([source], max_total_symbols=20)
 
     def test_explicit_tree_sitter_fails_when_supported_grammar_is_unavailable(self) -> None:
-        source = SourceFile(Path("sample.ts"), "sample.ts", "sample_ts", "export function run() {}\n")
+        source = SourceIR(Path("sample.ts"), "sample.ts", "sample_ts", "export function run() {}\n")
         with (
             patch("graphgraph.scanner.frontends.extractors._parser_for_suffix", return_value=None),
             patch(
@@ -1290,7 +1290,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 TreeSitterExtractor().extract_symbols([source], max_total_symbols=20)
 
     def test_auto_tree_sitter_records_grammar_failure_before_regex_fallback(self) -> None:
-        source = SourceFile(Path("sample.go"), "sample.go", "sample_go", "func Run() {}\n")
+        source = SourceIR(Path("sample.go"), "sample.go", "sample_go", "func Run() {}\n")
         with (
             patch("graphgraph.scanner.frontends.extractors._parser_for_suffix", return_value=None),
             patch(
@@ -1312,7 +1312,7 @@ class FrontendsScannerTest(unittest.TestCase):
         self.assertTrue(any(node.label == "Run" for node in result.nodes.values()))
 
     def test_tree_sitter_reports_unsupported_fallback_separately_from_parse_failures(self) -> None:
-        source = SourceFile(Path("notes.md"), "notes.md", "notes_md", "# Notes\n")
+        source = SourceIR(Path("notes.md"), "notes.md", "notes_md", "# Notes\n")
         result = TreeSitterExtractor(fallback_on_error=True).extract_symbols(
             [source],
             max_total_symbols=20,
@@ -1338,7 +1338,7 @@ class FrontendsScannerTest(unittest.TestCase):
             )
             f.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(f, "lib.rs", "lib_rs", text)],
+                [SourceIR(f, "lib.rs", "lib_rs", text)],
                 max_total_symbols=20,
             )
             labels = {node.label for node in result.nodes.values()}
@@ -1364,8 +1364,8 @@ class FrontendsScannerTest(unittest.TestCase):
             trait_path.write_text(trait_text, encoding="utf-8")
             impl_path.write_text(impl_text, encoding="utf-8")
             files = [
-                SourceFile(trait_path, "locus-core/src/pipeline.rs", "trait_file", trait_text),
-                SourceFile(impl_path, "locus-pipeline/src/lib.rs", "impl_file", impl_text),
+                SourceIR(trait_path, "locus-core/src/pipeline.rs", "trait_file", trait_text),
+                SourceIR(impl_path, "locus-pipeline/src/lib.rs", "impl_file", impl_text),
             ]
 
             result = RegexExtractor().extract_symbols(files, max_total_symbols=100)
@@ -1391,7 +1391,7 @@ class FrontendsScannerTest(unittest.TestCase):
             )
             f.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(f, "lib.rs", "lib_rs", text)],
+                [SourceIR(f, "lib.rs", "lib_rs", text)],
                 max_total_symbols=20,
             )
             labels = {node.label for node in result.nodes.values()}
@@ -1435,7 +1435,7 @@ class FrontendsScannerTest(unittest.TestCase):
             )
             f.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(f, "RecipeResolver.cs", "RecipeResolver_cs", text)],
+                [SourceIR(f, "RecipeResolver.cs", "RecipeResolver_cs", text)],
                 max_total_symbols=50,
             )
             by_label = {node.label: node for node in result.nodes.values()}
@@ -1475,7 +1475,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 for name, text in spec.items():
                     f = Path(tmp) / name
                     f.write_text(text, encoding="utf-8")
-                    srcs.append(SourceFile(f, name, name.replace(".", "_"), text))
+                    srcs.append(SourceIR(f, name, name.replace(".", "_"), text))
                 result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
                 calls = {
                     (result.nodes[e.source].label, result.nodes[e.target].label)
@@ -1501,8 +1501,8 @@ class FrontendsScannerTest(unittest.TestCase):
             c.parent.mkdir(parents=True, exist_ok=True)
             c.write_text(c_text, encoding="utf-8")
             srcs = [
-                SourceFile(rs, "shape.rs", "shape_rs", rs_text),
-                SourceFile(c, "vendor/common.h", "vendor_common_h", c_text),
+                SourceIR(rs, "shape.rs", "shape_rs", rs_text),
+                SourceIR(c, "vendor/common.h", "vendor_common_h", c_text),
             ]
             result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
             calls = {
@@ -1572,7 +1572,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(source_text, encoding="utf-8")
                 sources.append(
-                    SourceFile(
+                    SourceIR(
                         path,
                         rel,
                         rel.replace("/", "_").replace(".", "_"),
@@ -1622,7 +1622,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(source_text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), source_text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), source_text))
 
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
             calls = [
@@ -1649,7 +1649,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "worker.py"
             path.write_text(source_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "worker.py", "worker_py", source_text)],
+                [SourceIR(path, "worker.py", "worker_py", source_text)],
                 max_total_symbols=100,
             )
 
@@ -1690,8 +1690,8 @@ class FrontendsScannerTest(unittest.TestCase):
             b = Path(tmp) / "evolution.rs"
             b.write_text(rs_text_b, encoding="utf-8")
             srcs = [
-                SourceFile(a, "schedule_legality.rs", "schedule_legality_rs", rs_text_a),
-                SourceFile(b, "evolution.rs", "evolution_rs", rs_text_b),
+                SourceIR(a, "schedule_legality.rs", "schedule_legality_rs", rs_text_a),
+                SourceIR(b, "evolution.rs", "evolution_rs", rs_text_b),
             ]
             result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
             calls = {
@@ -1713,8 +1713,8 @@ class FrontendsScannerTest(unittest.TestCase):
             d = Path(tmp) / "d.rs"
             d.write_text(rs_text_d, encoding="utf-8")
             srcs = [
-                SourceFile(c, "c.rs", "c_rs", rs_text_c),
-                SourceFile(d, "d.rs", "d_rs", rs_text_d),
+                SourceIR(c, "c.rs", "c_rs", rs_text_c),
+                SourceIR(d, "d.rs", "d_rs", rs_text_d),
             ]
             result = select_extractor("tree_sitter").extract_symbols(srcs, max_total_symbols=100)
             calls = {
@@ -1746,7 +1746,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         matching = [
@@ -1784,7 +1784,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "yield_benchmark.rs"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "src/yield_benchmark.rs", "src_yield_benchmark_rs", text)],
+                [SourceIR(path, "src/yield_benchmark.rs", "src_yield_benchmark_rs", text)],
                 max_total_symbols=100,
             )
 
@@ -1828,7 +1828,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         calls = [edge for edge in result.edges if edge.type == "calls" and result.nodes[edge.source].label == "run"]
@@ -1854,7 +1854,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         candidates = [
@@ -1899,7 +1899,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "runtime.py"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "runtime.py", "runtime_py", text)],
+                [SourceIR(path, "runtime.py", "runtime_py", text)],
                 max_total_symbols=100,
             )
 
@@ -1945,7 +1945,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "bucket.py"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "bucket.py", "bucket_py", text)],
+                [SourceIR(path, "bucket.py", "bucket_py", text)],
                 max_total_symbols=100,
             )
 
@@ -1976,7 +1976,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "engine.rs"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "engine.rs", "engine_rs", text)],
+                [SourceIR(path, "engine.rs", "engine_rs", text)],
                 max_total_symbols=100,
             )
 
@@ -2013,7 +2013,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path.parent.mkdir()
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "tests/schema.rs", "tests_schema_rs", text)],
+                [SourceIR(path, "tests/schema.rs", "tests_schema_rs", text)],
                 max_total_symbols=100,
             )
 
@@ -2048,7 +2048,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "planner.rs"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "src/planner.rs", "src_planner_rs", text)],
+                [SourceIR(path, "src/planner.rs", "src_planner_rs", text)],
                 max_total_symbols=100,
             )
 
@@ -2074,7 +2074,7 @@ class FrontendsScannerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "battle_main.c"
             f.write_text(c_text, encoding="utf-8")
-            src = SourceFile(f, "battle_main.c", "battle_main_c", c_text)
+            src = SourceIR(f, "battle_main.c", "battle_main_c", c_text)
             result = select_extractor("tree_sitter").extract_symbols([src], max_total_symbols=100)
             refs = {
                 (result.nodes[e.source].label, result.nodes[e.target].label)
@@ -2104,7 +2104,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "server.c"
             path.write_text(c_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "server.c", "server_c", c_text)],
+                [SourceIR(path, "server.c", "server_c", c_text)],
                 max_total_symbols=100,
             )
 
@@ -2133,7 +2133,7 @@ class FrontendsScannerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "parser.py"
             f.write_text(py_text, encoding="utf-8")
-            src = SourceFile(f, "parser.py", "parser_py", py_text)
+            src = SourceIR(f, "parser.py", "parser_py", py_text)
             result = select_extractor("tree_sitter").extract_symbols([src], max_total_symbols=100)
             refs = {
                 (result.nodes[e.source].label, result.nodes[e.target].label)
@@ -2170,7 +2170,7 @@ class FrontendsScannerTest(unittest.TestCase):
             f = Path(tmp) / "integrate.rs"
             f.write_text(rs_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(f, "integrate.rs", "integrate_rs", rs_text)],
+                [SourceIR(f, "integrate.rs", "integrate_rs", rs_text)],
                 max_total_symbols=100,
             )
             calls = {
@@ -2204,7 +2204,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "learning_theory.rs"
             path.write_text(rust, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "src/learning_theory.rs", "learning_theory_rs", rust)],
+                [SourceIR(path, "src/learning_theory.rs", "learning_theory_rs", rust)],
                 max_total_symbols=100,
             )
 
@@ -2262,7 +2262,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 f = Path(tmp) / fname
                 f.write_text(text, encoding="utf-8")
                 result = select_extractor("tree_sitter").extract_symbols(
-                    [SourceFile(f, fname, fname.replace(".", "_"), text)],
+                    [SourceIR(f, fname, fname.replace(".", "_"), text)],
                     max_total_symbols=50,
                 )
                 labels = {node.label for node in result.nodes.values()}
@@ -2295,8 +2295,8 @@ class FrontendsScannerTest(unittest.TestCase):
             helper.write_text(helper_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [
-                    SourceFile(core, "Core.swift", "Core_swift", core_text),
-                    SourceFile(helper, "Helper.swift", "Helper_swift", helper_text),
+                    SourceIR(core, "Core.swift", "Core_swift", core_text),
+                    SourceIR(helper, "Helper.swift", "Helper_swift", helper_text),
                 ],
                 max_total_symbols=100,
             )
@@ -2338,8 +2338,8 @@ class FrontendsScannerTest(unittest.TestCase):
             helper.write_text(helper_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [
-                    SourceFile(core, "core.php", "core_php", core_text),
-                    SourceFile(helper, "helper.php", "helper_php", helper_text),
+                    SourceIR(core, "core.php", "core_php", core_text),
+                    SourceIR(helper, "helper.php", "helper_php", helper_text),
                 ],
                 max_total_symbols=100,
             )
@@ -2377,8 +2377,8 @@ class FrontendsScannerTest(unittest.TestCase):
             helper.write_text(helper_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [
-                    SourceFile(core, "core.rb", "core_rb", core_text),
-                    SourceFile(helper, "helper.rb", "helper_rb", helper_text),
+                    SourceIR(core, "core.rb", "core_rb", core_text),
+                    SourceIR(helper, "helper.rb", "helper_rb", helper_text),
                 ],
                 max_total_symbols=100,
             )
@@ -2415,8 +2415,8 @@ class FrontendsScannerTest(unittest.TestCase):
             helper.write_text(helper_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [
-                    SourceFile(core, "Core.scala", "Core_scala", core_text),
-                    SourceFile(helper, "Helper.scala", "Helper_scala", helper_text),
+                    SourceIR(core, "Core.scala", "Core_scala", core_text),
+                    SourceIR(helper, "Helper.scala", "Helper_scala", helper_text),
                 ],
                 max_total_symbols=100,
             )
@@ -2460,8 +2460,8 @@ class FrontendsScannerTest(unittest.TestCase):
             other.write_text(other_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [
-                    SourceFile(core, "core.js", "core_js", core_text),
-                    SourceFile(other, "other.js", "other_js", other_text),
+                    SourceIR(core, "core.js", "core_js", core_text),
+                    SourceIR(other, "other.js", "other_js", other_text),
                 ],
                 max_total_symbols=100,
             )
@@ -2509,8 +2509,8 @@ class FrontendsScannerTest(unittest.TestCase):
             dep.write_text(dep_text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
                 [
-                    SourceFile(main, "main.js", "main_js", main_text),
-                    SourceFile(dep, "dep.js", "dep_js", dep_text),
+                    SourceIR(main, "main.js", "main_js", main_text),
+                    SourceIR(dep, "dep.js", "dep_js", dep_text),
                 ],
                 max_total_symbols=100,
             )
@@ -2601,7 +2601,7 @@ class FrontendsScannerTest(unittest.TestCase):
             for i in range(3):
                 path = root / f"mod_{i}.py"
                 path.write_text("\n".join(f"def fn_{i}_{j}(): pass" for j in range(10)) + "\n", encoding="utf-8")
-                files.append(SourceFile(path, f"mod_{i}.py", f"mod_{i}_py", path.read_text(encoding="utf-8")))
+                files.append(SourceIR(path, f"mod_{i}.py", f"mod_{i}_py", path.read_text(encoding="utf-8")))
 
             result = RegexExtractor().extract_symbols(files, max_total_symbols=5)
             self.assertTrue(result.truncated)
@@ -2789,8 +2789,8 @@ class FrontendsScannerTest(unittest.TestCase):
                 encoding="utf-8",
             )
             files = [
-                SourceFile(rb, "service.rb", "service_rb", rb.read_text(encoding="utf-8")),
-                SourceFile(php, "controller.php", "controller_php", php.read_text(encoding="utf-8")),
+                SourceIR(rb, "service.rb", "service_rb", rb.read_text(encoding="utf-8")),
+                SourceIR(php, "controller.php", "controller_php", php.read_text(encoding="utf-8")),
             ]
             result = RegexExtractor().extract_symbols(files, max_total_symbols=100)
             labels_by_kind = {n.label: n.kind for n in result.nodes.values()}
@@ -2849,8 +2849,8 @@ class FrontendsScannerTest(unittest.TestCase):
             reader_c = root / "reader.c"
             reader_c.write_text("int process(int fd) {\n    return fd + 1;\n}\n", encoding="utf-8")
             files = [
-                SourceFile(foo_c, "foo.c", "foo_c", foo_c.read_text(encoding="utf-8")),
-                SourceFile(reader_c, "reader.c", "reader_c", reader_c.read_text(encoding="utf-8")),
+                SourceIR(foo_c, "foo.c", "foo_c", foo_c.read_text(encoding="utf-8")),
+                SourceIR(reader_c, "reader.c", "reader_c", reader_c.read_text(encoding="utf-8")),
             ]
             result = RegexExtractor().extract_symbols(files, max_total_symbols=100)
             calls = {
@@ -2903,7 +2903,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_"), text))
 
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
@@ -2940,7 +2940,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_"), text))
 
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
@@ -2980,7 +2980,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         target = next(node.id for node in result.nodes.values() if node.label == "count_ops" and node.kind == "method")
@@ -3030,7 +3030,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         target = next(node.id for node in result.nodes.values() if node.label == "count_ops" and node.kind == "method")
@@ -3062,7 +3062,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         go_id = next(node.id for node in result.nodes.values() if node.label == "go")
@@ -3104,7 +3104,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         go_id = next(node.id for node in result.nodes.values() if node.label == "go")
@@ -3153,7 +3153,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         # The invariant that makes the split safe to publish: the two halves
@@ -3212,7 +3212,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_").replace(".", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_").replace(".", "_"), text))
             result = select_extractor("tree_sitter").extract_symbols(files, max_total_symbols=100)
 
         histogram = dict(result.unknown_receiver_classes)
@@ -3276,7 +3276,7 @@ class FrontendsScannerTest(unittest.TestCase):
                 path = Path(tmp) / f"fixture{suffix}"
                 path.write_text(text, encoding="utf-8")
                 result = select_extractor("tree_sitter").extract_symbols(
-                    [SourceFile(path, path.name, f"fixture_{suffix[1:]}", text)],
+                    [SourceIR(path, path.name, f"fixture_{suffix[1:]}", text)],
                     max_total_symbols=100,
                 )
                 labels = {node_id: node.label for node_id, node in result.nodes.items()}
@@ -3324,7 +3324,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "a.py"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "a.py", "a_py", text)], max_total_symbols=50
+                [SourceIR(path, "a.py", "a_py", text)], max_total_symbols=50
             )
 
         go_id = next(node.id for node in result.nodes.values() if node.label == "go")
@@ -3358,7 +3358,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "b.py"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "b.py", "b_py", text)], max_total_symbols=50
+                [SourceIR(path, "b.py", "b_py", text)], max_total_symbols=50
             )
 
         go_id = next(node.id for node in result.nodes.values() if node.label == "go")
@@ -3380,7 +3380,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "c.py"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "c.py", "c_py", text)], max_total_symbols=50
+                [SourceIR(path, "c.py", "c_py", text)], max_total_symbols=50
             )
         self.assertTrue(result.nodes)
 
@@ -3407,7 +3407,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "a.ts"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "a.ts", "a_ts", text)], max_total_symbols=60
+                [SourceIR(path, "a.ts", "a_ts", text)], max_total_symbols=60
             )
 
         target = next(node.id for node in result.nodes.values() if node.label == "save" and node.kind == "method")
@@ -3489,7 +3489,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "a.rs"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "a.rs", "a_rs", text)], max_total_symbols=40
+                [SourceIR(path, "a.rs", "a_rs", text)], max_total_symbols=40
             )
 
         owners = {
@@ -3517,7 +3517,7 @@ class FrontendsScannerTest(unittest.TestCase):
             path = Path(tmp) / "p.py"
             path.write_text(text, encoding="utf-8")
             result = select_extractor("tree_sitter").extract_symbols(
-                [SourceFile(path, "p.py", "p_py", text)], max_total_symbols=40
+                [SourceIR(path, "p.py", "p_py", text)], max_total_symbols=40
             )
 
         go_id = next(node.id for node in result.nodes.values() if node.label == "go")

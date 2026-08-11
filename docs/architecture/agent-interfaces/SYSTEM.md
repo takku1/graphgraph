@@ -59,7 +59,7 @@ Measured illustration (Flask-scale one-hop relations): CLI end-to-end ~250 ms vs
 | **Reported separately** | Cold-start process latency — interpreter spawn and import, not graph work |
 | **Invariance gate** | Transport-specific absolute budgets plus scale invariance (OW-AC-08) |
 | **Response surface** | Machine response ≤1.15x evidence-packet tokens (OW-AC-06) |
-| **Receipts** | [agent-cycle tracker](../../evaluation/graybox-cycles/2026-08-02-agent-cycle-efficiency-quality-tracker.md) |
+| **Receipts** | [consolidated agent-cycle measurement](../../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements) |
 
 ## 7. Technology resolution
 

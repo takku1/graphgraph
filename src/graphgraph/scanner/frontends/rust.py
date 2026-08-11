@@ -8,10 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from ...graph.core import Edge, Node
-from .model import (
-    SourceFile,
-    _TsDef,
-)
+from ..source_ir import SourceIR
+from .model import _TsDef
 from .syntax import (
     _definition_node_id,
     _definition_summary,
@@ -74,7 +72,7 @@ def _rust_type_name(value: str) -> str:
     return candidates[0] if candidates else ""
 
 def _add_rust_method_owners(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
@@ -108,7 +106,7 @@ def _add_rust_method_owners(
             ))
 
 def _add_rust_fields(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     edges: list[Edge],
 ) -> None:
@@ -153,7 +151,7 @@ def _add_rust_fields(
                 ))
 
 def _add_rust_test_field_references(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     edges: list[Edge],
 ) -> None:
@@ -276,7 +274,7 @@ def _rust_type_names_in_range(text: bytes, start: int, end: int) -> set[str]:
     return names
 
 def _add_rust_type_references(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],

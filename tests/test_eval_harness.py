@@ -303,16 +303,16 @@ class SelfEvalSuiteTest(unittest.TestCase):
         red = [t for t in tasks if any("zzz_nonexistent" in item for item in t.expected_nodes)]
         self.assertTrue(red, "the suite must retain a task that is designed to fail")
 
-    def test_render_query_context_oracle_covers_every_production_caller(self) -> None:
+    def test_compiler_driver_oracle_covers_core_production_callers(self) -> None:
         tasks = load_eval_tasks(self.SUITE)
-        task = next(t for t in tasks if t.query == "what calls render_query_context")
+        task = next(t for t in tasks if t.query == "what calls CompilerDriver::compile")
         self.assertEqual(
             set(task.expected_nodes),
             {
                 "validate_queries",
-                "cmd_query",
+                "execute_query",
                 "build_query_context",
-                "render_native_context",
+                "cmd_context",
             },
         )
 

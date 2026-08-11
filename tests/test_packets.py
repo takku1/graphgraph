@@ -559,9 +559,9 @@ class SqlFormatTokenCostTest(unittest.TestCase):
         self.assertLess(sql_tokens, gg_tokens)
 
     def test_published_sql_ratio_is_not_more_expensive_than_gg(self) -> None:
-        from graphgraph.packets.formats import PACKET_FORMAT_TABLE
+        from graphgraph.packet_targets import TARGET_TABLE
 
-        sql_row = next(row for row in PACKET_FORMAT_TABLE if row["format"] == "sql")
+        sql_row = next(row for row in TARGET_TABLE if row["format"] == "sql")
         self.assertNotIn("+", str(sql_row["relative_tokens"]))
         ratio = float(str(sql_row["relative_tokens"]).lstrip("~").rstrip("x"))
         self.assertLess(ratio, 1.0)
@@ -572,7 +572,7 @@ class DeadFormatGuardTest(unittest.TestCase):
     public registry that no renderer can produce is a dead format (path-to-10 #8)."""
 
     def test_every_registered_format_renders_nonempty(self) -> None:
-        from graphgraph.packets import PACKET_FORMAT_NAMES, render_packet
+        from graphgraph.packet_targets import TARGET_SPECS
 
         graph = Graph(
             nodes={
@@ -581,13 +581,90 @@ class DeadFormatGuardTest(unittest.TestCase):
             },
             edges=[Edge("a", "b", "calls")],
         )
-        for fmt in PACKET_FORMAT_NAMES:
-            with self.subTest(format=fmt):
-                out = render_packet(graph, set(graph.nodes), list(graph.edges), fmt)
-                self.assertTrue(out and out.strip(), f"registered format {fmt!r} rendered empty")
-                validation = validate_packet(out)
-                self.assertTrue(validation.ok, f"registered format {fmt!r} failed validation: {validation.errors}")
-                self.assertEqual(validation.format, fmt)
+        for target in TARGET_SPECS:
+            with self.subTest(format=target.name):
+                out = target.encode(graph, set(graph.nodes), list(graph.edges))
+                self.assertTrue(out and out.strip(), f"registered target {target.name!r} rendered empty")
+                validation = target.validate(out)
+                self.assertTrue(validation.ok, f"registered target {target.name!r} failed validation: {validation.errors}")
+                self.assertEqual(validation.format, target.name)
+
+    def test_selection_graph_is_closed_and_preserves_endpoint_identity(self) -> None:
+        from graphgraph.packet_targets import TARGET_NAMES, TARGET_SPECS, target_spec
+
+        alternatives = {
+            alternative
+            for target in TARGET_SPECS
+            for alternative in target.selection.alternatives
+        }
+        self.assertLessEqual(alternatives, set(TARGET_NAMES))
+        self.assertEqual(target_spec("gg").selection.alternatives, ("svo",))
+
+        unique = Graph(
+            nodes={
+                "a": Node("a", "entity_a", "function"),
+                "b": Node("b", "entity_b", "function"),
+            }
+        )
+        colliding = Graph(
+            nodes={
+                "a": Node("a", "entity", "function"),
+                "b": Node("b", "entity", "function"),
+            }
+        )
+        identity = target_spec("svo").identity
+        self.assertTrue(identity.admissible(unique, set(unique.nodes)))
+        self.assertFalse(identity.admissible(colliding, set(colliding.nodes)))
+
+
+class PacketFormatDeclarationTest(unittest.TestCase):
+    """A packet must say which encoding it is, because the text cannot be sniffed.
+
+    Format is chosen adaptively: by query class, and then by whichever encoding
+    renders the selected subgraph in fewest tokens. So one question can come
+    back as `gg` or `svo` depending on how big its answer turned out -- a real
+    token win, but it broke a reader that inferred the format from three sample
+    runs and then silently parsed nothing on the fourth.
+
+    Sniffing cannot be made correct: `gg` and `svo` open with a `#` marker
+    line, but `semantic_arrow` opens with `@nodes` and `doc_summary` with
+    `[d]`. The declared field is therefore the only sound dispatch, and it must
+    name a real renderer.
+    """
+
+    def test_every_renderable_format_is_named_by_the_selection_receipt(self) -> None:
+        from graphgraph.packet_targets import TARGET_NAMES
+
+        # The two formats whose text carries no `#` marker are exactly why a
+        # declared field is required rather than optional.
+        unsniffable = {"semantic_arrow", "doc_summary"}
+        self.assertTrue(
+            unsniffable <= set(TARGET_NAMES),
+            f"expected {unsniffable} among renderable formats: {sorted(TARGET_NAMES)}",
+        )
+
+    def test_declared_format_comes_from_the_selection_receipt_not_a_guess(self) -> None:
+        from graphgraph.platform import CompileRequest, ContextCompiler
+
+        graph = Graph(
+            nodes={
+                "FILE": Node("FILE", "module.py", "python", "module.py"),
+                "TARGET": Node("TARGET", "target", "function", "module.py"),
+            },
+            edges=[Edge("FILE", "TARGET", "contains")],
+        )
+        adaptive = ContextCompiler(graph).compile(
+            CompileRequest("target", query_class="direct_lookup", packet=None)
+        )
+        pinned = ContextCompiler(graph).compile(
+            CompileRequest("target", query_class="direct_lookup", packet="gg")
+        )
+
+        self.assertEqual(
+            adaptive.receipt.packet,
+            adaptive.receipt.format_selection["chosen"],
+        )
+        self.assertEqual(pinned.receipt.packet, "gg")
 
 
 class PacketPriorityTest(unittest.TestCase):
@@ -668,7 +745,7 @@ class PacketPriorityTest(unittest.TestCase):
     def test_reverse_priority_sorts_production_callers_before_benchmarks(self) -> None:
         # Self-eval regression: alphabetic ids put benchmarks/ before src/ and
         # buried cmd_query beneath four timing helpers for
-        # "what calls render_query_context".
+        # "what calls CompilerDriver::compile".
         graph = Graph(
             nodes={
                 "target": Node("target", "target", "function", "src/pkg/target.py"),

@@ -11,6 +11,7 @@ extractors). This module re-exports the full former surface so
 
 from __future__ import annotations
 
+from ..source_ir import SourceIR
 from .edges import (
     _add_imports_from,
     _add_nested_contains,
@@ -42,7 +43,6 @@ from .model import (
     ExtractionResult,
     Extractor,
     FrontendCapability,
-    SourceFile,
     _CallSite,
     _MemberCallStats,
     _TsDef,
@@ -114,7 +114,7 @@ from .syntax import (
 
 __all__ = [
     "FrontendCapability",
-    "SourceFile",
+    "SourceIR",
     "ExtractionResult",
     "Extractor",
     "RegexExtractor",

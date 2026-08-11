@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 from graphgraph.scanner.files import collect_files
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, CaseResult, GateResult, Task
 
@@ -71,7 +71,7 @@ def run_secret_boundary(task: Task) -> CaseResult:
         _write_fixture(root)
         graph_path = root / ".graphgraph" / "graph.gg"
 
-        rendered, _status = render_native_context(
+        rendered, _status = CompilerDriver().compile(DriverRequest(
             query="secret canary API_KEY",
             query_class="negative_query",
             directory=root,
@@ -80,7 +80,7 @@ def run_secret_boundary(task: Task) -> CaseResult:
             json_details=True,
             show_anchors=True,
             max_nodes=20,
-        )
+        ))
         payload = json.loads(rendered)
         packet = str(payload.get("packet", ""))
         blob = _artifact_blob(root, graph_path, rendered)

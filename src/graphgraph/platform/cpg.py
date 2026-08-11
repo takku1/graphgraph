@@ -13,10 +13,10 @@ from ..scanner.frontends import (
     parser_for_suffix,
     parser_unavailable_reason,
 )
+from ..scanner.source_ir import SourceIR, compile_syntax_ir
 from .contracts import (
     CapabilityReceipt,
     EvidenceBatch,
-    PythonAstEvidenceProvider,
 )
 
 _SUPPORTED_SUFFIXES = {
@@ -140,36 +140,38 @@ class CpgEvidenceProvider:
         nodes: dict[str, Node] = {}
         edges: list[Edge] = []
         warnings: list[str] = []
-        python_paths = tuple(path for path in sources if path.casefold().endswith(".py"))
-        if python_paths:
-            python = PythonAstEvidenceProvider(max_nodes=1_000_000, max_edges=2_000_000).collect(
-                graph,
-                python_paths,
-            )
-            nodes.update((node.id, node) for node in python.nodes)
-            edges.extend(python.edges)
-            warnings.extend(python.receipt.warnings)
-        symbols = _symbols_by_path(graph, set(sources) - set(python_paths))
-        for rel_path, source in sorted(sources.items()):
-            if rel_path in python_paths:
-                continue
-            parser = parser_for_suffix(source.suffix)
+        artifacts_compiled = 0
+        artifacts_reused = 0
+        symbols = _symbols_by_path(graph, set(sources))
+        for rel_path, source_path in sorted(sources.items()):
+            parser = parser_for_suffix(source_path.suffix)
             if parser is None:
                 warnings.append(
-                    f"{rel_path}:grammar_unavailable:{parser_unavailable_reason(source.suffix)}"
+                    f"{rel_path}:grammar_unavailable:{parser_unavailable_reason(source_path.suffix)}"
                 )
                 continue
             try:
-                text = source.read_text(encoding="utf-8", errors="replace")
-                text_bytes = text.encode("utf-8", errors="replace")
-                tree = parse_with_timeout(parser, text_bytes, self.parse_timeout_micros)
-                if tree is None:
+                text = source_path.read_text(encoding="utf-8", errors="replace")
+                source = SourceIR(source_path, rel_path, rel_path, text)
+                syntax = compile_syntax_ir(
+                    source,
+                    parser,
+                    lambda text: parse_with_timeout(
+                        parser,
+                        text,
+                        self.parse_timeout_micros,
+                    ),
+                )
+                if syntax is None:
                     raise TimeoutError("Tree-sitter parse timed out")
             except (OSError, RuntimeError, TimeoutError) as exc:
                 warnings.append(f"{rel_path}:{type(exc).__name__}")
                 continue
-            language = source.suffix.casefold().lstrip(".")
-            for definition in _definition_nodes(tree.root_node):
+            artifacts_reused += int(syntax.cache_hit)
+            artifacts_compiled += int(not syntax.cache_hit)
+            text_bytes = source.text_bytes
+            language = source_path.suffix.casefold().lstrip(".")
+            for definition in _definition_nodes(syntax.tree.root_node):
                 name = _definition_name(definition, text_bytes)
                 if not name:
                     continue
@@ -213,6 +215,9 @@ class CpgEvidenceProvider:
                 nodes_truncated=nodes_truncated,
                 edges_truncated=edges_truncated,
                 paths_processed=len(sources),
+                cache_hit=artifacts_reused > 0 and artifacts_compiled == 0,
+                artifacts_compiled=artifacts_compiled,
+                artifacts_reused=artifacts_reused,
                 warnings=tuple(dict.fromkeys(warnings)),
             ),
         )
@@ -230,9 +235,9 @@ def _graph_sources(
             continue
         if not rel_path or not supports_path(rel_path) or not node.source:
             continue
-        source = Path(node.source)
-        if source.is_file():
-            sources.setdefault(rel_path, source)
+        source_path = Path(node.source)
+        if source_path.is_file():
+            sources.setdefault(rel_path, source_path)
     return sources
 
 

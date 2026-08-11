@@ -44,47 +44,12 @@ def _split_on_marker_line(text: str, marker: str) -> tuple[str, str]:
 
 
 def validate_packet(packet: str) -> ValidationResult:
-    text = packet.strip()
-    if text.startswith("#svo") or _has_marker_line(text, "#svo"):
-        return _require_nonempty_nodes(validate_svo(_from_marker_line(text, "#svo")))
-    if text.startswith("# Context Packet") or _has_marker_line(text, "# Context Packet"):
-        return _require_nonempty_nodes(validate_hybrid(_from_marker_line(text, "# Context Packet")))
-    if text.startswith("<g>") or _has_marker_line(text, "<g>"):
-        return _require_nonempty_nodes(validate_lowlevel(_from_marker_line(text, "<g>")))
-    if text.startswith("TABLE nodes:") or re.search(r"^TABLE nodes:", text, re.MULTILINE):
-        return _require_nonempty_nodes(validate_sql(_from_line_prefix(text, "TABLE nodes:")))
-    if text.startswith("[r]") or _has_marker_line(text, "[r]"):
-        return _require_nonempty_nodes(validate_gg_max(text))
-    if text.startswith("@nodes") or "@nodes" in text:
-        return _require_nonempty_nodes(validate_semantic_arrow(text))
-    if text.startswith("[d]") or _has_marker_line(text, "[d]"):
-        return _require_nonempty_nodes(validate_doc_summary(_from_marker_line(text, "[d]")))
-    return ValidationResult(False, "unknown", 0, 0, ("unknown packet format",))
+    from ..packet_targets import detect_target
 
-
-def _require_nonempty_nodes(result: ValidationResult) -> ValidationResult:
-    if result.ok and result.node_count == 0:
-        return ValidationResult(
-            False,
-            result.format,
-            result.node_count,
-            result.edge_count,
-            result.errors + ("empty packet: no nodes",),
-        )
-    return result
-
-
-def _from_marker_line(text: str, marker: str) -> str:
-    match = re.search(rf"^\s*{re.escape(marker)}\s*$", text, re.MULTILINE)
-    # ``\s`` includes newlines, so ``match.start()`` can point at the blank
-    # separator before a marker in wrapped CLI output. Reconstruct from the
-    # marker itself to guarantee the delegated validator sees it on line one.
-    return marker + text[match.end():] if match is not None else text
-
-
-def _from_line_prefix(text: str, prefix: str) -> str:
-    match = re.search(rf"^{re.escape(prefix)}", text, re.MULTILINE)
-    return text[match.start():] if match is not None else text
+    target = detect_target(packet)
+    if target is None:
+        return ValidationResult(False, "unknown", 0, 0, ("unknown packet format",))
+    return target.validate(packet)
 
 
 def validate_hybrid(packet: str) -> ValidationResult:

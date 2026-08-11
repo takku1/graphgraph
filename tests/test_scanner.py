@@ -21,6 +21,66 @@ class ScannerTest(unittest.TestCase):
         self.assertEqual(concept_id("Token Store"), "concept_token_store")
         self.assertEqual(canonical_concept_label("token store"), "Token Store")
 
+    def test_every_definition_gets_a_node_even_when_names_collide(self) -> None:
+        """Gate: graph symbol nodes == AST definition count.
+
+        Node ids qualify a method by its owning type, which separates `A.run`
+        from `B.run` but not a `@property def x` from its `@x.setter def x`,
+        nor a `helper` nested in two different functions. The node builder
+        keeps the first id it sees, so those definitions were dropped
+        entirely: no node, no `calls` edges, never in a blast radius, and a
+        `callers == 0` dead-code query wrong for every property. Measured on a
+        real Flask checkout at 7.9% of production definitions -- including all
+        seven of its property setters.
+        """
+        import ast
+
+        source = (
+            "class Config:\n"
+            "    @property\n"
+            "    def debug(self):\n"
+            "        return self._debug\n"
+            "\n"
+            "    @debug.setter\n"
+            "    def debug(self, value):\n"
+            "        self._debug = value\n"
+            "\n"
+            "def outer_one():\n"
+            "    def helper():\n"
+            "        return 1\n"
+            "    return helper()\n"
+            "\n"
+            "def outer_two():\n"
+            "    def helper():\n"
+            "        return 2\n"
+            "    return helper()\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "mod.py").write_text(source, encoding="utf-8")
+            graph = scan_directory(root, depth="symbols")
+
+            expected = sum(
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                for node in ast.walk(ast.parse(source))
+            )
+            symbols = [n for n in graph.nodes.values() if n.kind in {"function", "method", "class"}]
+            self.assertEqual(
+                len(symbols),
+                expected,
+                f"{expected - len(symbols)} definition(s) have no node: "
+                f"{sorted(n.id for n in symbols)}",
+            )
+
+            # The surviving ids must stay distinct, and the *first* definition
+            # of each name must keep its bare id so existing graphs, caches,
+            # and packet node references are not churned by this fix.
+            self.assertEqual(len(symbols), len({n.id for n in symbols}))
+            ids = {n.id for n in symbols}
+            self.assertTrue(any(i.endswith("__Config__debug") for i in ids), ids)
+            self.assertTrue(any(i.endswith("__helper") for i in ids), ids)
+            self.assertEqual(sum(1 for i in ids if "@L" in i), 2, ids)
+
     def test_scan_preserves_extraction_confidence_independent_of_centrality(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

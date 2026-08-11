@@ -9,9 +9,16 @@ from typing import Any, Literal
 
 from ..graph.core import Edge, Graph, Node
 from ..storage.sectioned import (
+    _CALL,
+    _INDEX_REF,
+    _NODE_LITE,
+    _U32,
+    PackedRelationView,
     RelationNode,
     SectionedRelationView,
+    _index_hash,
     is_sectioned_graph,
+    load_packed_relation_view,
     load_sectioned_relation_view,
 )
 from .predicates import caller_evidence_quality
@@ -379,15 +386,270 @@ def query_relation_view(
     }
 
 
+def _packed_identity_text(view: PackedRelationView, index: int) -> str:
+    if index < 0 or (index + 1) * _U32.size > len(view.identity_offsets):
+        raise ValueError(f"invalid GGB4 identity string index {index}")
+    offset = _U32.unpack_from(view.identity_offsets, index * _U32.size)[0]
+    if offset + _U32.size > len(view.identity):
+        raise ValueError("invalid GGB4 identity string offset")
+    length = _U32.unpack_from(view.identity, offset)[0]
+    start = offset + _U32.size
+    end = start + length
+    if end > len(view.identity):
+        raise ValueError("invalid GGB4 identity string bounds")
+    return view.identity[start:end].decode("utf-8")
+
+
+def _packed_node(view: PackedRelationView, node_n: int) -> RelationNode:
+    if not 0 <= node_n < view.node_count:
+        raise ValueError(f"invalid GGB4 relation node index {node_n}")
+    row = _NODE_LITE.unpack_from(view.node_rows, node_n * _NODE_LITE.size)
+    id_idx, label, kind, node_path, line, role, active = row
+    if not active:
+        raise ValueError("GGB4 relation index names an inactive node")
+    return RelationNode(
+        id=_packed_identity_text(view, id_idx),
+        label=_packed_identity_text(view, label),
+        kind=_packed_identity_text(view, kind),
+        path=_packed_identity_text(view, node_path),
+        line=None if line < 0 else line,
+        role=_packed_identity_text(view, role),
+    )
+
+
+def _packed_index_candidates(
+    view: PackedRelationView,
+    namespace: bytes,
+    value: str,
+) -> tuple[int, ...]:
+    wanted = _index_hash(namespace, value)
+
+    def hash_at(index: int) -> int:
+        return _INDEX_REF.unpack_from(view.exact_index, index * _INDEX_REF.size)[0]
+
+    low = 0
+    high = view.exact_index_count
+    while low < high:
+        middle = (low + high) // 2
+        if hash_at(middle) < wanted:
+            low = middle + 1
+        else:
+            high = middle
+    start = low
+    high = view.exact_index_count
+    while low < high:
+        middle = (low + high) // 2
+        if hash_at(middle) <= wanted:
+            low = middle + 1
+        else:
+            high = middle
+    return tuple(
+        _INDEX_REF.unpack_from(view.exact_index, index * _INDEX_REF.size)[1]
+        for index in range(start, low)
+    )
+
+
+def _resolve_packed_target(
+    view: PackedRelationView,
+    target: str,
+) -> tuple[str, tuple[tuple[int, RelationNode], ...]]:
+    raw = target.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {"`", "'", '"'}:
+        raw = raw[1:-1].strip()
+    if not raw:
+        return "not_found", ()
+
+    exact = tuple(
+        (node_n, node)
+        for node_n in _packed_index_candidates(view, b"id", raw)
+        if (node := _packed_node(view, node_n)).id == raw
+    )
+    if exact:
+        return ("ok" if len(exact) == 1 else "ambiguous"), exact
+
+    wanted_label = raw.rsplit("::", 1)[-1].strip().casefold()
+    label_matches = tuple(
+        (node_n, node)
+        for node_n in _packed_index_candidates(view, b"label", wanted_label)
+        if (node := _packed_node(view, node_n)).label.casefold() == wanted_label
+    )
+    if "::" in raw:
+        path_text, _label_text = raw.rsplit("::", 1)
+        wanted_path = _normalized(path_text)
+        qualified = tuple(
+            item
+            for item in label_matches
+            if _normalized(item[1].path) == wanted_path
+            or _normalized(item[1].path).endswith("/" + wanted_path)
+        )
+        if qualified:
+            ordered = tuple(sorted(qualified, key=lambda item: _view_node_order(item[1])))
+            return ("ok" if len(ordered) == 1 else "ambiguous"), ordered
+    code_matches = tuple(
+        item for item in label_matches if item[1].kind.casefold() in _CODE_SYMBOL_KINDS
+    )
+    matches = code_matches or label_matches
+    if matches:
+        ordered = tuple(sorted(matches, key=lambda item: _view_node_order(item[1])))
+        return ("ok" if len(ordered) == 1 else "ambiguous"), ordered
+
+    wanted_path = _normalized(raw)
+    path_matches = tuple(
+        (node_n, node)
+        for node_n in _packed_index_candidates(view, b"path", wanted_path)
+        if (node := _packed_node(view, node_n)).path
+        and _normalized(node.path) == wanted_path
+    )
+    if path_matches:
+        ordered = tuple(sorted(path_matches, key=lambda item: _view_node_order(item[1])))
+        return ("ok" if len(ordered) == 1 else "ambiguous"), ordered
+    return "not_found", ()
+
+
+def _packed_call_rows(
+    view: PackedRelationView,
+    node_n: int,
+    direction: RelationDirection,
+) -> tuple[tuple, ...]:
+    payload = view.incoming_calls if direction == "callers" else view.outgoing_calls
+    offsets = view.incoming_offsets if direction == "callers" else view.outgoing_offsets
+    start = _U32.unpack_from(offsets, node_n * _U32.size)[0]
+    end = _U32.unpack_from(offsets, (node_n + 1) * _U32.size)[0]
+    row_count = len(payload) // _CALL.size
+    if not 0 <= start <= end <= row_count:
+        raise ValueError("invalid GGB4 call adjacency span")
+    return tuple(
+        _CALL.unpack_from(payload, index * _CALL.size)
+        for index in range(start, end)
+    )
+
+
+def query_packed_relation_view(
+    view: PackedRelationView,
+    target: str,
+    *,
+    direction: RelationDirection,
+    relation: str = "calls",
+    limit: int = 50,
+    include_tests: bool = True,
+    include_external: bool = False,
+    details: bool = False,
+    freshness: str = "unchecked",
+) -> dict[str, Any]:
+    """Query one packed GGB4 adjacency span without materializing the graph/view."""
+
+    if direction not in {"callers", "callees"}:
+        raise ValueError("direction must be 'callers' or 'callees'")
+    if relation != "calls":
+        raise ValueError("relation currently supports only 'calls'")
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+    resolution, candidates = _resolve_packed_target(view, target)
+    if resolution == "not_found":
+        return {
+            "status": "not_found",
+            "query": target,
+            "suggestion": "Use search_nodes to find an exact node id or pass path::symbol.",
+        }
+    if resolution == "ambiguous":
+        return {
+            "status": "ambiguous",
+            "query": target,
+            "candidates": [_view_node_row(node) for _node_n, node in candidates],
+            "suggestion": "Pass one candidate id or path::symbol.",
+        }
+    target_n, target_node = candidates[0]
+    calls = _packed_call_rows(view, target_n, direction)
+    filtered_tests = 0
+    filtered_external = 0
+    rows: list[dict[str, Any]] = []
+    for source_n, target_n_value, confidence, provenance, location, evidence, edge_count in calls:
+        neighbor_n = source_n if direction == "callers" else target_n_value
+        node = _packed_node(view, neighbor_n)
+        if node.role == "test" and not include_tests:
+            filtered_tests += 1
+            continue
+        if node.role == "external" and not include_external:
+            filtered_external += 1
+            continue
+        row = {
+            **_view_node_row(node),
+            "role": node.role,
+            "confidence": round(float(confidence), 3),
+        }
+        if details:
+            relation_strings = view.relation_strings
+            if not all(0 <= index < len(relation_strings) for index in (provenance, location, evidence)):
+                raise ValueError("invalid GGB4 call relation string index")
+            row.update(
+                {
+                    "edge_count": edge_count,
+                    "provenance": relation_strings[provenance],
+                    "source_location": relation_strings[location],
+                    "evidence": relation_strings[evidence],
+                }
+            )
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            _role_order(str(row["role"])),
+            _normalized(str(row["path"])),
+            int(row["line"] or 0),
+            str(row["label"]).casefold(),
+            str(row["id"]),
+        )
+    )
+    total = len(rows)
+    returned = rows[:limit]
+    complete_within_graph = len(returned) == total
+    return {
+        "status": "ok",
+        "direction": direction,
+        "relation": relation,
+        "target": _view_node_row(target_node),
+        "matched_total": len(calls),
+        "total": total,
+        "returned": len(returned),
+        "omitted": total - len(returned),
+        "filtered": {"tests": filtered_tests, "external": filtered_external},
+        "neighbors": returned,
+        "receipt": {
+            "complete_within_graph": complete_within_graph,
+            "call_topology_status": view.topology_status,
+            "call_topology_evidence": view.topology_detail,
+            "answer_complete": (
+                complete_within_graph
+                and view.topology_status == "complete"
+                and freshness == "fresh"
+            ),
+            "freshness": freshness,
+        },
+    }
+
+
 @lru_cache(maxsize=16)
 def _cached_relation_view(path_text: str, mtime_ns: int, size: int) -> SectionedRelationView:
     del mtime_ns, size
     return load_sectioned_relation_view(Path(path_text))
 
 
+@lru_cache(maxsize=16)
+def _cached_packed_relation_view(
+    path_text: str,
+    mtime_ns: int,
+    size: int,
+) -> PackedRelationView | None:
+    del mtime_ns, size
+    return load_packed_relation_view(Path(path_text))
+
+
 def clear_relation_view_cache() -> int:
-    removed = _cached_relation_view.cache_info().currsize
+    removed = (
+        _cached_relation_view.cache_info().currsize
+        + _cached_packed_relation_view.cache_info().currsize
+    )
     _cached_relation_view.cache_clear()
+    _cached_packed_relation_view.cache_clear()
     return removed
 
 
@@ -418,9 +680,12 @@ def query_saved_relations(
     resolved = path.resolve()
     if is_sectioned_graph(resolved) and not _has_applicable_delta(resolved):
         stat = resolved.stat()
-        view = _cached_relation_view(str(resolved), stat.st_mtime_ns, stat.st_size)
-        return query_relation_view(
-            view,
+        cache_key = (str(resolved), stat.st_mtime_ns, stat.st_size)
+        packed = _cached_packed_relation_view(*cache_key)
+        query_view = query_packed_relation_view if packed is not None else query_relation_view
+        view = packed if packed is not None else _cached_relation_view(*cache_key)
+        return query_view(
+            view,  # type: ignore[arg-type]
             target,
             direction=direction,
             relation=relation,
@@ -513,6 +778,7 @@ __all__ = [
     "clear_relation_view_cache",
     "encode_relation_micro",
     "query_relation_view",
+    "query_packed_relation_view",
     "query_relations",
     "query_saved_relations",
 ]

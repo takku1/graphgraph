@@ -11,6 +11,38 @@ from typing import Any
 
 MANIFEST_VERSION = 4
 
+#: path -> ((mtime_ns, size), parsed payload). The manifest is whole-repo
+#: state, so it grows with the corpus and is re-read on every incremental
+#: update; `clear_manifest_cache` exists so tests and long-lived servers can
+#: drop it explicitly.
+_MANIFEST_CACHE: dict[str, tuple[tuple[int, int], Any]] = {}
+
+
+def clear_manifest_cache() -> None:
+    """Forget every parsed manifest. Mirrors `clear_graph_cache`."""
+    _MANIFEST_CACHE.clear()
+
+
+def _isolated(data: dict[str, Any]) -> dict[str, Any]:
+    """Give a caller its own view of the two mappings `Manifest` exposes.
+
+    `deepcopy` is not an option: on a 33.5 MB manifest it costs 1,067 ms
+    against 449 ms to simply re-read and re-parse, so it would make the cache
+    slower than no cache at all. A shallow copy is ~0 ms and is sufficient
+    here, because every writer replaces whole entries -- `files[rel] = {...}`,
+    `del files[rel]`, `manifest.type_index = ...` -- and none mutates an entry
+    in place. Sharing the entry objects is therefore safe; sharing the two
+    containers would not be.
+    """
+    isolated = dict(data)
+    files = data.get("files")
+    if isinstance(files, dict):
+        isolated["files"] = dict(files)
+    type_index = data.get("type_index")
+    if isinstance(type_index, dict):
+        isolated["type_index"] = dict(type_index)
+    return isolated
+
 
 @lru_cache(maxsize=1)
 def extractor_fingerprint() -> str:
@@ -63,12 +95,36 @@ class Manifest:
     @classmethod
     def load(cls, path: Path) -> Manifest:
         if not path.exists():
+            _MANIFEST_CACHE.pop(str(path), None)
             return cls()
+        # 35 MB of JSON on a 1,574-file checkout, re-parsed in full on every
+        # single-file update: measured at 537 ms, 55% of that update's wall
+        # time and the largest term in its failure to stay invariant to repo
+        # size. A resident process re-paid it on every call, so process
+        # residency alone could not remove it.
+        #
+        # Keyed on the same stat identity the packet cache uses, so an external
+        # rewrite changes size or mtime and is re-read. Only the parsed payload
+        # is shared; each caller gets its own copy to mutate, because `save`
+        # writes back whatever the caller mutated.
+        key = str(path)
+        try:
+            stat = path.stat()
+            identity = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            identity = None
+        if identity is not None:
+            cached = _MANIFEST_CACHE.get(key)
+            if cached is not None and cached[0] == identity:
+                return cls(_isolated(cached[1]))
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return cls(data)
         except Exception:
             return cls({"version": 0})
+        if identity is not None:
+            _MANIFEST_CACHE[key] = (identity, data)
+            return cls(_isolated(data))
+        return cls(data)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +154,17 @@ class Manifest:
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise
+        # Seed the cache with what we just wrote. Writing changes the file's
+        # stat, so the next `load` would otherwise always miss -- and an
+        # incremental update writes the manifest on every call, which made the
+        # read cache useless in exactly the edit loop it exists to serve.
+        # `data` holds this instance's own `files`/`type_index` mappings, so it
+        # is copied out rather than shared with the caller that keeps mutating.
+        try:
+            stat = path.stat()
+        except OSError:
+            return
+        _MANIFEST_CACHE[str(path)] = ((stat.st_mtime_ns, stat.st_size), _isolated(data))
 
     def update_file(
         self,

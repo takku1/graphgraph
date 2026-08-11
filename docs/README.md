@@ -65,7 +65,7 @@ Superseded pre-redesign documents were retired; their history is in git.
 |----------|------|
 | [evaluation/README.md](evaluation/README.md) | Evaluation index |
 | [evaluation/empirical-evaluation.md](evaluation/empirical-evaluation.md) | Measured results (through 2026-07-19) |
-| [evaluation/graybox-cycles/](evaluation/graybox-cycles/README.md) | Dated gray-box evidence records, 2026-07-27 → 08-02 |
+| [evaluation/graybox-cycles/](evaluation/graybox-cycles/README.md) | Consolidated gray-box measurement ledger, corpora, and current receipts through 2026-08-08 |
 | [evaluation/acceptance-evaluation-harness.md](evaluation/acceptance-evaluation-harness.md) | Acceptance harness |
 | [evaluation/defect-ledger.md](evaluation/defect-ledger.md) | Defects & resolutions |
 | [evaluation/metric-validity-gaps.md](evaluation/metric-validity-gaps.md) | Metric validity gaps |

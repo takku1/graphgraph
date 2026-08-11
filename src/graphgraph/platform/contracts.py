@@ -28,6 +28,8 @@ class CapabilityReceipt:
     paths_processed: int = 0
     paths_restored: int = 0
     cache_hit: bool = False
+    artifacts_compiled: int = 0
+    artifacts_reused: int = 0
     warnings: tuple[str, ...] = ()
 
 

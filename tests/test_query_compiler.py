@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from graphgraph import Edge, Graph, Node
 from graphgraph.io import save_graph
@@ -15,24 +16,24 @@ from graphgraph.services.query import execute_query
 
 class QueryCompilerTest(unittest.TestCase):
     def test_exact_callers_query_uses_relation_operator(self) -> None:
-        plan = compile_query("what calls render_query_context")
+        plan = compile_query("what calls CompilerDriver::compile")
 
         self.assertEqual(plan.operator, QueryOperator.RELATIONS)
-        self.assertEqual(plan.arguments["target"], "render_query_context")
+        self.assertEqual(plan.arguments["target"], "CompilerDriver::compile")
         self.assertEqual(plan.arguments["direction"], "callers")
         self.assertEqual(plan.cost_class, "indexed_one_hop")
         self.assertFalse(plan.mutating)
 
     def test_exact_callees_query_uses_relation_operator(self) -> None:
-        plan = compile_query("what does GraphRuntime::compile call?")
+        plan = compile_query("what does ContextCompiler::compile call?")
 
         self.assertEqual(plan.operator, QueryOperator.RELATIONS)
-        self.assertEqual(plan.arguments["target"], "GraphRuntime::compile")
+        self.assertEqual(plan.arguments["target"], "ContextCompiler::compile")
         self.assertEqual(plan.arguments["direction"], "callees")
 
     def test_compound_relation_and_test_query_stays_in_context(self) -> None:
         plan = compile_query(
-            "what calls render_query_context and which tests should run if it changes?"
+            "what calls CompilerDriver::compile and which tests should run if it changes?"
         )
 
         self.assertEqual(plan.operator, QueryOperator.CONTEXT)
@@ -65,7 +66,7 @@ class QueryCompilerTest(unittest.TestCase):
         self.assertEqual(plan.operator, QueryOperator.CONTEXT)
 
     def test_explicit_context_override_wins(self) -> None:
-        plan = compile_query("what calls render_query_context", mode="context")
+        plan = compile_query("what calls CompilerDriver::compile", mode="context")
 
         self.assertEqual(plan.operator, QueryOperator.CONTEXT)
         self.assertEqual(plan.confidence, 1.0)
@@ -158,9 +159,81 @@ class QueryCompilerTest(unittest.TestCase):
 
         context = response["result"]
         selection = context["retrieval"]["format_selection"]
+        self.assertEqual(context["packet_format"], selection["chosen"])
         self.assertEqual(selection["chosen_tokens"], selection["minimum_tokens"])
         self.assertLessEqual(selection["ratio_to_minimum"], 1.05)
         self.assertTrue(validate_packet(context["packet"]).ok)
+
+    def test_context_query_routes_and_plans_once(self) -> None:
+        from graphgraph.platform import compiler
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / ".graphgraph" / "graph.gg"
+            graph_path.parent.mkdir()
+            save_graph(
+                Graph(
+                    nodes={
+                        "FILE": Node("FILE", "module.py", "python", "module.py"),
+                        "TARGET": Node("TARGET", "target", "function", "module.py"),
+                    },
+                    edges=[Edge("FILE", "TARGET", "contains")],
+                ),
+                graph_path,
+            )
+
+            with (
+                patch.object(compiler, "route_query", wraps=compiler.route_query) as route,
+                patch.object(compiler, "plan_context", wraps=compiler.plan_context) as plan,
+                patch.object(compiler, "validate_packet", wraps=compiler.validate_packet) as validate,
+            ):
+                response = execute_query(
+                    "target",
+                    directory=root,
+                    graph_path=graph_path,
+                    mode="context",
+                    query_class="direct_lookup",
+                    packet="gg",
+                )
+
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(route.call_count, 1)
+        self.assertEqual(plan.call_count, 1)
+        self.assertEqual(validate.call_count, 1)
+
+    def test_cli_delegates_operator_compilation_once(self) -> None:
+        import contextlib
+        import io
+        from unittest.mock import Mock
+
+        from graphgraph.cli.parser import build_parser
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path = root / ".graphgraph" / "graph.gg"
+            graph_path.parent.mkdir()
+            save_graph(
+                Graph(
+                    nodes={
+                        "CALLER": Node("CALLER", "caller", "function", "src/a.py"),
+                        "TARGET": Node("TARGET", "target", "function", "src/b.py"),
+                    },
+                    edges=[Edge("CALLER", "TARGET", "calls")],
+                ),
+                graph_path,
+            )
+            args = build_parser().parse_args(
+                ["query", "what calls target", "--graph", str(graph_path)]
+            )
+            compiler_spy = Mock(wraps=compile_query)
+            with (
+                patch("graphgraph.planning.query_compiler.compile_query", compiler_spy),
+                patch("graphgraph.services.query.compile_query", compiler_spy),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                args.func(args)
+
+        self.assertEqual(compiler_spy.call_count, 1)
 
 
 if __name__ == "__main__":

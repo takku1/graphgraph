@@ -18,7 +18,7 @@ import json
 import os
 from pathlib import Path
 
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, PENDING, CaseResult, GateResult, Task
 from .test_exec import ZERO_SELECTED, run_command, tool_available
@@ -57,7 +57,7 @@ def _evidence_relations(items: list[dict]) -> set[str]:
 
 def run_affected_tests(task: Task, repo: Path, graph_path: Path | None = None) -> CaseResult:
     graph_path = graph_path or (repo / ".graphgraph" / "graph.gg")
-    rendered, _status = render_native_context(
+    rendered, _status = CompilerDriver().compile(DriverRequest(
         query=task.query,
         query_class="affected_tests",
         directory=repo,
@@ -66,7 +66,7 @@ def run_affected_tests(task: Task, repo: Path, graph_path: Path | None = None) -
         json_details=True,
         show_anchors=True,
         max_nodes=task.max_nodes or 40,
-    )
+    ))
     payload = json.loads(rendered)
     affected = (payload.get("retrieval") or {}).get("affected_tests") or {}
     commands = [c for c in (affected.get("commands") or []) if c]

@@ -16,11 +16,10 @@ from ..packets.validation import validate_any
 from ..planning import plan_context, query_class_schema
 from ..retrieval import encode_relation_micro, query_relations, query_saved_relations, search_nodes
 from ..scanner import DEFAULT_SCAN_MAX_NODES
-from ..services import render_final_packet, render_full_graph, render_query_context, render_source_snippets
+from ..services import render_final_packet, render_full_graph, render_source_snippets
+from ..services.compiler_driver import CompilerDriver, DriverRequest
 from ..services.freshness import (
     inspect_saved_graph_freshness,
-    refresh_receipt,
-    scope_freshness,
     source_root_for_saved_graph,
 )
 from ..services.lifecycle import (
@@ -633,52 +632,11 @@ def build_query_context(args: dict[str, Any]) -> str:
     graph_path = Path(graph_path_str) if graph_path_str else find_graph_path()
     changed_paths = _unique_strings(args.get("changed_paths") or [])
     deleted_paths = _unique_strings(args.get("deleted_paths") or [])
-    refreshed_graph = None
-    refresh_metadata = None
     sync_git = str(args.get("sync") or "none") == "git"
-    if changed_paths or deleted_paths or sync_git:
-        status = refresh_saved_graph(
-            directory=Path(str(args.get("directory") or ".")),
-            output_path=graph_path,
-            changed_paths=changed_paths,
-            deleted_paths=deleted_paths,
-            sync_git=sync_git,
-            max_nodes=int(args["scan_max_nodes"]) if args.get("scan_max_nodes") is not None else DEFAULT_SCAN_MAX_NODES,
-            depth=str(args["depth"]) if args.get("depth") else None,
-            frontend=str(args["frontend"]) if args.get("frontend") else None,
-            docs=bool(args["docs"]) if "docs" in args else None,
-            history=bool(args["history"]) if "history" in args else None,
-        )
-        if status.built:
-            refreshed_graph = status.graph
-        refresh_metadata = refresh_receipt(
-            status,
-            mode="git" if sync_git else "explicit",
-            requested_changed_paths=tuple(changed_paths),
-            requested_deleted_paths=tuple(deleted_paths),
-        )
-        anchor_paths = tuple(dict.fromkeys((*changed_paths, *status.changed_paths)))
-    else:
-        anchor_paths = ()
-    freshness = (
-        {"fresh": True, "changed_count": 0, "deleted_count": 0, "changed_paths": [], "deleted_paths": []}
-        if sync_git
-        else inspect_saved_graph_freshness(
-            directory=Path(str(args.get("directory") or ".")),
-            output_path=graph_path,
-        )
-    )
-    metadata: dict[str, object] = {
-        "freshness": scope_freshness(
-            freshness,
-            tuple(dict.fromkeys((*changed_paths, *deleted_paths))),
-        )
-    }
-    if refresh_metadata is not None:
-        metadata["refresh"] = refresh_metadata
-    rendered = render_query_context(
+    rendered, _status = CompilerDriver().compile(DriverRequest(
         query=str(args["query"]),
         query_class=str(args.get("query_class") or "auto"),
+        directory=Path(str(args.get("directory") or ".")),
         graph_path=graph_path,
         packet=str(args["packet"]) if args.get("packet") else None,
         hops=int(args["hops"]) if args.get("hops") is not None else None,
@@ -686,30 +644,37 @@ def build_query_context(args: dict[str, Any]) -> str:
         max_nodes=int(args["max_nodes"]) if args.get("max_nodes") is not None else None,
         scopes=tuple(str(scope) for scope in args.get("scopes") or []),
         scope_mode=str(args.get("scope_mode") or "strict"),
-        # MCP always needs the structured receipt internally. Compact mode
-        # removes anchors after proof construction; explicit show_anchors
-        # below still controls whether the caller receives the detailed form.
         show_anchors=True,
+        changed_paths=tuple(changed_paths),
+        deleted_paths=tuple(deleted_paths),
+        sync_git=sync_git,
+        json_output=True,
+        json_details=True,
         cache_namespace="mcp_query",
-        json_anchors=True,
-        graph=refreshed_graph,
-        response_metadata=metadata,
+        scan_max_nodes=(
+            int(args["scan_max_nodes"])
+            if args.get("scan_max_nodes") is not None
+            else DEFAULT_SCAN_MAX_NODES
+        ),
+        depth=str(args["depth"]) if args.get("depth") else None,
+        frontend=str(args["frontend"]) if args.get("frontend") else None,
+        docs=bool(args["docs"]) if "docs" in args else None,
+        history=bool(args["history"]) if "history" in args else None,
         source_mode=str(args.get("source_mode") or "auto"),
         memory_scopes=tuple(str(scope) for scope in args.get("memory_scopes") or ("project", "session")),
-        anchor_paths=anchor_paths,
         include_snippets=bool(args.get("include_snippets")),
         snippet_limit=int(args["snippet_limit"]) if args.get("snippet_limit") is not None else 3,
         snippet_context_lines=(
             int(args["snippet_context_lines"]) if args.get("snippet_context_lines") is not None else 2
         ),
         snippet_max_lines=(int(args["snippet_max_lines"]) if args.get("snippet_max_lines") is not None else 24),
-    )
+    ))
     if (
         str(args.get("format") or "compact") == "detailed"
         or bool(args.get("show_anchors"))
         or bool(args.get("include_snippets"))
     ):
-        # ``render_query_context`` pretty-prints CLI diagnostics. MCP results
+        # The shared context module pretty-prints CLI diagnostics. MCP results
         # are machine-only, so forwarding that whitespace inflated detailed
         # envelopes by roughly 45% (9.6k -> 6.6k characters on the critical
         # C# fixture) without adding one bit of proof. Preserve the complete

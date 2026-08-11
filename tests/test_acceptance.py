@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from graphgraph.acceptance.execution import select_tasks
 from graphgraph.acceptance.gates import (
     gate_call_edges,
     gate_expected_completeness,
@@ -22,7 +23,6 @@ from graphgraph.acceptance.model import (
 )
 from graphgraph.acceptance.runner import _parse_packet, run_case
 from graphgraph.acceptance.scoreboard import summarize, to_markdown
-from graphgraph.acceptance.service import select_tasks
 from graphgraph.acceptance.tokens import count_tokens
 from graphgraph.cli.parser import build_parser
 from graphgraph.services.control import GATE_ORDER

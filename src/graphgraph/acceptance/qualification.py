@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 from graphgraph.io import load_any
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, NA, PASS, CaseResult, GateResult, Task
 
@@ -29,7 +29,7 @@ _OWNERS = {
 
 
 def _query(query: str, repo: Path, graph_path: Path) -> dict:
-    rendered, _status = render_native_context(
+    rendered, _status = CompilerDriver().compile(DriverRequest(
         query=query,
         query_class="direct_lookup",
         directory=repo,
@@ -38,7 +38,7 @@ def _query(query: str, repo: Path, graph_path: Path) -> dict:
         json_details=True,
         show_anchors=True,
         max_nodes=12,
-    )
+    ))
     return json.loads(rendered)
 
 

@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 from graphgraph.packets.validation import validate_any
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, CaseResult, GateResult, Task
 from .tokens import count_tokens
@@ -46,7 +46,7 @@ def run_doc_enumeration(task: Task) -> CaseResult:
         _write_fixture(root)
         graph_path = root / ".graphgraph" / "graph.gg"
 
-        json_raw, _s = render_native_context(
+        json_raw, _s = CompilerDriver().compile(DriverRequest(
             query=_QUERY,
             query_class="doc_summary",
             directory=root,
@@ -55,12 +55,12 @@ def run_doc_enumeration(task: Task) -> CaseResult:
             json_details=True,
             show_anchors=True,
             max_nodes=30,
-        )
+        ))
         payload = json.loads(json_raw)
         packet = str(payload.get("packet", ""))
         status = str((payload.get("retrieval") or {}).get("answerability", {}).get("status", ""))
 
-        plain_out, _s2 = render_native_context(
+        plain_out, _s2 = CompilerDriver().compile(DriverRequest(
             query=_QUERY,
             query_class="doc_summary",
             directory=root,
@@ -68,7 +68,7 @@ def run_doc_enumeration(task: Task) -> CaseResult:
             json_output=False,
             show_anchors=False,
             max_nodes=30,
-        )
+        ))
 
         v_json = validate_any(packet)
         v_plain = validate_any(plain_out)  # exactly what the CLI validates in plain mode

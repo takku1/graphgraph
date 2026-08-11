@@ -170,11 +170,10 @@ def evaluate_graph(
     # pipeline as `graphgraph query`; calling retrieve_context() directly made
     # the benchmark disagree with the shipped command whenever semantic/source
     # seeds changed the production anchors.
-    from ..platform.compiler import GraphProgram
-    from ..platform.runtime import create_graph_runtime
+    from ..platform.compiler import CompileRequest, ContextCompiler
 
     graph = load_any(graph_path)
-    runtime = create_graph_runtime(
+    compiler = ContextCompiler.open(
         graph_path,
         graph=graph,
         enable_evidence=False,
@@ -187,8 +186,8 @@ def evaluate_graph(
     results: list[EvalResult] = []
     for task_index, task in enumerate(tasks):
         started = perf_counter()
-        compiled = runtime.compile(
-            GraphProgram(
+        compiled = compiler.compile(
+            CompileRequest(
                 query=task.query,
                 query_class=task.query_class,
                 packet=None,

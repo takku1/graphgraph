@@ -12,6 +12,23 @@ MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 
 
 class DocumentationContractTest(unittest.TestCase):
+    def test_graybox_directory_is_a_compact_rolling_evidence_window(self) -> None:
+        graybox = ROOT / "docs" / "evaluation" / "graybox-cycles"
+        ledger = (graybox / "README.md").read_text(encoding="utf-8")
+        raw_receipts = sorted(graybox.glob("20??-??-??-*.md"))
+
+        self.assertLessEqual(
+            len(raw_receipts),
+            2,
+            "promote durable findings to the measurement ledger before adding another raw receipt",
+        )
+        for receipt in raw_receipts:
+            self.assertIn(
+                f"]({receipt.name})",
+                ledger,
+                f"current raw receipt is not indexed: {receipt.name}",
+            )
+
     def test_every_doc_has_an_inbound_index_link(self) -> None:
         # T09: docs/README.md is the authoritative map. Every document under
         # docs/ must be reachable from it (directly or through a linked index),

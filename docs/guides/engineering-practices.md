@@ -131,7 +131,7 @@ every alternative.
   predates the 2026-07-30 token-proxy recalibration; the direction holds but the
   magnitude was measured with a ruler carrying a 47% cross-format spread, so
   re-measure before repeating it. See
-  [the recalibration finding](../evaluation/graybox-cycles/2026-07-30-token-proxy-recalibration.md).
+  [the consolidated recalibration measurement](../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements).
 - **Query-class-aware retrieval depth** — `planning/` routes `blast_radius`,
   `subsystem_summary`, `direct_lookup`, etc. to different expansion depths. This
   is the "pull the right dependencies" idea, already calibrated.

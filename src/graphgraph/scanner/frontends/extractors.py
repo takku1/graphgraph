@@ -7,6 +7,7 @@ from typing import Any
 from ...graph.core import Edge, Node
 from ...graph.operations import dedupe_edges
 from ..ast import _is_context_symbol, extract_symbols
+from ..source_ir import SourceIR, compile_syntax_ir
 from .edges import (
     _add_imports_from,
     _add_nested_contains,
@@ -25,7 +26,6 @@ from .languages import (
 from .model import (
     ExtractionResult,
     Extractor,
-    SourceFile,
     _TsDef,
 )
 from .persistent_facts import PythonProjectTypeFacts
@@ -62,7 +62,7 @@ class RegexExtractor:
 
     def extract_symbols(
         self,
-        files: list[SourceFile],
+        files: list[SourceIR],
         max_total_symbols: int,
         context_nodes: dict[str, Node] | None = None,
         type_fact_context: PythonProjectTypeFacts | None = None,
@@ -82,7 +82,7 @@ class TreeSitterExtractor:
 
     def extract_symbols(
         self,
-        files: list[SourceFile],
+        files: list[SourceIR],
         max_total_symbols: int,
         context_nodes: dict[str, Node] | None = None,
         type_fact_context: PythonProjectTypeFacts | None = None,
@@ -90,11 +90,11 @@ class TreeSitterExtractor:
         context_ids = set((context_nodes or {}).keys())
         nodes: dict[str, Node] = dict(context_nodes or {})
         edges: list[Edge] = []
-        defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]] = []
+        defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]] = []
         name_to_symbols: dict[str, list[str]] = {}
         total = 0
         truncated = False
-        fallback_sources: list[SourceFile] = []
+        fallback_sources: list[SourceIR] = []
         failed_files: list[str] = []
         unsupported_files: list[str] = []
         grammar_errors: list[str] = []
@@ -120,10 +120,17 @@ class TreeSitterExtractor:
                 raise RuntimeError(
                     f"Tree-sitter grammar unavailable for {source.rel}{detail}: {reason}"
                 )
-            text_bytes = source.text.encode("utf-8", errors="replace")
             try:
-                tree = _parse_with_timeout(parser, text_bytes, self.parse_timeout_micros)
-                if tree is None:
+                syntax = compile_syntax_ir(
+                    source,
+                    parser,
+                    lambda text: _parse_with_timeout(
+                        parser,
+                        text,
+                        self.parse_timeout_micros,
+                    ),
+                )
+                if syntax is None:
                     raise TimeoutError(f"Tree-sitter parse timed out after {self.parse_timeout_micros} microseconds")
             except Exception as exc:
                 try:
@@ -139,7 +146,8 @@ class TreeSitterExtractor:
                 else:
                     parse_error_files.append(source.rel)
                 continue
-            root = tree.root_node
+            text_bytes = source.text_bytes
+            root = syntax.tree.root_node
             defs = _collect_defs(source, root, text_bytes)
             defs_by_file.append((source, defs, root))
             seen_ids: set[str] = set()

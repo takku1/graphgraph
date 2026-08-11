@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 from ..concepts.terms import term_key
 from ..graph.core import Edge, Graph
 from ..planning import ContextPlan
+from ..planning.routing import AUTOMATIC_ROUTE_MIN_CONFIDENCE
 from .anchors import retrieval_confidence
 from .facets import (
     _AFFECTED_OUTPUT_TERMS,
@@ -1204,12 +1205,22 @@ def reconcile_semantic_retrieval_receipt(
 
     query_class = str(getattr(route, "query_class", ""))
     route_confidence = float(getattr(route, "confidence", 1.0))
-    if automatic_route and route_confidence < 0.25:
+    if automatic_route and route_confidence < AUTOMATIC_ROUTE_MIN_CONFIDENCE:
         status = "incomplete"
         abstained = True
-        reasons.append(f"automatic routing confidence is low ({route_confidence:.3f})")
+        # Say what this number *is*. Route confidence scores the wording alone
+        # and never sees the graph, so quoting it bare read as an answer
+        # confidence and invited calibration against a value that cannot move:
+        # this branch is only reachable when no routing signal matched at all.
+        # The evidence-derived score lives in `answerability.confidence`.
+        reasons.append(
+            "no routing signal matched the wording "
+            f"(text-only route confidence {route_confidence:.3f}; "
+            "answer confidence is reported separately as answerability.confidence)"
+        )
         metadata["routing_recovery"] = {
             "strategy": "calibrated_abstention",
+            "route_confidence_is_text_only": True,
             "confidence": route_confidence,
             "suggestions": [
                 "add an exact symbol or path",

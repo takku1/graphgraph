@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 from graphgraph.services.control import parse_control_ir
-from graphgraph.services.native import render_native_context
 
 from .gates import default_gates
 from .model import CaseResult, PacketEdge, PacketNode, ProbeResult, Task
@@ -63,8 +63,7 @@ def _parse_packet(packet: str) -> tuple[dict[str, str], list[PacketNode], list[P
 
 
 def graph_identity(graph_path: Path) -> dict:
-    """Reproducible graph identity. The .gg manifest carries no hash, so we hash
-    the graph bytes; this is the stable identity a receipt can be replayed against."""
+    """Return the stable graph identity recorded in acceptance receipts."""
     identity: dict = {"graph": str(graph_path)}
     try:
         raw = graph_path.read_bytes()
@@ -87,7 +86,7 @@ def graph_identity(graph_path: Path) -> dict:
 
 def run_probe(task: Task, repo: Path, graph_path: Optional[Path] = None) -> ProbeResult:
     graph_path = graph_path or (repo / ".graphgraph" / "graph.gg")
-    rendered, _status = render_native_context(
+    rendered, _status = CompilerDriver().compile(DriverRequest(
         query=task.query,
         query_class=task.query_class,
         directory=repo,
@@ -98,7 +97,7 @@ def run_probe(task: Task, repo: Path, graph_path: Optional[Path] = None) -> Prob
         max_nodes=task.max_nodes,
         scopes=task.scopes,
         packet="gg",
-    )
+    ))
     payload = json.loads(rendered)
 
     packet = str(payload.get("packet", ""))
@@ -117,8 +116,6 @@ def run_probe(task: Task, repo: Path, graph_path: Optional[Path] = None) -> Prob
     try:
         receipt = parse_control_ir(control_raw)
     except ValueError:
-        # Malformed or absent control output is itself a finding; fall back to
-        # a field scan so the remaining gates still score rather than erroring.
         for field_pair in control_raw.split():
             if field_pair.startswith("next="):
                 next_action = field_pair.split("=", 1)[1]
@@ -167,7 +164,7 @@ def run_case(task: Task, repo: Path, graph_path: Optional[Path] = None) -> CaseR
             return CaseResult(task=task, probe=None, gates=[], error=f"{type(exc).__name__}: {exc}")
     try:
         probe = run_probe(task, repo, graph_path)
-    except Exception as exc:  # noqa: BLE001 - surface as a scored failure, never crash the board
+    except Exception as exc:  # noqa: BLE001
         return CaseResult(task=task, probe=None, gates=[], error=f"{type(exc).__name__}: {exc}")
     gate_fn = task.gate_fn or default_gates
     gates = gate_fn(probe, task)

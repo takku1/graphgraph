@@ -18,7 +18,7 @@ from graphgraph.analysis.eval import (
     calibration_pairs,
     results_with_calibration_to_json,
 )
-from graphgraph.cli.commands import cmd_eval
+from graphgraph.cli.evaluation import cmd_eval
 from graphgraph.cli.parser import build_parser
 from graphgraph.graph.core import Graph, Node
 from graphgraph.io import save_graph

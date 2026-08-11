@@ -35,6 +35,64 @@ from graphgraph.retrieval.models import Match
 
 
 class PlanningTest(unittest.TestCase):
+    def test_unrouted_queries_report_zero_not_a_prior_shaped_constant(self) -> None:
+        """The no-signal branch must not dress its prior up as a measurement.
+
+        `route_query` scored BROAD_FALLBACK_PRIOR as though the prior were
+        observed evidence, so every unrouted query reported
+        0.65*(0.75/6) + 0.35*(0.75/4) = 0.147 -- identical across corpora,
+        languages, and whether the answer was perfect or nonexistent. A graybox
+        cycle measured it as invariant over eight unrelated queries on two
+        repositories and correctly called it a decorative number.
+
+        Every routing signal weighs >= 3.0 against MIN_WINNING_SCORE 2.0, so
+        one firing signal is already decisive: this branch is reachable *only*
+        with no signal at all, and zero is the truthful score. Confidence that
+        varies with the corpus has to come from anchor evidence, which routing
+        cannot see -- that is `retrieval_confidence`.
+        """
+        from graphgraph.planning.routing import (
+            _SIGNALS,
+            AUTOMATIC_ROUTE_MIN_CONFIDENCE,
+            BROAD_FALLBACK,
+            MIN_WINNING_SCORE,
+            route_query,
+        )
+
+        unrouted = [
+            "chocolate cake recipe",
+            "zzzz nonsense qqq",
+            "totally unrelated aardvark banana",
+            "CUDA warps",
+        ]
+        for query in unrouted:
+            route = route_query(query)
+            self.assertEqual(route.query_class, BROAD_FALLBACK, query)
+            self.assertEqual(
+                route.confidence,
+                0.0,
+                f"{query!r} reported {route.confidence:.3f}; the no-signal branch has no evidence to score",
+            )
+            # The decision this number gates must be unchanged by saying so.
+            self.assertLess(route.confidence, AUTOMATIC_ROUTE_MIN_CONFIDENCE)
+
+        # The invariant the zero rests on: no signal is weak enough to leave
+        # the router indecisive while still carrying evidence. If a lighter
+        # signal is ever added, the branch can vary and this must be revisited.
+        self.assertTrue(
+            all(weight >= MIN_WINNING_SCORE for _cls, weight, _reason, _pattern in _SIGNALS),
+            "a signal below MIN_WINNING_SCORE makes the indecisive branch reachable with real evidence",
+        )
+
+    def test_route_confidence_threshold_has_one_definition(self) -> None:
+        """The abstain threshold was hardcoded as 0.25 in two subsystems."""
+        import graphgraph.retrieval.test_recommendations as recommendations
+        import graphgraph.services.compiler_driver as compiler_driver
+        from graphgraph.planning.routing import AUTOMATIC_ROUTE_MIN_CONFIDENCE
+
+        self.assertIs(recommendations.AUTOMATIC_ROUTE_MIN_CONFIDENCE, AUTOMATIC_ROUTE_MIN_CONFIDENCE)
+        self.assertIs(compiler_driver.AUTOMATIC_ROUTE_MIN_CONFIDENCE, AUTOMATIC_ROUTE_MIN_CONFIDENCE)
+
     def test_query_router_maps_agent_intents_without_graph_io(self) -> None:
         cases = {
             "where is render_packet defined": "direct_lookup",

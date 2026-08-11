@@ -19,8 +19,8 @@ from time import perf_counter
 from graphgraph.io import load_any, save_validated_graph
 from graphgraph.mcp.server import build_query_context
 from graphgraph.scanner import scan_directory
-from graphgraph.services import render_query_context
-from graphgraph.services.native import remove_paths_validated_graph, update_paths_validated_graph
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
+from graphgraph.services.lifecycle import remove_paths_validated_graph, update_paths_validated_graph
 
 
 @contextmanager
@@ -76,12 +76,12 @@ def _run_separate(root: Path, graph_path: Path) -> float:
             paths=["module_1.py"],
             frontend="regex",
         )
-        packet = render_query_context(
+        packet, _status = CompilerDriver().compile(DriverRequest(
             query="fused_target",
             query_class="direct_lookup",
             graph_path=graph_path,
             cache_namespace="separate_benchmark",
-        )
+        ))
         elapsed = perf_counter() - start
     _assert_result(graph_path, packet)
     return elapsed

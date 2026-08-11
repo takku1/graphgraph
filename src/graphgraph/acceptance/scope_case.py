@@ -13,7 +13,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, CaseResult, GateResult, Task
 from .runner import _parse_packet
@@ -66,7 +66,7 @@ def run_scope_inference(task: Task) -> CaseResult:
         _write_fixture(root)
         graph_path = root / ".graphgraph" / "graph.gg"
 
-        rendered, _s = render_native_context(
+        rendered, _s = CompilerDriver().compile(DriverRequest(
             query=_QUERY,
             query_class="subsystem_summary",
             directory=root,
@@ -75,7 +75,7 @@ def run_scope_inference(task: Task) -> CaseResult:
             json_details=True,
             show_anchors=True,
             max_nodes=40,
-        )
+        ))
         payload = json.loads(rendered)
         packet = str(payload.get("packet", ""))
         _relations, nodes, _edges = _parse_packet(packet)

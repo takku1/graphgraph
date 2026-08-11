@@ -9,11 +9,11 @@ from ..io import find_graph_path, load_any
 from ..packets import packet_format_schema
 from ..planning import query_class_schema
 from ..platform import (
-    GraphProgram,
+    CompileRequest,
+    ContextCompiler,
     MemoryStore,
     build_change_packet,
     compiler_pass_schema,
-    create_graph_runtime,
     graph_as_of,
     repair_context_json,
 )
@@ -106,9 +106,9 @@ def handle_platform_tool(name: str, args: dict[str, Any]) -> str:
     """Execute one advanced platform tool and return its existing text payload."""
     if name == "compile_context":
         graph_path = Path(str(args["graph_path"])) if args.get("graph_path") else find_graph_path()
-        runtime = create_graph_runtime(graph_path)
-        result = runtime.compile(
-            GraphProgram(
+        compiler = ContextCompiler.open(graph_path)
+        result = compiler.compile(
+            CompileRequest(
                 query=str(args["query"]),
                 query_class=str(args.get("query_class") or "auto"),
                 packet=str(args.get("packet") or "gg"),

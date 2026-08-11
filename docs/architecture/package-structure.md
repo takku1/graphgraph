@@ -30,13 +30,13 @@ holds only `__init__.py` (the curated public API), `__main__.py`, and
 - `io/`: graph load/save/merge APIs plus graph/policy/lesson path discovery.
 - `analysis/`: graph summaries, graph comparisons, and retrieval evaluation
   (`eval.py`).
-- `services/`: higher-level query/context/snippet/native orchestration, plus
+- `services/`: higher-level compiler/query/context/snippet/lifecycle domains, plus
   the gate-control receipt (`control.py`).
 - `acceptance/`: black-box acceptance harness and the live-validation harness
   (`live_validation.py`). These are release/eval tooling, not engine code.
-- `cli/` and `mcp/`: command-line and MCP surfaces. CLI installation/plugin
-  generation lives in `cli/install.py`; runtime command handlers live in
-  `cli/commands.py`.
+- `cli/` and `mcp/`: command-line and MCP surfaces. Each CLI handler lives in
+  its domain module (`lifecycle.py`, `retrieval.py`, `graph_io.py`, and so on);
+  parser dispatch imports that owner lazily.
 
 ## Import Rule
 

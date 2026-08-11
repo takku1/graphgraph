@@ -10,6 +10,7 @@ from typing import Any
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
+from ..source_ir import SourceIR
 from .grammars import SUFFIX_LANGUAGE, UNION_PROFILE, profile_for_suffix
 from .javascript import (
     js_callback_definition,
@@ -17,11 +18,7 @@ from .javascript import (
     js_definition_owner,
     js_function_definition,
 )
-from .model import (
-    SourceFile,
-    _CallSite,
-    _TsDef,
-)
+from .model import _CallSite, _TsDef
 from .scope_graph import ScopeGraph, type_scope
 
 # Functions in JS/TS are usually assigned, not declared; see javascript.py.
@@ -153,11 +150,51 @@ def _definition_qualified_name(definition: _TsDef) -> str:
     return f"{qualifier}::{definition.name}" if qualifier else ""
 
 
-def _definition_node_id(source: SourceFile, definition: _TsDef) -> str:
+def _definition_node_id(source: SourceIR, definition: _TsDef) -> str:
     qualifier = _definition_impl_qualifier(definition)
     if qualifier:
-        return f"{source.file_node_id}__{qualifier}__{definition.name}"
-    return f"{source.file_node_id}__{definition.name}"
+        return f"{source.file_node_id}__{qualifier}__{definition.name}{definition.disambiguator}"
+    return f"{source.file_node_id}__{definition.name}{definition.disambiguator}"
+
+
+def _disambiguate_definition_ids(defs: list[_TsDef]) -> list[_TsDef]:
+    """Separate the node ids of same-named definitions in one file.
+
+    The id scheme qualifies a method by its owning type, which distinguishes
+    `A.run` from `B.run` but not a `@property def debug` from its
+    `@debug.setter def debug`, nor a `helper` nested inside two different
+    functions. The node builder keeps the first id it sees and skips the rest,
+    so those definitions were silently dropped: no node, therefore no `calls`
+    edges, no appearance in a blast radius, and a `callers == 0` dead-code
+    query that is wrong for every property. Measured at 7.9% of production
+    definitions on a real Flask checkout, and every property setter in it.
+
+    The first definition of a name keeps the bare id, so existing graphs,
+    caches, packets, and node references are undisturbed; only the definitions
+    that were previously discarded gain a `@L<line>` suffix.
+
+    Runs after owner attachment, because the qualifier depends on the owner.
+    """
+    seen: set[str] = set()
+    result: list[_TsDef] = []
+    for definition in defs:
+        key = f"{_definition_impl_qualifier(definition)}::{definition.name}"
+        if key not in seen:
+            seen.add(key)
+            result.append(definition)
+            continue
+        # Two definitions genuinely sharing a name, scope, *and* line is not
+        # reachable from any grammar here, but an id collision is exactly the
+        # silent-drop bug this function exists to remove, so it is closed
+        # rather than assumed away.
+        suffix = f"@L{definition.line}"
+        occurrence = 2
+        while f"{key}{suffix}" in seen:
+            suffix = f"@L{definition.line}#{occurrence}"
+            occurrence += 1
+        seen.add(f"{key}{suffix}")
+        result.append(replace(definition, disambiguator=suffix))
+    return result
 
 
 # These four tables are now *derived* from the per-language profiles in
@@ -210,7 +247,7 @@ def _go_receiver_owner(node: Any, text: bytes) -> str:
     return ""
 
 
-def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
+def _collect_defs(source: SourceIR, root: Any, text: bytes) -> list[_TsDef]:
     defs: list[_TsDef] = []
     # Hoisted out of the walk below: `Path.suffix` re-parses the path string on
     # every access, and the JS check ran for every node that is not a definition
@@ -298,10 +335,10 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             )
         )
     if source.path.suffix.lower() != ".rs":
-        return _attach_lexical_method_owners(defs)
+        return _disambiguate_definition_ids(_attach_lexical_method_owners(defs))
     impls = [d for d in defs if d.kind == "impl_block" and len(d.extra) == 2]
     if not impls:
-        return defs
+        return _disambiguate_definition_ids(defs)
     owned: list[_TsDef] = []
     for definition in defs:
         if definition.kind not in {"function", "method"}:
@@ -313,7 +350,7 @@ def _collect_defs(source: SourceFile, root: Any, text: bytes) -> list[_TsDef]:
             continue
         parent = min(parents, key=lambda item: item.end - item.start)
         owned.append(replace(definition, kind="method", owner=parent.extra[1], extra=parent.extra))
-    return owned
+    return _disambiguate_definition_ids(owned)
 
 
 def _base_class_names(node: Any, text: bytes) -> tuple[str, ...]:
@@ -377,6 +414,13 @@ def _declared_return_type(node: Any, text: bytes) -> str:
     """
     try:
         annotation = node.child_by_field_name("return_type")
+        if annotation is None:
+            # Go is the exception: its grammar names this field `result`.
+            # Reading only `return_type` meant every Go function looked
+            # unannotated, so Go contributed nothing to the repo-wide
+            # name -> return type map and `x := NewThing()` could never type
+            # its receiver -- the single dominant binding form in the language.
+            annotation = node.child_by_field_name("result")
     except Exception:
         return ""
     if annotation is None:
@@ -423,12 +467,12 @@ def _syntax_text_without_literals(node: Any, text: bytes) -> str:
     return bytes(segment).decode("utf-8", errors="replace")
 
 
-def _definition_facts(source: SourceFile, node: Any, text: bytes) -> tuple[str, ...]:
+def _definition_facts(source: SourceIR, node: Any, text: bytes) -> tuple[str, ...]:
     """Project language attributes into small, queryable normalized-IR facts."""
     return _definition_facts_and_text(source, node, text)[0]
 
 
-def _definition_facts_and_text(source: SourceFile, node: Any, text: bytes) -> tuple[tuple[str, ...], str]:
+def _definition_facts_and_text(source: SourceIR, node: Any, text: bytes) -> tuple[tuple[str, ...], str]:
     """Facts plus the literal-blanked source they were derived from.
 
     Resolution needs that same blanked text, so returning it here means the
@@ -676,7 +720,7 @@ def _return_type_names(
 
 def _select_owner_type(
     owner: str,
-    source: SourceFile,
+    source: SourceIR,
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
 ) -> str | None:
@@ -826,7 +870,7 @@ def _method_owner(node_id: str, nodes: dict[str, Node]) -> str:
 
 def _resolve_member_call(
     *,
-    source: SourceFile,
+    source: SourceIR,
     source_id: str,
     call: _CallSite,
     receiver_types: dict[str, str],
@@ -1113,7 +1157,7 @@ def _select_import_target(
 
 
 def _reexported_symbols(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     edges: list[Edge],
 ) -> dict[tuple[str, str], str]:

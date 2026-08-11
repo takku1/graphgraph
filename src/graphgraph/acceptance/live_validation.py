@@ -402,20 +402,20 @@ def derived_queries(graph: Any) -> list[tuple[str, str]]:
 
 def validate_queries(graph: Any, graph_path: Path, query_texts: Sequence[str]) -> list[dict[str, Any]]:
     from graphgraph.packets.validation import validate_packet
-    from graphgraph.services import render_query_context
+    from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
     queries = [(query, "auto") for query in query_texts] if query_texts else derived_queries(graph)
     rows: list[dict[str, Any]] = []
     for query, query_class in queries:
         try:
-            raw = render_query_context(
+            raw, _status = CompilerDriver().compile(DriverRequest(
                 query=query,
                 query_class=query_class,
                 graph_path=graph_path,
                 show_anchors=True,
-                json_anchors=True,
+                json_output=True,
                 cache_namespace="skill_validate_live",
-            )
+            ))
             data = json.loads(raw)
             packet = data.get("packet", "")
             validation = validate_packet(packet) if packet else None

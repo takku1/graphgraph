@@ -1,5 +1,7 @@
 import argparse
 
+from ..packet_targets import TARGET_NAMES
+
 # Every name below comes from `graphgraph.surface`, which imports nothing.
 # Reading them from their defining modules loaded the packet renderers, the
 # planner, the platform stack, and the scanner (and through it `pathspec` and
@@ -7,7 +9,6 @@ import argparse
 # drift test that keeps the copies honest.
 from ..surface import (
     DEFAULT_SCAN_MAX_NODES,
-    PACKET_FORMAT_NAMES,
     QUERY_CLASS_NAMES,
     REPRESENTATION_DEFAULT,
     REPRESENTATION_DESCRIPTION,
@@ -125,7 +126,7 @@ def _add_retrieval_commands(sub) -> None:
         default=None,
         help="Expanded node budget. Default: dynamic by query class and graph shape; stable skeleton uses 100.",
     )
-    final.add_argument("--packet", choices=PACKET_FORMAT_NAMES)
+    final.add_argument("--packet", choices=TARGET_NAMES)
     _add_representation_arguments(final)
     final.set_defaults(func=_lazy_cmd("retrieval", "cmd_final"))
 
@@ -162,7 +163,7 @@ def _add_retrieval_commands(sub) -> None:
         default="auto",
         help="Routing policy (default: auto; explicit classes remain supported).",
     )
-    query.add_argument("--packet", choices=PACKET_FORMAT_NAMES)
+    query.add_argument("--packet", choices=TARGET_NAMES)
     _add_representation_arguments(query)
     query.add_argument("--hops", type=int)
     query.add_argument(
@@ -196,7 +197,12 @@ def _add_retrieval_commands(sub) -> None:
     query.add_argument(
         "--pretty",
         action="store_true",
-        help="Indent --json output for reading by eye. Costs ~26%% more tokens; omit for machine consumption.",
+        # Measured 2026-08-07 with tiktoken/cl100k_base over real envelopes
+        # (direct_lookup 39.0%, subsystem_summary 25.9%, blast_radius 32.0%).
+        # The former "~26%" quoted the cheapest observed shape as if it were
+        # typical. `tests/test_surface_constants.py` re-measures and fails if
+        # this range stops bracketing reality.
+        help="Indent --json output for reading by eye. Costs ~26-39%% more tokens; omit for machine consumption.",
     )
     query.set_defaults(func=_lazy_cmd("retrieval", "cmd_query"))
 
@@ -239,7 +245,7 @@ def _add_retrieval_commands(sub) -> None:
         default="auto",
         help="Routing policy (default: auto; explicit classes remain supported).",
     )
-    context.add_argument("--packet", choices=PACKET_FORMAT_NAMES)
+    context.add_argument("--packet", choices=TARGET_NAMES)
     _add_representation_arguments(context)
     context.add_argument(
         "--anchor-limit", type=int, help="Max anchor nodes before expansion. Default: adaptive by query class."
@@ -711,7 +717,11 @@ def _add_analysis_commands(sub) -> None:
     select.add_argument(
         "--pretty",
         action="store_true",
-        help="Indent --json output for reading by eye. Costs ~26%% more tokens; omit for machine consumption.",
+        # Measured 2026-08-07 with tiktoken/cl100k_base: 42.8-50.6% across
+        # 10..200 symbols. `select` is dearer than `query` because its payload
+        # is a flat list of small records, which is the shape indentation taxes
+        # hardest -- one line, and its indent, per field.
+        help="Indent --json output for reading by eye. Costs ~43-51%% more tokens; omit for machine consumption.",
     )
     select.set_defaults(func=_lazy_cmd("planning_commands", "cmd_select"))
 

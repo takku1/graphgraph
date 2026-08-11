@@ -45,7 +45,7 @@ The following architectural components are currently missing or require signific
 
 ### C. Token-Window Budget Calibration
 * **Gap:** The dynamic budget estimator relies on a token proxy coefficient. While calibrated within 1.5% for current formats, it is pessimistic about dense subgraphs, leading to over-pruning.
-  * **Restated 2026-07-30:** that 1.5% compared the planner's proxy against the rendered packet's `estimate_tokens`. Both sides were the same word count, so it measured internal self-consistency, not agreement with a tokenizer — against real BPE the proxy was 26.5% out with a 47% cross-format spread. Now recalibrated to 2.78%. See [the recalibration finding](graybox-cycles/2026-07-30-token-proxy-recalibration.md).
+  * **Restated 2026-07-30:** that 1.5% compared the planner's proxy against the rendered packet's `estimate_tokens`. Both sides were the same word count, so it measured internal self-consistency, not agreement with a tokenizer — against real BPE the proxy was 26.5% out with a 47% cross-format spread. Now recalibrated to 2.78%. See [the consolidated recalibration measurement](graybox-cycles/README.md#instrument-and-representation-measurements).
 * **Impact:** GraphGraph may prematurely truncate peripheral node contexts even when the prompt window has ample room.
 
 ---

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from inspect import signature
 
 
-class NativeServiceBoundaryTest(unittest.TestCase):
+class ServiceDomainBoundaryTest(unittest.TestCase):
     def test_retrieval_orchestrator_uses_explicit_stage_modules(self) -> None:
         from importlib import import_module
         from pathlib import Path
@@ -31,40 +30,11 @@ class NativeServiceBoundaryTest(unittest.TestCase):
         self.assertFalse(hasattr(context, "apply_shape_budget"))
         self.assertFalse(hasattr(context, "expand_context"))
 
-    def test_native_facade_exports_domain_module_contracts(self) -> None:
-        from graphgraph.services import native
-        from graphgraph.services.freshness import (
-            inspect_saved_graph_freshness,
-            refresh_receipt,
-            scope_freshness,
-        )
-        from graphgraph.services.lifecycle import (
-            GraphBuildStatus,
-            ensure_native_graph,
-            refresh_saved_graph,
-            remove_paths_validated_graph,
-            scan_validated_graph,
-            update_paths_validated_graph,
-        )
-        from graphgraph.services.native_context import render_native_context
-        from graphgraph.services.project_status import build_project_status, graph_shape
+    def test_native_compatibility_facade_is_removed(self) -> None:
+        from pathlib import Path
 
-        exports = {
-            "GraphBuildStatus": GraphBuildStatus,
-            "scan_validated_graph": scan_validated_graph,
-            "update_paths_validated_graph": update_paths_validated_graph,
-            "refresh_saved_graph": refresh_saved_graph,
-            "remove_paths_validated_graph": remove_paths_validated_graph,
-            "ensure_native_graph": ensure_native_graph,
-            "inspect_saved_graph_freshness": inspect_saved_graph_freshness,
-            "scope_freshness": scope_freshness,
-            "refresh_receipt": refresh_receipt,
-            "graph_shape": graph_shape,
-            "build_project_status": build_project_status,
-            "render_native_context": render_native_context,
-        }
-        for name, value in exports.items():
-            self.assertEqual(signature(getattr(native, name)), signature(value))
+        services = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
+        self.assertFalse((services / "native.py").exists())
 
     def test_cli_and_mcp_depend_on_domain_seams_not_native_monolith(self) -> None:
         from pathlib import Path
@@ -102,16 +72,12 @@ class NativeServiceBoundaryTest(unittest.TestCase):
         from graphgraph.services.lifecycle import GraphBuildStatus, manifest_path_for_graph
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
-        native_source = (root / "native.py").read_text(encoding="utf-8")
         freshness_source = (root / "freshness.py").read_text(encoding="utf-8")
         lifecycle_source = (root / "lifecycle.py").read_text(encoding="utf-8")
 
         self.assertEqual(GraphBuildStatus.__module__, "graphgraph.services.lifecycle")
         self.assertEqual(manifest_path_for_graph.__module__, "graphgraph.services.lifecycle")
         self.assertEqual(inspect_saved_graph_freshness.__module__, "graphgraph.services.freshness")
-        self.assertNotIn("class GraphBuildStatus", native_source)
-        self.assertNotIn("def manifest_path_for_graph", native_source)
-        self.assertNotIn("def inspect_saved_graph_freshness", native_source)
         self.assertNotIn("_delegate(", freshness_source)
         self.assertNotIn("from . import native as _native", lifecycle_source)
 
@@ -127,7 +93,6 @@ class NativeServiceBoundaryTest(unittest.TestCase):
         )
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
-        native_source = (root / "native.py").read_text(encoding="utf-8")
         runtime_source = (root / "runtime_probes.py").read_text(encoding="utf-8")
         functions = (
             _read_package_status,
@@ -139,7 +104,6 @@ class NativeServiceBoundaryTest(unittest.TestCase):
 
         self.assertTrue(all(function.__module__ == "graphgraph.services.runtime_probes" for function in functions))
         for function in functions:
-            self.assertNotIn(f"def {function.__name__}", native_source)
             self.assertIn(f"def {function.__name__}", runtime_source)
 
     def test_project_status_bodies_live_in_project_status_module(self) -> None:
@@ -155,7 +119,6 @@ class NativeServiceBoundaryTest(unittest.TestCase):
         )
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
-        native_source = (root / "native.py").read_text(encoding="utf-8")
         status_source = (root / "project_status.py").read_text(encoding="utf-8")
         functions = (
             _absent_graph_status,
@@ -168,24 +131,21 @@ class NativeServiceBoundaryTest(unittest.TestCase):
 
         self.assertTrue(all(function.__module__ == "graphgraph.services.project_status" for function in functions))
         for function in functions:
-            self.assertNotIn(f"def {function.__name__}", native_source)
             self.assertIn(f"def {function.__name__}", status_source)
         self.assertNotIn("_delegate(", status_source)
         self.assertNotIn("from . import native", status_source)
 
-    def test_native_context_body_lives_in_native_context_module(self) -> None:
+    def test_compiler_driver_body_lives_in_compiler_driver_module(self) -> None:
         from pathlib import Path
 
-        from graphgraph.services.native_context import render_native_context
+        from graphgraph.services.compiler_driver import CompilerDriver
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
-        native_source = (root / "native.py").read_text(encoding="utf-8")
-        context_source = (root / "native_context.py").read_text(encoding="utf-8")
+        driver_source = (root / "compiler_driver.py").read_text(encoding="utf-8")
 
-        self.assertEqual(render_native_context.__module__, "graphgraph.services.native_context")
-        self.assertNotIn("def render_native_context", native_source)
-        self.assertIn("def render_native_context", context_source)
-        self.assertNotIn("from . import native", context_source)
+        self.assertEqual(CompilerDriver.__module__, "graphgraph.services.compiler_driver")
+        self.assertIn("class CompilerDriver", driver_source)
+        self.assertNotIn("from . import native", driver_source)
 
     def test_lifecycle_implementation_bodies_live_outside_native_facade(self) -> None:
         from pathlib import Path
@@ -201,7 +161,6 @@ class NativeServiceBoundaryTest(unittest.TestCase):
         )
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
-        native_source = (root / "native.py").read_text(encoding="utf-8")
         lifecycle_source = (root / "lifecycle.py").read_text(encoding="utf-8")
         functions = (
             _all_paths_outside_tree,
@@ -215,31 +174,31 @@ class NativeServiceBoundaryTest(unittest.TestCase):
 
         self.assertTrue(all(function.__module__ == "graphgraph.services.lifecycle" for function in functions))
         for function in functions:
-            self.assertNotIn(f"def {function.__name__}", native_source)
             self.assertIn(f"def {function.__name__}", lifecycle_source)
         self.assertNotIn("def _native(", lifecycle_source)
 
 
 class CliDomainBoundaryTest(unittest.TestCase):
+    def test_command_compatibility_facade_is_removed(self) -> None:
+        from pathlib import Path
+
+        cli = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
+        self.assertFalse((cli / "commands.py").exists())
+
     def test_eval_command_lives_in_evaluation_domain(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli.commands import cmd_eval as compatibility_cmd_eval
         from graphgraph.cli.evaluation import cmd_eval
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
 
-        self.assertIs(compatibility_cmd_eval, cmd_eval)
         self.assertEqual(cmd_eval.__module__, "graphgraph.cli.evaluation")
-        self.assertNotIn("def cmd_eval", commands_source)
         self.assertIn('_lazy_cmd("evaluation", "cmd_eval")', parser_source)
 
     def test_graph_io_commands_live_in_graph_io_domain(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli import commands
         from graphgraph.cli.graph_io import (
             cmd_compare,
             cmd_export,
@@ -249,65 +208,54 @@ class CliDomainBoundaryTest(unittest.TestCase):
         )
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
         functions = (cmd_compare, cmd_export, cmd_ingest, cmd_validate, cmd_validate_graph)
 
         self.assertTrue(all(function.__module__ == "graphgraph.cli.graph_io" for function in functions))
         for function in functions:
-            self.assertIs(getattr(commands, function.__name__), function)
-            self.assertNotIn(f"def {function.__name__}", commands_source)
+            self.assertTrue(callable(function))
         self.assertIn('_lazy_cmd("graph_io"', parser_source)
 
     def test_description_commands_live_in_descriptions_domain(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli import commands
         from graphgraph.cli.descriptions import cmd_frontends, cmd_ontology, cmd_traversal
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
         functions = (cmd_frontends, cmd_ontology, cmd_traversal)
 
         self.assertTrue(all(function.__module__ == "graphgraph.cli.descriptions" for function in functions))
         for function in functions:
-            self.assertIs(getattr(commands, function.__name__), function)
-            self.assertNotIn(f"def {function.__name__}", commands_source)
+            self.assertTrue(callable(function))
         self.assertIn('_lazy_cmd("descriptions"', parser_source)
 
     def test_cache_command_lives_in_cache_domain(self) -> None:
         from pathlib import Path
 
         from graphgraph.cli.cache import cmd_cache
-        from graphgraph.cli.commands import cmd_cache as compatibility_cmd_cache
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
 
-        self.assertIs(compatibility_cmd_cache, cmd_cache)
         self.assertEqual(cmd_cache.__module__, "graphgraph.cli.cache")
-        self.assertNotIn("def cmd_cache", commands_source)
         self.assertIn('_lazy_cmd("cache", "cmd_cache")', parser_source)
 
     def test_install_commands_are_wired_from_install_domain(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli import commands
         from graphgraph.cli.install import cmd_artifacts, cmd_install
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
 
-        self.assertIs(commands.cmd_artifacts, cmd_artifacts)
-        self.assertIs(commands.cmd_install, cmd_install)
+        self.assertEqual(cmd_artifacts.__module__, "graphgraph.cli.install")
+        self.assertEqual(cmd_install.__module__, "graphgraph.cli.install")
         self.assertIn('_lazy_cmd("install"', parser_source)
 
     def test_lifecycle_commands_live_in_lifecycle_domain(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli import commands
         from graphgraph.cli.lifecycle import (
             _run_scan,
             _run_update,
@@ -317,20 +265,17 @@ class CliDomainBoundaryTest(unittest.TestCase):
         )
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
         functions = (cmd_scan, _run_scan, cmd_update, _run_update, cmd_remove)
 
         self.assertTrue(all(function.__module__ == "graphgraph.cli.lifecycle" for function in functions))
         for function in functions:
-            self.assertIs(getattr(commands, function.__name__), function)
-            self.assertNotIn(f"def {function.__name__}", commands_source)
+            self.assertTrue(callable(function))
         self.assertIn('_lazy_cmd("lifecycle"', parser_source)
 
     def test_retrieval_commands_live_in_retrieval_domain(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli import commands
         from graphgraph.cli.retrieval import (
             cmd_context,
             cmd_final,
@@ -340,34 +285,27 @@ class CliDomainBoundaryTest(unittest.TestCase):
         )
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
         functions = (cmd_render, cmd_final, cmd_query, cmd_snippets, cmd_context)
 
         self.assertTrue(all(function.__module__ == "graphgraph.cli.retrieval" for function in functions))
         for function in functions:
-            self.assertIs(getattr(commands, function.__name__), function)
-            self.assertNotIn(f"def {function.__name__}", commands_source)
+            self.assertTrue(callable(function))
         self.assertIn('_lazy_cmd("retrieval"', parser_source)
 
     def test_planning_and_diagnostic_commands_own_remaining_bodies(self) -> None:
         from pathlib import Path
 
-        from graphgraph.cli import commands
         from graphgraph.cli.diagnostics import cmd_doctor, cmd_status
         from graphgraph.cli.planning_commands import cmd_plan, cmd_profile, cmd_select
 
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "cli"
-        commands_source = (root / "commands.py").read_text(encoding="utf-8")
         parser_source = (root / "parser.py").read_text(encoding="utf-8")
         planning = (cmd_plan, cmd_profile, cmd_select)
         diagnostics = (cmd_doctor, cmd_status)
 
         self.assertTrue(all(function.__module__ == "graphgraph.cli.planning_commands" for function in planning))
         self.assertTrue(all(function.__module__ == "graphgraph.cli.diagnostics" for function in diagnostics))
-        for function in (*planning, *diagnostics):
-            self.assertIs(getattr(commands, function.__name__), function)
-            self.assertNotIn(f"def {function.__name__}", commands_source)
         self.assertIn('_lazy_cmd("diagnostics"', parser_source)
         self.assertIn('_lazy_cmd("planning_commands"', parser_source)
 

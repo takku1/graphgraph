@@ -6,9 +6,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 # Parser construction needs only names, which `surface` supplies without
-# importing anything. `..io` and the platform runtime are imported inside
+# importing anything. `..io` and the context compiler are imported inside
 # `cmd_platform`, so building the parser does not pay for either stack.
-from ..surface import COMPILER_PASS_NAMES, PACKET_FORMAT_NAMES
+from ..packet_targets import TARGET_NAMES
+from ..surface import COMPILER_PASS_NAMES
 
 
 def add_platform_parser(sub: argparse._SubParsersAction) -> None:
@@ -19,7 +20,7 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
     compile_cmd.add_argument("query")
     compile_cmd.add_argument("--graph")
     compile_cmd.add_argument("--query-class", default="auto")
-    compile_cmd.add_argument("--packet", choices=PACKET_FORMAT_NAMES, default="gg")
+    compile_cmd.add_argument("--packet", choices=TARGET_NAMES, default="gg")
     compile_cmd.add_argument("--pass", action="append", dest="passes", choices=COMPILER_PASS_NAMES, default=[])
     compile_cmd.add_argument("--scope", action="append", default=[])
     compile_cmd.add_argument("--max-nodes", type=int)
@@ -169,54 +170,54 @@ def add_platform_parser(sub: argparse._SubParsersAction) -> None:
 
 
 def platform_capabilities() -> dict[str, object]:
-    from ..platform import create_graph_runtime
+    from ..platform import ContextCompiler
+    from ..platform.compiler import compiler_pass_table
 
-    registry = create_graph_runtime(None, graph=_empty_graph(), source_planning=False).providers
+    registry = ContextCompiler.open(None, graph=_empty_graph(), source_planning=False).providers
     return {
         "model": "LLM-native graph IR compiler",
         "hot_path": ["SYNC", "EXTRACT", "NORMALIZE_IR", "ANCHOR", "EXPAND", "SELECT", "PACK"],
         "passes": list(COMPILER_PASS_NAMES),
-        "packet_formats": list(PACKET_FORMAT_NAMES),
+        "pass_specs": list(compiler_pass_table()),
+        "packet_formats": list(TARGET_NAMES),
         "providers": registry.capabilities(),
         "adapters": ["federation", "semantic", "temporal", "memory", "runtime_trace", "repair", "evaluation", "interop", "http", "watch"],
     }
 
 
 def cmd_platform(args: argparse.Namespace) -> None:
-    # Heavy platform runtime, imported here so it loads only when a `platform`
+    # Heavy compiler dependencies are imported here so they load only when a `platform`
     # subcommand actually runs -- not when the CLI parser is built.
     from ..io import find_graph_path, load_any, save_validated_graph  # noqa: F401
     from ..platform import (
-        GraphProgram,
+        CompileRequest,
+        ContextCompiler,
         MemoryStore,
         ProjectRegistry,
         SemanticIndex,
         TemporalStore,
         build_change_packet,
         build_continuation_receipt,
-        build_hierarchy,
         build_repair_context,
-        create_graph_runtime,
         evaluate_cases,
         graph_as_of,
-        infer_edges,
         ingest_runtime_trace,
         load_benchmark_config,
         migrate_platform_state,
         run_benchmark,
     )
     from ..platform.temporal import new_episode
-    from ..services.native import update_paths_validated_graph
+    from ..services.lifecycle import update_paths_validated_graph
 
     action = args.platform_action
     if action == "compile":
         graph_path = _graph_path(args)
-        runtime = create_graph_runtime(
+        compiler = ContextCompiler.open(
             graph_path,
             evidence_store_path=Path(args.evidence_store) if args.evidence_store else None,
             refresh_evidence=args.refresh_evidence,
         )
-        result = runtime.compile(GraphProgram(
+        result = compiler.compile(CompileRequest(
             args.query,
             args.query_class,
             args.packet,
@@ -338,24 +339,21 @@ def cmd_platform(args: argparse.Namespace) -> None:
     if action == "transform":
         graph_path = _graph_path(args)
         graph = load_any(graph_path)
-        receipts = []
-        for item in args.passes:
-            if item == "evidence":
-                graph, provider_receipts = create_graph_runtime(
-                    graph_path,
-                    graph=graph,
-                    evidence_store_path=Path(args.evidence_store) if args.evidence_store else None,
-                    refresh_evidence=args.refresh_evidence,
-                ).apply_evidence()
-                receipts.extend(asdict(receipt) for receipt in provider_receipts)
-            elif item == "inference":
-                graph, receipt = infer_edges(graph)
-                receipts.append(receipt)
-            else:
-                graph = build_hierarchy(graph)
-                receipts.append({"pass": "hierarchy", "communities": graph.metadata.get("communities", "0")})
-        validation = save_validated_graph(graph, Path(args.output))
-        print(json.dumps({"output": args.output, "valid": validation.ok, "receipts": receipts}, indent=2))
+        transformation = ContextCompiler.open(
+            graph_path,
+            graph=graph,
+            evidence_store_path=Path(args.evidence_store) if args.evidence_store else None,
+            refresh_evidence=args.refresh_evidence,
+            source_planning=False,
+        ).transform(CompileRequest(query="", passes=tuple(args.passes)))
+        validation = save_validated_graph(transformation.graph, Path(args.output))
+        print(json.dumps({
+            "output": args.output,
+            "valid": validation.ok,
+            "passes": transformation.passes,
+            "receipts": transformation.receipts,
+            "warnings": transformation.warnings,
+        }, indent=2))
         return
     if action == "trace":
         graph, receipt = ingest_runtime_trace(_graph(args), Path(args.trace), trace_id=args.trace_id)
@@ -392,7 +390,7 @@ def cmd_platform(args: argparse.Namespace) -> None:
             raise SystemExit(1)
         return
     if action == "acceptance":
-        from ..acceptance.service import execute_acceptance
+        from ..acceptance.execution import execute_acceptance
 
         execution = execute_acceptance(
             repo=Path(args.repo),
@@ -435,7 +433,7 @@ def cmd_platform(args: argparse.Namespace) -> None:
         return
     if action == "serve":
         graph_path = Path(args.graph) if args.graph else find_graph_path()
-        from ..platform.service import serve_graph
+        from ..platform.server import serve_graph
 
         serve_graph(
             graph_path,
@@ -461,12 +459,12 @@ def cmd_platform(args: argparse.Namespace) -> None:
             status = update_paths_validated_graph(directory=root, output_path=graph_path, paths=changed, deleted_paths=deleted)
             print(json.dumps({"changed": changed, "deleted": deleted, "nodes": len(status.graph.nodes), "edges": len(status.graph.edges)}))
 
-        from ..platform.service import watch_paths
+        from ..platform.server import watch_paths
 
         watch_paths(root, refresh, interval=args.interval)
         return
     if action == "hooks":
-        from ..platform.service import install_git_hooks
+        from ..platform.server import install_git_hooks
 
         paths = install_git_hooks(Path(args.directory), executable=args.executable)
         print(json.dumps({"installed": [str(path) for path in paths]}, indent=2))

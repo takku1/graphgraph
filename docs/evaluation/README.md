@@ -5,7 +5,7 @@ Measured behavior, harnesses, and defect history. Incomplete **tasks** live in [
 | Document | Role |
 |----------|------|
 | [empirical-evaluation.md](empirical-evaluation.md) | Empirical results corpus (through 2026-07-19) |
-| [graybox-cycles/](graybox-cycles/README.md) | Dated gray-box evaluation records, 2026-07-27 → 08-02 |
+| [graybox-cycles/](graybox-cycles/README.md) | Consolidated measurement ledger, executable corpora, and current raw receipts through 2026-08-08 |
 | [acceptance-evaluation-harness.md](acceptance-evaluation-harness.md) | Acceptance harness |
 | [defect-ledger.md](defect-ledger.md) | Confirmed defects & resolutions |
 | [metric-validity-gaps.md](metric-validity-gaps.md) | Metric / component validity gaps |

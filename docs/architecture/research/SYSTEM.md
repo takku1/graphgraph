@@ -37,7 +37,7 @@ behind a measured gate.
 - **[Ubiquitous]** Every claim in the registry SHALL resolve to a source path that exists.
   - `EvidenceStage: Proved` — mechanically enforced by `tests/test_research_registry.py`, which fails on any dangling source. This is the strongest evidence class in the tree and it is enforced by construction rather than by review.
 - **[Ubiquitous]** A candidate SHALL NOT be described as promotable on a bare field-ranked baseline; it SHALL be measured inside production ranking.
-  - `EvidenceStage: Measured` — symmetric coupling improved a field-ranked selection by `+0.066` and then moved production recall and MRR not at all, at 11.9x latency. See [coupling has no production leverage](../../evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md).
+  - `EvidenceStage: Measured` — symmetric coupling improved a field-ranked selection by `+0.066` and then moved production recall and MRR not at all, at 11.9x latency. See [the consolidated influence-field measurement](../../evaluation/graybox-cycles/README.md#influence-field-experiment).
 - **[Ubiquitous]** Mechanisms here SHALL be off the production path.
   - `EvidenceStage: Observed` — nothing in `retrieval/` imports `research/`.
 - **[Conditional]** IF an experiment is recorded THEN its claim, mechanism, and source SHALL be registered together.

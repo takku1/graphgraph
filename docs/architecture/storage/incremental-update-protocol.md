@@ -124,7 +124,7 @@ Shipped in `scanner/core.py`, exported from `graphgraph.scanner` and the
 top-level `graphgraph` package. Both require a prior `scan_directory` run
 (existing manifest + graph at the given paths) and raise `ValueError`
 otherwise; the CLI/MCP wrappers (`update_paths_validated_graph` /
-`remove_paths_validated_graph` in `services/native.py`) catch that and any
+`remove_paths_validated_graph` in `services/lifecycle.py`) catch that and any
 validation failure, and fall back to a full `scan_directory` rebuild — the
 same repair philosophy `scan_validated_graph` already uses.
 

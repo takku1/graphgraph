@@ -22,7 +22,7 @@ Two obligations follow, and both are gates rather than aspirations:
   tokens against a real tokenizer, never by how tidy it looks. This is why an
   uncalibrated estimator with 47% cross-format spread was a project-level
   defect: the compiler was optimizing against a cost model that did not
-  describe its target ([token proxy recalibration](../evaluation/graybox-cycles/2026-07-30-token-proxy-recalibration.md)).
+  describe its target ([consolidated token-proxy measurement](../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements)).
 - **"Better" is comparative or it is nothing.** The goal is to beat comparable
   context-graph and agent-memory systems on token cost first, with latency and
   content coverage as constraints that must not regress. Absolute numbers in

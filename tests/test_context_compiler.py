@@ -13,7 +13,7 @@ from graphgraph import Edge, Graph, Node
 from graphgraph.cli.parser import build_parser
 from graphgraph.io import save_graph
 from graphgraph.mcp import dispatch
-from graphgraph.platform.service import create_server
+from graphgraph.platform.server import create_server
 
 
 def _graph() -> Graph:
@@ -47,7 +47,7 @@ def _receipt_projection(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
-class RuntimeFactoryParityTest(unittest.TestCase):
+class ContextCompilerParityTest(unittest.TestCase):
     def test_cli_mcp_and_http_compile_the_same_program(self) -> None:
         query = "blast radius of database_adapter"
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,24 +127,24 @@ class RuntimeFactoryParityTest(unittest.TestCase):
         self.assertEqual(cli["packet"], mcp["packet"])
         self.assertEqual(mcp["packet"], http["packet"])
 
-    def test_factory_owns_runtime_dependencies_and_defaults(self) -> None:
-        from graphgraph.platform.runtime import create_graph_runtime
+    def test_compiler_open_owns_dependencies_and_defaults(self) -> None:
+        from graphgraph.platform import ContextCompiler
 
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"
             graph = _graph()
             save_graph(graph, graph_path)
 
-            runtime = create_graph_runtime(graph_path, graph=graph)
+            compiler = ContextCompiler.open(graph_path, graph=graph)
 
-        self.assertEqual(runtime.source_mode, "auto")
-        self.assertEqual(runtime.memory_scopes, ("project", "session"))
+        self.assertEqual(compiler.source_mode, "auto")
+        self.assertEqual(compiler.memory_scopes, ("project", "session"))
         self.assertEqual(
-            tuple(capability["name"] for capability in runtime.providers.capabilities()),
+            tuple(capability["name"] for capability in compiler.providers.capabilities()),
             ("structural", "cpg"),
         )
-        self.assertIsNotNone(runtime.evidence_store)
-        self.assertIsNotNone(runtime.source_planner)
+        self.assertIsNotNone(compiler.evidence_store)
+        self.assertIsNotNone(compiler.source_planner)
 
 
 if __name__ == "__main__":

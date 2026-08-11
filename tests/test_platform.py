@@ -26,14 +26,17 @@ from graphgraph.platform import (
     BenchmarkConfig,
     BenchmarkGates,
     CapabilityReceipt,
+    CompileRequest,
+    CompilerPassSpec,
+    ContextCompiler,
     CpgEvidenceProvider,
     Episode,
     EvaluationCase,
     EvidenceBatch,
     EvidenceStore,
-    GraphProgram,
-    GraphRuntime,
     MemoryStore,
+    PassContext,
+    PassOutcome,
     ProjectRegistry,
     ProviderRegistry,
     PythonAstEvidenceProvider,
@@ -53,9 +56,11 @@ from graphgraph.platform import (
     run_benchmark,
 )
 from graphgraph.platform.interop import export_graph
-from graphgraph.platform.service import create_server, install_git_hooks, serve_graph
+from graphgraph.platform.server import create_server, install_git_hooks, serve_graph
 from graphgraph.runtime.state import atomic_write_text, file_lock
-from graphgraph.services import render_query_context
+from graphgraph.scanner.frontends import TreeSitterExtractor
+from graphgraph.scanner.source_ir import SourceIR, clear_syntax_ir_cache
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 
 def platform_graph() -> Graph:
@@ -136,6 +141,13 @@ class PlatformTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = {
+                "sample.py": (
+                    "def normalize(value: int) -> int:\n"
+                    "    result = value\n"
+                    "    if result:\n"
+                    "        result += 1\n"
+                    "    return result\n"
+                ),
                 "sample.js": (
                     "function process(input) {\n"
                     "  let total = input;\n"
@@ -177,6 +189,7 @@ class PlatformTest(unittest.TestCase):
             for name, text in files.items():
                 (root / name).write_text(text, encoding="utf-8")
             graph = Graph({
+                "py_normalize": Node("py_normalize", "normalize", "function", "sample.py", "L1", source=str(root / "sample.py")),
                 "js_process": Node("js_process", "process", "function", "sample.js", "L1", source=str(root / "sample.js")),
                 "ts_convert": Node("ts_convert", "convert", "function", "sample.ts", "L1", source=str(root / "sample.ts")),
                 "go_compute": Node("go_compute", "compute", "function", "sample.go", "L2", source=str(root / "sample.go")),
@@ -196,10 +209,33 @@ class PlatformTest(unittest.TestCase):
                 for fact in node.facts
                 if fact.startswith("language:")
             }
-            self.assertTrue({"js", "ts", "go", "rs", "java"} <= languages)
+            self.assertTrue({"py", "js", "ts", "go", "rs", "java"} <= languages)
             self.assertEqual(receipts[0].provider, "cpg")
-            self.assertEqual(receipts[0].paths_processed, 5)
+            self.assertEqual(receipts[0].paths_processed, 6)
             self.assertTrue(all(edge.evidence and edge.source_location for edge in enriched.edges))
+
+    def test_cpg_reuses_scanner_syntax_for_unchanged_source_revision(self) -> None:
+        clear_syntax_ir_cache()
+        with tempfile.TemporaryDirectory() as tmp:
+            source_path = Path(tmp) / "sample.js"
+            text = "function process(value) { let result = value; return result; }\n"
+            source_path.write_text(text, encoding="utf-8")
+            source = SourceIR(source_path, "sample.js", "sample_js", text)
+            extraction = TreeSitterExtractor().extract_symbols(
+                [source],
+                max_total_symbols=20,
+            )
+            graph = Graph(extraction.nodes, extraction.edges)
+
+            with patch(
+                "graphgraph.platform.cpg.parse_with_timeout",
+                side_effect=AssertionError("CPG reparsed an unchanged SourceIR"),
+            ):
+                batch = CpgEvidenceProvider().collect(graph)
+
+        self.assertEqual(batch.receipt.artifacts_compiled, 0)
+        self.assertEqual(batch.receipt.artifacts_reused, 1)
+        self.assertTrue(batch.receipt.cache_hit)
 
     def test_cpg_receipt_preserves_concrete_grammar_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -338,13 +374,13 @@ class PlatformTest(unittest.TestCase):
             self.assertIn("observed_calls", {edge.type for edge in plan.graph.edges})
             self.assertTrue(any(node_id.startswith("payments::") for node_id in plan.graph.nodes))
 
-            payload = json.loads(render_query_context(
+            payload = json.loads(CompilerDriver().compile(DriverRequest(
                 query="runtime database rollback payments",
                 graph_path=graph_path,
                 show_anchors=True,
-                json_anchors=True,
+                json_output=True,
                 source_mode="all",
-            ))
+            ))[0])
             self.assertEqual(
                 set(payload["retrieval"]["sources"]["sources"]),
                 {"semantic", "memory", "temporal", "federation", "runtime_trace"},
@@ -401,13 +437,13 @@ class PlatformTest(unittest.TestCase):
             registry.register("flask", root, graph_path)
             registry.register("fixture", root / "fixture", foreign_path)
 
-            payload = json.loads(render_query_context(
+            payload = json.loads(CompilerDriver().compile(DriverRequest(
                 query="Compare flask request dispatch with fixture Root flow",
                 graph_path=graph_path,
                 show_anchors=True,
-                json_anchors=True,
+                json_output=True,
                 source_mode="all",
-            ))
+            ))[0])
 
             coverage = payload["retrieval"]["project_coverage"]
             self.assertEqual(coverage["required"], ["fixture", "flask"])
@@ -433,13 +469,13 @@ class PlatformTest(unittest.TestCase):
             )
 
             payload = json.loads(
-                render_query_context(
+                CompilerDriver().compile(DriverRequest(
                     query="run",
                     graph_path=graph_path,
                     show_anchors=True,
-                    json_anchors=True,
+                    json_output=True,
                     source_mode="auto",
-                )
+                ))[0]
             )
 
             sources = payload["retrieval"]["sources"]
@@ -466,13 +502,13 @@ class PlatformTest(unittest.TestCase):
             )
 
             payload = json.loads(
-                render_query_context(
+                CompilerDriver().compile(DriverRequest(
                     query="run violet rollback",
                     graph_path=graph_path,
                     show_anchors=True,
-                    json_anchors=True,
+                    json_output=True,
                     memory_scopes=("isolated",),
-                )
+                ))[0]
             )
 
             self.assertEqual(payload["retrieval"]["sources"]["memories"], 1)
@@ -646,8 +682,8 @@ class PlatformTest(unittest.TestCase):
             self.assertEqual(receipts[0].provider, "python_ast")
             self.assertTrue(all(edge.evidence and edge.source_location for edge in enriched.edges))
 
-    def test_runtime_compiles_passes_to_valid_packet(self) -> None:
-        result = GraphRuntime(platform_graph(), (StructuralEvidenceProvider(),)).compile(GraphProgram(
+    def test_compiler_runs_passes_to_valid_packet(self) -> None:
+        result = ContextCompiler(platform_graph(), (StructuralEvidenceProvider(),)).compile(CompileRequest(
             "where does run call database query", passes=("evidence", "inference", "hierarchy"), max_nodes=20
         ))
         self.assertTrue(result.receipt.valid)
@@ -655,7 +691,82 @@ class PlatformTest(unittest.TestCase):
         self.assertTrue(result.packet.startswith("#gg"))
         self.assertTrue(result.receipt.provider_receipts)
 
-    def test_runtime_preserves_document_scope_during_compiler_routing(self) -> None:
+    def test_compiler_accepts_an_injected_pass_through_one_seam(self) -> None:
+        class MarkerPass:
+            spec = CompilerPassSpec("marker", "Attach a test-only compiler receipt.")
+
+            def run(self, context: PassContext, graph: Graph) -> PassOutcome:
+                if context.request.query != "run":
+                    raise AssertionError("pass received the wrong compilation request")
+                return PassOutcome(graph, warnings=("marker ran",))
+
+        result = ContextCompiler(
+            platform_graph(),
+            compiler_passes=(MarkerPass(),),
+        ).compile(CompileRequest("run", query_class="direct_lookup", passes=("marker",)))
+
+        self.assertEqual(result.receipt.passes, ("marker",))
+        self.assertIn("marker ran", result.receipt.warnings)
+
+    def test_compiler_cache_invalidates_only_required_artifacts(self) -> None:
+        runs = 0
+
+        class NodeAnalysisPass:
+            spec = CompilerPassSpec(
+                "node_analysis",
+                "Derive metadata only from the node artifact.",
+                requires=("graph.nodes",),
+                produces=("graph.metadata",),
+                preserves=("graph.nodes", "graph.edges"),
+                capabilities=("node_count",),
+                deterministic=True,
+                cache_scope="compiler",
+            )
+
+            def run(self, context: PassContext, graph: Graph) -> PassOutcome:
+                nonlocal runs
+                del context
+                runs += 1
+                return PassOutcome(Graph(
+                    dict(graph.nodes),
+                    list(graph.edges),
+                    {**graph.metadata, "node_count": str(len(graph.nodes))},
+                ))
+
+        graph = platform_graph()
+        compiler = ContextCompiler(graph, compiler_passes=(NodeAnalysisPass(),))
+        request = CompileRequest("", passes=("node_analysis",))
+
+        first = compiler.transform(request)
+        first.graph.metadata["node_count"] = "poisoned public result"
+        graph.edges.append(Edge("query", "config", "reads"))
+        preserved = compiler.transform(request)
+
+        self.assertEqual(runs, 1)
+        self.assertEqual(preserved.receipts[0]["cache"]["state"], "hit")
+        self.assertEqual(preserved.graph.metadata["node_count"], "6")
+        self.assertIn(Edge("query", "config", "reads"), preserved.graph.edges)
+
+        graph.nodes["worker"] = Node("worker", "worker", "function", "src/worker.py")
+        invalidated = compiler.transform(request)
+
+        self.assertEqual(runs, 2)
+        self.assertEqual(invalidated.receipts[0]["cache"]["state"], "miss")
+        self.assertEqual(invalidated.graph.metadata["node_count"], "7")
+        required = invalidated.receipts[0]["requires"]
+        self.assertEqual([item["artifact"] for item in required], ["graph.nodes"])
+        self.assertTrue(required[0]["digest"])
+
+    def test_compiler_transform_uses_the_same_pass_catalog_without_retrieval(self) -> None:
+        outcome = ContextCompiler(platform_graph()).transform(
+            CompileRequest("", passes=("inference", "hierarchy"))
+        )
+
+        self.assertEqual(outcome.passes, ("inference", "hierarchy"))
+        self.assertEqual(outcome.receipts[-1]["pass"], "hierarchy")
+        self.assertIn("communities", outcome.graph.metadata)
+
+    def test_compiler_preserves_document_scope_during_routing(self) -> None:
         path = "docs/roadmap/gaps.md"
         graph = Graph(nodes={
             "ABSENT": Node(
@@ -667,7 +778,7 @@ class PlatformTest(unittest.TestCase):
             ),
         })
 
-        result = GraphRuntime(graph).compile(GraphProgram(
+        result = ContextCompiler(graph).compile(CompileRequest(
             "Identify one capability currently marked absent.",
             scopes=(path,),
         ))
@@ -676,7 +787,7 @@ class PlatformTest(unittest.TestCase):
         self.assertIn("explicit document scope", result.route.reasons)
         self.assertEqual(result.retrieval.starts, ("ABSENT",))
 
-    def test_runtime_exact_paths_bypass_auxiliary_source_planning(self) -> None:
+    def test_compiler_exact_paths_bypass_auxiliary_source_planning(self) -> None:
         class UnexpectedSourcePlanner:
             def plan(self, *_args: object, **_kwargs: object) -> object:
                 raise AssertionError("exact paths must bypass global source planning")
@@ -684,10 +795,10 @@ class PlatformTest(unittest.TestCase):
         graph = Graph(nodes={
             "PLAN": Node("PLAN", "plan_writes", "method", "src/planner.rs"),
         })
-        result = GraphRuntime(
+        result = ContextCompiler(
             graph,
             source_planner=UnexpectedSourcePlanner(),  # type: ignore[arg-type]
-        ).compile(GraphProgram(
+        ).compile(CompileRequest(
             "plan write deduplication",
             query_class="direct_lookup",
             anchor_paths=("src/planner.rs",),
@@ -776,8 +887,8 @@ class PlatformTest(unittest.TestCase):
             edges=[],
         )
 
-        result = GraphRuntime(graph).compile(
-            GraphProgram("What changed recently?", query_class="recent_changes")
+        result = ContextCompiler(graph).compile(
+            CompileRequest("What changed recently?", query_class="recent_changes")
         )
 
         self.assertFalse(result.retrieval.metadata["change_evidence"]["proven"])
@@ -1203,9 +1314,9 @@ class PlatformTest(unittest.TestCase):
                 self.callback()
 
         with (
-            patch("graphgraph.platform.service.create_server", return_value=server),
-            patch("graphgraph.platform.service.threading.Timer", ImmediateTimer),
-            patch("graphgraph.platform.service.webbrowser.open") as browser_open,
+            patch("graphgraph.platform.server.create_server", return_value=server),
+            patch("graphgraph.platform.server.threading.Timer", ImmediateTimer),
+            patch("graphgraph.platform.server.webbrowser.open") as browser_open,
         ):
             serve_graph(
                 Path("graph.gg"),
@@ -1222,7 +1333,7 @@ class PlatformTest(unittest.TestCase):
             ["platform", "serve", "--graph", "graph.gg", "--port", "0"]
         )
         with (
-            patch("graphgraph.platform.service.serve_graph") as mocked_serve,
+            patch("graphgraph.platform.server.serve_graph") as mocked_serve,
             patch("builtins.print") as mocked_print,
         ):
             args.func(args)

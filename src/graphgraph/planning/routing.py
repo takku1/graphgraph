@@ -48,6 +48,11 @@ SEPARATION_WEIGHT = 0.35
 EVIDENCE_SCALE = 6.0  # score at which evidence strength saturates to 1.0
 SEPARATION_SCALE = 4.0  # margin at which separation saturates to 1.0
 
+#: Confidence at or above which an automatic route is treated as decided.
+#: Callers previously hardcoded 0.25 independently; a routing threshold that
+#: lives in two subsystems is one edit away from disagreeing with itself.
+AUTOMATIC_ROUTE_MIN_CONFIDENCE = 0.25
+
 
 @dataclass(frozen=True)
 class QueryRoute:
@@ -308,9 +313,24 @@ def route_query(
     indecisive = top_score < MIN_WINNING_SCORE or (top_score < DECISIVE_SCORE and margin < MIN_DECISIVE_MARGIN)
     if indecisive:
         winner = BROAD_FALLBACK
-        top_score = scores[winner]
-        other_best = max(score for name, score in scores.items() if name != winner)
-        margin = max(0.0, top_score - other_best)
+        # Report the evidence this query produced, which on this branch is
+        # none. Every routing signal weighs at least 3.0 against a
+        # MIN_WINNING_SCORE of 2.0, so a single firing signal is already
+        # decisive -- this branch is reachable only when *nothing* matched.
+        #
+        # It previously scored BROAD_FALLBACK_PRIOR as though the prior were
+        # observed evidence, emitting 0.65*(0.75/6) + 0.35*(0.75/4) = 0.147 for
+        # every query, on every corpus, in every language, whether the answer
+        # was perfect or nonexistent. A constant dressed as a measurement is
+        # worse than an explicit zero, because it invites calibration against a
+        # number that never moves.
+        #
+        # Confidence that *does* vary with the corpus has to come from anchor
+        # evidence, which this function cannot see: routing is text-only and
+        # performs no I/O by contract. See `answerability.confidence` for the
+        # retrieval-derived signal.
+        top_score = 0.0
+        margin = 0.0
         reasons[winner].append("ambiguous intent kept broad")
 
     confidence = _route_confidence(top_score, margin)

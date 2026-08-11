@@ -122,6 +122,26 @@ class SectionedStorageTest(unittest.TestCase):
                         query_relations(graph, target, **options),
                     )
 
+    def test_exact_relation_uses_packed_indexes_without_materializing_view(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg"
+            save_graph(_graph(), path)
+            with mock.patch(
+                "graphgraph.retrieval.relations.load_sectioned_relation_view",
+                side_effect=AssertionError("packed GGB4 lookup must not materialize the legacy relation view"),
+            ):
+                result = query_saved_relations(
+                    path,
+                    "src/core.py::work",
+                    direction="callers",
+                    include_tests=False,
+                )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual([row["label"] for row in result["neighbors"]], ["run"])
+
     def test_full_load_checks_cold_sections_while_partial_read_is_selective(self) -> None:
         graph = _graph()
         with tempfile.TemporaryDirectory() as tmp:

@@ -19,11 +19,18 @@ Distinguish:
 
 | Concern | Module map |
 |---------|------------|
-| Renderers | `packets/renderers.py`, `formats.py` |
-| Validation | `packets/validation.py` |
-| Packet metrics | `packets/metrics.py` |
+| Atomic target catalog | `packet_targets.py` |
+| Encoder implementations | `packets/renderers.py` |
+| Validator implementations | `packets/validation.py` |
+| Token measurement | `packets/metrics.py` |
+| Target cost models | `packet_targets.py` |
 
-Public formats must generate and validate end-to-end or be unadvertised (OW-Q05-A). Names: compact `gg` is the accepted CLI/API name (older research text may say `gg_max`).
+`TargetSpec` is the sole authority for identity projection, capabilities,
+encoder, validator, priority behavior, cost model, detection markers, and
+adaptive alternatives. CLI, MCP, HTTP, planner cost estimation, rendering, and
+validation derive their public behavior from that catalog. Public targets must
+generate and validate end-to-end or be unadvertised (OW-Q05-A). Names: compact
+`gg` is the accepted CLI/API name (older research text may say `gg_max`).
 
 ## 3. Interfaces
 
@@ -40,7 +47,7 @@ Public formats must generate and validate end-to-end or be unadvertised (OW-Q05-
 - **[Conditional]** IF selecting a cheaper encoding THEN identity-safe semantics SHALL be preserved.
   - `EvidenceStage: Sampled`.
 - **[Ubiquitous]** Token claims for ranking formats SHALL use calibrated estimators (OW-AC-07, done).
-  - `EvidenceStage: Measured` — mean error 2.78%, max 11.93%, cross-format spread 7.04% against `tiktoken`; see [token proxy recalibration](../../evaluation/graybox-cycles/2026-07-30-token-proxy-recalibration.md).
+  - `EvidenceStage: Measured` — mean error 2.78%, max 11.93%, cross-format spread 7.04% against `tiktoken`; see [the consolidated recalibration measurement](../../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements).
   - **Re-verified 2026-08-05** (T-B05, `benchmarks/context_graph/calibrate_token_proxy.py --enforce`, this project's own graph, 108 packet/tokenizer pairs across `o200k_base`+`cl100k_base`): mean |error| **2.73%**, p95 **5.93%**, cross-format spread **6.68%**, 0 format inversions — all four gates (MAE≤5%, p95≤10%, spread≤10%, 0 inversions) pass with headroom, materially unchanged from the 2026-07-30 baseline. A fresh least-squares refit produces slightly different constants (piece 1.32 vs shipped 1.26, punctuation 0.045 vs shipped 0.163) reflecting this repo's corpus drift since calibration, but the *shipped* constants — not the refit — are what the gate scores, and they still pass comfortably. Not re-fitted: the difference is a normal refit delta on a still-passing estimator, not a failing one, and this project's own convention holds format-ranking changes to an eval gate rather than updating constants opportunistically.
 - **[Ubiquitous]** Code accumulating a packet line by line SHALL sum `token_units()` and round once.
   - `EvidenceStage: Measured` — summing `estimate_tokens` per line drifts from the same packet rendered whole; this silently broke incremental budget accounting once already.
@@ -52,14 +59,16 @@ Public formats must generate and validate end-to-end or be unadvertised (OW-Q05-
 - **ADR-CP-001:** Format is chosen by measured token cost, not a universal aesthetic floor — the ranking inverted once already under a real tokenizer, so aesthetics are not evidence.
 - **ADR-CP-002:** The shipped estimator is a calibrated two-parameter proxy, not a bundled tokenizer. `tiktoken` stays an optional measurement instrument so the runtime keeps no model-vendor dependency.
 - **ADR-CP-003:** The proxy is deliberately **whitespace-blind**. It sizes budgets; it cannot judge a layout or pretty-printing decision. A whitespace term was fitted twice and rejected both times for taking a negative coefficient.
+- **ADR-CP-004:** Target behavior is registered atomically in one cold-start-safe catalog. Lazy callable references preserve CLI startup while eliminating parallel renderer, validator, cost, and advertised-name registries.
+- **ADR-CP-005:** Adaptive alternatives and endpoint identity projections are target policy. The compiler executes declared alternatives and rejects a non-injective projection before comparing exact rendered token cost.
 
 ## 6. Leaf execution & test seam
 
 | | |
 |--|--|
-| **Implementation** | `packets/renderers.py`, `packets/formats.py`, `packets/validation.py`, `packets/metrics.py` |
+| **Implementation** | `packet_targets.py`, `packets/renderers.py`, `packets/validation.py`, `packets/metrics.py` |
 | **Test surface** | `tests/test_packets.py` |
-| **Contract test** | `tests/test_docs_contract.py::test_architecture_uses_current_public_packet_names` — keeps advertised format names in sync with this tree |
+| **Contract test** | `tests/test_packets.py::DeadFormatGuardTest`, `tests/test_public_contracts.py::PublicContractParityTest` — every target renders, validates, has closed selection references, and reaches each transport from the same catalog |
 
 ## 7. Measurement seams
 

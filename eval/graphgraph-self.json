@@ -24,12 +24,12 @@
       "expected": ["evaluate_graph"]
     },
     {
-      "query": "what calls render_query_context",
+      "query": "what calls CompilerDriver::compile",
       "expected": [
         "validate_queries",
-        "cmd_query",
+        "execute_query",
         "build_query_context",
-        "render_native_context"
+        "cmd_context"
       ]
     },
     {

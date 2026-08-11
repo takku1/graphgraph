@@ -7,11 +7,11 @@ from typing import Any
 
 from ..graph.ontology import DEFAULT_RELATIONS
 from ..graph.traversal import POLICIES, traversal_policy
-from ..packets import PACKET_FORMAT_TABLE
+from ..packet_targets import TARGET_TABLE
 from ..planning import query_class_schema
 from ..scanner.frontends import available_frontends
 
-FORMAT_TABLE = list(PACKET_FORMAT_TABLE)
+FORMAT_TABLE = list(TARGET_TABLE)
 
 DESCRIPTION_TOOLS: list[dict[str, Any]] = [
     {

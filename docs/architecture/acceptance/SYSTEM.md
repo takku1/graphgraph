@@ -31,7 +31,7 @@ of which representation is cheapest. It owns the *verdict procedure*.
 | Token-vs-quality loop | `quality.py` |
 | Live model validation | `live_validation.py` |
 | Result rendering | `scoreboard.py` |
-| Data model / service / CLI | `model.py`, `service.py`, `__main__.py` |
+| Data model / execution / CLI | `model.py`, `execution.py`, `__main__.py` |
 
 ## 3. Interface contracts
 
@@ -94,7 +94,7 @@ of which representation is cheapest. It owns the *verdict procedure*.
 
 - **Fit gap:** the canonical corpus is one external repository. Generalization to a rotating multi-language panel is open work (OW-AC-10).
 - **BUILD justification:** differentiator — the qualification procedure *is* the project's standard of proof, and ADR-006 at L0 makes it the subsystem that must carry any superiority claim.
-- **Seam:** `acceptance/service.py`, `acceptance/runner.py`
+- **Seam:** `acceptance/execution.py`, `acceptance/runner.py`
 - **Exit cost:** **LOW** — the harness observes the public surface, so replacing it does not touch the system under test.
 - **Operational owner:** us
 - **Failure mode:** a missing target corpus yields no verdict rather than a default pass.

@@ -387,7 +387,7 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
                     self.assertEqual(result.metadata["answerability"]["confidence"], 0.0)
 
     def test_compiler_abstains_on_low_confidence_automatic_route(self) -> None:
-        from graphgraph.platform import GraphProgram, GraphRuntime
+        from graphgraph.platform import CompileRequest, ContextCompiler
 
         graph = Graph(
             nodes={
@@ -401,7 +401,9 @@ class QueryConditionedSectionRelevanceTest(unittest.TestCase):
             }
         )
 
-        compiled = GraphRuntime(graph).compile(GraphProgram(query="facet coverage answerability reconciliation"))
+        compiled = ContextCompiler(graph).compile(
+            CompileRequest(query="facet coverage answerability reconciliation")
+        )
 
         self.assertLess(compiled.route.confidence, 0.25)
         self.assertEqual(compiled.retrieval.metadata["answerability"]["status"], "incomplete")

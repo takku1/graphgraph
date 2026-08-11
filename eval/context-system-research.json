@@ -356,7 +356,7 @@
       "evidence": [
         "benchmarks/context_graph/global_attention_phase2_coupling.py",
         "tests/test_attention_field_coupling.py",
-        "docs/evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ],
       "decision": "Directed coupling is degenerate on 3 of 4 projects (median support 0.0107%-0.0291%, zero mass outside the top 64 entities). Symmetric coupling is non-degenerate on 4 of 4 (median support 98.46%-99.95%, 62.5% of mass outside the top 64). Phase 1 therefore compared cover formulas over an empty far field on most projects; its formula-level conclusions do not isolate the formula. Re-run C1 and C1-HYBRID-RESERVE-003 under symmetric coupling before treating any cover verdict as final."
     },
@@ -379,7 +379,7 @@
       ],
       "evidence": [
         "benchmarks/context_graph/global_attention_phase3_recoupled.py",
-        "docs/evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ],
       "decision": "Symmetric coupling improved the flat baseline from mean exact recall 0.5035 to 0.5694 (median 0.2667 to 0.5000); paired across 72 cases 32 improved and 3 regressed. The reserve's own exact recall rose 0.4319 to 0.5206. Promising as a RETRIEVAL field, but measured on a pure field-ranked baseline, not on production search_nodes, which combines PPR with lexical, semantic, and kind signals and uses localized PPR on large graphs. Do not promote until measured on the production eval."
     },
@@ -401,7 +401,7 @@
       ],
       "evidence": [
         "benchmarks/context_graph/coupling_production_ranking.py",
-        "docs/evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ],
       "decision": "Disabling PPR entirely scores identically to every coupling: recall 0.6905, MRR 0.6905. All 21 ranked lists do change, so the term is wired and active -- it reorders the tail, not the head. Field-stage work has no measurable leverage on the tasks this project gates against. Do not tune the field further until a paraphrase/conceptual task set exists that can detect its contribution."
     }
@@ -857,7 +857,7 @@
       "artifacts": [
         "benchmarks/context_graph/global_attention_phase2_coupling.py",
         "tests/test_attention_field_coupling.py",
-        "docs/evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ]
     },
     {
@@ -885,7 +885,7 @@
       "stop_condition": "worst-project gain at least 0.02 with no exact-recall loss above 0.02, or the candidate is rejected",
       "artifacts": [
         "benchmarks/context_graph/global_attention_phase3_recoupled.py",
-        "docs/evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ]
     },
     {
@@ -913,7 +913,7 @@
       "stop_condition": "paired per-task comparison across four projects at three budgets",
       "artifacts": [
         "benchmarks/context_graph/global_attention_phase3_recoupled.py",
-        "docs/evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ]
     },
     {
@@ -939,7 +939,7 @@
       "stop_condition": "paired comparison over all resolvable labelled tasks",
       "artifacts": [
         "benchmarks/context_graph/coupling_production_ranking.py",
-        "docs/evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md"
+        "docs/evaluation/graybox-cycles/README.md"
       ]
     }
   ]

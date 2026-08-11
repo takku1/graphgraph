@@ -17,9 +17,7 @@ from graphgraph.io import (
     save_graph,
 )
 from graphgraph.mcp import dispatch
-from graphgraph.services.native import (
-    inspect_saved_graph_freshness,
-)
+from graphgraph.services.freshness import inspect_saved_graph_freshness
 
 
 class McpProjectStatusTest(unittest.TestCase):
@@ -31,7 +29,7 @@ class McpProjectStatusTest(unittest.TestCase):
         # doc_nodes (what actually landed), and it must agree with the count
         # project_status reports for the same graph.
         from graphgraph.mcp.server import handle_build_graph
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -67,7 +65,7 @@ class McpProjectStatusTest(unittest.TestCase):
         # an exception -- it must return an inspectable, actionable status and
         # the MCP handler must serialize it rather than raise.
         from graphgraph.mcp.server import handle_project_status
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)  # deliberately empty: no .graphgraph graph
@@ -85,7 +83,7 @@ class McpProjectStatusTest(unittest.TestCase):
         # can't answer "did symbol extraction happen?". project_status now reports
         # symbol_extraction derived from actual node kinds -- authoritative even
         # when the label is stale.
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         symbol_graph = Graph(
             nodes={
@@ -114,7 +112,7 @@ class McpProjectStatusTest(unittest.TestCase):
             self.assertEqual(files["symbol_nodes"], 0)
 
     def test_project_status_separates_member_call_trust_coverage_and_external_sites(self) -> None:
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         graph = Graph(
             nodes={
@@ -164,7 +162,7 @@ class McpProjectStatusTest(unittest.TestCase):
         self.assertIn("7 member-call sites lack receiver evidence", calls["warning"])
 
     def test_project_status_marks_legacy_member_call_telemetry_unclassified(self) -> None:
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         graph = Graph(
             nodes={"A": Node("A", "caller", "function", "a.py")},
@@ -185,7 +183,7 @@ class McpProjectStatusTest(unittest.TestCase):
         self.assertIn("full symbol scan", calls["warning"])
 
     def test_project_status_reports_validation_package_and_runtime_hint(self) -> None:
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -218,7 +216,7 @@ class McpProjectStatusTest(unittest.TestCase):
             self.assertTrue(any("PYTHONPATH includes src" in note for note in report["runtime_notes"]))
 
     def test_project_status_reports_cargo_workspace_metadata(self) -> None:
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -244,7 +242,7 @@ class McpProjectStatusTest(unittest.TestCase):
         self.assertEqual(report["package"]["rust"]["members"], ["crates/core", "crates/cli"])
 
     def test_project_status_reports_npm_manifest_and_test_script(self) -> None:
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -282,7 +280,7 @@ class McpProjectStatusTest(unittest.TestCase):
         )
 
     def test_project_status_expands_cargo_workspace_globs_and_excludes(self) -> None:
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -338,7 +336,7 @@ class McpProjectStatusTest(unittest.TestCase):
         # graph.metadata for the same flags at all, so it could report a
         # graph as fully validated/healthy while silently built from an
         # incomplete scan.
-        from graphgraph.services.native import build_project_status
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -407,7 +405,7 @@ class McpProjectStatusTest(unittest.TestCase):
             git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
 
             graph_path = root / ".graphgraph" / "graph.gg"
-            from graphgraph.services.native import scan_validated_graph
+            from graphgraph.services.lifecycle import scan_validated_graph
 
             scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
 
@@ -430,7 +428,8 @@ class McpProjectStatusTest(unittest.TestCase):
         # count against nodes-carrying-a-path (302 vs 6239) and fired on every
         # graph, including one full-scanned seconds earlier -- a warning that
         # is always on teaches readers to ignore it.
-        from graphgraph.services.native import build_project_status, scan_validated_graph
+        from graphgraph.services.lifecycle import scan_validated_graph
+        from graphgraph.services.project_status import build_project_status
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"

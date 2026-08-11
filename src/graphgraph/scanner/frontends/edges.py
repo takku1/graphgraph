@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 
 from ...graph.core import Edge, Node
 from ..ast import _lang_family
+from ..source_ir import SourceIR
 from .binding_providers import (
     DIRECT_FIELD_BINDING_PRIORITY,
     ENCLOSING_INSTANCE_PRIORITY,
@@ -27,14 +28,10 @@ from .external_summaries import (
     javascript_external_type_bindings,
     javascript_property_copy_helpers,
 )
+from .go import go_return_type_name
 from .grammars import profile_for_suffix
 from .languages import _SUFFIX_LANGUAGE
-from .model import (
-    SourceFile,
-    _CallSite,
-    _MemberCallStats,
-    _TsDef,
-)
+from .model import _CallSite, _MemberCallStats, _TsDef
 from .module_calls import (
     javascript_module_specifier_bindings,
     module_alias_targets,
@@ -109,7 +106,7 @@ def _unique_callables_for_language(
     return result
 
 
-def _callable_receiver_owner(source: SourceFile, definition: _TsDef) -> str:
+def _callable_receiver_owner(source: SourceIR, definition: _TsDef) -> str:
     """Owner key used only for member-call matching.
 
     Class names are project-visible nominal types. JavaScript property objects
@@ -127,7 +124,7 @@ def _callable_receiver_owner(source: SourceFile, definition: _TsDef) -> str:
 
 
 def _add_tree_sitter_implements(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
     nodes: dict[str, Node] | None = None,
@@ -176,7 +173,7 @@ def _add_tree_sitter_implements(
 
 
 def _add_nested_contains(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     edges: list[Edge],
 ) -> None:
@@ -227,7 +224,7 @@ def _add_nested_contains(
 
 
 def _add_returns(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
@@ -260,7 +257,7 @@ def _add_returns(
 
 
 def _add_tree_sitter_callback_references(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
@@ -307,7 +304,7 @@ def _add_tree_sitter_callback_references(
 
 
 def _file_field_types(
-    source: SourceFile,
+    source: SourceIR,
     defs: list[_TsDef],
     root: Any,
 ) -> dict[tuple[str, str], str]:
@@ -321,7 +318,7 @@ def _file_field_types(
 
 
 def _project_field_types(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], str]:
     """Repo-wide `(owner, field) -> type`, with ambiguous declarations dropped.
 
@@ -344,7 +341,7 @@ def _project_field_types(
 
 
 def _project_field_type_facts(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], TypeFact]:
     """Repo-wide field facts retaining source provenance and ambiguity."""
     result, _scope_graph = _project_field_indexes(defs_by_file)
@@ -352,7 +349,7 @@ def _project_field_type_facts(
 
 
 def _project_field_indexes(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> tuple[dict[tuple[str, str], TypeFact], ScopeGraph]:
     """Build compatibility field facts and the language-partitioned scope graph."""
 
@@ -390,7 +387,7 @@ def _project_field_indexes(
 
 
 def _project_python_global_types(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], str]:
     """Repo-wide annotated module globals keyed by module provenance."""
     return {
@@ -401,7 +398,7 @@ def _project_python_global_types(
 
 
 def _project_python_global_type_facts(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], TypeFact]:
     """Repo-wide annotated module-global facts retaining ambiguity."""
     result: dict[tuple[str, str], TypeFact] = {}
@@ -420,7 +417,7 @@ def _project_python_global_type_facts(
 
 
 def _project_python_return_facts(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], TypeFact]:
     """Repo-wide Python return facts keyed by module provenance and symbol."""
     result: dict[tuple[str, str], TypeFact] = {}
@@ -438,7 +435,7 @@ def _project_python_return_facts(
 
 
 def _join_python_package_reexports(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     direct_facts: Mapping[tuple[str, str], TypeFact],
     import_facts: Callable[
         [str, Mapping[tuple[str, str], TypeFact]],
@@ -474,7 +471,7 @@ def _join_python_package_reexports(
 
 
 def _add_tree_sitter_calls(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
@@ -584,9 +581,10 @@ def _add_tree_sitter_calls(
     # dropped: an ambiguous return is not receiver evidence.
     return_types_by_name: dict[str, set[str]] = {}
     return_type_by_definition: dict[tuple[str, str], str] = {}
+    go_return_types_by_name: dict[str, set[str]] = {}
     for source, defs, _root in defs_by_file:
         source_suffix = source.path.suffix.lower()
-        if source_suffix not in ({".rs"} | _TS_SUFFIXES):
+        if source_suffix not in ({".rs", ".go"} | _TS_SUFFIXES):
             continue
         text_bytes = source.text.encode("utf-8", errors="replace")
         for definition in (item for item in defs if item.kind in {"function", "method"}):
@@ -595,14 +593,30 @@ def _add_tree_sitter_calls(
             # factory return type from `return new X()` in the body.
             if source_suffix == ".rs":
                 return_type = _return_type_name(body_text)
+            elif source_suffix == ".go":
+                # Go declares its result in the signature, so this is a read of
+                # the parsed `result` field rather than a guess from the body.
+                return_type = go_return_type_name(definition.return_type)
             else:
                 source_types, helpers = js_property_context.get(source.rel, ({}, frozenset()))
                 copied_types = _ts_property_copy_types(body_text, source_types, helpers)
                 return_type = _ts_return_type_from_body(body_text, copied_types)
-            if return_type:
-                return_types_by_name.setdefault(definition.name, set()).add(return_type)
-                return_type_by_definition[(source.rel, definition.name)] = return_type
+            if not return_type:
+                continue
+            if source_suffix == ".go":
+                # Kept out of the shared map on purpose. It is keyed by bare
+                # function name across the whole repo, so folding Go into it
+                # would let a Go function supply the type for a same-named
+                # TypeScript or Rust local -- and would make previously unique
+                # names ambiguous, silently costing those languages bindings.
+                go_return_types_by_name.setdefault(definition.name, set()).add(return_type)
+                continue
+            return_types_by_name.setdefault(definition.name, set()).add(return_type)
+            return_type_by_definition[(source.rel, definition.name)] = return_type
     unique_return_types = {name: next(iter(types)) for name, types in return_types_by_name.items() if len(types) == 1}
+    go_unique_return_types = {
+        name: next(iter(types)) for name, types in go_return_types_by_name.items() if len(types) == 1
+    }
 
     js_source_paths = tuple(source.rel for source, _defs, _root in defs_by_file if source.path.suffix.lower() in _TS_SUFFIXES)
     default_return_types: dict[str, str] = {}
@@ -857,7 +871,7 @@ def _add_tree_sitter_calls(
                     initial_facts=python_initial_facts,
                     call_return_facts=python_call_return_facts,
                     unique_return_types={
-                        **unique_return_types,
+                        **(go_unique_return_types if language == "go" else unique_return_types),
                         **module_call_return_types.get(source.rel, {}),
                     },
                     call_receiver_types=call_receiver_types,
@@ -1217,12 +1231,12 @@ def _add_tree_sitter_calls(
 
 
 def _add_imports_from(
-    defs_by_file: list[tuple[SourceFile, list[_TsDef], Any]],
+    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
     nodes: dict[str, Node],
     name_to_symbols: dict[str, list[str]],
     edges: list[Edge],
 ) -> None:
-    unresolved: list[tuple[SourceFile, str, list[str], str | None, str | None, str, str]] = []
+    unresolved: list[tuple[SourceIR, str, list[str], str | None, str | None, str, str]] = []
     for source, _defs, _root in defs_by_file:
         suffix = source.path.suffix.lower()
         src_lang = _lang_family(source.rel)

@@ -799,7 +799,7 @@ def packet_priority(
         )
     # Rank maintained production paths before benchmark/test harness callers.
     # Sorting only by path-derived id put ``benchmarks_...`` ahead of ``src_...``
-    # and buried the actual CLI/MCP callers of render_query_context below four
+    # and buried the actual CLI/MCP compiler-driver callers below four
     # benchmark helpers (self-eval MRR 0.125). Keep all callers in the packet;
     # this changes only the order the agent reads them.
     if graph is None:

@@ -284,7 +284,7 @@ It is also currently degenerate on real graphs. Because influence diffuses
 along edge direction and 62.9% of active entities are directed sinks, the far
 field receives no mass — a live compile yields `aggregate_mass 0.0`,
 `refinements 0`, and a single cover line for 98.8% of the project. See
-[the coupling finding](docs/evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md)
+[the consolidated influence-field measurement](docs/evaluation/graybox-cycles/README.md#influence-field-experiment)
 for the measurement and
 [the tournament](docs/research/context-system-tournament.md) for the promotion
 rules. Use it to reproduce that result, not to get better context.

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from graphgraph.scanner.frontends import SourceFile, select_extractor
+from graphgraph.scanner.frontends import SourceIR, select_extractor
 from graphgraph.scanner.frontends.module_calls import whole_module_binding_names
 from graphgraph.scanner.frontends.python import (
     _python_class_field_types,
@@ -272,11 +272,75 @@ def dispatch():
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
-                files.append(SourceFile(path, rel, rel.replace("/", "_"), text))
+                files.append(SourceIR(path, rel, rel.replace("/", "_"), text))
             return select_extractor("tree_sitter").extract_symbols(
                 files,
                 max_total_symbols=100,
             )
+
+    def test_go_receiver_bound_to_a_constructor_result_resolves(self) -> None:
+        """`x := NewThing()` must type its receiver, like Rust and TypeScript.
+
+        Go's grammar names the result field `result`, not `return_type`, so
+        every Go function looked unannotated and Go contributed nothing to the
+        name -> return type map. `_go_bindings` then had nothing to consult,
+        and was the only provider that never consulted it at all. `:=` was
+        understood solely in its composite-literal form (`x := Engine{}`).
+
+        Only names with one concrete result repo-wide are used, so an
+        ambiguous name still resolves to nothing rather than to a guess.
+        """
+        result = self._extract(
+            {
+                "main.go": (
+                    "package main\n"
+                    "type Engine struct{ name string }\n"
+                    "func (e *Engine) Run() int { return 1 }\n"
+                    "type Widget struct{ id int }\n"
+                    "func (w *Widget) Draw() int { return 3 }\n"
+                    "func NewEngine() *Engine { return &Engine{} }\n"
+                    "func OpenWidget() (*Widget, error) { return &Widget{}, nil }\n"
+                    "func single() int {\n"
+                    "\te := NewEngine()\n"
+                    "\treturn e.Run()\n"
+                    "}\n"
+                    "func multi() int {\n"
+                    "\tw, err := OpenWidget()\n"
+                    "\tif err != nil { return 0 }\n"
+                    "\treturn w.Draw()\n"
+                    "}\n"
+                ),
+            }
+        )
+        calls = {
+            (edge.source, edge.target)
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(
+            ("main.go__single", "main.go__Engine__Run"),
+            calls,
+            "single-value `e := NewEngine()` did not type its receiver",
+        )
+        # Multi-value results are the dominant Go form: the first component is
+        # what the variable binds, the trailing `error` carries no methods.
+        self.assertIn(
+            ("main.go__multi", "main.go__Widget__Draw"),
+            calls,
+            "`w, err := OpenWidget()` did not type its receiver from the first result",
+        )
+
+    def test_go_result_type_reads_only_nominal_types(self) -> None:
+        """Slices, maps and builtins own no methods, so they must not bind."""
+        from graphgraph.scanner.frontends.go import go_return_type_name
+
+        self.assertEqual(go_return_type_name("*Engine"), "Engine")
+        self.assertEqual(go_return_type_name("pkg.Engine"), "Engine")
+        self.assertEqual(go_return_type_name("(*Widget, error)"), "Widget")
+        self.assertEqual(go_return_type_name("[]*Widget"), "")
+        self.assertEqual(go_return_type_name("map[string]Widget"), "")
+        self.assertEqual(go_return_type_name("int"), "")
+        self.assertEqual(go_return_type_name(""), "")
 
     def test_two_hop_receiver_expression_resolves_a_call_edge(self) -> None:
         result = self._extract(
@@ -456,21 +520,17 @@ class ProjectFieldTypeTest(unittest.TestCase):
 
     def _project_map(self, sources: dict[str, str]):
         from graphgraph.scanner.frontends.edges import _project_field_types
-        from graphgraph.scanner.frontends.model import SourceFile
-
         files = []
         for rel, text in sources.items():
             files.append(
-                (SourceFile(path=Path(rel), rel=rel, file_node_id=rel, text=text), [], None)
+                (SourceIR(path=Path(rel), rel=rel, file_node_id=rel, text=text), [], None)
             )
         return _project_field_types(files)
 
     def _project_facts(self, sources: dict[str, str]):
         from graphgraph.scanner.frontends.edges import _project_field_type_facts
-        from graphgraph.scanner.frontends.model import SourceFile
-
         files = [
-            (SourceFile(path=Path(rel), rel=rel, file_node_id=rel, text=text), [], None)
+            (SourceIR(path=Path(rel), rel=rel, file_node_id=rel, text=text), [], None)
             for rel, text in sources.items()
         ]
         return _project_field_type_facts(files)

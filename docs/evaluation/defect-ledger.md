@@ -26,12 +26,12 @@ literature.
 ## Express ceiling follow-up checklist
 
 This checklist tracks the independent Express gray-box report at
-[`2026-08-01-graybox-express-theoretical-ceiling.md`](graybox-cycles/2026-08-01-graybox-express-theoretical-ceiling.md).
+[the consolidated ceiling campaign](graybox-cycles/README.md#historical-ceiling-campaigns).
 It separates fixed false negatives from the remaining precision work.
 
 Cross-repository deployment, conceptual retrieval, abstention, transport, and
 token gates now live in the canonical
-[`2026-08-02 agent-cycle tracker`](graybox-cycles/2026-08-02-agent-cycle-efficiency-quality-tracker.md).
+[the consolidated agent-cycle measurement](graybox-cycles/README.md#instrument-and-representation-measurements).
 
 - [x] Attribute a nested call to its innermost callable exactly once; correct
   the inflated receiver-site denominator.

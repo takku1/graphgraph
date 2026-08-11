@@ -69,7 +69,7 @@ class DocumentAuthorityTest(unittest.TestCase):
         # End-to-end against the shipped docs/README.md (the single source).
         self.assertEqual(document_authority("architecture.md"), "current")
         self.assertEqual(
-            document_authority("findings/2026-07-27-graybox-comprehensive.md"), "current"
+            document_authority("evaluation/graybox-cycles/README.md"), "current"
         )
 
 

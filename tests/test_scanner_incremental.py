@@ -23,6 +23,126 @@ from graphgraph.scanner.frontends import (
 from graphgraph.storage.backends import save_graph_binary
 
 
+class ManifestCacheTest(unittest.TestCase):
+    """The manifest cache must never outlive the file it describes.
+
+    The manifest is whole-repo state -- 33.5 MB of JSON on a 1,574-file
+    checkout -- and an incremental update both reads and rewrites it on every
+    call, so re-parsing it dominated the update that promises to cost
+    `len(paths)` rather than repo size. Caching it is only safe while the
+    invalidation is exactly right: a stale manifest would restore deleted files
+    and resurrect symbols that no longer exist.
+    """
+
+    def setUp(self) -> None:
+        from graphgraph.runtime.manifest import clear_manifest_cache
+
+        clear_manifest_cache()
+
+    def _write(self, path: Path, files: dict) -> None:
+        from graphgraph.runtime.manifest import Manifest
+
+        manifest = Manifest()
+        manifest.files = dict(files)
+        manifest.save(path)
+
+    def _write_externally(self, path: Path, files: dict) -> None:
+        """Replace the manifest the way another process would.
+
+        Deliberately *not* `Manifest.save`: that seeds the cache, which would
+        mask the invalidation this test exists to prove. The bytes have to
+        change under a cache that never saw the write.
+        """
+        payload = {
+            "version": 4,
+            "source_root": "",
+            "extractor_fingerprint": "",
+            "updated_at": "",
+            "type_index": {},
+            "files": files,
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_external_rewrite_invalidates_the_cached_parse(self) -> None:
+        import os
+
+        from graphgraph.runtime.manifest import Manifest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg.manifest.json"
+            self._write_externally(path, {"a.py": {"hash": "1"}})
+            self.assertEqual(sorted(Manifest.load(path).files), ["a.py"])
+
+            # Same byte length, so only the timestamp distinguishes them --
+            # the harder half of the invalidation. Forced to a distinct mtime
+            # because a filesystem's timestamp resolution is coarser than two
+            # back-to-back writes.
+            self._write_externally(path, {"b.py": {"hash": "2"}})
+            stat = path.stat()
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+            self.assertEqual(
+                sorted(Manifest.load(path).files),
+                ["b.py"],
+                "cache served a manifest that no longer describes the store",
+            )
+
+    def test_deleting_the_manifest_drops_the_entry(self) -> None:
+        from graphgraph.runtime.manifest import Manifest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg.manifest.json"
+            self._write(path, {"a.py": {"hash": "1"}})
+            self.assertEqual(sorted(Manifest.load(path).files), ["a.py"])
+
+            path.unlink()
+            self.assertEqual(
+                Manifest.load(path).files,
+                {},
+                "a removed manifest must not keep answering from cache",
+            )
+
+    def test_one_caller_mutating_its_manifest_cannot_reach_another(self) -> None:
+        from graphgraph.runtime.manifest import Manifest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg.manifest.json"
+            self._write(path, {"a.py": {"hash": "1"}})
+
+            first = Manifest.load(path)
+            first.files["injected.py"] = {"hash": "x"}
+            del first.files["a.py"]
+
+            second = Manifest.load(path)
+            self.assertEqual(
+                sorted(second.files),
+                ["a.py"],
+                "a caller's edits leaked into the shared cached payload",
+            )
+
+    def test_saving_seeds_the_cache_with_what_was_written(self) -> None:
+        """The write path must publish, not just invalidate.
+
+        An update rewrites the manifest every call, so a read-only cache would
+        miss every time in exactly the loop it exists to serve.
+        """
+        from graphgraph.runtime.manifest import Manifest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "graph.gg.manifest.json"
+            self._write(path, {"a.py": {"hash": "1"}})
+
+            # Corrupt the bytes on disk without changing size or mtime is not
+            # portable, so assert the cheaper observable: the freshly saved
+            # manifest is readable and correct without re-parsing having to
+            # produce a different answer.
+            reloaded = Manifest.load(path)
+            self.assertEqual(sorted(reloaded.files), ["a.py"])
+            reloaded.files["c.py"] = {"hash": "3"}
+            reloaded.save(path)
+            self.assertEqual(sorted(Manifest.load(path).files), ["a.py", "c.py"])
+
+
 class ManifestDeferralTest(unittest.TestCase):
     """The scanner must defer the manifest write so the lifecycle can order it
     after the graph commit (a failed graph write must not leave the manifest
@@ -168,7 +288,7 @@ class IncrementalScannerTest(unittest.TestCase):
         self.assertEqual(updated.metadata, baseline.metadata)
 
     def test_validated_identical_update_reports_no_write(self) -> None:
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             scan_validated_graph,
             update_paths_validated_graph,
         )
@@ -285,7 +405,7 @@ class IncrementalScannerTest(unittest.TestCase):
         # Structural validity cannot catch this: an empty graph is
         # structurally perfect, so size-of-what-is-replaced is the only signal.
         from graphgraph.io import GraphShrinkRefused, load_any
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             scan_validated_graph,
             update_paths_validated_graph,
         )
@@ -333,7 +453,7 @@ class IncrementalScannerTest(unittest.TestCase):
     def test_update_force_allows_an_intentional_shrink(self) -> None:
         # The guard must not become a wall: an operator who means it keeps a
         # way through, otherwise legitimate rebuilds get stuck behind it.
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             scan_validated_graph,
             update_paths_validated_graph,
         )
@@ -371,7 +491,7 @@ class IncrementalScannerTest(unittest.TestCase):
 
     def test_validated_updates_compose_through_delta_sidecar(self) -> None:
         from graphgraph.io import load_any
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             scan_validated_graph,
             update_paths_validated_graph,
         )
@@ -433,7 +553,7 @@ class IncrementalScannerTest(unittest.TestCase):
         # (excluded, a typo, or already deleted) was formerly idempotent
         # success; erroring on it broke batch cleanups that included one such
         # path. Only a path resolving OUTSIDE the scanned tree is the mistake.
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             remove_paths_validated_graph,
             scan_validated_graph,
         )
@@ -461,7 +581,7 @@ class IncrementalScannerTest(unittest.TestCase):
         # The other half: a path resolving entirely outside the scanned tree is
         # the wrong-root mistake and must still surface, not silently no-op.
         from graphgraph.io import RemovalMatchedNothing
-        from graphgraph.services.native import (
+        from graphgraph.services.lifecycle import (
             remove_paths_validated_graph,
             scan_validated_graph,
         )

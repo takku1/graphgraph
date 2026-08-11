@@ -12,10 +12,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ..source_ir import SourceIR
 from .cpp import cpp_class_field_types, cpp_local_types
 from .csharp import csharp_class_field_types, csharp_local_types
-from .go import go_local_types
-from .model import SourceFile, _TsDef
+from .go import go_local_call_return_types, go_local_types
+from .model import _TsDef
 from .python import _python_class_field_types, _python_local_types, _python_parameter_names
 from .rust import (
     _rust_fields_in_range,
@@ -168,7 +169,18 @@ def _cpp_bindings(context: LocalBindingContext) -> dict[str, str]:
 
 
 def _go_bindings(context: LocalBindingContext) -> dict[str, str]:
-    return go_local_types(context.body)
+    result = go_local_types(context.body)
+    # Parity with Rust and TypeScript, which have always consulted this map.
+    # Go was the only language that ignored it, and `x := NewThing()` is the
+    # idiomatic way Go binds nearly every local -- so its receivers went
+    # untyped and member-call resolution sat an order of magnitude below every
+    # other language the scanner supports.
+    for binding, inferred in go_local_call_return_types(
+        context.body,
+        dict(context.unique_return_types),
+    ).items():
+        result.setdefault(binding, inferred)
+    return result
 
 
 def _empty_local_bindings(_context: LocalBindingContext) -> dict[str, str]:
@@ -211,7 +223,7 @@ def local_bindings(context: LocalBindingContext) -> BindingEnvironment:
 class FieldBindingContext:
     """Inputs available to a language adapter while collecting type fields."""
 
-    source: SourceFile
+    source: SourceIR
     definitions: tuple[_TsDef, ...]
     root: Any
 

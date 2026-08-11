@@ -87,6 +87,12 @@ Tree-sitter extraction currently targets definitions, `contains`, `calls`, and
 Rust `implements` relationships. File-level imports still use graphgraph's
 deterministic resolver.
 
+Every frontend now receives an immutable, versioned `SourceIR`. Tree-sitter
+compiles that revision into a bounded content-addressed `SyntaxIR`; optional
+CPG evidence consumes the same resident tree instead of reparsing unchanged
+bytes. Receipt fields distinguish newly compiled syntax artifacts from reused
+ones, so reuse and eviction remain observable rather than inferred.
+
 The separate incremental CPG evidence provider now adds conservative
 intraprocedural reads, writes, control blocks, fields, declared types, and
 return types across the installed language pack. These relations normalize

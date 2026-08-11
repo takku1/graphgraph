@@ -12,12 +12,12 @@ Orchestrate end-user operations above retrieval/planning: natural-language **que
 | Operation | Academic framing | Map |
 |-----------|------------------|-----|
 | `query` / `execute_query` | Query understanding → retrieve → packet | `services/query.py` |
-| `query_context` / `render_query_context` | One-shot NL context packet | `services/context.py` |
+| `CompilerDriver.compile` | One-shot NL context packet and workflow receipt | `services/compiler_driver.py` |
 | `final_packet` | Packet from known anchors | `services/context.py` |
 | `source_snippets` | Source window materialization | `services/snippets.py` |
 | Project status / freshness | Store health, delta awareness | `project_status.py`, `freshness.py` |
 | `build_project_atlas` | Repository orientation artifact | `project_atlas.py` |
-| Native scan orchestration | Corpus extraction driver | `native.py`, `native_context.py` |
+| Compiler driver | Project refresh → compile → cache → validate → receipt | `compiler_driver.py`; lifecycle, freshness, and project status are direct domain seams |
 | Lifecycle / control receipts | Gate control | `lifecycle.py`, `control.py` |
 
 ## 3. Invariants (EARS + Epistemic Stage)
@@ -35,14 +35,18 @@ Orchestrate end-user operations above retrieval/planning: natural-language **que
 
 - **ADR-AS-001:** Services orchestrate; they do not re-implement retrieval or planning. A behavior that belongs to retrieval and appears here is duplication, and the duplicate will drift.
 - **ADR-AS-002:** Anchor discovery is the service's job, not the caller's. `query_context` exists so an agent never has to guess a node ID to ask a question.
+- **ADR-AS-003:** `CompilerDriver.compile(DriverRequest)` is the single external
+  Seam for project lifecycle, compilation, whole-response caching, validation,
+  timing, and workflow receipts. `ContextCompiler` remains the semantic graph
+  compiler. Transport adapters SHALL NOT reproduce either schedule.
 
 ## 5. Leaf execution & test seam
 
 | | |
 |--|--|
-| **Implementation** | `services/` (12 modules): `query.py`, `context.py`, `snippets.py`, `project_status.py`, `freshness.py`, `project_atlas.py`, `native.py`, `lifecycle.py`, `control.py` |
+| **Implementation** | `services/`: `compiler_driver.py`, `cache_identity.py`, `query.py`, `context.py`, `snippets.py`, `project_status.py`, `freshness.py`, `project_atlas.py`, `lifecycle.py`, `control.py` |
 | **Test surface** | `tests/test_project_atlas.py`, `tests/test_mcp_project_status.py`, `tests/test_cli_mcp.py` |
-| **Note** | Service behavior is largely exercised through the transport tests — a thin orchestration layer is correctly tested at its boundaries |
+| **Note** | Driver behavior is exercised through its Interface plus transport parity. Query cache/control ownership is local to `compiler_driver.py`; stable, full, and known-anchor final packet rendering remains in `context.py`; deterministic cache identities shared by both live in `cache_identity.py`. |
 
 ## 6. Measurement seams
 
@@ -51,7 +55,7 @@ Orchestrate end-user operations above retrieval/planning: natural-language **que
 | **Primary metric** | End-to-end context-compilation latency, resident (`direction: lower`) |
 | **Cache metric** | Packet cache hit rate (`direction: higher`) — a fixed key delivered roughly **18.8x** on the repeated-pipeline path |
 | **Freshness gate** | An empty source delta implies a fresh graph (OW-AC-02) |
-| **Receipts** | [caching and compression prototypes](../../evaluation/graybox-cycles/2026-07-31-caching-and-compression-prototypes.md) |
+| **Receipts** | [consolidated cache measurements](../../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements) |
 
 ## 7. Technology resolution
 
@@ -66,9 +70,11 @@ Orchestrate end-user operations above retrieval/planning: natural-language **que
   | A task queue or job runner | Operations are synchronous and sub-second on the resident path; asynchrony would add failure modes to a path that has none |
   | Pushing orchestration into the CLI/MCP layers | Would duplicate it across both transports — precisely what ADR-AI-002 forbids |
 
-- **Fit gap:** none identified; this layer exists to keep the transports thin.
-- **BUILD justification:** genuinely trivial and stable — it is glue, and glue with a dependency is worse than glue.
-- **Seam:** `services/query.py`, `services/context.py`
+- **Fit gap:** lifecycle, cache, validation, and receipt decisions are substantial
+  enough to drift when transports coordinate them independently.
+- **BUILD justification:** the compiler driver creates Locality across CLI, MCP,
+  HTTP, Python, and acceptance callers without introducing a workflow framework.
+- **Seam:** `services/compiler_driver.py`
 - **Exit cost:** **LOW** — internal; no external contract depends on its shape.
 - **Operational owner:** us
 - **Failure mode:** a missing or invalid active graph surfaces through `project_status` with a re-scan instruction rather than an empty answer.

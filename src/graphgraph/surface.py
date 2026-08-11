@@ -7,27 +7,14 @@ print `--help`: the scanner pulled in `pathspec`, which pulls in `asyncio`, for
 a command that touches no files. That put roughly 200 ms of subsystem import in
 front of every single CLI invocation.
 
-This module has no imports at all, so the parser can read every name it needs
-for the cost of one `.pyc`. The values here are duplicated from their
-authoritative definitions on purpose; `tests/test_surface_constants.py` fails if
-any of them drifts, so the copy cannot silently rot.
+This module has no imports at all, so the parser can read the remaining names
+whose defining subsystems do not yet expose a cold catalog for the cost of one
+`.pyc`. `tests/test_surface_constants.py` fails if a compatibility copy drifts.
+Packet targets are intentionally absent: their complete cold catalog is the
+single authority in `graphgraph.packet_targets`.
 """
 
 from __future__ import annotations
-
-#: Mirrors `graphgraph.packets.formats.PACKET_FORMAT_NAMES`.
-PACKET_FORMAT_NAMES: tuple[str, ...] = (
-    "lowlevel",
-    "sql",
-    "hybrid",
-    "semantic_arrow",
-    "gg",
-    "gg_hybrid",
-    "gg_lex",
-    "gg_lex_hybrid",
-    "svo",
-    "doc_summary",
-)
 
 #: Mirrors `graphgraph.planning.routing.QUERY_CLASS_NAMES`.
 QUERY_CLASS_NAMES: tuple[str, ...] = (
@@ -69,7 +56,6 @@ __all__ = [
     "REPRESENTATION_DEFAULT",
     "REPRESENTATION_DESCRIPTION",
     "DEFAULT_SCAN_MAX_NODES",
-    "PACKET_FORMAT_NAMES",
     "QUERY_CLASS_NAMES",
     "REPRESENTATION_NAMES",
 ]

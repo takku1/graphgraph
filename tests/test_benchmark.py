@@ -1,10 +1,10 @@
-# Benchmark test for graphgraph extraction and token estimation
-"""Run the benchmark utilities on a sample codebase and assert reasonable performance.
+# Benchmark test for GraphGraph extraction and serialization density.
+"""Run extraction-density measurements on a sample codebase.
 
 This test exercises the new AST‑based Python extractor and measures:
 * Extraction time (seconds)
 * Number of symbol nodes and edges created
-* Approximate token size of the resulting graph packet
+* Whitespace density of a deterministic graph serialization
 """
 
 import json
@@ -24,7 +24,7 @@ ROOT = Path(__file__).parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from graphgraph.benchmark.bench_utils import estimate_token_size
+from graphgraph.benchmark.extraction_density import graph_serialization_words
 from graphgraph.graph.core import Edge, Graph, Node
 from graphgraph.scanner.ast import extract_symbols
 
@@ -61,6 +61,17 @@ SOURCE_EXTRACTION_SECONDS_PER_MIB_LIMIT = 5.42
 
 
 class BenchmarkExtractionTest(unittest.TestCase):
+    def test_serialization_density_ignores_memoized_dataclass_attributes(self) -> None:
+        node = Node("n", "node", "function", "src/node.py", scope="src")
+        edge = Edge("n", "n", "references")
+        graph = Graph({node.id: node}, [edge])
+        before = graph_serialization_words(graph)
+
+        node.normalized_scope_values
+        edge.traversal_val
+
+        self.assertEqual(graph_serialization_words(graph), before)
+
     def test_runtime_pins_the_offline_ready_tree_sitter_language_pack(self):
         data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         self.assertIn(
@@ -215,19 +226,20 @@ class BenchmarkExtractionTest(unittest.TestCase):
             f"({elapsed:.2f}s total)",
         )
 
-        # Build a temporary graph and estimate token size
+        # Build a temporary graph and measure serialization density. This is a
+        # word-unit SLO, deliberately separate from calibrated packet tokens.
         g = Graph(nodes=symbol_nodes, edges=symbol_edges)
 
-        token_est = estimate_token_size(g)
+        graph_words = graph_serialization_words(g)
         # Normalize by the actual input size: a fixed repository-total ceiling
         # naturally fails whenever useful source is added and says nothing
         # about extraction efficiency.
         source_word_proxy = sum(len(text.split()) for _path, _rel, _id, text in files)
-        token_ceiling = int(source_word_proxy * SOURCE_GRAPH_TOKEN_DENSITY_LIMIT)
+        word_ceiling = int(source_word_proxy * SOURCE_GRAPH_TOKEN_DENSITY_LIMIT)
         self.assertLess(
-            token_est,
-            token_ceiling,
-            f"Graph/source token density too high: {token_est / source_word_proxy:.4f}",
+            graph_words,
+            word_ceiling,
+            f"Graph/source serialization density too high: {graph_words / source_word_proxy:.4f}",
         )
 
         # Extraction-quality floor (path-to-10 "adopt first" gate).
@@ -250,7 +262,7 @@ class BenchmarkExtractionTest(unittest.TestCase):
 
         print(
             f"Extraction time: {elapsed:.2f}s, symbols: {len(symbol_nodes)}, "
-            f"edges: {len(symbol_edges)}, token_estimate: {token_est}, "
+            f"edges: {len(symbol_edges)}, graph_serialization_words: {graph_words}, "
             f"calls_per_symbol: {calls_per_symbol:.2f}"
         )
 

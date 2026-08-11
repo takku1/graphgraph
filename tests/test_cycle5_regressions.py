@@ -11,8 +11,8 @@ from graphgraph.acceptance.live_validation import _prepare_validation_graph
 from graphgraph.platform.semantic import SemanticIndex
 from graphgraph.runtime.manifest import Manifest
 from graphgraph.scanner import scan_directory
-from graphgraph.services.context import _actionable_receipt
-from graphgraph.services.native import scope_freshness
+from graphgraph.services.compiler_driver import _actionable_receipt
+from graphgraph.services.freshness import scope_freshness
 from graphgraph.services.snippets import render_source_snippets
 
 

@@ -1,3 +1,5 @@
+"""Local HTTP server, repository watcher, and hook installation."""
+
 from __future__ import annotations
 
 import hmac
@@ -18,12 +20,11 @@ from pathlib import Path
 from typing import Callable
 
 from ..io import load_any
-from ..packets import PACKET_FORMAT_NAMES
+from ..packet_targets import TARGET_NAMES
 from ..scanner.files import collect_files
-from .compiler import COMPILER_PASS_NAMES, GraphProgram
+from .compiler import COMPILER_PASS_NAMES, CompileRequest, ContextCompiler
 from .memory import MemoryStore
 from .persistence import PLATFORM_STATE_VERSION, append_jsonl_many, migrate_platform_state
-from .runtime import create_graph_runtime
 from .temporal import Episode, TemporalStore
 
 
@@ -288,7 +289,7 @@ def create_server(
             text = _bounded_text(data.get("query"), "query", 20_000)
             query_class = _bounded_text(data.get("query_class", "auto"), "query_class", 100)
             packet = _bounded_text(data.get("packet", "gg"), "packet", 100)
-            if packet not in PACKET_FORMAT_NAMES:
+            if packet not in TARGET_NAMES:
                 raise ValueError(f"unknown packet: {packet}")
             raw_passes = data.get("passes", [])
             if not isinstance(raw_passes, list):
@@ -300,7 +301,7 @@ def create_server(
             max_nodes = data.get("max_nodes")
             if max_nodes is not None:
                 max_nodes = min(1000, max(1, int(max_nodes)))
-            result = create_graph_runtime(
+            result = ContextCompiler.open(
                 resolved,
                 graph=graph,
                 source_mode=_bounded_text(
@@ -308,7 +309,7 @@ def create_server(
                     "source_mode",
                     20,
                 ),
-            ).compile(GraphProgram(
+            ).compile(CompileRequest(
                 text,
                 query_class=query_class,
                 packet=packet,

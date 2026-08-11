@@ -25,8 +25,10 @@ from graphgraph.retrieval import (
     search_nodes,
     tokenize,
 )
-from graphgraph.services import render_final_packet, render_query_context, render_source_snippets
+from graphgraph.services import render_final_packet, render_source_snippets
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 from graphgraph.services.context import resolve_start_nodes
+from graphgraph.services.lifecycle import GraphBuildStatus
 
 
 class ExactOverloadReceiptTest(unittest.TestCase):
@@ -1125,14 +1127,14 @@ class RetrievalTest(unittest.TestCase):
                 ),
             ):
                 payload = json.loads(
-                    render_query_context(
+                    CompilerDriver().compile(DriverRequest(
                         query="resolve_packet_budget",
                         query_class="auto",
                         graph_path=graph_path,
-                        graph=graph,
-                        json_anchors=True,
+                        resident_status=GraphBuildStatus(graph_path, graph, built=True),
+                        json_output=True,
                         show_anchors=True,
-                    )
+                    ))[0]
                 )
 
         self.assertEqual(payload["anchors"][0]["id"], "TARGET")
@@ -2242,12 +2244,12 @@ class RetrievalTest(unittest.TestCase):
     def test_document_inflections_do_not_blur_code_identifiers(self) -> None:
         graph = Graph(
             nodes={
-                "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/native.py"),
+                "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/lifecycle.py"),
                 "INSPECT": Node(
                     "INSPECT",
                     "inspect_saved_graph_freshness",
                     "function",
-                    "src/services/native.py",
+                    "src/services/lifecycle.py",
                 ),
                 "SAVE": Node("SAVE", "save_graph", "function", "src/io/core.py"),
             }
@@ -2276,9 +2278,9 @@ class RetrievalTest(unittest.TestCase):
         )
         graph = Graph(
             nodes={
-                "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/native.py"),
+                "REFRESH": Node("REFRESH", "refresh_saved_graph", "function", "src/services/lifecycle.py"),
                 "SYNC": Node(
-                    "SYNC", "worktree_sync_candidate", "function", "src/services/native.py", summary="rel_path"
+                    "SYNC", "worktree_sync_candidate", "function", "src/services/lifecycle.py", summary="rel_path"
                 ),
             }
         )
@@ -2288,7 +2290,7 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(coverage["unfulfilled"], [])
         self.assertEqual(coverage["coverage_ratio"], 1.0)
 
-    def test_render_query_context_show_anchors_includes_line_number(self) -> None:
+    def test_compiler_driver_show_anchors_includes_line_number(self) -> None:
         # The text-mode ANCHORS listing (used by `graphgraph query
         # --show-anchors`) previously showed only the file path, never the
         # line -- an agent had no way to jump straight to the match without
@@ -2306,15 +2308,15 @@ class RetrievalTest(unittest.TestCase):
             graph_path = root / "graph.gg"
             save_graph(scan_directory(root, depth="symbols", frontend="regex"), graph_path)
 
-            packet = render_query_context(
+            packet = CompilerDriver().compile(DriverRequest(
                 query="find_this_function",
                 query_class="direct_lookup",
                 graph_path=graph_path,
                 show_anchors=True,
-            )
+            ))[0]
             self.assertIn("app.py:5", packet)
 
-    def test_render_query_context_cache_hit_skips_retrieval(self) -> None:
+    def test_compiler_driver_cache_hit_skips_retrieval(self) -> None:
         from graphgraph.runtime.cache import TopologicalKVCache
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2322,32 +2324,28 @@ class RetrievalTest(unittest.TestCase):
             graph_path = root / "graph.json"
             save_graph(sample_graph(), graph_path)
             cache = TopologicalKVCache(root / "cache.json")
-            with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
-                first = render_query_context(
+            with patch("graphgraph.services.compiler_driver.TopologicalKVCache", return_value=cache):
+                first = CompilerDriver().compile(DriverRequest(
                     query="auth service",
                     query_class="direct_lookup",
                     graph_path=graph_path,
                     cache_namespace="early_query_cache",
-                )
+                ))[0]
                 with (
                     patch(
-                        "graphgraph.services.context.retrieve_context",
-                        side_effect=AssertionError("retrieval ran on a cache hit"),
-                    ),
-                    patch(
-                        "graphgraph.services.context.load_any_cached",
+                        "graphgraph.services.compiler_driver.load_any_cached",
                         side_effect=AssertionError("graph loaded on a cache hit"),
                     ),
                 ):
-                    second = render_query_context(
+                    second = CompilerDriver().compile(DriverRequest(
                         query="auth service",
                         query_class="direct_lookup",
                         graph_path=graph_path,
                         cache_namespace="early_query_cache",
-                    )
+                    ))[0]
             self.assertEqual(first, second)
 
-    def test_render_query_context_cache_contract_invalidates_old_semantics(self) -> None:
+    def test_compiler_driver_cache_contract_invalidates_old_semantics(self) -> None:
         from graphgraph.runtime.cache import TopologicalKVCache
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -2355,23 +2353,23 @@ class RetrievalTest(unittest.TestCase):
             graph_path = root / "graph.json"
             save_graph(sample_graph(), graph_path)
             cache = TopologicalKVCache(root / "cache.json")
-            with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
+            with patch("graphgraph.services.compiler_driver.TopologicalKVCache", return_value=cache):
                 with patch(
-                    "graphgraph.services.context.QUERY_RESPONSE_CACHE_VERSION",
+                    "graphgraph.services.compiler_driver.QUERY_RESPONSE_CACHE_VERSION",
                     "legacy_semantic_contract",
                 ):
-                    render_query_context(
+                    CompilerDriver().compile(DriverRequest(
                         query="auth service",
                         query_class="direct_lookup",
                         graph_path=graph_path,
                         cache_namespace="versioned_query_cache",
-                    )
-                render_query_context(
+                    ))
+                CompilerDriver().compile(DriverRequest(
                     query="auth service",
                     query_class="direct_lookup",
                     graph_path=graph_path,
                     cache_namespace="versioned_query_cache",
-                )
+                ))
 
             self.assertEqual(cache.stats()["hits"], 0)
             self.assertEqual(cache.stats()["misses"], 2)
@@ -2438,16 +2436,16 @@ class RetrievalTest(unittest.TestCase):
                     )
             self.assertEqual(first, second)
 
-    def test_render_query_context_honors_hops_override(self) -> None:
+    def test_compiler_driver_honors_hops_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.json"
             save_graph(sample_graph(), graph_path)
-            packet = render_query_context(
+            packet = CompilerDriver().compile(DriverRequest(
                 query="auth service",
                 query_class="blast_radius",
                 graph_path=graph_path,
                 hops=0,
-            )
+            ))[0]
             self.assertIn("AuthService", packet)
             self.assertNotIn("TokenStore", packet)
             self.assertNotIn("reads", packet)

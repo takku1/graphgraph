@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import Protocol
 
 from ...graph.core import Edge, Node
+from ..source_ir import SourceIR
 
 
 @dataclass(frozen=True)
@@ -22,13 +22,6 @@ class FrontendCapability:
     # selectable; advertising `available=True` for something that silently
     # falls back to regex is the dishonesty this field exists to prevent.
     selectable: bool = True
-
-@dataclass(frozen=True)
-class SourceFile:
-    path: Path
-    rel: str
-    file_node_id: str
-    text: str
 
 @dataclass(frozen=True)
 class ExtractionResult:
@@ -64,7 +57,7 @@ class Extractor(Protocol):
 
     def extract_symbols(
         self,
-        files: list[SourceFile],
+        files: list[SourceIR],
         max_total_symbols: int,
         context_nodes: dict[str, Node] | None = None,
     ) -> ExtractionResult:
@@ -80,6 +73,13 @@ class _TsDef:
     extra: tuple[str, ...] = ()
     owner: str = ""
     facts: tuple[str, ...] = ()
+    # Suffix that separates this definition's node id from an earlier
+    # same-named one in the same file and scope. Empty for the first (and
+    # usually only) definition of a name, so ordinary ids are unchanged.
+    # Assigned once per file by `_disambiguate_definition_ids`, because
+    # `_definition_node_id` is called from a dozen sites and must stay a pure
+    # function of the definition it is handed.
+    disambiguator: str = ""
     # Declared return annotation, taken from the parser's own `return_type`
     # field rather than re-derived from source text.
     return_type: str = ""

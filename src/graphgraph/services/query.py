@@ -119,6 +119,11 @@ def execute_query(
     scopes: tuple[str, ...] = (),
     scope_mode: str = "strict",
     source_mode: str = "auto",
+    memory_scopes: tuple[str, ...] = ("project", "session"),
+    representation: str = "flat",
+    representation_budget: int | None = None,
+    cache_namespace: str = "unified_query",
+    include_context_freshness: bool = False,
 ) -> dict[str, object]:
     """Compile and execute one safe query without inferring mutations."""
     started = time.perf_counter()
@@ -136,10 +141,12 @@ def execute_query(
         return _needs_index(query_text, directory, graph_path, plan)
 
     graph = None
+    resident_status = None
     refresh: dict[str, object] | None = None
+    freshness_detail: dict[str, object] | None = None
     freshness = "unchecked"
     if sync == "git":
-        from .freshness import inspect_saved_graph_freshness, source_root_for_saved_graph
+        from .freshness import inspect_saved_graph_freshness, scope_freshness, source_root_for_saved_graph
         from .lifecycle import refresh_saved_graph
 
         source_root = source_root_for_saved_graph(resolved_graph)
@@ -149,15 +156,19 @@ def execute_query(
             sync_git=True,
         )
         graph = status.graph
-        checked = inspect_saved_graph_freshness(
-            directory=source_root,
-            output_path=resolved_graph,
+        resident_status = status
+        freshness_detail = scope_freshness(
+            inspect_saved_graph_freshness(
+                directory=source_root,
+                output_path=resolved_graph,
+            ),
+            scopes,
         )
         freshness = (
             "fresh"
-            if checked["fresh"]
+            if freshness_detail["fresh"]
             else "incompatible"
-            if not checked["extractor_compatible"]
+            if not freshness_detail["extractor_compatible"]
             else "stale"
         )
         refresh = {
@@ -169,7 +180,7 @@ def execute_query(
     operator = plan.operator
     result: Any
     if operator is QueryOperator.RELATIONS:
-        from ..retrieval import encode_relation_micro, query_relations, query_saved_relations
+        from ..retrieval.relations import encode_relation_micro, query_relations, query_saved_relations
 
         query = query_relations if graph is not None else query_saved_relations
         relation = query(
@@ -185,6 +196,23 @@ def execute_query(
             operator = QueryOperator.CONTEXT
         else:
             result = encode_relation_micro(relation)
+    if operator is QueryOperator.CONTEXT and include_context_freshness and freshness_detail is None:
+        from .freshness import inspect_saved_graph_freshness, scope_freshness, source_root_for_saved_graph
+
+        freshness_detail = scope_freshness(
+            inspect_saved_graph_freshness(
+                directory=source_root_for_saved_graph(resolved_graph),
+                output_path=resolved_graph,
+            ),
+            scopes,
+        )
+        freshness = (
+            "fresh"
+            if freshness_detail["fresh"]
+            else "incompatible"
+            if not freshness_detail["extractor_compatible"]
+            else "stale"
+        )
     if graph is None and operator is not QueryOperator.RELATIONS:
         graph = load_any(resolved_graph)
     if operator is QueryOperator.SELECT:
@@ -198,7 +226,7 @@ def execute_query(
         )
         result = _selection_payload(selected)
     elif operator is QueryOperator.SEARCH:
-        from ..retrieval import search_nodes
+        from ..retrieval.search import search_nodes
 
         result = _search_payload(
             search_nodes(graph, str(plan.arguments["query"]), limit=max(0, limit))
@@ -208,13 +236,14 @@ def execute_query(
 
         result = build_project_status(directory=directory, graph_path=resolved_graph)
     elif operator is QueryOperator.CONTEXT:
-        from .context import render_query_context
+        from .compiler_driver import CompilerDriver, DriverRequest
 
-        rendered = render_query_context(
+        rendered, _status = CompilerDriver().compile(DriverRequest(
             query=query_text,
             query_class=query_class,
+            directory=directory,
             graph_path=resolved_graph,
-            graph=graph if refresh is not None else None,
+            resident_status=resident_status,
             packet=packet,
             hops=hops,
             anchor_limit=anchor_limit,
@@ -222,25 +251,33 @@ def execute_query(
             scopes=scopes,
             scope_mode=scope_mode,
             show_anchors=True,
-            json_anchors=True,
-            cache_namespace="unified_query",
+            json_output=True,
+            json_details=True,
+            cache_namespace=cache_namespace,
+            sync_git=sync == "git",
             source_mode=source_mode,
-        )
+            memory_scopes=memory_scopes,
+            representation=representation,
+            representation_budget=representation_budget,
+        ))
         result = json.loads(rendered)
 
+    execution_receipt: dict[str, object] = {
+        "mutating": False,
+        "graph_path": str(resolved_graph),
+        "freshness": freshness,
+        "refresh": refresh,
+        "milliseconds": round((time.perf_counter() - started) * 1000, 3),
+    }
+    if freshness_detail is not None:
+        execution_receipt["freshness_detail"] = freshness_detail
     return {
         "status": "ok",
         "query": query_text,
         "operator": operator.value,
         "plan": _plan_payload(plan),
         "result": result,
-        "receipt": {
-            "mutating": False,
-            "graph_path": str(resolved_graph),
-            "freshness": freshness,
-            "refresh": refresh,
-            "milliseconds": round((time.perf_counter() - started) * 1000, 3),
-        },
+        "receipt": execution_receipt,
     }
 
 

@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from graphgraph.mcp.server import build_query_context
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, PASS, CaseResult, GateResult, Task
 from .runner import _parse_packet
@@ -48,7 +48,7 @@ def run_transport_parity(task: Task) -> CaseResult:
         graph_path = root / ".graphgraph" / "graph.gg"
 
         # CLI JSON (also builds the graph the other transports reuse).
-        cli_json_raw, _status = render_native_context(
+        cli_json_raw, _status = CompilerDriver().compile(DriverRequest(
             query=_QUERY,
             query_class="reverse_lookup",
             directory=root,
@@ -57,11 +57,11 @@ def run_transport_parity(task: Task) -> CaseResult:
             json_details=True,
             show_anchors=True,
             max_nodes=20,
-        )
+        ))
         cli_json = json.loads(cli_json_raw)
 
         # CLI plain (packet only).
-        cli_plain_raw, _status2 = render_native_context(
+        cli_plain_raw, _status2 = CompilerDriver().compile(DriverRequest(
             query=_QUERY,
             query_class="reverse_lookup",
             directory=root,
@@ -69,7 +69,7 @@ def run_transport_parity(task: Task) -> CaseResult:
             json_output=False,
             show_anchors=False,
             max_nodes=20,
-        )
+        ))
 
         # MCP query_context tool.
         mcp_raw = build_query_context(

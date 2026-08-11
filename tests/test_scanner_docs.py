@@ -13,7 +13,7 @@ from graphgraph.graph.ontology import relation_spec
 from graphgraph.scanner.doc import DocumentInput, extract_document_context
 from graphgraph.scanner.frontends import (
     ExtractionResult,
-    SourceFile,
+    SourceIR,
 )
 
 
@@ -339,7 +339,7 @@ class DocsScannerTest(unittest.TestCase):
         class CapturingExtractor:
             def extract_symbols(
                 self,
-                files: list[SourceFile],
+                files: list[SourceIR],
                 max_total_symbols: int,
                 context_nodes: dict | None = None,
             ) -> ExtractionResult:

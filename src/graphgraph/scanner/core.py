@@ -26,7 +26,7 @@ from .files import (
     collect_files,
     node_id,
 )
-from .frontends import SourceFile, select_extractor
+from .frontends import select_extractor
 from .frontends.persistent_facts import (
     AffectedTypeFactFiles,
     PersistentPythonTypeIndex,
@@ -41,6 +41,7 @@ from .frontends.python import (
 from .history import extract_commit_history, repository_history_start
 from .imports import add_file_edges
 from .rust_references import filter_rust_reference_edges
+from .source_ir import SourceIR
 
 logger = logging.getLogger(__name__)
 ScanProgress = Callable[[str, str], None]
@@ -1420,7 +1421,7 @@ def _build_graph_from_split(
     python_fact_snapshots = dict(python_fact_snapshots or {})
     symbols_started = time.perf_counter()
     if depth == "symbols" and dirty_files:
-        source_files: list[SourceFile] = []
+        source_files: list[SourceIR] = []
         pending_snapshots: list[tuple[str, str]] = []
         for f, rel, fhash in dirty_files:
             suffix = f.suffix.lower()
@@ -1431,7 +1432,7 @@ def _build_graph_from_split(
                 text = f.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 continue
-            source_files.append(SourceFile(f, rel, file_nid, text))
+            source_files.append(SourceIR(f, rel, file_nid, text))
             if suffix == ".py" and rel not in python_fact_snapshots:
                 pending_snapshots.append((rel, text))
         python_fact_snapshots.update(_python_snapshots(pending_snapshots))

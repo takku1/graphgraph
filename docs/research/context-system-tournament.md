@@ -485,7 +485,7 @@ cover formulas over an empty far field, so their formula-level conclusions do
 not isolate the formula. `C1` and `C1-HYBRID-RESERVE-003` must be re-measured
 under `F1-SYMMETRIC-COUPLING` before any cover verdict is final. Full
 measurement:
-[the coupling finding](../evaluation/graybox-cycles/2026-07-29-influence-field-coupling.md).
+[the consolidated influence-field measurement](../evaluation/graybox-cycles/README.md#influence-field-experiment).
 
 Non-degeneracy is a precondition, not a result. Whether a multiresolution
 representation over a real field beats an equal-token flat packet is
@@ -504,7 +504,7 @@ The same run produced an unlooked-for result: symmetric coupling improves the
 equal-token flat baseline itself, mean exact recall `0.5035` → `0.5694`, 32 of
 72 paired cases improved against 3 regressed. The value of this research line
 so far is a better *field*, not a better *representation*. See
-[the recoupled verdicts](../evaluation/graybox-cycles/2026-07-30-recoupled-cover-verdicts.md).
+[the consolidated influence-field measurement](../evaluation/graybox-cycles/README.md#influence-field-experiment).
 
 ## 11. Immediate next work order
 
@@ -518,7 +518,7 @@ so far is a better *field*, not a better *representation*. See
    detectable. Until tasks exist whose queries share no tokens with their
    answers, field work cannot be evaluated, and `F1-SYMMETRIC-COUPLING` is
    rejected on production evidence. See
-   [the leverage finding](../evaluation/graybox-cycles/2026-07-30-coupling-has-no-production-leverage.md).
+   [the terminal leverage finding](../evaluation/graybox-cycles/README.md#influence-field-experiment).
 1. Keep every new claim and candidate synchronized with the executable
    registry and its evidence paths.
 2. Preserve the Phase 0 exact oracle as an evaluator-only ceiling; never feed

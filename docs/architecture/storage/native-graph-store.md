@@ -379,11 +379,22 @@ one repository is not enough.
 Completed:
 
 1. GGB3 control, SQLite sidecar, and packed GGR1 prototype tournaments.
-2. Sectioned GGB4 full-fidelity writer/reader and partial exact-relation reader.
+2. Sectioned GGB4 full-fidelity writer/reader and packed exact-relation reader.
+   New stores embed identity-string offsets, a stable hashed exact-symbol index,
+   and forward/reverse call-offset arrays. Exact queries decode only the target
+   and returned adjacency span rather than materializing every relation node,
+   call object, and adjacency dictionary.
 3. Per-section CRCs, atomic writes, legacy GGB3/GGB2 migration reads, and delta
    correctness fallback.
 4. CLI, MCP, and unified-query routing through the canonical partial reader.
 5. Removal of both standalone sidecar implementations and their duplicate tests.
+
+On the 2026-08-08 self-graph (15,402 nodes / 57,924 edges), the packed reader's
+in-process exact caller lookup measured **3.81 ms p50** versus **57.08 ms p50**
+for the compatibility relation-view materialization path (15.0x faster). Fresh
+CLI subprocess p50 fell from roughly 280 ms to 226.5 ms; Python/process startup
+still dominates that transport. See the
+[measurement receipt](../../evaluation/graybox-cycles/2026-08-08-packed-relation-cold-path.md).
 
 Remaining: make the scanner emit `FileDelta` directly and fit the update-scaling
 model. The existing delta append remains crash-safe and cheap; the remaining
@@ -406,4 +417,3 @@ non-local cost is graph diff/validation, not the canonical GGB4 byte layout.
   CIDR 2022.
 - SQLite, [Write-Ahead Logging](https://www.sqlite.org/wal.html) and [WITHOUT
   ROWID](https://www.sqlite.org/withoutrowid.html) official documentation.
-

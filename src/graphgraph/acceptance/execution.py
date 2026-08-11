@@ -1,4 +1,4 @@
-"""Application service for GraphGraph's canonical acceptance board."""
+"""Acceptance-suite selection and execution."""
 
 from __future__ import annotations
 

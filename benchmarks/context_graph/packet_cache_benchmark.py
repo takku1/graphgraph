@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
 
 from graphgraph.io import clear_graph_cache, find_graph_path  # noqa: E402
 from graphgraph.runtime.cache import TopologicalKVCache  # noqa: E402
-from graphgraph.services.context import render_query_context  # noqa: E402
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest  # noqa: E402
 
 OUT = ROOT / "benchmarks" / "context_graph" / "out" / "live"
 REPORT_JSON = OUT / "packet_cache.json"
@@ -36,15 +36,16 @@ def main() -> None:
         namespace = "packet_cache_benchmark"
 
         def query() -> str:
-            return render_query_context(
+            packet, _status = CompilerDriver().compile(DriverRequest(
                 query="who calls render_packet",
                 query_class="reverse_lookup",
                 graph_path=graph_path,
                 cache_namespace=namespace,
-            )
+            ))
+            return packet
 
         clear_graph_cache()
-        with patch("graphgraph.services.context.TopologicalKVCache", return_value=cache):
+        with patch("graphgraph.services.compiler_driver.TopologicalKVCache", return_value=cache):
             cold_ms = elapsed_ms(query)
             cache.clear()
             warm_graph_ms = elapsed_ms(query)

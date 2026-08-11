@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from graphgraph.runtime.cache import TopologicalKVCache, cache_file_for_graph
-from graphgraph.services.native import render_native_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
 from .model import FAIL, NA, PASS, CaseResult, GateResult, Task
 
@@ -42,7 +42,7 @@ _COMPLEX_QUERY = "What directly calls normalize_rust and which tests cover it?"
 
 def _run(query: str, repo: Path, graph_path: Path) -> tuple[dict, float]:
     started = time.perf_counter()
-    rendered, _status = render_native_context(
+    rendered, _status = CompilerDriver().compile(DriverRequest(
         query=query,
         query_class="direct_lookup",
         directory=repo,
@@ -51,7 +51,7 @@ def _run(query: str, repo: Path, graph_path: Path) -> tuple[dict, float]:
         json_details=True,
         show_anchors=True,
         max_nodes=20,
-    )
+    ))
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     return json.loads(rendered), elapsed_ms
 
@@ -105,14 +105,14 @@ def _invalidation_gate() -> GateResult:
             source_a + "\n\ndef alpha_extra():\n    return alpha_target()\n",
             encoding="utf-8",
         )
-        render_native_context(
+        CompilerDriver().compile(DriverRequest(
             query="alpha_target",
             query_class="direct_lookup",
             directory=repo,
             graph_path=graph_path,
             json_output=True,
             changed_paths=("alpha.py",),
-        )
+        ))
 
         # The symbol the edit introduced must now be retrievable: that is what
         # proves the refresh reached the cache rather than a stale packet

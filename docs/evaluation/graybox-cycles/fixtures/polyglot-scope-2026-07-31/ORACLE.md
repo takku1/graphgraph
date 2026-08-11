@@ -1,6 +1,6 @@
 # Polyglot scope fixture — oracle
 
-Frozen 2026-07-31. Companion to `../../2026-07-31-critical-graybox-scope-resolution.md`.
+Frozen 2026-07-31. Companion to the [consolidated ceiling campaign](../../README.md#historical-ceiling-campaigns).
 
 22 files, 7 languages. All expected edges are true **by construction**, not by observation.
 
