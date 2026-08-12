@@ -1,0 +1,108 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "crush",
+    "repository": "charmbracelet/crush",
+    "commit": "b109e35f260cbb6a7903581728dbeb6d11895d57",
+    "language": "go",
+    "split": "test"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_of_go_declarations_and_doc_comments; each expected declaration was located by reading internal/**/*.go at the pinned commit and confirming the mechanism in the body or its doc comment; each unanswerable case was confirmed by a case-insensitive grep over the Go sources returning zero files; no retrieval tool's output was consulted to decide what the correct answer is",
+    "refs": [
+      "internal/diff/diff.go",
+      "internal/csync/maps.go",
+      "internal/csync/versionedmap.go",
+      "internal/csync/value.go",
+      "internal/filetracker/service.go"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "CRU-C-001",
+      "query": "producing a unified line-by-line comparison between two revisions of a file",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "go", "text"],
+      "expected_nodes": [
+        "internal_diff_diff_go__GenerateDiff"
+      ],
+      "oracle_refs": [
+        "internal/diff/diff.go:10 GenerateDiff builds a unified diff via udiff.Unified and counts added/removed lines"
+      ]
+    },
+    {
+      "id": "CRU-C-002",
+      "query": "a lookup table guarded so several goroutines may read and write it at once",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "go", "concurrency"],
+      "expected_nodes": [
+        "internal_csync_maps_go__Map"
+      ],
+      "oracle_refs": [
+        "internal/csync/maps.go:11 type Map holds an inner map plus a sync.RWMutex; its doc comment states it 'provides thread-safe access'"
+      ]
+    },
+    {
+      "id": "CRU-C-003",
+      "query": "a concurrent lookup structure that also tracks a revision counter",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "go", "concurrency"],
+      "expected_nodes": [
+        "internal_csync_versionedmap_go__VersionedMap"
+      ],
+      "oracle_refs": [
+        "internal/csync/versionedmap.go:16 VersionedMap doc comment: 'a thread-safe map that keeps track of its version'"
+      ]
+    },
+    {
+      "id": "CRU-C-004",
+      "query": "a generic holder for one item shared safely between threads, rejecting pointers and slices",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "go", "concurrency"],
+      "expected_nodes": [
+        "internal_csync_value_go__Value"
+      ],
+      "oracle_refs": [
+        "internal/csync/value.go:11 type Value[T any]; doc comment at :10 directs slices to [Slice] and maps to [Map], and NewValue at :19 panics if given a pointer, slice or map"
+      ]
+    },
+    {
+      "id": "CRU-C-005",
+      "query": "the contract for recording which documents were opened during a conversation",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "go"],
+      "expected_nodes": [
+        "internal_filetracker_service_go__Service"
+      ],
+      "oracle_refs": [
+        "internal/filetracker/service.go:16 type Service interface; doc comment: 'defines the interface for tracking file reads in sessions'"
+      ]
+    },
+    {
+      "id": "CRU-R-001",
+      "query": "where are Kubernetes pod specifications reconciled",
+      "query_class": "direct_lookup",
+      "strata": ["negative", "red_control", "conceptual", "go"],
+      "expected_answerable": false,
+      "oracle_refs": [
+        "grep -ril kubernetes over internal/ and main.go at b109e35 returns zero Go files; this project has no Kubernetes surface"
+      ]
+    },
+    {
+      "id": "CRU-R-002",
+      "query": "the WebAssembly module loader and its host bindings",
+      "query_class": "direct_lookup",
+      "strata": ["negative", "red_control", "conceptual", "go"],
+      "expected_answerable": false,
+      "oracle_refs": [
+        "grep -ril for 'webassembly' and 'wasm' over internal/ and main.go at b109e35 returns zero Go files"
+      ]
+    }
+  ]
+}

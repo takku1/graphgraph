@@ -9,26 +9,34 @@
   },
   "split_policy": {
     "unit": "repository",
-    "rule": "T-B02 held-out set. Every repository here is unseen by retrieval-policy tuning: none appears in retrieval-policy-v1 or heldout-language-rotation-2026-08-02. The 2026-08-02 rotation panel is deliberately excluded because its cross-repo recall moved (0.841 -> 0.886) during the OW-AC-03 tuning window, so it can no longer support a head-to-head claim. No repository here may be used to tune retrieval; a fix motivated by these tasks retires the suite.",
+    "rule": "T-B02 held-out set. Every repository here is unseen by retrieval-policy tuning: none appears in retrieval-policy-v1 or heldout-language-rotation-2026-08-02. The 2026-08-02 rotation panel is deliberately excluded because its cross-repo recall moved (0.841 -> 0.886) during the OW-AC-03 tuning window, so it can no longer support a head-to-head claim. The train slot is a third-party frozen checkout rather than this repository, so the suite does not self-invalidate each time its own HEAD moves. No repository here may be used to tune retrieval; a fix motivated by these tasks retires the suite.",
     "train": [
-      "takku1/graphgraph"
+      "langchain-ai/langgraph"
     ],
     "calibration": [
       "ratatui/ratatui"
     ],
     "test": [
-      "psf/requests"
+      "psf/requests",
+      "charmbracelet/crush"
     ]
   },
   "projects": [
     {
-      "tasks": "graphgraph-control.json"
+      "tasks": "langgraph-control.json"
     },
     {
       "tasks": "ratatui.json"
     },
     {
       "tasks": "requests.json"
+    },
+    {
+      "tasks": "crush.json"
     }
+  ],
+  "known_limitations": [
+    "The protocol's lexical_disjoint guard compares a query only against its own expected_nodes' tokens. It does not compare the query against the rest of the graph's vocabulary, so a task can pass the guard while lexically matching a SIBLING of the target and reaching it in one expansion hop. Two ratatui tasks were authored that way and were rewritten once measured; both original phrasings are recorded in their oracle_refs. When adding tasks here, additionally confirm with a lexical search that neither the target nor its immediate neighbours appear in the top lexical hits.",
+    "Doc-node share does not explain per-project conceptual recall: requests carries the highest doc share (58.2%) and scores 0.000, while ratatui at 46.9% and crush at 19.9% score 0.667-before-correction and 0.000. An early reading of raw paragraph counts suggested otherwise and was wrong."
   ]
 }

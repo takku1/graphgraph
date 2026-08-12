@@ -1,0 +1,30 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "langgraph",
+    "repository": "langchain-ai/langgraph",
+    "commit": "5931a5f0b313feff24e2516a586c55601b868ac1",
+    "language": "python",
+    "split": "train"
+  },
+  "oracle": {
+    "method": "committed_source_control_for_split_completeness_only; this project exists to satisfy the protocol requirement that all three splits be populated and is deliberately a third-party frozen checkout rather than this repository, so the suite does not self-invalidate whenever its own HEAD moves",
+    "refs": ["libs/langgraph/langgraph/graph/message.py:61"]
+  },
+  "tasks": [
+    {
+      "id": "LG-CONCEPTUAL-CONTROL-001",
+      "query": "Where is add_messages defined?",
+      "query_class": "direct_lookup",
+      "strata": ["exact", "train_control"],
+      "expected": ["libs/langgraph/langgraph/graph/message.py"],
+      "oracle_refs": ["libs/langgraph/langgraph/graph/message.py:61 def add_messages"]
+    }
+  ]
+}

@@ -36,26 +36,28 @@
     },
     {
       "id": "RAT-C-002",
-      "query": "breaking a paragraph across several rows so words are kept whole",
+      "query": "folding overflowing prose at term gaps instead of cutting a term in half",
       "query_class": "direct_lookup",
       "strata": ["conceptual", "lexical_disjoint", "text"],
       "expected_nodes": [
         "ratatui_widgets_src_reflow_rs__WordWrapper"
       ],
       "oracle_refs": [
-        "ratatui-widgets/src/reflow.rs:31 WordWrapper implements the LineComposer trait and performs word-boundary wrapping, as opposed to LineTruncator at :238 which clips"
+        "ratatui-widgets/src/reflow.rs:31 WordWrapper implements the LineComposer trait and performs word-boundary wrapping, as opposed to LineTruncator at :238 which clips",
+        "query vocabulary check: the earlier phrasing ('breaking a paragraph across several rows so words are kept whole') passed the exact-token guard but named the ratatui types Paragraph, Rows and Wrap, which ranked 14.87/10.78/14.20 lexically and put the target one hop away -- lexical retrieval wearing a conceptual label. This phrasing ranks HalfBlockGrid/Buffer/layout and reaches neither the target nor its siblings"
       ]
     },
     {
       "id": "RAT-C-003",
-      "query": "dividing an available region into sub-areas that satisfy the declared sizing rules",
+      "query": "allocating a bounded drawing surface among nested panels honouring their declared sizing",
       "query_class": "direct_lookup",
       "strata": ["conceptual", "lexical_disjoint", "layout"],
       "expected_nodes": [
         "ratatui_core_src_layout_layout_rs__Layout__split"
       ],
       "oracle_refs": [
-        "ratatui-core/src/layout/layout.rs:688 Layout::split divides a Rect according to the configured constraints, solved via the kasuari constraint solver imported at :11"
+        "ratatui-core/src/layout/layout.rs:688 Layout::split divides a Rect according to the configured constraints, solved via the kasuari constraint solver imported at :11",
+        "query vocabulary check: the earlier phrasing ('dividing an available region into sub-areas...') passed the exact-token guard but matched sub_modifier and the sibling method Layout::areas lexically, leaving the target one hop away. This phrasing ranks Buffer/Block/List and reaches neither the target nor its siblings"
       ]
     },
     {
