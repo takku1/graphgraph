@@ -1,0 +1,188 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "requests",
+    "repository": "psf/requests",
+    "commit": "cd90742ed94d901759e26766197d0ce7c7bd9c8e",
+    "language": "python",
+    "split": "test"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_of_python_definitions_and_call_sites; every expected symbol was located by reading src/requests/*.py at the pinned commit and confirming the mechanism in the function body, every expected edge was confirmed at its call site, and every unanswerable case was confirmed by an exhaustive grep returning zero files; no retrieval tool's output was consulted to decide what the correct answer is",
+    "refs": [
+      "src/requests/sessions.py",
+      "src/requests/auth.py",
+      "src/requests/adapters.py",
+      "src/requests/utils.py",
+      "src/requests/structures.py",
+      "src/requests/cookies.py"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "REQ-C-001",
+      "query": "where does it decide to discard the caller's credentials when a hop points at a different machine",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "security"],
+      "expected_nodes": [
+        "src_requests_sessions_py__SessionRedirectMixin__should_strip_auth"
+      ],
+      "oracle_refs": [
+        "src/requests/sessions.py:154-185 should_strip_auth compares old/new hostname and returns True when they differ; the query names no token appearing in the symbol"
+      ]
+    },
+    {
+      "id": "REQ-C-002",
+      "query": "which routine removes the caller's credential header while following a hop to another site",
+      "query_class": "reverse_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "security"],
+      "expected_nodes": [
+        "src_requests_sessions_py__SessionRedirectMixin__rebuild_auth",
+        "src_requests_sessions_py__SessionRedirectMixin__should_strip_auth"
+      ],
+      "expected_edges": [
+        [
+          "src_requests_sessions_py__SessionRedirectMixin__rebuild_auth",
+          "src_requests_sessions_py__SessionRedirectMixin__should_strip_auth"
+        ]
+      ],
+      "oracle_refs": [
+        "src/requests/sessions.py:324 rebuild_auth deletes headers['Authorization'] guarded by self.should_strip_auth(original_url, url) -- the only call site in the package"
+      ]
+    },
+    {
+      "id": "REQ-C-003",
+      "query": "how is the character set for interpreting a reply body determined using the protocol metadata",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "encoding"],
+      "expected_nodes": [
+        "src_requests_utils_py__get_encoding_from_headers"
+      ],
+      "oracle_refs": [
+        "src/requests/utils.py:569 get_encoding_from_headers reads the content-type header and returns the charset; called from adapters.py:385 when building the response"
+      ]
+    },
+    {
+      "id": "REQ-C-004",
+      "query": "recovering the declared charset by scanning the markup itself rather than the protocol fields",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "encoding"],
+      "expected_nodes": [
+        "src_requests_utils_py__get_encodings_from_content"
+      ],
+      "oracle_refs": [
+        "src/requests/utils.py:522 get_encodings_from_content regex-scans an HTML/XML body for charset declarations, distinct from the header-based path"
+      ]
+    },
+    {
+      "id": "REQ-C-005",
+      "query": "working out the byte order of a payload with no explicit declaration",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "encoding"],
+      "expected_nodes": [
+        "src_requests_utils_py__guess_json_utf"
+      ],
+      "oracle_refs": [
+        "src/requests/utils.py:1008 guess_json_utf inspects a BOM and the null-byte pattern of the first four bytes to infer the UTF variant"
+      ]
+    },
+    {
+      "id": "REQ-C-006",
+      "query": "the mapping type that treats field names as equivalent regardless of capitalisation",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "data_structure"],
+      "expected_nodes": [
+        "src_requests_structures_py__CaseInsensitiveDict"
+      ],
+      "oracle_refs": [
+        "src/requests/structures.py:20 CaseInsensitiveDict stores keys lowercased in __setitem__ and compares lowercased in __eq__"
+      ]
+    },
+    {
+      "id": "REQ-C-007",
+      "query": "challenge and response login flow that answers a server nonce",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint", "compound", "auth"],
+      "expected_nodes": [
+        "src_requests_auth_py__HTTPDigestAuth",
+        "src_requests_auth_py__HTTPDigestAuth__build_digest_header",
+        "src_requests_auth_py__HTTPDigestAuth__handle_401"
+      ],
+      "oracle_refs": [
+        "src/requests/auth.py:124 HTTPDigestAuth; :157 build_digest_header computes the response from the server nonce; :273 handle_401 retries the request after a challenge"
+      ]
+    },
+    {
+      "id": "REQ-C-008",
+      "query": "keeping sockets alive so repeated calls to one host avoid a fresh handshake",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "transport"],
+      "expected_nodes": [
+        "src_requests_adapters_py__HTTPAdapter__init_poolmanager"
+      ],
+      "oracle_refs": [
+        "src/requests/adapters.py:239 init_poolmanager constructs the urllib3 PoolManager that backs connection reuse for the adapter"
+      ]
+    },
+    {
+      "id": "REQ-C-009",
+      "query": "the loop that keeps chasing location headers until a final reply arrives",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "redirects"],
+      "expected_nodes": [
+        "src_requests_sessions_py__SessionRedirectMixin__resolve_redirects"
+      ],
+      "oracle_refs": [
+        "src/requests/sessions.py:186 resolve_redirects is the generator that repeatedly follows the redirect target and yields each intermediate response"
+      ]
+    },
+    {
+      "id": "REQ-C-010",
+      "query": "turning a streamed byte sequence into text as chunks arrive",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "encoding"],
+      "expected_nodes": [
+        "src_requests_utils_py__stream_decode_response_unicode"
+      ],
+      "oracle_refs": [
+        "src/requests/utils.py:594 stream_decode_response_unicode wraps an iterator in an incremental decoder so text is produced per chunk"
+      ]
+    },
+    {
+      "id": "REQ-R-001",
+      "query": "how are bidirectional websocket frames parsed and dispatched",
+      "query_class": "direct_lookup",
+      "strata": ["negative", "red_control", "conceptual"],
+      "expected_answerable": false,
+      "oracle_refs": [
+        "grep -ril websocket over src/requests returns zero files at cd90742; the library has no websocket support, so any confident symbol answer is a fabrication"
+      ]
+    },
+    {
+      "id": "REQ-R-002",
+      "query": "where is stream multiplexing over a single HTTP/2 connection implemented",
+      "query_class": "direct_lookup",
+      "strata": ["negative", "red_control", "conceptual"],
+      "expected_answerable": false,
+      "oracle_refs": [
+        "grep -ril for 'http/2', 'h2' and 'multiplex' over src/requests returns zero files at cd90742; requests speaks HTTP/1.1 via urllib3 only"
+      ]
+    },
+    {
+      "id": "REQ-R-003",
+      "query": "the gRPC channel pooling and stub generation layer",
+      "query_class": "subsystem_summary",
+      "strata": ["negative", "red_control", "conceptual"],
+      "expected_answerable": false,
+      "oracle_refs": [
+        "grep -ril grpc over src/requests returns zero files at cd90742; no gRPC surface exists in this package"
+      ]
+    }
+  ]
+}

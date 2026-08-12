@@ -1,0 +1,72 @@
+{
+  "schema_version": "graphgraph.eval.v1",
+  "versions": {
+    "task_resolver": "node-qrel-v3-facets",
+    "reference_tokenizers": "cl100k_base+o200k_base@tiktoken-0.13.0",
+    "token_proxy": "piece-punctuation-ls-v1",
+    "expected_evidence": "independent-source-receipt-v1"
+  },
+  "project": {
+    "id": "ratatui",
+    "repository": "ratatui/ratatui",
+    "commit": "3d8639cbb2f910200f30e680a8923ccaf99ba1bf",
+    "language": "rust",
+    "split": "calibration"
+  },
+  "oracle": {
+    "method": "manual_source_inspection_of_rust_item_definitions_and_doc_comments; each expected item was located by reading the crate sources at the pinned commit and confirming the mechanism in the item body or its rustdoc contract; no retrieval tool's output was consulted to decide what the correct answer is",
+    "refs": [
+      "ratatui-core/src/buffer/buffer.rs",
+      "ratatui-core/src/layout/layout.rs",
+      "ratatui-widgets/src/reflow.rs"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "RAT-C-001",
+      "query": "what computes the smallest set of screen updates between two rendered frames",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "rendering"],
+      "expected_nodes": [
+        "ratatui_core_src_buffer_buffer_rs__Buffer__diff_iter"
+      ],
+      "oracle_refs": [
+        "ratatui-core/src/buffer/buffer.rs:506 diff_iter -- rustdoc states it 'Builds a minimal sequence of coordinates and Cells necessary to update the UI from self to other'"
+      ]
+    },
+    {
+      "id": "RAT-C-002",
+      "query": "breaking a paragraph across several rows so words are kept whole",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "text"],
+      "expected_nodes": [
+        "ratatui_widgets_src_reflow_rs__WordWrapper"
+      ],
+      "oracle_refs": [
+        "ratatui-widgets/src/reflow.rs:31 WordWrapper implements the LineComposer trait and performs word-boundary wrapping, as opposed to LineTruncator at :238 which clips"
+      ]
+    },
+    {
+      "id": "RAT-C-003",
+      "query": "dividing an available region into sub-areas that satisfy the declared sizing rules",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint", "layout"],
+      "expected_nodes": [
+        "ratatui_core_src_layout_layout_rs__Layout__split"
+      ],
+      "oracle_refs": [
+        "ratatui-core/src/layout/layout.rs:688 Layout::split divides a Rect according to the configured constraints, solved via the kasuari constraint solver imported at :11"
+      ]
+    },
+    {
+      "id": "RAT-R-001",
+      "query": "where is the GPU shader compilation pipeline configured",
+      "query_class": "direct_lookup",
+      "strata": ["negative", "red_control", "conceptual"],
+      "expected_answerable": false,
+      "oracle_refs": [
+        "grep -ril for 'shader', 'gpu' and 'wgpu' across the crate sources at 3d8639c returns no implementation; ratatui renders to a terminal backend and has no GPU pipeline"
+      ]
+    }
+  ]
+}
