@@ -104,6 +104,27 @@ def scope_freshness(
     return enriched
 
 
+def classify_freshness(freshness: dict[str, object], *, scoped: bool = False) -> str:
+    """Collapse a freshness mapping into the tri-state label receipts carry.
+
+    ``scoped`` reads ``requested_scope_fresh`` (drift limited to the caller's
+    declared paths) instead of repository-wide ``fresh``.
+
+    Incompatibility is checked first, and that ordering is load-bearing rather
+    than stylistic. ``fresh`` already folds in ``extractor_compatible``, so for
+    the repository-wide case either order agrees. ``requested_scope_fresh`` does
+    not: once a caller passes scopes, it is computed purely from whether the
+    stale set intersects those paths. Testing freshness first therefore reported
+    a graph built by a *different scanner version* as "fresh" whenever the drift
+    happened to fall outside the query's scope -- hiding the one condition that
+    a refresh cannot repair and only a rebuild can.
+    """
+    if not freshness.get("extractor_compatible", True):
+        return "incompatible"
+    key = "requested_scope_fresh" if scoped else "fresh"
+    return "fresh" if freshness.get(key) else "stale"
+
+
 def refresh_receipt(
     status: GraphBuildStatus,
     *,
@@ -146,6 +167,7 @@ def refresh_receipt(
 
 
 __all__ = [
+    "classify_freshness",
     "inspect_saved_graph_freshness",
     "refresh_receipt",
     "scope_freshness",

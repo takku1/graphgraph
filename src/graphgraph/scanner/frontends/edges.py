@@ -386,17 +386,6 @@ def _project_field_indexes(
     return result, scope_graph
 
 
-def _project_python_global_types(
-    defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
-) -> dict[tuple[str, str], str]:
-    """Repo-wide annotated module globals keyed by module provenance."""
-    return {
-        key: concrete
-        for key, fact in _project_python_global_type_facts(defs_by_file).items()
-        if (concrete := fact.concrete) is not None
-    }
-
-
 def _project_python_global_type_facts(
     defs_by_file: list[tuple[SourceIR, list[_TsDef], Any]],
 ) -> dict[tuple[str, str], TypeFact]:

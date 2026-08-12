@@ -216,7 +216,3 @@ class CaseResult:
         if not graded:
             return NA
         return PASS
-
-    @property
-    def failing_gates(self) -> list[GateResult]:
-        return [g for g in self.gates if g.status == FAIL]

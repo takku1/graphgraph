@@ -420,14 +420,6 @@ def _decode_strings(payload: bytes, count: int) -> list[str]:
     return result
 
 
-def _records(payload: bytes, count: int, record: struct.Struct) -> list[tuple]:
-    if len(payload) != count * record.size:
-        raise ValueError(
-            f"GGB4 record section has {len(payload)} bytes; expected {count * record.size}"
-        )
-    return [record.unpack_from(payload, index * record.size) for index in range(count)]
-
-
 def _iter_records(payload: bytes, count: int, record: struct.Struct):
     """Yield fixed records without allocating a second full tuple list."""
 

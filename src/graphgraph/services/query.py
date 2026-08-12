@@ -152,7 +152,12 @@ def execute_query(
     freshness_detail: dict[str, object] | None = None
     freshness = "unchecked"
     if sync == "git":
-        from .freshness import inspect_saved_graph_freshness, scope_freshness, source_root_for_saved_graph
+        from .freshness import (
+            classify_freshness,
+            inspect_saved_graph_freshness,
+            scope_freshness,
+            source_root_for_saved_graph,
+        )
         from .lifecycle import refresh_saved_graph
 
         source_root = source_root_for_saved_graph(resolved_graph)
@@ -170,13 +175,7 @@ def execute_query(
             ),
             scopes,
         )
-        freshness = (
-            "fresh"
-            if freshness_detail["fresh"]
-            else "incompatible"
-            if not freshness_detail["extractor_compatible"]
-            else "stale"
-        )
+        freshness = classify_freshness(freshness_detail)
         refresh = {
             "updated": len(status.changed_paths),
             "removed": len(status.deleted_paths),
@@ -189,7 +188,12 @@ def execute_query(
         # scopes so drift elsewhere in the repo can't manufacture false
         # staleness for an unrelated query. Never blocks an answer -- only
         # flags one, same as the sync="git" path's freshness field.
-        from .freshness import inspect_saved_graph_freshness, scope_freshness, source_root_for_saved_graph
+        from .freshness import (
+            classify_freshness,
+            inspect_saved_graph_freshness,
+            scope_freshness,
+            source_root_for_saved_graph,
+        )
 
         freshness_detail = scope_freshness(
             inspect_saved_graph_freshness(
@@ -198,13 +202,7 @@ def execute_query(
             ),
             scopes,
         )
-        freshness = (
-            "fresh"
-            if freshness_detail["requested_scope_fresh"]
-            else "incompatible"
-            if not freshness_detail["extractor_compatible"]
-            else "stale"
-        )
+        freshness = classify_freshness(freshness_detail, scoped=True)
     operator = plan.operator
     result: Any
     if operator is QueryOperator.RELATIONS:

@@ -119,10 +119,3 @@ def document_recency(rel_path: str) -> tuple[str, int]:
     date_match = _DATE_PREFIX.search(name)
     cycle_match = _CYCLE.search(name)
     return (date_match.group(1) if date_match else "", int(cycle_match.group(1)) if cycle_match else 0)
-
-
-def authority_sort_key(rel_path: str, *, docs_readme: Path | None = None) -> tuple[int, str, int]:
-    """Descending-authority sort key: (tier rank, date, cycle), higher first."""
-    tier = document_authority(rel_path, docs_readme=docs_readme)
-    date, cycle = document_recency(rel_path)
-    return (authority_rank(tier), date, cycle)

@@ -296,7 +296,11 @@ def cmd_snippets(args: argparse.Namespace) -> None:
 def cmd_relations(args: argparse.Namespace) -> None:
     from ..io import find_graph_path
     from ..retrieval.relations import encode_relation_micro, query_relations, query_saved_relations
-    from ..services.freshness import inspect_saved_graph_freshness, source_root_for_saved_graph
+    from ..services.freshness import (
+        classify_freshness,
+        inspect_saved_graph_freshness,
+        source_root_for_saved_graph,
+    )
     from ..services.lifecycle import refresh_saved_graph
 
     graph_path = Path(args.graph) if args.graph else find_graph_path()
@@ -315,7 +319,7 @@ def cmd_relations(args: argparse.Namespace) -> None:
             directory=source_root,
             output_path=graph_path,
         )
-        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
+        freshness = classify_freshness(checked)
         refresh_summary = {
             "updated": len(status.changed_paths),
             "removed": len(status.deleted_paths),
@@ -331,7 +335,7 @@ def cmd_relations(args: argparse.Namespace) -> None:
         # repo, and `target` is a symbol name, not a declared change scope.
         source_root = source_root_for_saved_graph(graph_path)
         checked = inspect_saved_graph_freshness(directory=source_root, output_path=graph_path)
-        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
+        freshness = classify_freshness(checked)
     query = query_relations if graph is not None else query_saved_relations
     result = query(
         graph if graph is not None else graph_path,

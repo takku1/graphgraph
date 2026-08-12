@@ -30,6 +30,7 @@ from graphgraph.packets import (
 from graphgraph.scanner import scan_directory
 from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 from graphgraph.services.freshness import (
+    classify_freshness,
     inspect_saved_graph_freshness,
     refresh_receipt,
     scope_freshness,
@@ -175,6 +176,47 @@ class CliMcpTest(unittest.TestCase):
         self.assertEqual(freshness["remaining_stale_count"], 1)
         self.assertEqual(freshness["changed_paths"], ["src/unrelated.py"])
         self.assertEqual(freshness["unrelated_changed_count"], 1)
+
+    def test_scoped_freshness_never_reports_fresh_for_an_incompatible_extractor(self) -> None:
+        # `fresh` folds in extractor_compatible, but `requested_scope_fresh`
+        # does not -- once scopes are passed it is computed purely from whether
+        # the stale set intersects them. Testing freshness before compatibility
+        # therefore called a graph built by a different scanner version "fresh"
+        # whenever the drift fell outside the query's scope, hiding the one
+        # condition a refresh cannot repair.
+        scoped = scope_freshness(
+            {
+                "fresh": False,
+                "extractor_compatible": False,
+                "changed_count": 1,
+                "deleted_count": 0,
+                "changed_paths": ["src/unrelated.py"],
+                "deleted_paths": [],
+            },
+            ("src/requested.py",),
+        )
+
+        self.assertTrue(scoped["requested_scope_fresh"])
+        self.assertEqual(classify_freshness(scoped, scoped=True), "incompatible")
+        self.assertEqual(classify_freshness(scoped), "incompatible")
+
+    def test_classify_freshness_separates_scoped_from_repository_drift(self) -> None:
+        scoped = scope_freshness(
+            {
+                "fresh": False,
+                "extractor_compatible": True,
+                "changed_count": 1,
+                "deleted_count": 0,
+                "changed_paths": ["src/unrelated.py"],
+                "deleted_paths": [],
+            },
+            ("src/requested.py",),
+        )
+
+        # Same evidence, two honest answers: the caller's slice is clean while
+        # the repository is not.
+        self.assertEqual(classify_freshness(scoped, scoped=True), "fresh")
+        self.assertEqual(classify_freshness(scoped), "stale")
 
     def test_refresh_receipt_separates_request_work_and_graph_mutations(self) -> None:
         status = GraphBuildStatus(

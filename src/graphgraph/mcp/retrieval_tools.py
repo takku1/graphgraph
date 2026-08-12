@@ -19,6 +19,7 @@ from ..scanner import DEFAULT_SCAN_MAX_NODES
 from ..services import render_final_packet, render_full_graph, render_source_snippets
 from ..services.compiler_driver import CompilerDriver, DriverRequest
 from ..services.freshness import (
+    classify_freshness,
     inspect_saved_graph_freshness,
     source_root_for_saved_graph,
 )
@@ -830,7 +831,7 @@ def handle_query_relations(args: dict[str, Any]) -> str:
             directory=source_root,
             output_path=graph_path,
         )
-        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
+        freshness = classify_freshness(checked)
         refresh_summary = {
             "updated": len(status.changed_paths),
             "removed": len(status.deleted_paths),
@@ -847,7 +848,7 @@ def handle_query_relations(args: dict[str, Any]) -> str:
         # so scoping to it would almost never match a real changed path.
         source_root = source_root_for_saved_graph(graph_path)
         checked = inspect_saved_graph_freshness(directory=source_root, output_path=graph_path)
-        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
+        freshness = classify_freshness(checked)
     query = query_relations if graph is not None else query_saved_relations
     result = query(
         graph if graph is not None else graph_path,
