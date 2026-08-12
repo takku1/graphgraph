@@ -1,7 +1,7 @@
 # Acceptance harness
 
 Black-box gate checks for the GraphGraph 10/11 acceptance spec
-(`docs/bugs/2026-07-19-graphgraph-10-11-acceptance-spec.md`). It drives
+([`graphgraph-10-11-acceptance-spec.md`](graphgraph-10-11-acceptance-spec.md)). It drives
 GraphGraph only through its public native retrieval surface, parses the compact
 `#gg` packet, and scores it against sealed ground truth — ground truth is
 used only to score a packet that was already produced, never fed back as a

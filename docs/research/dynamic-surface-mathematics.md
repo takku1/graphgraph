@@ -66,7 +66,7 @@ Spreading Activation's smooth energy propagation (§1) gives locally stable top-
 
 $$\text{Prefix}(S) \approx \text{Prefix}(S_{\text{prior}})$$
 
-This is a property of Mechanism B (spreading activation) only; it says nothing about the separately-branched Personalized PageRank retrieval path (Mechanism A), since the two are selected by an exclusive branch and never combined (see `docs/arxiv_paper_graphgraph_2.0.md` §3).
+This is a property of Mechanism B (spreading activation) only; it says nothing about the separately-branched Personalized PageRank retrieval path (Mechanism A), since the two are selected by an exclusive branch and never combined (see `docs/research/manuscript-graphgraph-2.md` §3).
 
 The system's actual prompt-prefix-caching aid, **`render_stable_skeleton`** (`src/graphgraph/services/context.py`), is unrelated to either retrieval mechanism above: it renders the top-N nodes by **plain, unpersonalized, query-independent PageRank** (`graph.pagerank()`), so the same prefix is produced regardless of the current query or conversation turn. That query-independence — not spreading activation's stability — is what makes the prefix cacheable.
 

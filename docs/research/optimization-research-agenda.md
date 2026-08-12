@@ -192,10 +192,17 @@ Completed platform hot-path work:
 
 ## P2: Source Organization
 
-1. Split `retrieval/context.py` into query orchestration, expansion/evidence
-   reservation, and sibling-enrichment modules once behavior stabilizes.
-2. Split `scanner/frontends.py` by frontend ownership: base protocol, Tree-sitter
-   extraction, call resolution, and import/re-export resolution.
+1. **Partly done.** Split `retrieval/context.py` into query orchestration,
+   expansion/evidence reservation, and sibling-enrichment modules once behavior
+   stabilizes. `expansion.py`, `reservations.py`, `budgeting.py` and
+   `scoping.py` are now separate; `context.py` itself still holds the
+   orchestration remainder.
+2. ~~Split `scanner/frontends.py` by frontend ownership: base protocol,
+   Tree-sitter extraction, call resolution, and import/re-export resolution.~~
+   **Done** — `scanner/frontends/` is now a package along exactly those seams:
+   `model.py`/`extractors.py` (protocol), `grammars.py`/`syntax.py`
+   (Tree-sitter), `edges.py`/`scope_graph.py`/`binding_providers.py` (call
+   resolution), `module_calls.py` (import/re-export), plus per-language modules.
 3. Split CLI and MCP command registries by feature domain while preserving public
    entry points.
 4. Group benchmarks by gate type only when imports and canonical artifact paths

@@ -41,7 +41,7 @@ only enter via `ingest`), so SCIP's cross-repo resolution model doesn't
 directly apply — but the **idea of a stable, language-agnostic symbol ID
 scheme** is exactly what graphgraph's node IDs already are. **Already
 covered** conceptually; cross-repo resolution specifically is out of scope
-by design (see `docs/architecture.md`).
+by design (see `docs/architecture/system-architecture.md`).
 
 ### Google Kythe — [kythe.io/docs/kythe-overview](https://kythe.io/docs/kythe-overview.html)
 Language-agnostic cross-reference graph for Google's internal multi-language
@@ -51,7 +51,7 @@ to O(L+C+B) — every frontend normalizes into one shared graph shape once,
 instead of every client needing bespoke per-language logic.
 
 **Verdict:** **already covered** — this is exactly graphgraph's own
-frontend architecture (`scanner/frontends.py`'s `RegexExtractor`/
+frontend architecture (`scanner/frontends/`'s `RegexExtractor`/
 `TreeSitterExtractor` both normalize into the same `Node`/`Edge` shape).
 Worth citing as independent validation that the pattern is sound, not a new
 idea to adopt.
@@ -135,7 +135,7 @@ to temporal-graph structure.
 **Verdict: partial.** graphgraph already has real bitemporal bones —
 `Edge.valid_from`/`valid_to`, `Node.created_at`/`updated_at`, soft-delete
 via `expire_node`/`expire_edge` keeping an append-only operation log
-(`docs/incremental-update-instruction-set.md`), plus git-history-derived
+(`docs/architecture/storage/incremental-update-protocol.md`), plus git-history-derived
 `fixes`/churn edges. What's *not* exploited yet: none of the query classes
 let a caller ask a time-scoped question ("what did this function's
 dependents look like as of commit X," "what changed in the last N
@@ -149,7 +149,7 @@ Dual-store: vector DB for semantic recall + a separate knowledge graph for
 entity relationships, queried together.
 
 **Verdict:** graphgraph is graph-only by design (no vector/embedding store)
-— that's a real, intentional scope boundary (`docs/architecture.md`/
+— that's a real, intentional scope boundary (`docs/architecture/system-architecture.md`/
 `docs/rigorous-framing.md`: claims about embeddings are explicitly listed as
 needing evidence, not assumed). Not a gap to close; a boundary to keep
 honest about, which the project already does.

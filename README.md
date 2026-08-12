@@ -197,7 +197,7 @@ graphgraph remove --files src/auth/legacy.py --depth symbols
 ```
 
 MCP equivalents: `update_graph_files` / `remove_graph_files`, same shape as
-`build_graph`. See `docs/incremental-update-instruction-set.md` for the full
+`build_graph`. See `docs/architecture/storage/incremental-update-protocol.md` for the full
 design (profiling data, prior-art survey, correctness notes).
 
 For an MCP agent that will query immediately after editing, `query_context`
