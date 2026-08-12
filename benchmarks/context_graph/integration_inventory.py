@@ -25,6 +25,11 @@ class ScriptStatus:
     in_run_all: bool
     in_promotion: bool
     documented: bool
+    in_tests: bool
+    in_research_registry: bool
+    in_src_provenance: bool
+    used_by_peers: bool
+    protected: bool
     status: str
     next_action: str
 
@@ -49,26 +54,81 @@ def _text_mentions(paths: list[Path]) -> str:
     return "\n".join(parts)
 
 
+def _tree_text(root: Path, pattern: str) -> str:
+    """Concatenate every file matching `pattern` under `root`.
+
+    Globbed rather than hardcoded: this scanner previously listed four
+    individual doc paths, and all four had been moved by a docs
+    reorganisation. Every script then scored `documented=False` regardless
+    of the written record, which is how genuinely load-bearing scripts came
+    to look `exploratory`.
+    """
+    if not root.exists():
+        return ""
+    return "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in sorted(root.rglob(pattern))
+    )
+
+
 def inventory() -> list[ScriptStatus]:
     run_all = _literal_scripts(BENCH / "run_all.py", "SCRIPTS")
     promote_text = (BENCH / "promote_check.py").read_text(encoding="utf-8", errors="replace")
-    docs_text = _text_mentions([
-        BENCH / "README.md",
-        ROOT / "docs" / "empirical-findings.md",
-        ROOT / "docs" / "adaptive-planning-math.md",
-        ROOT / "docs" / "towards_publishable_research.md",
-        ROOT / "docs" / "rigorous-framing.md",
-    ])
+    # Whole docs tree, plus this suite's own README.
+    docs_text = _tree_text(ROOT / "docs", "*.md") + "\n" + _text_mentions([BENCH / "README.md"])
+    # A script imported by a test is load-bearing no matter what the docs say:
+    # deleting it breaks the suite.
+    tests_text = _tree_text(ROOT / "tests", "*.py")
+    # eval/*.json carries the research claim ledger. Scripts cited there are
+    # the standing evidence for a claim -- including *rejected* claims, whose
+    # artifacts tests/test_research_registry.py requires to still exist. A
+    # concluded finding is therefore not a licence to delete the script.
+    registry_text = _tree_text(ROOT / "eval", "*.json")
+    # src/ comments cite benchmarks as the derivation source for shipped
+    # numeric constants; deleting one severs a production audit trail.
+    src_text = _tree_text(ROOT / "src", "*.py")
 
     rows: list[ScriptStatus] = []
     for path in sorted(BENCH.glob("*.py")):
         script = path.name
         if script in EXEMPT:
             continue
+        # Match on the stem so module imports (`from ... import x`) count
+        # alongside literal `foo.py` mentions. Over-detection is the safe
+        # direction here: a false reference keeps a file, a missed one
+        # deletes something load-bearing.
+        stem = path.stem
         in_run_all = script in run_all
-        in_promotion = script in promote_text
-        documented = script in docs_text
-        if in_promotion:
+        in_promotion = stem in promote_text
+        documented = stem in docs_text
+        in_tests = stem in tests_text
+        in_research_registry = stem in registry_text
+        in_src_provenance = stem in src_text
+        # Shared helpers inside this suite are imported by sibling scripts and
+        # by nothing else, so every other signal reads as "unreferenced".
+        used_by_peers = any(
+            stem in peer.read_text(encoding="utf-8", errors="replace")
+            for peer in BENCH.glob("*.py")
+            if peer != path
+        )
+        protected = (
+            in_promotion
+            or in_tests
+            or in_research_registry
+            or in_src_provenance
+            or used_by_peers
+        )
+
+        if in_tests:
+            status = "test_dependency"
+            next_action = "Do not delete; imported by the test suite."
+        elif in_research_registry:
+            status = "research_evidence"
+            next_action = "Do not delete; cited as claim evidence in eval/ (registry test enforces existence)."
+        elif in_src_provenance:
+            status = "src_provenance"
+            next_action = "Do not delete; cited in src/ as the derivation source for a shipped constant."
+        elif in_promotion:
             status = "promotion"
             next_action = "Keep load-bearing; regressions should fail promote_check."
         elif in_run_all and documented:
@@ -80,10 +140,27 @@ def inventory() -> list[ScriptStatus]:
         elif documented:
             status = "documented_only"
             next_action = "Add to run_all/promote if still current, otherwise mark archived."
+        elif used_by_peers:
+            status = "shared_helper"
+            next_action = "Do not delete; imported by sibling benchmark scripts."
         else:
             status = "exploratory"
             next_action = "Promote, document, archive, or delete after reading current output."
-        rows.append(ScriptStatus(script, in_run_all, in_promotion, documented, status, next_action))
+        rows.append(
+            ScriptStatus(
+                script,
+                in_run_all,
+                in_promotion,
+                documented,
+                in_tests,
+                in_research_registry,
+                in_src_provenance,
+                used_by_peers,
+                protected,
+                status,
+                next_action,
+            )
+        )
     return rows
 
 
@@ -92,12 +169,22 @@ def render_markdown(rows: list[ScriptStatus]) -> str:
     for row in rows:
         counts[row.status] = counts.get(row.status, 0) + 1
 
+    protected_count = sum(1 for row in rows if row.protected)
+    deletable = [row.script for row in rows if row.status == "exploratory"]
+
     lines = [
         "# Benchmark Integration Inventory",
         "",
         "This report classifies benchmark scripts by whether they are part of the",
         "promotion gate, the broad run-all suite, or the written empirical record.",
         "Exploratory does not mean bad; it means the script is not yet load-bearing.",
+        "",
+        "`protected` means at least one of: imported by the test suite, cited as",
+        "claim evidence in `eval/`, named in `src/` as a constant's derivation",
+        "source, imported by a sibling benchmark, or wired into `promote_check.py`.",
+        "Protected scripts must not be deleted on the strength of looking",
+        "undocumented -- a *rejected* research claim still requires its evidence",
+        "artifact to exist.",
         "",
         "## Counts",
         "",
@@ -106,21 +193,46 @@ def render_markdown(rows: list[ScriptStatus]) -> str:
     ]
     for status in sorted(counts):
         lines.append(f"| `{status}` | {counts[status]} |")
+    lines.append(f"| **protected (any reason)** | **{protected_count}** |")
+    lines.append(f"| **unreferenced (`exploratory`)** | **{len(deletable)}** |")
 
     lines.extend([
         "",
         "## Scripts",
         "",
-        "| Script | Status | Run all | Promotion | Documented | Next action |",
-        "| --- | --- | ---: | ---: | ---: | --- |",
+        "| Script | Status | Protected | Run all | Promotion | Docs | Tests | Registry | src | Peers | Next action |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ])
+
+    def mark(flag: bool) -> str:
+        return "yes" if flag else "no"
+
     for row in rows:
         lines.append(
             f"| `{row.script}` | `{row.status}` | "
-            f"{'yes' if row.in_run_all else 'no'} | "
-            f"{'yes' if row.in_promotion else 'no'} | "
-            f"{'yes' if row.documented else 'no'} | {row.next_action} |"
+            f"{mark(row.protected)} | "
+            f"{mark(row.in_run_all)} | "
+            f"{mark(row.in_promotion)} | "
+            f"{mark(row.documented)} | "
+            f"{mark(row.in_tests)} | "
+            f"{mark(row.in_research_registry)} | "
+            f"{mark(row.in_src_provenance)} | "
+            f"{mark(row.used_by_peers)} | {row.next_action} |"
         )
+
+    lines.extend([
+        "",
+        "## Unreferenced scripts",
+        "",
+        "No reference found in run_all, promote_check, docs, tests, eval registry,",
+        "or src provenance. These are the only deletion candidates, and each still",
+        "warrants reading its current output before removal.",
+        "",
+    ])
+    if deletable:
+        lines.extend(f"- `{script}`" for script in deletable)
+    else:
+        lines.append("_None._")
     return "\n".join(lines) + "\n"
 
 

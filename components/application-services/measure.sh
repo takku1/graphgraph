@@ -19,17 +19,31 @@ fi
 "$PY" - "$GRAPH" <<'PYEOF'
 import json, sys, time, datetime
 from pathlib import Path
-from graphgraph.io.core import load_any
-from graphgraph.services.context import render_query_context
+from graphgraph.services.compiler_driver import CompilerDriver, DriverRequest
 
-graph = load_any(Path(sys.argv[1]))
+# Was render_query_context(), removed by e466afd (OW-Q09 context-compiler
+# convergence). CompilerDriver is that path's successor and is itself the
+# application-services entry point, so this measures the component directly
+# rather than a helper that used to sit in front of it.
+graph_path = Path(sys.argv[1])
 Q = "how does packet validation work"
+
+
+def compile_once() -> None:
+    CompilerDriver().compile(DriverRequest(
+        query=Q,
+        graph_path=graph_path,
+        query_class="direct_lookup",
+        rebuild=False,
+    ))
+
+
 for _ in range(2):
-    render_query_context(query=Q, graph=graph)
+    compile_once()
 runs = []
 for _ in range(5):
     t0 = time.perf_counter()
-    render_query_context(query=Q, graph=graph)
+    compile_once()
     runs.append((time.perf_counter() - t0) * 1000.0)
 runs.sort()
 value = round(runs[len(runs)//2], 3)

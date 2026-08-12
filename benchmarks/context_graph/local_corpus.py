@@ -2,8 +2,8 @@
 
 Reuses the same on-disk projects already scanned by
 ``cross_repo_anchor_stress.py`` (``DEFAULT_PROJECT_PATHS`` / ``LOCAL_PROJECT_PATHS``
-/ ``RESOURCES_ROOT``) so the storage backend bake-off and snippet-usefulness
-benchmark share one corpus instead of each hardcoding project lists. No
+/ ``RESOURCES_ROOT``) so the storage backend bake-off and the other real-project
+benchmarks share one corpus instead of each hardcoding project lists. No
 network access or cloning is needed: every path here is already checked out
 locally under ``C:\\Users\\dcarn\\aiprojects``.
 
