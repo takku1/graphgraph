@@ -123,9 +123,15 @@ def execute_query(
     representation: str = "flat",
     representation_budget: int | None = None,
     cache_namespace: str = "unified_query",
-    include_context_freshness: bool = False,
 ) -> dict[str, object]:
-    """Compile and execute one safe query without inferring mutations."""
+    """Compile and execute one safe query without inferring mutations.
+
+    Freshness is always checked by default now (cheap, O(changed-files),
+    never refuses -- only flags): a full refresh under ``sync="git"``, or
+    otherwise a read-only check scoped to ``scopes``. There is no opt-out;
+    the check was confirmed cheap enough (see services/freshness.py) that
+    skipping it was never buying real performance, only silence.
+    """
     started = time.perf_counter()
     directory = directory.resolve()
     plan = compile_query(
@@ -177,6 +183,28 @@ def execute_query(
             "write": status.built,
             "fresh": freshness == "fresh",
         }
+    else:
+        # No refresh requested, but never silently "unchecked": a cheap,
+        # read-only O(changed-files) check, scoped to the query's declared
+        # scopes so drift elsewhere in the repo can't manufacture false
+        # staleness for an unrelated query. Never blocks an answer -- only
+        # flags one, same as the sync="git" path's freshness field.
+        from .freshness import inspect_saved_graph_freshness, scope_freshness, source_root_for_saved_graph
+
+        freshness_detail = scope_freshness(
+            inspect_saved_graph_freshness(
+                directory=source_root_for_saved_graph(resolved_graph),
+                output_path=resolved_graph,
+            ),
+            scopes,
+        )
+        freshness = (
+            "fresh"
+            if freshness_detail["requested_scope_fresh"]
+            else "incompatible"
+            if not freshness_detail["extractor_compatible"]
+            else "stale"
+        )
     operator = plan.operator
     result: Any
     if operator is QueryOperator.RELATIONS:
@@ -196,23 +224,6 @@ def execute_query(
             operator = QueryOperator.CONTEXT
         else:
             result = encode_relation_micro(relation)
-    if operator is QueryOperator.CONTEXT and include_context_freshness and freshness_detail is None:
-        from .freshness import inspect_saved_graph_freshness, scope_freshness, source_root_for_saved_graph
-
-        freshness_detail = scope_freshness(
-            inspect_saved_graph_freshness(
-                directory=source_root_for_saved_graph(resolved_graph),
-                output_path=resolved_graph,
-            ),
-            scopes,
-        )
-        freshness = (
-            "fresh"
-            if freshness_detail["fresh"]
-            else "incompatible"
-            if not freshness_detail["extractor_compatible"]
-            else "stale"
-        )
     if graph is None and operator is not QueryOperator.RELATIONS:
         graph = load_any(resolved_graph)
     if operator is QueryOperator.SELECT:

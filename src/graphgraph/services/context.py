@@ -30,6 +30,7 @@ from ..runtime.cache import (
     runtime_cache_fingerprint,
 )
 from .cache_identity import file_signature, packet_dependency_paths, worktree_signature
+from .freshness import inspect_saved_graph_freshness, scope_freshness
 
 FINAL_RESPONSE_CACHE_VERSION = "final_v8_registry_aware_facet_preflight"
 
@@ -48,6 +49,37 @@ def render_stable_skeleton(graph_path: Path | None = None, max_nodes: int = 100,
     top_set = set(top_nodes)
     skeleton_edges = [edge for edge in graph.edges if edge.active and edge.source in top_set and edge.target in top_set]
     return render_packet(graph, top_set, skeleton_edges, packet)
+
+
+def _stale_note(
+    graph_path: Path,
+    project_root: Path,
+    requested_paths: tuple[str, ...] = (),
+) -> str:
+    """Return a one-line packet annotation when the graph has drifted from source.
+
+    Cheap (O(changed files) git-diff, per services/freshness.py) and read-only
+    -- never refuses an answer, only flags one so a caller isn't silently
+    served a stale packet with no signal, mirroring the annotation
+    query_context already surfaces via workflow.freshness.
+    """
+    try:
+        checked = scope_freshness(
+            inspect_saved_graph_freshness(directory=project_root, output_path=graph_path),
+            requested_paths,
+        )
+    except Exception:
+        return ""
+    if not checked.get("extractor_compatible", True):
+        return "STALE: graph was built by a different scanner version; rebuild with `graphgraph scan --no-incremental`.\n"
+    if checked.get("requested_scope_fresh", True):
+        return ""
+    changed = checked.get("changed_count", 0)
+    deleted = checked.get("deleted_count", 0)
+    return (
+        f"STALE: graph is unsynced with source for {changed} changed and {deleted} deleted "
+        "path(s); answer may be out of date -- refresh with `graphgraph scan` or pass sync=git.\n"
+    )
 
 
 class FullGraphTooLargeError(ValueError):
@@ -96,7 +128,10 @@ def render_full_graph(
         estimated = estimate_tokens(rendered)
         if estimated > max_tokens:
             raise FullGraphTooLargeError(estimated, max_tokens, len(all_nodes), len(all_edges))
-    return rendered
+    # A full-graph dump has no query scope to narrow against -- any drift
+    # anywhere in source is in scope, so check whole-repository freshness.
+    note = _stale_note(resolved_graph_path, project_root_for_graph(resolved_graph_path))
+    return note + rendered if note else rendered
 
 
 def render_final_packet(
@@ -142,9 +177,22 @@ def render_final_packet(
             f"{file_signature(resolved_policies_path)}|{file_signature(lessons_path)}"
         ),
     )
+    # Computed outside the packet cache -- and never stored inside a cached
+    # entry -- so a stale-source signal reflects the state *now*, not the
+    # state when this packet text last changed. The graph-side cache already
+    # invalidates on graph-file mutation; this catches source drifting out
+    # from under an unchanged graph, which that cache cannot see.
+    #
+    # Scoped only to `paths` (an explicit declared-scope filter), not
+    # `starts` -- starts are node ids/labels, not a change-scope, so scoping
+    # to them would rarely match a real changed path and would mostly just
+    # mask real drift. When paths is empty (the common case) this correctly
+    # falls back to whole-repository freshness.
+    stale_note = _stale_note(resolved_graph_path, project_root, tuple(paths))
+
     cached_packet = cache.get(resolved_graph_path, cache_key)
     if cached_packet:
-        return cached_packet
+        return stale_note + cached_packet if stale_note else cached_packet
 
     graph = load_any_cached(resolved_graph_path)
     if max_nodes is None:
@@ -244,7 +292,7 @@ def render_final_packet(
         node_ids=nodes,
         paths=packet_dependency_paths(graph, nodes),
     )
-    return final_output
+    return stale_note + final_output if stale_note else final_output
 
 
 def resolve_start_nodes(graph: Graph, starts: list[str]) -> list[str]:

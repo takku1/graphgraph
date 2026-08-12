@@ -78,8 +78,69 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(payload["v"], 2)
             self.assertEqual(payload["d"], "<-calls")
             self.assertEqual(payload["n"][0][0], "run")
+            # No sync requested and no git repo/manifest exists in the tmp
+            # fixture, so the default cheap freshness check correctly finds
+            # nothing stale -- freshness is "fresh", not the old blanket
+            # "unchecked", and completeness is no longer needlessly blocked.
+            self.assertTrue(payload["r"]["answer_complete"])
+            self.assertEqual(payload["r"]["freshness"], "fresh")
+            self.assertNotIn("sync_if_completeness_required", payload.get("a", ()))
+
+    def test_relations_cli_default_path_flags_drift_without_explicit_sync(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.cli.retrieval import cmd_relations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(
+                Graph(
+                    nodes={
+                        "TARGET": Node("TARGET", "work", "function", "src/core.py"),
+                        "CALLER": Node("CALLER", "run", "function", "src/app.py"),
+                    },
+                    edges=[Edge("CALLER", "TARGET", "calls")],
+                    metadata={
+                        "member_calls_global_resolved": "1",
+                        "member_calls_global_unknown_receiver": "0",
+                        "member_calls_global_ambiguous": "0",
+                    },
+                ),
+                graph_path,
+            )
+            args = build_parser().parse_args(
+                [
+                    "relations",
+                    "work",
+                    "--direction",
+                    "callers",
+                    "--graph",
+                    str(graph_path),
+                ]
+            )
+            stdout = StringIO()
+            with (
+                # cmd_relations does a function-local `from ..services.freshness
+                # import ...`, not a module-level import, so the patch target is
+                # the defining module, not graphgraph.cli.retrieval.
+                patch(
+                    "graphgraph.services.freshness.inspect_saved_graph_freshness",
+                    return_value={
+                        "fresh": False,
+                        "extractor_compatible": True,
+                        "changed_count": 1,
+                        "deleted_count": 0,
+                        "changed_paths": ["src/core.py"],
+                        "deleted_paths": [],
+                    },
+                ),
+                redirect_stdout(stdout),
+            ):
+                cmd_relations(args)
+
+            payload = json.loads(stdout.getvalue())
             self.assertFalse(payload["r"]["answer_complete"])
-            self.assertIn("sync_if_completeness_required", payload["a"])
+            self.assertEqual(payload["r"]["freshness"], "stale")
+            self.assertIn("project_status", payload.get("a", ()))
 
     def test_graph_artifacts_bind_to_their_own_project_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -788,6 +849,102 @@ class CliMcpTest(unittest.TestCase):
             )
             self.assertNotIn("sync_if_completeness_required", data.get("a", ()))
             refresh.assert_called_once()
+
+    def test_mcp_query_relations_default_path_flags_drift_without_explicit_sync(self) -> None:
+        # Regression for the release_floor-blocking bug class: a drifted
+        # graph must never answer silently by default. No `sync` argument is
+        # passed here at all -- this is the previously-"unchecked" path.
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(
+                Graph(
+                    nodes={
+                        "TARGET": Node("TARGET", "work", "function", "src/core.py"),
+                        "CALLER": Node("CALLER", "run", "function", "src/app.py"),
+                    },
+                    edges=[Edge("CALLER", "TARGET", "calls")],
+                    metadata={
+                        "member_calls_global_resolved": "1",
+                        "member_calls_global_unknown_receiver": "0",
+                        "member_calls_global_ambiguous": "0",
+                    },
+                ),
+                graph_path,
+            )
+
+            with patch(
+                "graphgraph.mcp.retrieval_tools.inspect_saved_graph_freshness",
+                return_value={
+                    "fresh": False,
+                    "extractor_compatible": True,
+                    "changed_count": 1,
+                    "deleted_count": 0,
+                    "changed_paths": ["src/core.py"],
+                    "deleted_paths": [],
+                },
+            ):
+                response = dispatch(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 553,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "query_relations",
+                            "arguments": {
+                                "target": "work",
+                                "direction": "callers",
+                                "graph_path": str(graph_path),
+                            },
+                        },
+                    }
+                )
+
+            assert response is not None
+            data = json.loads(response["result"]["content"][0]["text"])
+            self.assertEqual(data["r"]["freshness"], "stale")
+            self.assertFalse(data["r"]["answer_complete"])
+            self.assertIn("project_status", data.get("a", ()))
+
+    def test_mcp_final_packet_default_path_flags_drift_without_explicit_sync(self) -> None:
+        # Same bug class, for the final_packet tool: no `sync` argument, no
+        # `sync` parameter even exists on this tool -- freshness must still
+        # be surfaced by default, as an in-band STALE note (final_packet
+        # returns raw packet text, not a JSON envelope).
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(sample_graph(), graph_path)
+
+            with patch(
+                "graphgraph.services.context.inspect_saved_graph_freshness",
+                return_value={
+                    "fresh": False,
+                    "extractor_compatible": True,
+                    "changed_count": 2,
+                    "deleted_count": 0,
+                    "changed_paths": ["src/a.py", "src/b.py"],
+                    "deleted_paths": [],
+                },
+            ):
+                response = dispatch(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 554,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "final_packet",
+                            "arguments": {
+                                "starts": list(sample_graph().nodes.keys())[:1],
+                                "query_class": "narrow_lookup",
+                                "graph_path": str(graph_path),
+                            },
+                        },
+                    }
+                )
+
+            assert response is not None
+            text = response["result"]["content"][0]["text"]
+            self.assertTrue(text.startswith("STALE:"))
+            self.assertIn("2 changed", text)
 
     def test_mcp_query_context_auto_routes_when_class_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

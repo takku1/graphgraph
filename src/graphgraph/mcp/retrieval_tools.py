@@ -818,7 +818,6 @@ def handle_query_relations(args: dict[str, Any]) -> str:
     started = time.perf_counter()
     sync_git = str(args.get("sync") or "none") == "git"
     refresh_summary = None
-    freshness = "unchecked"
     if sync_git:
         source_root = source_root_for_saved_graph(graph_path)
         status = refresh_saved_graph(
@@ -840,6 +839,15 @@ def handle_query_relations(args: dict[str, Any]) -> str:
         }
     else:
         graph = None
+        # No explicit sync requested, but a stale graph should never answer
+        # silently: run the cheap, read-only O(changed-files) check by
+        # default. Whole-repository, not scoped to `target` -- a relations
+        # query traverses callers/callees that can live anywhere in the
+        # repo, and `target` is a symbol name, not a declared change scope,
+        # so scoping to it would almost never match a real changed path.
+        source_root = source_root_for_saved_graph(graph_path)
+        checked = inspect_saved_graph_freshness(directory=source_root, output_path=graph_path)
+        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
     query = query_relations if graph is not None else query_saved_relations
     result = query(
         graph if graph is not None else graph_path,

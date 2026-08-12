@@ -175,7 +175,6 @@ def cmd_query(args: argparse.Namespace) -> None:
         representation=args.representation,
         representation_budget=args.representation_budget,
         cache_namespace="cli_query",
-        include_context_freshness=True,
     )
     if response.get("status") != "ok":
         emit_json(response, getattr(args, "pretty", False))
@@ -304,7 +303,6 @@ def cmd_relations(args: argparse.Namespace) -> None:
     started = time.perf_counter()
     sync_git = getattr(args, "sync", "none") == "git"
     refresh_summary = None
-    freshness = "unchecked"
     if sync_git:
         source_root = source_root_for_saved_graph(graph_path)
         status = refresh_saved_graph(
@@ -326,6 +324,14 @@ def cmd_relations(args: argparse.Namespace) -> None:
         }
     else:
         graph = None
+        # No explicit sync requested, but a stale graph should never answer
+        # silently: run the cheap, read-only O(changed-files) check by
+        # default. Whole-repository, not scoped to `target` -- a relations
+        # query traverses callers/callees that can live anywhere in the
+        # repo, and `target` is a symbol name, not a declared change scope.
+        source_root = source_root_for_saved_graph(graph_path)
+        checked = inspect_saved_graph_freshness(directory=source_root, output_path=graph_path)
+        freshness = "fresh" if checked["fresh"] else "incompatible" if not checked["extractor_compatible"] else "stale"
     query = query_relations if graph is not None else query_saved_relations
     result = query(
         graph if graph is not None else graph_path,
