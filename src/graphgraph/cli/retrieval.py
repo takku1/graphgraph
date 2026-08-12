@@ -201,6 +201,8 @@ def cmd_query(args: argparse.Namespace) -> None:
             )
         print(message, file=sys.stderr)
 
+    _warn_if_semantic_evidence_unused(response)
+
     show_stats = getattr(args, "show_stats", False)
     as_json = getattr(args, "json", False)
     result = response.get("result")
@@ -242,6 +244,62 @@ def cmd_query(args: argparse.Namespace) -> None:
             f"GraphGraph query operator={response.get('operator')} cost={cost} ms={elapsed}",
             file=sys.stderr,
         )
+
+
+_SEMANTIC_REMEDY = {
+    "missing": "no semantic index exists; build one with `graphgraph platform semantic --rebuild`",
+    "stale": "the semantic index is stale; rebuild it with `graphgraph platform semantic --rebuild`",
+    "cold_backend": (
+        "a semantic index exists but the embedding backend is cold, and auto queries will not pay "
+        "its first-load cost; re-run with `--source-mode all`, or issue the query against a resident "
+        "process where the backend stays warm"
+    ),
+    "not_requested": (
+        "lexical retrieval looked strong enough that the semantic index was never consulted; if the "
+        "answer is missing, re-run with `--source-mode all`"
+    ),
+}
+
+
+def _warn_if_semantic_evidence_unused(response: dict[str, object]) -> None:
+    """Say why a paraphrase query was answered without the semantic index.
+
+    ``SemanticIndex.downgraded_reason`` exists so that a conceptual miss reads
+    as "rebuild the index" rather than "conceptual retrieval does not work". The
+    same silence covers three further states that it does not describe: no index
+    on disk, an index the cold-CLI backend declines to load, and a query where
+    strong-looking lexical scores meant the index was never consulted at all.
+    Each answers the query from lexical evidence alone and reports nothing, so a
+    caller measuring conceptual recall attributes the miss to retrieval quality
+    instead of to configuration.
+    """
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return
+    sources = ((result.get("retrieval") or {}) if isinstance(result.get("retrieval"), dict) else {}).get("sources")
+    if not isinstance(sources, dict):
+        return
+    # An exact hit needs no paraphrase evidence, and a contributing index is
+    # working as intended; neither is worth a warning.
+    if sources.get("exact_fast_path") or sources.get("semantic_seeds"):
+        return
+    remedy = _SEMANTIC_REMEDY.get(str(sources.get("semantic_index_state") or ""))
+    if not remedy:
+        return
+    try:
+        from ..platform.embeddings import resolve_backend
+
+        backend = resolve_backend()
+    except Exception:  # noqa: BLE001
+        return
+    # Only actionable when a real embedding backend is installed. Hash vectors
+    # cannot express paraphrase, so advising a rebuild would be a false remedy.
+    if backend is None or backend.name.startswith("hash"):
+        return
+    print(
+        f"GraphGraph WARNING: answered from lexical evidence only -- {remedy}.",
+        file=sys.stderr,
+    )
 
 
 def _render_cli_context_details(payload: dict[str, object]) -> str:

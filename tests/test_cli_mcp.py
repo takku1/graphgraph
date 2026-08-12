@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -3009,3 +3009,50 @@ class CliMcpTest(unittest.TestCase):
             # An explicit opt-out must still be honored.
             run("update", "--files", "a.py", "--no-docs")
             self.assertEqual(load_any(graph_path).metadata.get("docs"), "false")
+
+
+class SemanticEvidenceWarningTest(unittest.TestCase):
+    """A lexical-only answer must say why, not look like a retrieval verdict."""
+
+    def _warn(self, sources: dict, backend_name: str = "fastembed:BAAI/bge-small-en-v1.5") -> str:
+        from graphgraph.cli.retrieval import _warn_if_semantic_evidence_unused
+
+        response = {"result": {"retrieval": {"sources": sources}}}
+        stderr = StringIO()
+        backend = type("B", (), {"name": backend_name})()
+        with (
+            patch("graphgraph.platform.embeddings.resolve_backend", return_value=backend),
+            redirect_stderr(stderr),
+        ):
+            _warn_if_semantic_evidence_unused(response)
+        return stderr.getvalue()
+
+    def test_each_unused_state_names_its_own_remedy(self) -> None:
+        for state, expected in (
+            ("missing", "platform semantic --rebuild"),
+            ("stale", "platform semantic --rebuild"),
+            ("cold_backend", "--source-mode all"),
+            ("not_requested", "--source-mode all"),
+        ):
+            with self.subTest(state=state):
+                out = self._warn({"semantic_index_state": state, "semantic_seeds": 0})
+                self.assertIn("lexical evidence only", out)
+                self.assertIn(expected, out)
+
+    def test_silent_when_the_index_actually_contributed(self) -> None:
+        self.assertEqual(
+            self._warn({"semantic_index_state": "current", "semantic_seeds": 4}), ""
+        )
+
+    def test_silent_on_an_exact_hit_that_needs_no_paraphrase_evidence(self) -> None:
+        self.assertEqual(
+            self._warn({"semantic_index_state": "missing", "exact_fast_path": True}), ""
+        )
+
+    def test_silent_under_hash_vectors_because_a_rebuild_is_a_false_remedy(self) -> None:
+        # Hash vectors cannot express paraphrase, so telling the caller to
+        # rebuild would promise a capability the backend does not have.
+        self.assertEqual(
+            self._warn({"semantic_index_state": "missing", "semantic_seeds": 0}, backend_name="hash"),
+            "",
+        )
