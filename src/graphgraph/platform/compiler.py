@@ -34,7 +34,12 @@ from ..retrieval import (
     search_nodes,
 )
 from ..runtime.cache import activation_state_file_for_graph
-from ..surface import COMPILER_PASS_NAMES
+from ..surface import (
+    COMPILER_PASS_NAMES,
+    EVIDENCE_COMPILER_PASS,
+    HIERARCHY_COMPILER_PASS,
+    INFERENCE_COMPILER_PASS,
+)
 from .artifacts import (
     GRAPH_ARTIFACTS,
     GRAPH_EDGES,
@@ -147,7 +152,7 @@ class CompilerPass(Protocol):
 
 class _EvidencePass:
     spec = CompilerPassSpec(
-        "evidence",
+        EVIDENCE_COMPILER_PASS.name,
         "Collect bounded structural and CPG evidence.",
         produces=(*GRAPH_ARTIFACTS, "provider_receipts"),
         capabilities=("structural_evidence", "cpg_evidence"),
@@ -171,7 +176,7 @@ class _EvidencePass:
 
 class _InferencePass:
     spec = CompilerPassSpec(
-        "inference",
+        INFERENCE_COMPILER_PASS.name,
         "Infer typed edges from the current graph IR.",
         requires=(GRAPH_NODES, GRAPH_EDGES),
         produces=(GRAPH_EDGES, "inference_receipt"),
@@ -193,7 +198,7 @@ class _InferencePass:
 
 class _HierarchyPass:
     spec = CompilerPassSpec(
-        "hierarchy",
+        HIERARCHY_COMPILER_PASS.name,
         "Materialize the graph hierarchy.",
         requires=(GRAPH_NODES, GRAPH_EDGES),
         produces=(*GRAPH_ARTIFACTS, "hierarchy_receipt"),

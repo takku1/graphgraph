@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from ..surface import QUERY_CLASS_NAMES
+from ..surface import QUERY_CLASS_CONTRACTS, QUERY_CLASS_NAMES
 from .budgets import explicit_query_identifiers, plan_terms
 
 ROUTER_VERSION = "query_router_v5_path_intent_equivalence"
@@ -71,18 +71,7 @@ class QueryClassSpec:
     automatic: bool = True
 
 
-QUERY_CLASSES: tuple[QueryClassSpec, ...] = (
-    QueryClassSpec("direct_lookup", "Locate a definition or focused symbol."),
-    QueryClassSpec("reverse_lookup", "Find callers, references, implementors, or dependents."),
-    QueryClassSpec("affected_tests", "Find direct, transitive, and behavioral tests affected by a change."),
-    QueryClassSpec("multi_hop_path", "Trace a dependency, call, control, or data-flow path."),
-    QueryClassSpec("blast_radius", "Estimate downstream change impact and supporting evidence."),
-    QueryClassSpec("subsystem_summary", "Summarize a subsystem or architecture slice."),
-    QueryClassSpec("doc_summary", "Ground an answer in document sections and paragraphs."),
-    QueryClassSpec("negative_query", "Prove absence, isolation, or lack of references."),
-    QueryClassSpec("recent_changes", "Retrieve qualifying recent history and fixes evidence."),
-    QueryClassSpec("spreading_activation", "Use explicit multi-step activation retrieval.", automatic=False),
-)
+QUERY_CLASSES: tuple[QueryClassSpec, ...] = tuple(QueryClassSpec(*contract) for contract in QUERY_CLASS_CONTRACTS)
 def query_class_schema(
     *,
     include_auto: bool = False,

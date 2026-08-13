@@ -11,10 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SurfaceConstantsTest(unittest.TestCase):
-    """`graphgraph.surface` owns names so the parser can skip subsystems.
+    """`graphgraph.surface` owns cold contracts so the parser can skip subsystems.
 
-    Runtime owners consume the same cold catalog objects as the parser, so a
-    transport-visible name or default cannot drift behind a mirrored tuple.
+    Runtime owners and the parser project from the same atomic records, so a
+    transport-visible identity cannot drift behind a detached names tuple.
     """
 
     def _documented_pretty_range(self, command: str) -> tuple[float, float]:
@@ -99,20 +99,44 @@ class SurfaceConstantsTest(unittest.TestCase):
                 f"but measured {100 * measured:.1f}% -- documentation understates cost",
             )
 
-    def test_query_class_names_match(self) -> None:
-        from graphgraph.planning import QUERY_CLASS_NAMES
+    def test_query_class_catalog_drives_runtime_and_parser(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.planning import QUERY_CLASSES
 
-        self.assertIs(surface.QUERY_CLASS_NAMES, QUERY_CLASS_NAMES)
+        contracts = surface.QUERY_CLASS_CONTRACTS
+        expected = tuple((contract.name, contract.description, contract.automatic) for contract in contracts)
+        runtime = tuple((spec.name, spec.description, spec.automatic) for spec in QUERY_CLASSES)
+
+        parser = build_parser()
+        subparsers = next(action for action in parser._actions if hasattr(action, "choices") and action.choices)
+        plan = subparsers.choices["plan"]
+        query_class = next(action for action in plan._actions if action.dest == "query_class")
+
+        self.assertEqual(runtime, expected)
+        self.assertEqual(tuple(query_class.choices or ()), tuple(contract.name for contract in contracts))
 
     def test_representation_names_match(self) -> None:
         from graphgraph.representation import REPRESENTATION_NAMES
 
         self.assertIs(surface.REPRESENTATION_NAMES, REPRESENTATION_NAMES)
 
-    def test_compiler_pass_names_match(self) -> None:
-        from graphgraph.platform import COMPILER_PASS_NAMES
+    def test_compiler_pass_catalog_drives_runtime_and_parser(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.platform.compiler import BUILTIN_COMPILER_PASSES
 
-        self.assertIs(surface.COMPILER_PASS_NAMES, COMPILER_PASS_NAMES)
+        contracts = surface.COMPILER_PASS_CONTRACTS
+        expected_names = tuple(contract.name for contract in contracts)
+        runtime_names = tuple(compiler_pass.spec.name for compiler_pass in BUILTIN_COMPILER_PASSES)
+
+        parser = build_parser()
+        subparsers = next(action for action in parser._actions if hasattr(action, "choices") and action.choices)
+        platform = subparsers.choices["platform"]
+        actions = next(action for action in platform._actions if hasattr(action, "choices") and action.choices)
+        compile_parser = actions.choices["compile"]
+        passes = next(action for action in compile_parser._actions if action.dest == "passes")
+
+        self.assertEqual(runtime_names, expected_names)
+        self.assertEqual(tuple(passes.choices or ()), expected_names)
 
     def test_default_scan_max_nodes_matches(self) -> None:
         from graphgraph.scanner.files import DEFAULT_SCAN_MAX_NODES
