@@ -41,20 +41,11 @@ class _AnchorSelection:
     facet_roots: tuple[str, ...]
 
 
-def _execute_anchor_search(
-    graph: Graph,
-    request: _FeasibleRequest,
-    *,
-    max_nodes: int | None,
-    seed_ids: tuple[str, ...],
-) -> _AnchorSelection | RetrievalResult:
+def _rank_initial_candidates(graph: Graph, request: _FeasibleRequest, max_nodes: int | None):
     query = request.query
     query_class = request.query_class
     scopes = request.scopes
-    scope_mode = request.scope_mode
     anchor_paths = request.anchor_paths
-    requested_statuses = request.requested_statuses
-    status_constrained = request.status_constrained
     identifiers = request.identifiers
     qualified_matches = request.qualified_matches
     facets = request.facets
@@ -115,6 +106,16 @@ def _execute_anchor_search(
             exact_fast_path=query_class == "direct_lookup",
         )
     )
+    return anchor_query, path_matches, exact_matches, doc_intensity, plan, matches
+
+
+def _inject_priority_candidates(
+    graph: Graph, request: _FeasibleRequest, seed_ids, anchor_query, path_matches, exact_matches, matches
+):
+    query = request.query
+    query_class = request.query_class
+    scopes = request.scopes
+    facets = request.facets
     token_symbol_matches = (
         anchors.exact_token_symbol_anchor_matches(
             graph,
@@ -171,144 +172,28 @@ def _execute_anchor_search(
         priority_ids = {match.node.id for match in priority_matches}
         matches = priority_matches + tuple(match for match in matches if match.node.id not in priority_ids)
     exact_anchor_fast_path = bool(matches) and all("exact_fast_path" in match.reasons for match in matches)
-    semantic_terminal_matches: tuple[Match, ...] = ()
-    if facets and not path_matches and not exact_anchor_fast_path:
-        # A single bag-of-words search for a conjunction is dominated by nodes
-        # that repeat the query's common subsystem terms. Search each facet
-        # independently, then merge its best evidence into the candidate pool
-        # before anchor selection. This is bounded by the twelve-facet parser
-        # cap and preserves the original whole-query ranking at the front.
-        merged = list(matches)
-        seen_match_ids = {match.node.id for match in merged}
-        merged_positions = {match.node.id: index for index, match in enumerate(merged)}
-        semantic_terminals: list[Match] = []
-        semantic_terminal_facets = 0
-        semantic_candidate_groups: list[tuple[str, ...]] = []
-        for facet_label, facet_terms in facets:
-            for facet_query in facet_stage.facet_search_queries(facet_label, facet_terms):
-                facet_matches = search.search_nodes(
-                    graph,
-                    facet_query,
-                    limit=12,
-                    doc_intensity=0.0,
-                    personalize=True,
-                    scopes=scopes,
-                )
-                for match in facet_matches:
-                    if match.node.id not in seen_match_ids:
-                        merged.append(match)
-                        seen_match_ids.add(match.node.id)
-                        merged_positions[match.node.id] = len(merged) - 1
-            semantic_candidates = (
-                [
-                    node
-                    for node in sorted(
-                        (
-                            node
-                            for node in graph.nodes.values()
-                            if node.active
-                            and is_code_like(node)
-                            and (query_class != "subsystem_summary" or not scoping._is_test_material(node))
-                            and (not scopes or scoping._path_in_scopes(node.path, scopes))
-                            and facet_stage._facet_matches_node(node, facet_terms)
-                        ),
-                        key=lambda node: (
-                            scoping._is_test_material(node),
-                            facet_stage._software_role_label_distance(node, facet_terms),
-                            node.kind not in {"method", "function", "external"},
-                            len(node.path),
-                            node.id,
-                        ),
-                    )[:8]
-                ]
-                if query_class in {"multi_hop_path", "subsystem_summary"}
-                and facet_stage.has_software_role_projection(((facet_label, facet_terms),))
-                else []
-            )
-            if semantic_candidates:
-                semantic_terminal_facets += 1
-                semantic_candidate_groups.append(tuple(node.id for node in semantic_candidates))
-                semantic_terminals.extend(
-                    Match(node, 1000.0, ("semantic_structural_terminal",)) for node in semantic_candidates
-                )
-            for node in semantic_candidates:
-                if node.id not in seen_match_ids:
-                    merged.append(Match(node, 1000.0, ("semantic_structural_facet",)))
-                    seen_match_ids.add(node.id)
-                    merged_positions[node.id] = len(merged) - 1
-                else:
-                    position = merged_positions[node.id]
-                    prior = merged[position]
-                    merged[position] = Match(
-                        node,
-                        max(1000.0, prior.score),
-                        tuple(dict.fromkeys((*prior.reasons, "semantic_structural_facet"))),
-                    )
-        matches = tuple(merged)
-        if semantic_terminal_facets == len(facets):
-            if query_class == "subsystem_summary":
-                # A summary role is an evidence obligation, not a request for
-                # the cheapest graph connector. A test that calls both the
-                # inspection and repair functions can be a smaller connector,
-                # but it must not replace either production role. Round-robin
-                # preserves every role before retaining bounded ambiguity
-                # within a role (for example finalization plus response
-                # processing in a lifecycle).
-                semantic_terminals = []
-                max_group_size = max(map(len, semantic_candidate_groups), default=0)
-                for candidate_index in range(max_group_size):
-                    for group in semantic_candidate_groups:
-                        if candidate_index >= len(group):
-                            continue
-                        semantic_terminals.append(
-                            Match(
-                                graph.nodes[group[candidate_index]],
-                                1000.0,
-                                ("semantic_role_terminal",),
-                            )
-                        )
-                        if len(semantic_terminals) >= 12:
-                            break
-                    if len(semantic_terminals) >= 12:
-                        break
-            else:
-                global_connector = obligations.minimal_evidence_connector(
-                    {node_id for node_id, node in graph.nodes.items() if node.active},
-                    graph.edges,
-                    tuple(semantic_candidate_groups),
-                )
-                if global_connector is not None and len(global_connector[0]) <= 12:
-                    connector_nodes, _connector_edges, _connector_receipt = global_connector
-                    semantic_terminals = [
-                        Match(graph.nodes[node_id], 1000.0, ("semantic_global_connector",))
-                        for node_id in sorted(connector_nodes)
-                    ]
-                else:
-                    # Preserve at least one candidate from every obligation before
-                    # spending spare root slots on ambiguity within a facet. A flat
-                    # concatenation let a generic first facet (for example
-                    # ``matcher``) consume all twelve roots and silently dropped
-                    # exact later obligations such as ``search_path``.
-                    balanced_terminals: list[Match] = []
-                    max_group_size = max(map(len, semantic_candidate_groups), default=0)
-                    for candidate_index in range(max_group_size):
-                        for group in semantic_candidate_groups:
-                            if candidate_index >= len(group):
-                                continue
-                            balanced_terminals.append(
-                                Match(
-                                    graph.nodes[group[candidate_index]],
-                                    1000.0,
-                                    ("semantic_balanced_terminal",),
-                                )
-                            )
-                            if len(balanced_terminals) >= 12:
-                                break
-                        if len(balanced_terminals) >= 12:
-                            break
-                    semantic_terminals = balanced_terminals
-        if semantic_terminal_facets == len(facets):
-            semantic_terminal_matches = tuple({match.node.id: match for match in semantic_terminals}.values())
+    return matches, token_symbol_matches, implementation_matches, status_matches, source_matches, exact_anchor_fast_path
+
+
+def _scope_and_budget_candidates(
+    graph: Graph,
+    request: _FeasibleRequest,
+    max_nodes,
+    anchor_query,
+    path_matches,
+    matches,
+    status_matches,
+    source_matches,
+    implementation_matches,
+    token_symbol_matches,
+    exact_anchor_fast_path,
+    plan,
+):
+    query = request.query
+    query_class = request.query_class
+    scopes = request.scopes
+    status_constrained = request.status_constrained
+    facets = request.facets
     if status_constrained:
         # Status is an evidence type, not a ranking preference. Facet searches,
         # source seeds, and path roots may orient an ordinary document query,
@@ -341,6 +226,36 @@ def _execute_anchor_search(
             reason=f"{plan.reason}; ambiguous broad-query cap",
             planner_version=f"{plan.planner_version}_broad_query_cap",
         )
+    effective_anchor_limit = _effective_anchor_limit(
+        request,
+        anchor_query,
+        path_matches,
+        matches,
+        source_matches,
+        implementation_matches,
+        token_symbol_matches,
+        exact_anchor_fast_path,
+        plan,
+    )
+    return matches, inferred_scope, plan, effective_anchor_limit
+
+
+def _effective_anchor_limit(
+    request,
+    anchor_query,
+    path_matches,
+    matches,
+    source_matches,
+    implementation_matches,
+    token_symbol_matches,
+    exact_anchor_fast_path,
+    plan,
+):
+    query = request.query
+    query_class = request.query_class
+    status_constrained = request.status_constrained
+    identifiers = request.identifiers
+    facets = request.facets
     effective_anchor_limit = (
         anchors._adaptive_anchor_limit(matches, plan, query)
         if query_class in scoping.STRUCTURAL_QUERY_CLASSES or query_class in {"direct_lookup", "subsystem_summary"}
@@ -371,6 +286,23 @@ def _execute_anchor_search(
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(path_matches)))
     if facets and not path_matches and not exact_anchor_fast_path:
         effective_anchor_limit = max(effective_anchor_limit, min(12, len(facets)))
+    return effective_anchor_limit
+
+
+def _select_anchor_roots(
+    graph: Graph,
+    request: _FeasibleRequest,
+    matches,
+    path_matches,
+    semantic_terminal_matches,
+    inferred_scope,
+    effective_anchor_limit,
+    doc_intensity,
+    exact_anchor_fast_path,
+):
+    query = request.query
+    query_class = request.query_class
+    facets = request.facets
     selected_matches = anchors.select_anchor_matches(
         matches,
         effective_anchor_limit,
@@ -436,6 +368,217 @@ def _execute_anchor_search(
         # whole-query lexical hits must not become additional mandatory roots
         # and defeat the connector or role-evidence optimizer.
         selected_matches = semantic_terminal_matches[:12]
+    return selected_matches
+
+
+def _merge_semantic_facet_candidates(graph: Graph, request: _FeasibleRequest, matches):
+    query_class = request.query_class
+    scopes = request.scopes
+    facets = request.facets
+    # A single bag-of-words search for a conjunction is dominated by nodes
+    # that repeat the query's common subsystem terms. Search each facet
+    # independently, then merge its best evidence into the candidate pool
+    # before anchor selection. This is bounded by the twelve-facet parser
+    # cap and preserves the original whole-query ranking at the front.
+    merged = list(matches)
+    seen_match_ids = {match.node.id for match in merged}
+    merged_positions = {match.node.id: index for index, match in enumerate(merged)}
+    semantic_terminals: list[Match] = []
+    semantic_terminal_facets = 0
+    semantic_candidate_groups: list[tuple[str, ...]] = []
+    for facet_label, facet_terms in facets:
+        for facet_query in facet_stage.facet_search_queries(facet_label, facet_terms):
+            facet_matches = search.search_nodes(
+                graph,
+                facet_query,
+                limit=12,
+                doc_intensity=0.0,
+                personalize=True,
+                scopes=scopes,
+            )
+            for match in facet_matches:
+                if match.node.id not in seen_match_ids:
+                    merged.append(match)
+                    seen_match_ids.add(match.node.id)
+                    merged_positions[match.node.id] = len(merged) - 1
+        semantic_candidates = (
+            [
+                node
+                for node in sorted(
+                    (
+                        node
+                        for node in graph.nodes.values()
+                        if node.active
+                        and is_code_like(node)
+                        and (query_class != "subsystem_summary" or not scoping._is_test_material(node))
+                        and (not scopes or scoping._path_in_scopes(node.path, scopes))
+                        and facet_stage._facet_matches_node(node, facet_terms)
+                    ),
+                    key=lambda node: (
+                        scoping._is_test_material(node),
+                        facet_stage._software_role_label_distance(node, facet_terms),
+                        node.kind not in {"method", "function", "external"},
+                        len(node.path),
+                        node.id,
+                    ),
+                )[:8]
+            ]
+            if query_class in {"multi_hop_path", "subsystem_summary"}
+            and facet_stage.has_software_role_projection(((facet_label, facet_terms),))
+            else []
+        )
+        if semantic_candidates:
+            semantic_terminal_facets += 1
+            semantic_candidate_groups.append(tuple(node.id for node in semantic_candidates))
+            semantic_terminals.extend(
+                Match(node, 1000.0, ("semantic_structural_terminal",)) for node in semantic_candidates
+            )
+        for node in semantic_candidates:
+            if node.id not in seen_match_ids:
+                merged.append(Match(node, 1000.0, ("semantic_structural_facet",)))
+                seen_match_ids.add(node.id)
+                merged_positions[node.id] = len(merged) - 1
+            else:
+                position = merged_positions[node.id]
+                prior = merged[position]
+                merged[position] = Match(
+                    node,
+                    max(1000.0, prior.score),
+                    tuple(dict.fromkeys((*prior.reasons, "semantic_structural_facet"))),
+                )
+    matches = tuple(merged)
+    return matches, semantic_terminals, semantic_terminal_facets, semantic_candidate_groups
+
+
+def _choose_semantic_terminals(
+    graph: Graph, query_class: str, facets, semantic_terminals, semantic_terminal_facets, semantic_candidate_groups
+):
+    if semantic_terminal_facets != len(facets):
+        return ()
+    if semantic_terminal_facets == len(facets):
+        if query_class == "subsystem_summary":
+            # A summary role is an evidence obligation, not a request for
+            # the cheapest graph connector. A test that calls both the
+            # inspection and repair functions can be a smaller connector,
+            # but it must not replace either production role. Round-robin
+            # preserves every role before retaining bounded ambiguity
+            # within a role (for example finalization plus response
+            # processing in a lifecycle).
+            semantic_terminals = []
+            max_group_size = max(map(len, semantic_candidate_groups), default=0)
+            for candidate_index in range(max_group_size):
+                for group in semantic_candidate_groups:
+                    if candidate_index >= len(group):
+                        continue
+                    semantic_terminals.append(
+                        Match(
+                            graph.nodes[group[candidate_index]],
+                            1000.0,
+                            ("semantic_role_terminal",),
+                        )
+                    )
+                    if len(semantic_terminals) >= 12:
+                        break
+                if len(semantic_terminals) >= 12:
+                    break
+        else:
+            global_connector = obligations.minimal_evidence_connector(
+                {node_id for node_id, node in graph.nodes.items() if node.active},
+                graph.edges,
+                tuple(semantic_candidate_groups),
+            )
+            if global_connector is not None and len(global_connector[0]) <= 12:
+                connector_nodes, _connector_edges, _connector_receipt = global_connector
+                semantic_terminals = [
+                    Match(graph.nodes[node_id], 1000.0, ("semantic_global_connector",))
+                    for node_id in sorted(connector_nodes)
+                ]
+            else:
+                # Preserve at least one candidate from every obligation before
+                # spending spare root slots on ambiguity within a facet. A flat
+                # concatenation let a generic first facet (for example
+                # ``matcher``) consume all twelve roots and silently dropped
+                # exact later obligations such as ``search_path``.
+                balanced_terminals: list[Match] = []
+                max_group_size = max(map(len, semantic_candidate_groups), default=0)
+                for candidate_index in range(max_group_size):
+                    for group in semantic_candidate_groups:
+                        if candidate_index >= len(group):
+                            continue
+                        balanced_terminals.append(
+                            Match(
+                                graph.nodes[group[candidate_index]],
+                                1000.0,
+                                ("semantic_balanced_terminal",),
+                            )
+                        )
+                        if len(balanced_terminals) >= 12:
+                            break
+                    if len(balanced_terminals) >= 12:
+                        break
+                semantic_terminals = balanced_terminals
+    return tuple({match.node.id: match for match in semantic_terminals}.values())
+
+
+def _execute_anchor_search(
+    graph: Graph,
+    request: _FeasibleRequest,
+    *,
+    max_nodes: int | None,
+    seed_ids: tuple[str, ...],
+) -> _AnchorSelection | RetrievalResult:
+    query = request.query
+    query_class = request.query_class
+    scopes = request.scopes
+    scope_mode = request.scope_mode
+    requested_statuses = request.requested_statuses
+    status_constrained = request.status_constrained
+    facets = request.facets
+    plan = request.plan
+    anchor_query, path_matches, exact_matches, doc_intensity, plan, matches = _rank_initial_candidates(
+        graph, request, max_nodes
+    )
+    (
+        matches,
+        token_symbol_matches,
+        implementation_matches,
+        status_matches,
+        source_matches,
+        exact_anchor_fast_path,
+    ) = _inject_priority_candidates(graph, request, seed_ids, anchor_query, path_matches, exact_matches, matches)
+    semantic_terminal_matches: tuple[Match, ...] = ()
+    if facets and not path_matches and not exact_anchor_fast_path:
+        matches, semantic_terminals, semantic_terminal_facets, semantic_candidate_groups = (
+            _merge_semantic_facet_candidates(graph, request, matches)
+        )
+        semantic_terminal_matches = _choose_semantic_terminals(
+            graph, query_class, facets, semantic_terminals, semantic_terminal_facets, semantic_candidate_groups
+        )
+    matches, inferred_scope, plan, effective_anchor_limit = _scope_and_budget_candidates(
+        graph,
+        request,
+        max_nodes,
+        anchor_query,
+        path_matches,
+        matches,
+        status_matches,
+        source_matches,
+        implementation_matches,
+        token_symbol_matches,
+        exact_anchor_fast_path,
+        plan,
+    )
+    selected_matches = _select_anchor_roots(
+        graph,
+        request,
+        matches,
+        path_matches,
+        semantic_terminal_matches,
+        inferred_scope,
+        effective_anchor_limit,
+        doc_intensity,
+        exact_anchor_fast_path,
+    )
     negative_abstain = _negative_query_abstain(
         graph,
         query_class=query_class,

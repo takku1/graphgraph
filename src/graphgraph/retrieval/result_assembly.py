@@ -31,28 +31,21 @@ from .phase_support import (
 )
 
 
-def _assemble_retrieval_result(
+def _expand_result_graph(
     graph: Graph,
     selection: _AnchorSelection,
-    *,
     activation_state_path: Path | None,
-) -> RetrievalResult:
+):
     request = selection.request
     query = request.query
     query_class = request.query_class
     scopes = request.scopes
     scope_mode = request.scope_mode
-    anchor_paths = request.anchor_paths
-    requested_statuses = request.requested_statuses
     status_constrained = request.status_constrained
-    facets = request.facets
     plan = selection.plan
-    path_matches = selection.path_matches
-    selected_matches = selection.selected_matches
     status_matches = selection.status_matches
     inferred_scope = selection.inferred_scope
     exact_anchor_fast_path = selection.exact_anchor_fast_path
-    effective_anchor_limit = selection.effective_anchor_limit
     starts = selection.starts
     facet_roots = selection.facet_roots
     if query_class == "spreading_activation":
@@ -117,6 +110,38 @@ def _assemble_retrieval_result(
         nodes = set(starts) | {edge.target for edge in edges}
     if query_class in scoping.STRUCTURAL_QUERY_CLASSES:
         nodes, edges = reservations.prune_unexplained_structural_nodes(nodes, edges, starts)
+    nodes, edges, constraint_selection, path_connector_failed = _constrain_multi_hop_path(
+        graph, selection, nodes, edges
+    )
+    if inferred_scope and not (query_class == "multi_hop_path" and exact_anchor_fast_path):
+        # A post-hoc top-k scope cap recomputes boundary scores over the current
+        # packet, so a newly admitted connector can evict a node returned at a
+        # smaller budget. Exact path packets already have precise endpoints and
+        # a hard node budget; preserve their universal expansion prefix instead
+        # of applying a second, non-monotone optimizer.
+        nodes, edges = quality.cap_inferred_scope_crossings(graph, nodes, edges, inferred_scope, protected=starts)
+    if scopes and scope_mode == "strict":
+        nodes = {node_id for node_id in nodes if scoping._path_in_scopes(graph.nodes[node_id].path, scopes)}
+        edges = [edge for edge in edges if edge.source in nodes and edge.target in nodes]
+    if status_constrained:
+        nodes, edges = document_status._constrain_document_status_packet(
+            graph,
+            nodes,
+            edges,
+            {match.node.id for match in status_matches},
+        )
+    return nodes, edges, starts, constraint_selection, path_connector_failed
+
+
+def _constrain_multi_hop_path(graph: Graph, selection: _AnchorSelection, nodes, edges):
+    request = selection.request
+    query_class = request.query_class
+    facets = request.facets
+    path_matches = selection.path_matches
+    selected_matches = selection.selected_matches
+    exact_anchor_fast_path = selection.exact_anchor_fast_path
+    starts = selection.starts
+    facet_roots = selection.facet_roots
     constraint_selection = None
     path_connector_failed = False
     if query_class == "multi_hop_path" and facets:
@@ -171,23 +196,21 @@ def _assemble_retrieval_result(
                 nodes, edges = connector_nodes, connector_edges
             elif len(evidence_groups) >= 2:
                 path_connector_failed = True
-    if inferred_scope and not (query_class == "multi_hop_path" and exact_anchor_fast_path):
-        # A post-hoc top-k scope cap recomputes boundary scores over the current
-        # packet, so a newly admitted connector can evict a node returned at a
-        # smaller budget. Exact path packets already have precise endpoints and
-        # a hard node budget; preserve their universal expansion prefix instead
-        # of applying a second, non-monotone optimizer.
-        nodes, edges = quality.cap_inferred_scope_crossings(graph, nodes, edges, inferred_scope, protected=starts)
-    if scopes and scope_mode == "strict":
-        nodes = {node_id for node_id in nodes if scoping._path_in_scopes(graph.nodes[node_id].path, scopes)}
-        edges = [edge for edge in edges if edge.source in nodes and edge.target in nodes]
-    if status_constrained:
-        nodes, edges = document_status._constrain_document_status_packet(
-            graph,
-            nodes,
-            edges,
-            {match.node.id for match in status_matches},
-        )
+    return nodes, edges, constraint_selection, path_connector_failed
+
+
+def _base_result_metadata(graph: Graph, selection: _AnchorSelection, nodes, edges, starts, constraint_selection):
+    request = selection.request
+    query = request.query
+    query_class = request.query_class
+    scopes = request.scopes
+    scope_mode = request.scope_mode
+    anchor_paths = request.anchor_paths
+    facets = request.facets
+    plan = selection.plan
+    selected_matches = selection.selected_matches
+    inferred_scope = selection.inferred_scope
+    effective_anchor_limit = selection.effective_anchor_limit
     # An anchor admitted on lexical similarity that then touched no edge in the
     # finished packet spent budget to say nothing. `anchor_contribution` has
     # always measured this and nothing acted on it. Explicit `anchor_paths` are
@@ -252,6 +275,19 @@ def _assemble_retrieval_result(
             "anchor_paths": _anchor_paths_metadata(anchor_paths, selected_matches, query_class),
         }
     )
+    return metadata, nodes, starts
+
+
+def _apply_facet_answerability(
+    metadata, graph: Graph, selection: _AnchorSelection, nodes, edges, starts, path_connector_failed: bool
+) -> None:
+    request = selection.request
+    query = request.query
+    query_class = request.query_class
+    facets = request.facets
+    selected_matches = selection.selected_matches
+    exact_anchor_fast_path = selection.exact_anchor_fast_path
+    facet_roots = selection.facet_roots
     if facets:
         coverage = facet_stage.facet_coverage(graph, nodes, facets, roots=facet_roots or starts)
         metadata["facet_coverage"] = coverage
@@ -320,6 +356,17 @@ def _assemble_retrieval_result(
                 ),
                 "confidence": closure_confidence,
             }
+
+
+def _apply_evidence_receipts(metadata, graph: Graph, selection: _AnchorSelection, nodes, edges, starts) -> None:
+    request = selection.request
+    query = request.query
+    query_class = request.query_class
+    scopes = request.scopes
+    scope_mode = request.scope_mode
+    requested_statuses = request.requested_statuses
+    plan = selection.plan
+    status_matches = selection.status_matches
     relationship_obligation = obligations.relationship_obligation_coverage(
         query_class,
         starts,
@@ -399,6 +446,15 @@ def _assemble_retrieval_result(
                     f"node budget omitted {truncation['omitted_direct_neighbors']} known direct reverse neighbor(s)"
                 ),
             }
+
+
+def _apply_document_receipts(metadata, graph: Graph, selection: _AnchorSelection, nodes, starts) -> None:
+    request = selection.request
+    query = request.query
+    query_class = request.query_class
+    anchor_paths = request.anchor_paths
+    facets = request.facets
+    selected_matches = selection.selected_matches
     _affected_tests_metadata(
         metadata,
         graph=graph,
@@ -463,6 +519,25 @@ def _assemble_retrieval_result(
     if isinstance(answerability, dict):
         anchors.gate_answer_confidence(answerability, selected_matches)
 
+
+def _assemble_retrieval_result(
+    graph: Graph,
+    selection: _AnchorSelection,
+    *,
+    activation_state_path: Path | None,
+) -> RetrievalResult:
+    request = selection.request
+    query = request.query
+    query_class = request.query_class
+    selected_matches = selection.selected_matches
+    starts = selection.starts
+    nodes, edges, starts, constraint_selection, path_connector_failed = _expand_result_graph(
+        graph, selection, activation_state_path
+    )
+    metadata, nodes, starts = _base_result_metadata(graph, selection, nodes, edges, starts, constraint_selection)
+    _apply_facet_answerability(metadata, graph, selection, nodes, edges, starts, path_connector_failed)
+    _apply_evidence_receipts(metadata, graph, selection, nodes, edges, starts)
+    _apply_document_receipts(metadata, graph, selection, nodes, starts)
     if subsystems.wants_subsystem_map(query, query_class):
         metadata["subsystem_map"] = subsystems.build_subsystem_map(graph)
 
