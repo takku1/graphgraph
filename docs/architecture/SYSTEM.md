@@ -62,6 +62,7 @@ External graph tools are **ingestion interoperability** only; they are not the r
 | Evaluation analysis | Calibration, authority, versioned suites, metrics | `analysis/` | [evaluation-analysis/SYSTEM.md](./evaluation-analysis/SYSTEM.md) |
 | Research laboratory | Unpromoted candidates, executable claim registry | `research/` | [research/SYSTEM.md](./research/SYSTEM.md) |
 | Project representation | Flat vs multiresolution project shaping | `representation/` | [representation/SYSTEM.md](./representation/SYSTEM.md) |
+| Maintainability convergence | Complexity ratchets, cold-contract authority, behavior-preserving decomposition | Cross-cutting | [maintainability/SYSTEM.md](./maintainability/SYSTEM.md) |
 
 Package inventory narrative: [package-structure.md](./package-structure.md).  
 End-to-end narrative (legacy detail): [system-architecture.md](./system-architecture.md).

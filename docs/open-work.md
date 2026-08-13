@@ -80,7 +80,11 @@ gate passes. This is the only checklist for the migration.
 | OW-Q09-C | Atomic `TargetSpec` catalog | done | Q09-B | Each packet target registers identity, capabilities, encoder, validator, priority policy, and cost model atomically; parallel format registries and advertised-name copies are deleted |
 | OW-Q09-D | Artifact preservation and invalidation | done | Q09-C | Pass specifications declare requirements, products, preservation, determinism, cache scope, and cost; cache keys bind graph revision plus artifact hashes; mutation tests prove precise invalidation |
 | OW-Q09-E | Evaluation promotion and scratch retirement | done | Q09-D | Durable findings are represented by architecture, contracts, benchmarks, or tests; superseded `docs/evaluation` scratch artifacts are removed; authority/link tests pass |
-| OW-Q09-F | Terminology and filename audit | active | Q09-E | Remaining generic names are retained only when they name a coherent mathematical/domain abstraction; ambiguous names and aliases are removed; cold-start, token, accuracy, and full-suite gates do not regress |
+| OW-Q09-F | Maintainability and terminology convergence | done | Q09-E | [Maintainability tree](architecture/maintainability/SYSTEM.md) passes its promoted 248 structural ratchet; cold-contract aliases have one authority; retrieval orchestration is decomposed without cold-start, token, accuracy, or full-suite regression |
+
+OW-Q09-F is recursively specified rather than represented by another checklist.
+Claimable execution units and their ordering are T-A10 through T-A12 in the
+[Wayfinder map](../.scratch/wayfinder-map/MAP.md).
 
 **OW-Q09 landing + gate de-contamination (2026-08-11).** Stages A–E were
 complete in the working tree but had never been committed. They landed as one

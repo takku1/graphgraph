@@ -57,6 +57,7 @@ Two consequences for how work is gated here:
 | acceptance | `acceptance_pass_rate` | **1.0** | 11/11 active on locus; 2 pending, graph stale (2026-08-11) |
 | evaluation-analysis | `answer_confidence_ece` | **0.0627** | 26 labelled predictions, 10 bins, gate ECE<0.10 (2026-08-11) |
 | representation | `hybrid_vs_flat_token_ratio` | **2.6505** | **hybrid is 2.65x more expensive — see below** |
+| maintainability | `structural_complexity_diagnostics` | **248** | Ruff 0.15.21; promoted best-known C901/PLR0911/PLR0912/PLR0915 count over `src/graphgraph` |
 
 Baselines are machine-local. Re-record on a new host before trusting a delta.
 
@@ -744,6 +745,24 @@ cap it harder than 200 chars) has not been tried.
     candidate from the global-attention line; the default stays flat. Its
     promotion status belongs in a spec, not in a benchmark script's comments.
   - **Blocked By:** none
+
+- [x] **[T-A10]** Install the structural-complexity ratchet — **OW-Q09-F**
+  - **Target:** [maintainability/structural-ratchet](../../docs/architecture/maintainability/structural-ratchet/SYSTEM.md)
+  - **Gate:** Ruff C901/PLR0911/PLR0912/PLR0915 diagnostics SHALL remain at or below the observed baseline of 249; ordinary Ruff and architecture-contract tests remain green.
+  - **Receipt:** `tests/test_maintainability.py` plus `components/maintainability/baseline.json` and `{checks,measure}.sh` make the baseline executable without enabling 249 failures in the default lint profile.
+  - **Blocked By:** none
+
+- [x] **[T-A11]** Replace mirrored cold-surface names with one cold contract catalog — **OW-Q09-F**
+  - **Target:** [maintainability/cold-contract-authority](../../docs/architecture/maintainability/cold-contract-authority/SYSTEM.md)
+  - **Gate:** parser import-weight and public contract tests pass; `surface.py` no longer describes itself as a compatibility copy; CLI cold-start does not regress.
+  - **Receipt:** atomic query-class and compiler-pass contracts now drive runtime and parser projections. Independent audit KEEP: 34 targeted and 111 agent-interface tests passed; full suite/Ruff green; structural count 249; parser cold median 98.440 ms baseline → 97.316 ms candidate.
+  - **Blocked By:** `T-A10`
+
+- [x] **[T-A12]** Decompose `retrieve_context` at measured phase seams — **OW-Q09-F**
+  - **Target:** [maintainability/retrieval-orchestration](../../docs/architecture/maintainability/retrieval-orchestration/SYSTEM.md)
+  - **Gate:** the three L3 leaves land independently; retrieval recall, token, latency, and full-suite gates do not regress.
+  - **Receipt:** `retrieve_context` remains the sole public facade over three private phases and two frozen slotted records. Independent audit KEEP: public outputs/Receipts byte-identical, 251 focused and 1,191 full-suite tests passed, node recall 0.8125 and token vector unchanged, warm median 524.747 ms → 517.419 ms, import cycles 0, structural count 249 → 248.
+  - **Blocked By:** `T-A10`; may proceed independently of `T-A11`
 
 ### Housekeeping
 

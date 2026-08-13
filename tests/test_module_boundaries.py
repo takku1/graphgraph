@@ -5,7 +5,6 @@ import unittest
 
 class ServiceDomainBoundaryTest(unittest.TestCase):
     def test_retrieval_orchestrator_uses_explicit_stage_modules(self) -> None:
-        from importlib import import_module
         from pathlib import Path
 
         from graphgraph.retrieval import context
@@ -13,20 +12,12 @@ class ServiceDomainBoundaryTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "retrieval"
         context_source = (root / "context.py").read_text(encoding="utf-8")
 
-        stages = {
-            "anchors": context.anchors,
-            "document_status": context.document_status,
-            "expansion": context.expansion,
-            "facets": context.facet_stage,
-            "quality": context.quality,
-            "reservations": context.reservations,
-            "scoping": context.scoping,
-            "search": context.search,
-            "test_recommendations": context.test_recommendations,
-        }
-        for stage, module in stages.items():
-            self.assertIs(module, import_module(f"graphgraph.retrieval.{stage}"))
-            self.assertNotIn(f"from .{stage} import (", context_source)
+        phases = ("request_feasibility", "anchor_search", "result_assembly")
+        for phase in phases:
+            self.assertIn(f"from .{phase} import", context_source)
+        for old_stage in ("anchors", "document_status", "expansion", "facets", "quality", "reservations", "scoping", "search"):
+            self.assertNotIn(f"from .{old_stage} import", context_source)
+            self.assertFalse(hasattr(context, old_stage))
         self.assertFalse(hasattr(context, "apply_shape_budget"))
         self.assertFalse(hasattr(context, "expand_context"))
 
