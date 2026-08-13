@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -27,6 +29,7 @@ from baseline import (  # noqa: E402
     telemetry_contradiction,
 )
 from evidence_logger import log_event  # noqa: E402
+from hypothesis_runner import ERROR, _bash, evaluate_hypothesis  # noqa: E402
 
 # --- direction resolution ---------------------------------------------------
 
@@ -209,3 +212,30 @@ def test_find_baseline_survives_torn_line(tmp_path):
 def test_log_event_rejects_invalid_stage(tmp_path):
     with pytest.raises(ValueError):
         log_event("comp", "measurement", {}, evidence_stage="Vibes", log_dir=str(tmp_path))
+
+
+def test_bash_probe_rejects_a_launcher_without_a_working_shell():
+    failed = subprocess.CompletedProcess(["bash", "--version"], 1, "", "no /bin/bash")
+    with patch("hypothesis_runner.shutil.which", return_value="bash"), patch(
+        "hypothesis_runner.subprocess.run", return_value=failed
+    ):
+        assert _bash() is None
+
+
+def test_missing_shell_is_harness_error_not_product_revert(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    component = tmp_path / "components" / "demo"
+    component.mkdir(parents=True)
+    (component / "checks.sh").write_text("exit 0\n", encoding="utf-8")
+    (component / "measure.sh").write_text("exit 0\n", encoding="utf-8")
+
+    with patch("hypothesis_runner._bash", return_value=None):
+        code, reason = evaluate_hypothesis(
+            "demo",
+            "hypothesis/demo",
+            log_dir=str(tmp_path / ".measure"),
+        )
+
+    assert code == ERROR
+    assert reason == "checks.sh instrument error"
+    assert not (tmp_path / ".measure" / "demo" / "log.jsonl").exists()

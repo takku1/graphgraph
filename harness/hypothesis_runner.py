@@ -42,10 +42,23 @@ from baseline import (  # noqa: E402
 from evidence_logger import log_event  # noqa: E402
 
 KEEP, REVERT, ERROR = 0, 1, 2
+_INSTRUMENT_EXIT_CODES = frozenset({126, 127})
 
 
 def _bash() -> Optional[str]:
-    return shutil.which("bash")
+    candidate = shutil.which("bash")
+    if candidate is None:
+        return None
+    try:
+        probe = subprocess.run(
+            [candidate, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return candidate if probe.returncode == 0 else None
 
 
 def run_script(script_path: str, component: str, timeout: int = 300) -> Tuple[int, str, str]:
@@ -103,6 +116,9 @@ def evaluate_hypothesis(
     code, out, err = run_script(checks_path, component)
     if code != 0:
         detail = (err or out).strip()
+        if code in _INSTRUMENT_EXIT_CODES:
+            print(f"[ERROR] checks.sh instrument unavailable (exit {code})\n{detail}")
+            return ERROR, "checks.sh instrument error"
         print(f"[REVERT] checks.sh FAILED (exit {code})\n{detail}")
         record("decision", {}, "Refuted", "revert", f"checks.sh failed (exit {code})")
         return REVERT, "checks.sh failed"
@@ -112,6 +128,9 @@ def evaluate_hypothesis(
     code, out, err = run_script(measure_path, component)
     if code != 0:
         detail = (err or out).strip()
+        if code in _INSTRUMENT_EXIT_CODES:
+            print(f"[ERROR] measure.sh instrument unavailable (exit {code})\n{detail}")
+            return ERROR, "measure.sh instrument error"
         print(f"[REVERT] measure.sh FAILED (exit {code})\n{detail}")
         record("decision", {}, "Refuted", "revert", f"measure.sh failed (exit {code})")
         return REVERT, "measure.sh failed"
