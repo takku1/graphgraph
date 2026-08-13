@@ -421,6 +421,58 @@ class McpProjectStatusTest(unittest.TestCase):
             after = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
             self.assertNotIn("build/junk.py", after["changed_paths"])
 
+    def test_commit_after_scan_reports_stale_until_every_changed_path_is_refreshed(self) -> None:
+        """A clean worktree is not evidence that the saved graph matches HEAD."""
+        from graphgraph.services.lifecycle import (
+            scan_validated_graph,
+            update_paths_validated_graph,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+
+            def git(*args: str) -> None:
+                subprocess.run(("git", *args), cwd=root, capture_output=True, check=True)
+
+            git("init", "-q", ".")
+            (root / "a.py").write_text("VALUE = 1\n", encoding="utf-8")
+            (root / "b.py").write_text("VALUE = 2\n", encoding="utf-8")
+            git("add", "a.py", "b.py")
+            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "initial")
+
+            graph_path = root / ".graphgraph" / "graph.gg"
+            scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+
+            (root / "a.py").write_text("VALUE = 10\n", encoding="utf-8")
+            (root / "b.py").write_text("VALUE = 20\n", encoding="utf-8")
+            git("add", "a.py", "b.py")
+            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "change")
+
+            stale = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
+            self.assertFalse(stale["fresh"])
+            self.assertEqual(stale["changed_paths"], ["a.py", "b.py"])
+
+            update_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=["a.py"],
+                depth="symbols",
+            )
+            partial = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
+            self.assertFalse(partial["fresh"])
+            self.assertEqual(partial["changed_paths"], ["b.py"])
+
+            update_paths_validated_graph(
+                directory=root,
+                output_path=graph_path,
+                paths=["b.py"],
+                depth="symbols",
+            )
+            current = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
+            self.assertTrue(current["fresh"])
+            self.assertEqual(current["changed_paths"], [])
+
     def test_member_call_staleness_fires_only_after_an_incremental_scan(self) -> None:
         # The STALE note exists because incremental scans copy the global
         # member-call counts across untouched, so a resolver change reads as

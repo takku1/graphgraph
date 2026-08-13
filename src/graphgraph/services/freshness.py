@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..io import project_root_for_graph
-from ..retrieval.git_utils import get_git_tracked_changed_paths, get_git_worktree_paths
+from ..retrieval.git_utils import (
+    get_git_head_revision,
+    get_git_revision_paths,
+    get_git_tracked_changed_paths,
+    get_git_worktree_paths,
+)
 from ..runtime.manifest import Manifest, compute_file_hash
 from .lifecycle import GraphBuildStatus, _worktree_sync_candidate, manifest_path_for_graph
 
@@ -27,8 +32,21 @@ def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict
     if directory == Path("."):
         directory = project_root_for_graph(output_path)
     directory = source_root_for_saved_graph(output_path, fallback=directory)
-    changed, deleted = get_git_worktree_paths(directory)
     manifest = Manifest.load(manifest_path_for_graph(output_path))
+    worktree_changed, worktree_deleted = get_git_worktree_paths(directory)
+    current_revision = get_git_head_revision(directory)
+    revision_paths: tuple[tuple[str, ...], tuple[str, ...]] | None = ((), ())
+    provenance_compatible = True
+    if current_revision is not None:
+        if not manifest.source_revision:
+            provenance_compatible = False
+            revision_paths = None
+        elif manifest.source_revision != current_revision:
+            revision_paths = get_git_revision_paths(manifest.source_revision, directory)
+            provenance_compatible = revision_paths is not None
+    committed_changed, committed_deleted = revision_paths or ((), ())
+    changed = tuple(sorted(set(worktree_changed) | set(committed_changed)))
+    deleted = tuple(sorted(set(worktree_deleted) | set(committed_deleted)))
     # Ignore rules apply to untracked candidates only. A tracked file that is
     # also listed in .gitignore still reports its edits to Git, so filtering
     # it out here left the graph stale while freshness reported clean. The
@@ -57,13 +75,21 @@ def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict
     ]
     extractor_compatible = manifest.compatible
     return {
-        "fresh": not stale_changed and not stale_deleted and extractor_compatible,
+        "fresh": (
+            not stale_changed
+            and not stale_deleted
+            and extractor_compatible
+            and provenance_compatible
+        ),
         "changed_count": len(stale_changed),
         "deleted_count": len(stale_deleted),
         "changed_paths": stale_changed[:20],
         "deleted_paths": stale_deleted[:20],
         "measured_at": manifest.updated_at or "unknown",
         "extractor_compatible": extractor_compatible,
+        "provenance_compatible": provenance_compatible,
+        "source_revision": manifest.source_revision[:12] or "unknown",
+        "current_revision": current_revision[:12] if current_revision else "non-git",
         "extractor_identity": (
             manifest.extractor_fingerprint[:12]
             if manifest.extractor_fingerprint
@@ -119,7 +145,10 @@ def classify_freshness(freshness: dict[str, object], *, scoped: bool = False) ->
     happened to fall outside the query's scope -- hiding the one condition that
     a refresh cannot repair and only a rebuild can.
     """
-    if not freshness.get("extractor_compatible", True):
+    if (
+        not freshness.get("extractor_compatible", True)
+        or not freshness.get("provenance_compatible", True)
+    ):
         return "incompatible"
     key = "requested_scope_fresh" if scoped else "fresh"
     return "fresh" if freshness.get(key) else "stale"

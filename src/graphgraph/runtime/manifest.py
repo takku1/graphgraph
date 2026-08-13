@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-MANIFEST_VERSION = 4
+MANIFEST_VERSION = 5
 
 #: path -> ((mtime_ns, size), parsed payload). The manifest is whole-repo
 #: state, so it grows with the corpus and is re-read on every incremental
@@ -76,6 +76,7 @@ class Manifest:
         self.files = data.get("files", {}) if data else {}
         self.version = int(data.get("version", 0)) if data is not None else MANIFEST_VERSION
         self.source_root = str(data.get("source_root", "")) if data else ""
+        self.source_revision = str(data.get("source_revision", "")) if data else ""
         self.extractor_fingerprint = (
             str(data.get("extractor_fingerprint", "")) if data
             else extractor_fingerprint()
@@ -133,6 +134,7 @@ class Manifest:
         data = {
             "version": MANIFEST_VERSION,
             "source_root": self.source_root,
+            "source_revision": self.source_revision,
             "extractor_fingerprint": self.extractor_fingerprint,
             "updated_at": self.updated_at,
             "type_index": self.type_index,

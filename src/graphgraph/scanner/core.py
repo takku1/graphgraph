@@ -223,6 +223,11 @@ def scan_directory(
     below skip that discovery entirely and are much cheaper on large repos.
     """
     root = root.resolve()
+    # Capture provenance before discovery. If HEAD moves during the scan, the
+    # next freshness check compares from this revision and re-hashes every
+    # committed candidate instead of blessing a mixed snapshot as current.
+    from ..retrieval.git_utils import get_git_head_revision
+    source_revision = get_git_head_revision(root) or ""
     scan_started = time.perf_counter()
     extra_skip = frozenset(skip_dirs) if skip_dirs else frozenset()
     include_set = frozenset(include) if include else frozenset()
@@ -363,6 +368,7 @@ def scan_directory(
         python_type_context=python_type_context,
         type_index_data=type_index_data,
         progress=progress,
+        source_revision=source_revision,
     )
     build_ms = (time.perf_counter() - build_started) * 1000.0
     total_ms = (time.perf_counter() - scan_started) * 1000.0
@@ -1134,6 +1140,7 @@ def _persist_scan_manifest(
     manifest_path: Path | None,
     manifest_sink: list | None,
     progress: ScanProgress | None,
+    source_revision: str | None,
 ) -> None:
     """Record per-file node/edge ownership into the manifest for dirty files.
 
@@ -1193,6 +1200,12 @@ def _persist_scan_manifest(
     manifest.type_index = type_index_data
     if manifest_path is not None:
         manifest.source_root = str(root)
+        # Targeted updates retain the last full-discovery revision. Its
+        # cumulative Git diff remains the candidate oracle, while content
+        # hashes discard paths that have already been refreshed. Advancing it
+        # for a subset would hide committed siblings omitted from that update.
+        if source_revision is not None:
+            manifest.source_revision = source_revision
         if manifest_sink is not None:
             # Defer the write so the lifecycle can commit the manifest only
             # after the graph is durably persisted. Writing it here left the
@@ -1234,6 +1247,7 @@ def _build_graph_from_split(
     type_index_data: dict | None = None,
     progress: ScanProgress | None = None,
     manifest_sink: list | None = None,
+    source_revision: str | None = None,
 ) -> Graph:
     """Shared body: given a dirty/skip split (however it was determined),
     build the resulting Graph. Used by both the full-discovery
@@ -1660,6 +1674,7 @@ def _build_graph_from_split(
             manifest_path=manifest_path,
             manifest_sink=manifest_sink,
             progress=progress,
+            source_revision=source_revision,
         )
 
     # Edge confidence is epistemic: it records how trustworthy the extraction

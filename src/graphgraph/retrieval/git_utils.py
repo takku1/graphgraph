@@ -21,6 +21,111 @@ _git_diff_cache: dict[Path, tuple[float, dict[str, int]]] = {}
 _git_path_cache: dict[Path, tuple[float, tuple[tuple[str, ...], tuple[str, ...]]]] = {}
 _git_ignore_cache: dict[tuple[Path, tuple[str, ...]], tuple[float, tuple[str, ...]]] = {}
 _git_tracked_cache: dict[Path, tuple[float, tuple[str, ...]]] = {}
+_git_revision_path_cache: dict[
+    tuple[Path, str, str],
+    tuple[float, tuple[tuple[str, ...], tuple[str, ...]] | None],
+] = {}
+
+
+def _parse_name_status(payload: bytes) -> tuple[set[str], set[str], set[str]]:
+    """Parse ``git diff --name-status -z`` without losing rename origins."""
+    changed: set[str] = set()
+    deleted: set[str] = set()
+    tracked: set[str] = set()
+    fields = payload.decode("utf-8", errors="replace").split("\0")
+    index = 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        index += 1
+        code = status[:1]
+        if code in {"R", "C"} and index + 1 < len(fields):
+            old_path = fields[index].replace("\\", "/")
+            new_path = fields[index + 1].replace("\\", "/")
+            index += 2
+            changed.add(new_path)
+            tracked.add(new_path)
+            if code == "R":
+                deleted.add(old_path)
+            continue
+        if index >= len(fields):
+            break
+        path = fields[index].replace("\\", "/")
+        index += 1
+        if code == "D":
+            deleted.add(path)
+        else:
+            changed.add(path)
+            tracked.add(path)
+    return changed, deleted, tracked
+
+
+def get_git_head_revision(start: Path | None = None) -> str | None:
+    """Return the repository's current commit, or ``None`` outside usable Git."""
+    git_root = _find_git_root(start or Path.cwd())
+    if git_root is None:
+        return None
+    revision: str | None = None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=1.5,
+            cwd=git_root,
+        )
+        if result.returncode == 0:
+            candidate = result.stdout.strip()
+            if candidate:
+                revision = candidate
+    except Exception:
+        logger.debug("git HEAD lookup failed; revision freshness unavailable", exc_info=True)
+    return revision
+
+
+def get_git_revision_paths(
+    revision: str,
+    start: Path | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    """Return committed changed/deleted paths from *revision* to current HEAD.
+
+    ``None`` is deliberately distinct from an empty pair: it means Git could
+    not prove the comparison (for example after history was rewritten), so a
+    caller must not report an old graph as fresh.
+    """
+    git_root = _find_git_root(start or Path.cwd())
+    if git_root is None or not revision:
+        return None
+    head = get_git_head_revision(start)
+    if head is None:
+        return None
+    cache_key = (git_root, revision, head)
+    now = time.monotonic()
+    cached = _git_revision_path_cache.get(cache_key)
+    if cached is not None and now - cached[0] < _GIT_DIFF_CACHE_TTL_SECONDS:
+        return cached[1]
+    value: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+    try:
+        result = subprocess.run(
+            [
+                "git", "diff", "--name-status", "-z", "--find-renames",
+                revision, head,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2.0,
+            cwd=git_root,
+        )
+        if result.returncode == 0:
+            changed, deleted, _tracked = _parse_name_status(result.stdout)
+            value = (
+                tuple(sorted(changed - deleted)),
+                tuple(sorted(deleted)),
+            )
+    except Exception:
+        logger.debug("git revision diff failed; graph freshness is unproven", exc_info=True)
+    _git_revision_path_cache[cache_key] = (now, value)
+    return value
 
 
 def get_git_modified_files(start: Path | None = None) -> dict[str, int]:
@@ -104,30 +209,7 @@ def get_git_worktree_paths(start: Path | None = None) -> tuple[tuple[str, ...], 
             cwd=git_root,
         )
         if result.returncode == 0:
-            fields = result.stdout.decode("utf-8", errors="replace").split("\0")
-            index = 0
-            while index < len(fields) and fields[index]:
-                status = fields[index]
-                index += 1
-                code = status[:1]
-                if code in {"R", "C"} and index + 1 < len(fields):
-                    old_path = fields[index].replace("\\", "/")
-                    new_path = fields[index + 1].replace("\\", "/")
-                    index += 2
-                    changed.add(new_path)
-                    tracked.add(new_path)
-                    if code == "R":
-                        deleted.add(old_path)
-                    continue
-                if index >= len(fields):
-                    break
-                path = fields[index].replace("\\", "/")
-                index += 1
-                if code == "D":
-                    deleted.add(path)
-                else:
-                    changed.add(path)
-                    tracked.add(path)
+            changed, deleted, tracked = _parse_name_status(result.stdout)
 
         untracked = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
