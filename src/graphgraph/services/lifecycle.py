@@ -380,6 +380,7 @@ def refresh_saved_graph(
     current_graph = load_any(output_path)
     changed = list(dict.fromkeys(changed_paths or ()))
     deleted = list(dict.fromkeys(deleted_paths or ()))
+    sync_head_revision: str | None = None
 
     if sync_git:
         manifest = Manifest.load(manifest_path_for_graph(output_path))
@@ -405,8 +406,8 @@ def refresh_saved_graph(
         committed_changed: tuple[str, ...] = ()
         from ..retrieval.git_utils import get_git_head_revision
 
-        head_revision = get_git_head_revision(directory)
-        if head_revision is not None and current_revision != head_revision:
+        sync_head_revision = get_git_head_revision(directory)
+        if sync_head_revision is not None and current_revision != sync_head_revision:
             revision_paths = get_git_revision_paths(current_revision, directory)
             if revision_paths is not None:
                 committed_changed = revision_paths[0]
@@ -444,6 +445,10 @@ def refresh_saved_graph(
     changed = list(dict.fromkeys(path for path in changed if path not in deleted))
     deleted = list(dict.fromkeys(deleted))
     if not changed and not deleted:
+        if sync_head_revision is not None:
+            manifest = Manifest.load(manifest_path_for_graph(output_path))
+            manifest.source_revision = sync_head_revision
+            manifest.save(manifest_path_for_graph(output_path))
         return GraphBuildStatus(output_path, current_graph, built=False)
 
     metadata = current_graph.metadata
@@ -453,7 +458,7 @@ def refresh_saved_graph(
         resolved_frontend = "auto"
     resolved_docs = docs if docs is not None else metadata.get("docs") == "true"
     resolved_history = history if history is not None else metadata.get("history") == "true"
-    return update_paths_validated_graph(
+    status = update_paths_validated_graph(
         directory=directory,
         output_path=output_path,
         paths=changed,
@@ -465,6 +470,16 @@ def refresh_saved_graph(
         history=resolved_history,
         previous_graph=current_graph,
     )
+    if sync_head_revision is not None:
+        # A Git sync considers the complete committed+worktree candidate set.
+        # Once every stale hash has been updated or removed, advancing the
+        # provenance anchor is safe and prevents every later query from
+        # re-diffing the entire history since the last full scan. A crash before
+        # this atomic manifest save leaves the older, conservative anchor.
+        manifest = Manifest.load(manifest_path_for_graph(output_path))
+        manifest.source_revision = sync_head_revision
+        manifest.save(manifest_path_for_graph(output_path))
+    return status
 
 
 def remove_paths_validated_graph(

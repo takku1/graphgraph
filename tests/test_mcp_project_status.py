@@ -483,6 +483,18 @@ class McpProjectStatusTest(unittest.TestCase):
                 sync_git=True,
             )
             self.assertEqual(synced.changed_paths, ("a.py",))
+            from graphgraph.runtime.manifest import Manifest
+            from graphgraph.services.lifecycle import manifest_path_for_graph
+
+            manifest = Manifest.load(manifest_path_for_graph(graph_path))
+            head = subprocess.run(
+                ("git", "rev-parse", "HEAD"),
+                cwd=root,
+                capture_output=True,
+                check=True,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(manifest.source_revision, head)
             self.assertTrue(
                 inspect_saved_graph_freshness(directory=root, output_path=graph_path)["fresh"]
             )
