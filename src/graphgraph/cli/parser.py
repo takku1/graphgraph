@@ -2,11 +2,10 @@ import argparse
 
 from ..packet_targets import TARGET_NAMES
 
-# Every name below comes from `graphgraph.surface`, which imports nothing.
-# Reading them from their defining modules loaded the packet renderers, the
-# planner, the platform stack, and the scanner (and through it `pathspec` and
-# `asyncio`) before argparse had seen a single argument. See `surface` for the
-# drift test that keeps the copies honest.
+# Every name below comes from the import-free `graphgraph.surface` authority.
+# Reading through runtime owners would load the packet renderers, planner,
+# platform stack, and scanner (and through it `pathspec` and `asyncio`) before
+# argparse had seen a single argument.
 from ..surface import (
     DEFAULT_SCAN_MAX_NODES,
     QUERY_CLASS_NAMES,

@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..surface import QUERY_CLASS_NAMES
 from .budgets import explicit_query_identifiers, plan_terms
 
 ROUTER_VERSION = "query_router_v5_path_intent_equivalence"
@@ -82,9 +83,6 @@ QUERY_CLASSES: tuple[QueryClassSpec, ...] = (
     QueryClassSpec("recent_changes", "Retrieve qualifying recent history and fixes evidence."),
     QueryClassSpec("spreading_activation", "Use explicit multi-step activation retrieval.", automatic=False),
 )
-QUERY_CLASS_NAMES: tuple[str, ...] = tuple(spec.name for spec in QUERY_CLASSES)
-
-
 def query_class_schema(
     *,
     include_auto: bool = False,

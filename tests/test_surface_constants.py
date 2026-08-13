@@ -11,12 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SurfaceConstantsTest(unittest.TestCase):
-    """`graphgraph.surface` duplicates names so the parser can skip subsystems.
+    """`graphgraph.surface` owns names so the parser can skip subsystems.
 
-    The duplication is deliberate and only safe while it is checked: if a packet
-    format, query class, representation policy, or compiler pass is added to its
-    defining module and not mirrored here, the CLI would silently stop offering
-    it.
+    Runtime owners consume the same cold catalog objects as the parser, so a
+    transport-visible name or default cannot drift behind a mirrored tuple.
     """
 
     def _documented_pretty_range(self, command: str) -> tuple[float, float]:
@@ -104,22 +102,22 @@ class SurfaceConstantsTest(unittest.TestCase):
     def test_query_class_names_match(self) -> None:
         from graphgraph.planning import QUERY_CLASS_NAMES
 
-        self.assertEqual(surface.QUERY_CLASS_NAMES, QUERY_CLASS_NAMES)
+        self.assertIs(surface.QUERY_CLASS_NAMES, QUERY_CLASS_NAMES)
 
     def test_representation_names_match(self) -> None:
         from graphgraph.representation import REPRESENTATION_NAMES
 
-        self.assertEqual(surface.REPRESENTATION_NAMES, REPRESENTATION_NAMES)
+        self.assertIs(surface.REPRESENTATION_NAMES, REPRESENTATION_NAMES)
 
     def test_compiler_pass_names_match(self) -> None:
         from graphgraph.platform import COMPILER_PASS_NAMES
 
-        self.assertEqual(surface.COMPILER_PASS_NAMES, COMPILER_PASS_NAMES)
+        self.assertIs(surface.COMPILER_PASS_NAMES, COMPILER_PASS_NAMES)
 
     def test_default_scan_max_nodes_matches(self) -> None:
         from graphgraph.scanner.files import DEFAULT_SCAN_MAX_NODES
 
-        self.assertEqual(surface.DEFAULT_SCAN_MAX_NODES, DEFAULT_SCAN_MAX_NODES)
+        self.assertIs(surface.DEFAULT_SCAN_MAX_NODES, DEFAULT_SCAN_MAX_NODES)
 
 
 class ParserImportWeightTest(unittest.TestCase):

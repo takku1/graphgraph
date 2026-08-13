@@ -34,6 +34,7 @@ from ..retrieval import (
     search_nodes,
 )
 from ..runtime.cache import activation_state_file_for_graph
+from ..surface import COMPILER_PASS_NAMES
 from .artifacts import (
     GRAPH_ARTIFACTS,
     GRAPH_EDGES,
@@ -226,9 +227,6 @@ BUILTIN_COMPILER_PASSES: tuple[CompilerPass, ...] = (
 COMPILER_PASSES: tuple[CompilerPassSpec, ...] = tuple(
     compiler_pass.spec for compiler_pass in BUILTIN_COMPILER_PASSES
 )
-COMPILER_PASS_NAMES: tuple[str, ...] = tuple(spec.name for spec in COMPILER_PASSES)
-
-
 def compiler_pass_table() -> tuple[dict[str, object], ...]:
     """Serializable pass contracts for diagnostic and transport surfaces."""
     return tuple(asdict(spec) for spec in COMPILER_PASSES)

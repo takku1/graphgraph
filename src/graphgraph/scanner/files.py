@@ -8,6 +8,8 @@ from pathlib import Path
 
 from pathspec import GitIgnoreSpec
 
+from ..surface import DEFAULT_SCAN_MAX_NODES as DEFAULT_SCAN_MAX_NODES
+
 
 @dataclass(frozen=True)
 class CollectFilesResult:
@@ -19,16 +21,6 @@ class CollectFilesResult:
     rule_pruned_dirs: tuple[str, ...] = ()
     default_pruned_dirs: tuple[str, ...] = ()
 
-
-# Single source of truth for the file/symbol collection cap. Previously
-# hardcoded independently in cli/parser.py (4x), mcp/server.py (3x), and
-# every max_nodes=N default across scanner/core.py and services/lifecycle.py --
-# they drifted out of sync more than once (found via three separate bugs in
-# one session: query --show-stats missing on MCP, validate_packet unable to
-# check a graph file, and this literal value inconsistent across surfaces).
-# Every caller should reference this constant instead of restating the
-# number, so raising/lowering the default is a one-line change.
-DEFAULT_SCAN_MAX_NODES = 5000
 
 SKIP_DIRS = frozenset({
     ".git", ".svn", ".hg",

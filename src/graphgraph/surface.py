@@ -7,16 +7,15 @@ print `--help`: the scanner pulled in `pathspec`, which pulls in `asyncio`, for
 a command that touches no files. That put roughly 200 ms of subsystem import in
 front of every single CLI invocation.
 
-This module has no imports at all, so the parser can read the remaining names
-whose defining subsystems do not yet expose a cold catalog for the cost of one
-`.pyc`. `tests/test_surface_constants.py` fails if a compatibility copy drifts.
-Packet targets are intentionally absent: their complete cold catalog is the
-single authority in `graphgraph.packet_targets`.
+This module has no imports at all, so both the parser and runtime owners can
+read their shared transport contract for the cost of one `.pyc`. Packet targets
+are intentionally absent: their complete cold catalog is the single authority
+in `graphgraph.packet_targets`.
 """
 
 from __future__ import annotations
 
-#: Mirrors `graphgraph.planning.routing.QUERY_CLASS_NAMES`.
+#: Query classes exposed by planning and transport interfaces.
 QUERY_CLASS_NAMES: tuple[str, ...] = (
     "direct_lookup",
     "reverse_lookup",
@@ -30,7 +29,7 @@ QUERY_CLASS_NAMES: tuple[str, ...] = (
     "spreading_activation",
 )
 
-#: Mirrors `graphgraph.representation.REPRESENTATION_NAMES`.
+#: Representation policies exposed by compilers and transport interfaces.
 REPRESENTATION_NAMES: tuple[str, ...] = ("flat", "hybrid")
 
 #: The single source for how the representation policy is described to a
@@ -45,10 +44,10 @@ REPRESENTATION_DESCRIPTION: str = (
     "represents the remaining active project through aggregate path cells."
 )
 
-#: Mirrors `graphgraph.platform.COMPILER_PASS_NAMES`.
+#: Compiler passes exposed by the platform and transport interfaces.
 COMPILER_PASS_NAMES: tuple[str, ...] = ("evidence", "inference", "hierarchy")
 
-#: Mirrors `graphgraph.scanner.files.DEFAULT_SCAN_MAX_NODES`.
+#: Default file/symbol collection cap shared by scanner and transport callers.
 DEFAULT_SCAN_MAX_NODES: int = 5000
 
 __all__ = [
