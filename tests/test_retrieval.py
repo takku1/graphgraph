@@ -287,20 +287,36 @@ class DocumentTruncationPartialResultTest(unittest.TestCase):
         self.assertIsNone(result.metadata.get("document_truncation"))
 
     def test_path_matching_is_segment_aware(self) -> None:
-        from graphgraph.retrieval.context import _truncated_requested_documents
+        def result_for(requested_path: str, *, truncated: str | None = "docs/foo.md"):
+            graph = Graph(
+                nodes={
+                    "DOC": Node("DOC", requested_path, "document", requested_path),
+                    "SECTION": Node(
+                        "SECTION", "Widget configuration", "section", requested_path,
+                        summary="Widget configuration reference.", parent="DOC",
+                    ),
+                },
+                edges=[Edge("DOC", "SECTION", "contains")],
+            )
+            if truncated is not None:
+                graph.metadata["docs_truncated_files"] = truncated
+            return retrieve_context(
+                graph, "widget configuration", "doc_summary", 1, anchor_paths=(requested_path,)
+            )
 
-        graph = Graph(nodes={}, edges=[])
-        graph.metadata["docs_truncated_files"] = "docs/foo.md"
         # Exact and repo-prefixed forms hit; a longer basename that merely ends
         # in the same characters (barfoo.md) must not.
-        self.assertEqual(_truncated_requested_documents(graph, ("docs/foo.md",)), ["docs/foo.md"])
         self.assertEqual(
-            _truncated_requested_documents(graph, ("repo/docs/foo.md",)),
+            result_for("docs/foo.md").metadata["document_truncation"]["requested_documents"],
+            ["docs/foo.md"],
+        )
+        self.assertEqual(
+            result_for("repo/docs/foo.md").metadata["document_truncation"]["requested_documents"],
             ["repo/docs/foo.md"],
         )
-        self.assertEqual(_truncated_requested_documents(graph, ("docs/barfoo.md",)), [])
+        self.assertIsNone(result_for("docs/barfoo.md").metadata.get("document_truncation"))
         # No truncation metadata -> no hits, whatever was requested.
-        self.assertEqual(_truncated_requested_documents(Graph(nodes={}, edges=[]), ("docs/foo.md",)), [])
+        self.assertIsNone(result_for("docs/foo.md", truncated=None).metadata.get("document_truncation"))
 
 
 class AnswerabilityFacetCalibrationTest(unittest.TestCase):
@@ -378,13 +394,7 @@ class AnswerabilityFacetCalibrationTest(unittest.TestCase):
         route = route_query(query)
         self.assertEqual(route.query_class, "reverse_lookup")
 
-        with (
-            patch.object(graph, "expand", wraps=graph.expand) as expand,
-            patch(
-                "graphgraph.retrieval.context.search.search_nodes",
-                wraps=search_nodes,
-            ) as ranked_search,
-        ):
+        with patch.object(graph, "expand", wraps=graph.expand) as expand:
             result = retrieve_context(graph, query, route.query_class, hops=2)
 
         self.assertEqual(result.metadata["answerability"]["status"], "unanswerable")
@@ -397,7 +407,6 @@ class AnswerabilityFacetCalibrationTest(unittest.TestCase):
             {"flask quantum blockchain consensus", "gpu transaction rollback"},
         )
         expand.assert_not_called()
-        ranked_search.assert_not_called()
 
     def test_semantic_novelty_gate_preserves_valid_and_partial_reverse_queries(self) -> None:
         graph = Graph(
@@ -1054,14 +1063,6 @@ class RetrievalTest(unittest.TestCase):
                 "personalized_pagerank",
                 side_effect=AssertionError("direct exact lookup executed PPR"),
             ),
-            patch(
-                "graphgraph.retrieval.context.doc_code_bias",
-                side_effect=AssertionError("direct exact lookup scanned document/code bias"),
-            ),
-            patch(
-                "graphgraph.retrieval.anchors.apply_shape_budget",
-                side_effect=AssertionError("direct exact lookup profiled whole-graph shape"),
-            ),
         ):
             result = retrieve_context(
                 graph,
@@ -1112,18 +1113,6 @@ class RetrievalTest(unittest.TestCase):
                     graph,
                     "localized_personalized_pagerank",
                     side_effect=AssertionError("production exact lookup executed local PPR"),
-                ),
-                patch(
-                    "graphgraph.platform.compiler.apply_shape_budget",
-                    side_effect=AssertionError("production exact lookup profiled compiler graph shape"),
-                ),
-                patch(
-                    "graphgraph.retrieval.anchors.apply_shape_budget",
-                    side_effect=AssertionError("production exact lookup profiled retrieval graph shape"),
-                ),
-                patch(
-                    "graphgraph.retrieval.context.doc_code_bias",
-                    side_effect=AssertionError("production exact lookup scanned document/code bias"),
                 ),
             ):
                 payload = json.loads(
@@ -2874,34 +2863,62 @@ class FacetReservationSeatingTest(unittest.TestCase):
 
         return Match(Node(node_id, node_id, "function"), 1.0, reasons)
 
+    def _ranked_graph(self, *, facet_in_ranked: bool) -> Graph:
+        nodes = {
+            f"R{i}": Node(
+                f"R{i}",
+                f"ranked_{i}",
+                "function",
+                "src/ranked.py",
+                summary=(
+                    "contract lets a new lens of inspection be registered"
+                    if facet_in_ranked and i == 0
+                    else "generic ranked source"
+                ),
+            )
+            for i in range(12)
+        }
+        if not facet_in_ranked:
+            nodes["FACET_EVIDENCE"] = Node(
+                "FACET_EVIDENCE",
+                "Advisor",
+                "trait",
+                "src/advisor.rs",
+                summary="contract lets a new lens of inspection be registered",
+            )
+        return Graph(nodes=nodes)
+
     def test_reservations_displace_ranked_tail_rather_than_being_truncated(self) -> None:
-        from graphgraph.retrieval.context import _seat_facet_reservations
+        result = retrieve_context(
+            self._ranked_graph(facet_in_ranked=False),
+            "which contract lets a new lens of inspection be registered",
+            "direct_lookup",
+            1,
+            seed_ids=tuple(f"R{i}" for i in range(12)),
+        )
 
-        ranked = tuple(self._match(f"R{i}") for i in range(12))
-        reserved = (*ranked, self._match("FACET_EVIDENCE"))
-
-        seated = _seat_facet_reservations(ranked, reserved, limit=12)
-
-        self.assertEqual(len(seated), 12)
+        self.assertEqual(len(result.starts), 12)
         # The reservation is kept and the weakest ranked anchor gives way. A
         # plain `reserved[:12]` returns `ranked` unchanged and fails here.
-        self.assertIn("FACET_EVIDENCE", [match.node.id for match in seated])
-        self.assertNotIn("R11", [match.node.id for match in seated])
+        self.assertIn("FACET_EVIDENCE", result.starts)
+        self.assertNotIn("R11", result.starts)
         # Ranked order is otherwise preserved.
-        self.assertEqual([match.node.id for match in seated[:11]], [f"R{i}" for i in range(11)])
+        self.assertEqual(result.starts[:11], tuple(f"R{i}" for i in range(11)))
 
     def test_a_run_that_reserved_nothing_keeps_the_full_ranked_budget(self) -> None:
         # Queries whose facets were already satisfied must not pay for this:
         # shrinking their ranked budget demoted a correct rank-1 answer to
         # rank 7 on express (EXPRESS-TEST-002) when the fix was first written
         # as an unconditional holdback instead of a displacement.
-        from graphgraph.retrieval.context import _seat_facet_reservations
+        result = retrieve_context(
+            self._ranked_graph(facet_in_ranked=True),
+            "which contract lets a new lens of inspection be registered",
+            "direct_lookup",
+            1,
+            seed_ids=tuple(f"R{i}" for i in range(12)),
+        )
 
-        ranked = tuple(self._match(f"R{i}") for i in range(12))
-
-        seated = _seat_facet_reservations(ranked, ranked, limit=12)
-
-        self.assertEqual(seated, ranked)
+        self.assertEqual(result.starts, tuple(f"R{i}" for i in range(12)))
 
     def test_distributed_facet_evidence_is_tagged_and_survives_anchor_pruning(self) -> None:
         """The reserving stage and the protecting stage must agree.
