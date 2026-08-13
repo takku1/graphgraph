@@ -108,7 +108,11 @@ def _warm_observations() -> list[dict[str, Any]]:
 
 
 def _seed_composition(observation: dict[str, Any], graph) -> tuple[int, int]:
-    kinds = [graph.nodes[node_id].kind for node_id in observation["seed_ids"] if node_id in graph.nodes]
+    kinds = [
+        graph.nodes[node_id].kind
+        for node_id in observation["seed_ids"]
+        if node_id in graph.nodes
+    ]
     code = sum(kind in CODE_KINDS for kind in kinds)
     return code, len(kinds) - code
 
@@ -146,10 +150,10 @@ def _measure(module: str) -> int:
     cold = _cold_observations()
     warm = _warm_observations()
     graph = load_any(Path(".graphgraph/graph.gg"))
-    all_observations = [*cold, *warm]
-    invalid = [item for item in all_observations if item["semantic_state"] != "current"]
-    invalid_packets = [item for item in all_observations if item["packet_valid"] is not True]
-    compositions = [_seed_composition(item, graph) for item in all_observations]
+    observations = [*cold, *warm]
+    invalid = [item for item in observations if item["semantic_state"] != "current"]
+    invalid_packets = [item for item in observations if item["packet_valid"] is not True]
+    compositions = [_seed_composition(item, graph) for item in observations]
 
     cold_p95 = _p95([item["wall_ms"] for item in cold])
     warm_p95 = _p95([item["wall_ms"] for item in warm])
@@ -165,7 +169,9 @@ def _measure(module: str) -> int:
     if warm_p95 > WARM_P95_LIMIT_MS:
         failures.append(f"warm p95 {warm_p95:.1f} ms > {WARM_P95_LIMIT_MS:.1f} ms")
     if min_code < 1 or min_prose < 1:
-        failures.append(f"semantic seed balance missing (minimum code={min_code}, prose={min_prose})")
+        failures.append(
+            f"semantic seed balance missing (minimum code={min_code}, prose={min_prose})"
+        )
     if failures:
         for failure in failures:
             print(f"[HARD GATE] {failure}", file=sys.stderr)
@@ -178,21 +184,21 @@ def _measure(module: str) -> int:
         _metric("semantic_prose_seed_min", min_prose, "seeds", "higher", "hard_gate"),
         _metric(
             "semantic_load_p95_ms",
-            round(_p95([item["load_ms"] for item in all_observations]), 3),
+            round(_p95([item["load_ms"] for item in observations]), 3),
             "ms",
             "lower",
             "observation",
         ),
         _metric(
             "semantic_embed_p95_ms",
-            round(_p95([item["embed_ms"] for item in all_observations]), 3),
+            round(_p95([item["embed_ms"] for item in observations]), 3),
             "ms",
             "lower",
             "observation",
         ),
         _metric(
             "semantic_score_p95_ms",
-            round(_p95([item["score_ms"] for item in all_observations]), 3),
+            round(_p95([item["score_ms"] for item in observations]), 3),
             "ms",
             "lower",
             "observation",

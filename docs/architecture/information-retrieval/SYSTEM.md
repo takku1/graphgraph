@@ -2,6 +2,7 @@
 
 > **Package:** `retrieval/`  
 > **Child:** [confidence-and-routing.md](./confidence-and-routing.md)  
+> **Recurspec subtree:** [Semantic Retrieval](./semantic-retrieval/SYSTEM.md)
 > **Related:** [../query-planning/SYSTEM.md](../query-planning/SYSTEM.md)
 
 ## 1. Intent

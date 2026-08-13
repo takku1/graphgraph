@@ -13,8 +13,11 @@ python -m pytest \
   tests/test_planning.py \
   tests/test_cli_mcp.py \
   tests/test_cycle5_regressions.py \
+  tests/test_retrieval_phase_characterization.py \
+  tests/test_module_boundaries.py \
   -q
 python -m pytest -q
 python -m ruff check .
+python components/maintainability/measure.py
 git diff --check
 echo "[CHECKS] ${MODULE_NAME}: PASS"
