@@ -180,6 +180,23 @@ class ScannerTest(unittest.TestCase):
             files = {path.relative_to(root).as_posix() for path in collect_files(root, 100).files}
             self.assertEqual(files, {"app.py"})
 
+    def test_collect_files_skips_generated_dot_scratch_by_default(self) -> None:
+        from graphgraph.scanner.files import collect_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scratch = root / ".scratch" / "eval-run"
+            scratch.mkdir(parents=True)
+            (scratch / "graph.gg").write_text("generated", encoding="utf-8")
+            (scratch / "receipt.json").write_text("{}", encoding="utf-8")
+            (root / "app.py").write_text("", encoding="utf-8")
+
+            result = collect_files(root, 100)
+            files = {path.relative_to(root).as_posix() for path in result.files}
+
+            self.assertEqual(files, {"app.py"})
+            self.assertEqual(result.default_pruned_dirs, (".scratch",))
+
     def test_collect_files_ignores_skip_listed_ancestor_directory_names(self) -> None:
         # Regression: the skip check used to compare against path.parts (the
         # *absolute* path), so a project checked out under e.g. ~/repos/foo

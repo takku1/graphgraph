@@ -43,7 +43,7 @@ SKIP_DIRS = frozenset({
     # own instructions and can expose local MCP configuration.
     ".agents", ".claude", ".codex", ".cursor", ".gemini",
     "archive", "archives", "vendor", "third_party", "third-party", "external",
-    "tmp", "temp", "temporary", "scratch",
+    "tmp", "temp", "temporary", "scratch", ".scratch",
     # Generated agent/run artifacts should not feed back into future answers.
     "evidence", "artifacts", ".artifacts", "run_outputs", "run-output", "run-outputs",
     # Common names for cloned/vendored external repos that should never pollute the graph

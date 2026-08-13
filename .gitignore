@@ -13,6 +13,7 @@ env/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.scratch/
 
 # graphgraph output
 .graphgraph/
