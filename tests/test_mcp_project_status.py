@@ -424,6 +424,7 @@ class McpProjectStatusTest(unittest.TestCase):
     def test_commit_after_scan_reports_stale_until_every_changed_path_is_refreshed(self) -> None:
         """A clean worktree is not evidence that the saved graph matches HEAD."""
         from graphgraph.services.lifecycle import (
+            refresh_saved_graph,
             scan_validated_graph,
             update_paths_validated_graph,
         )
@@ -472,6 +473,19 @@ class McpProjectStatusTest(unittest.TestCase):
             current = inspect_saved_graph_freshness(directory=root, output_path=graph_path)
             self.assertTrue(current["fresh"])
             self.assertEqual(current["changed_paths"], [])
+
+            (root / "a.py").write_text("VALUE = 100\n", encoding="utf-8")
+            git("add", "a.py")
+            git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "again")
+            synced = refresh_saved_graph(
+                directory=root,
+                output_path=graph_path,
+                sync_git=True,
+            )
+            self.assertEqual(synced.changed_paths, ("a.py",))
+            self.assertTrue(
+                inspect_saved_graph_freshness(directory=root, output_path=graph_path)["fresh"]
+            )
 
     def test_member_call_staleness_fires_only_after_an_incremental_scan(self) -> None:
         # The STALE note exists because incremental scans copy the global

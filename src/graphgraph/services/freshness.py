@@ -8,8 +8,8 @@ from ..io import project_root_for_graph
 from ..retrieval.git_utils import (
     get_git_head_revision,
     get_git_revision_paths,
+    get_git_sync_paths,
     get_git_tracked_changed_paths,
-    get_git_worktree_paths,
 )
 from ..runtime.manifest import Manifest, compute_file_hash
 from .lifecycle import GraphBuildStatus, _worktree_sync_candidate, manifest_path_for_graph
@@ -33,26 +33,22 @@ def inspect_saved_graph_freshness(*, directory: Path, output_path: Path) -> dict
         directory = project_root_for_graph(output_path)
     directory = source_root_for_saved_graph(output_path, fallback=directory)
     manifest = Manifest.load(manifest_path_for_graph(output_path))
-    worktree_changed, worktree_deleted = get_git_worktree_paths(directory)
     current_revision = get_git_head_revision(directory)
-    revision_paths: tuple[tuple[str, ...], tuple[str, ...]] | None = ((), ())
-    provenance_compatible = True
-    if current_revision is not None:
-        if not manifest.source_revision:
-            provenance_compatible = False
-            revision_paths = None
-        elif manifest.source_revision != current_revision:
-            revision_paths = get_git_revision_paths(manifest.source_revision, directory)
-            provenance_compatible = revision_paths is not None
-    committed_changed, committed_deleted = revision_paths or ((), ())
-    changed = tuple(sorted(set(worktree_changed) | set(committed_changed)))
-    deleted = tuple(sorted(set(worktree_deleted) | set(committed_deleted)))
+    changed, deleted, provenance_compatible = get_git_sync_paths(
+        manifest.source_revision,
+        directory,
+    )
+    committed_changed: tuple[str, ...] = ()
+    if current_revision is not None and manifest.source_revision != current_revision:
+        revision_paths = get_git_revision_paths(manifest.source_revision, directory)
+        if revision_paths is not None:
+            committed_changed = revision_paths[0]
     # Ignore rules apply to untracked candidates only. A tracked file that is
     # also listed in .gitignore still reports its edits to Git, so filtering
     # it out here left the graph stale while freshness reported clean. The
     # untracked half arrives from `ls-files --exclude-standard`, which Git has
     # already filtered, so only non-Git `.ignore` rules remain to apply.
-    tracked = set(get_git_tracked_changed_paths(directory))
+    tracked = set(get_git_tracked_changed_paths(directory)) | set(committed_changed)
     if changed:
         from ..scanner.files import path_ignored_by_rules
 

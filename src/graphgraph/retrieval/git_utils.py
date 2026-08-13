@@ -128,6 +128,37 @@ def get_git_revision_paths(
     return value
 
 
+def get_git_sync_paths(
+    source_revision: str,
+    start: Path | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...], bool]:
+    """Union worktree drift with committed drift since a saved revision.
+
+    The boolean says whether Git could prove the committed interval. A caller
+    may use an empty candidate set only when it is true; otherwise a full scan
+    is required to avoid blessing unknown history as current.
+    """
+    worktree_changed, worktree_deleted = get_git_worktree_paths(start)
+    head = get_git_head_revision(start)
+    if head is None:
+        return worktree_changed, worktree_deleted, True
+    if not source_revision:
+        return worktree_changed, worktree_deleted, False
+    revision_paths = (
+        ((), ())
+        if source_revision == head
+        else get_git_revision_paths(source_revision, start)
+    )
+    if revision_paths is None:
+        return worktree_changed, worktree_deleted, False
+    committed_changed, committed_deleted = revision_paths
+    return (
+        tuple(sorted(set(worktree_changed) | set(committed_changed))),
+        tuple(sorted(set(worktree_deleted) | set(committed_deleted))),
+        True,
+    )
+
+
 def get_git_modified_files(start: Path | None = None) -> dict[str, int]:
     """Return current worktree change counts with a short repository-local cache.
 

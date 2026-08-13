@@ -18,7 +18,9 @@ from ..io import (
 from ..packets.validation import ValidationResult, validate_graph_object
 from ..retrieval.git_utils import (
     get_git_ignored_paths,
-    get_git_worktree_paths,
+    get_git_revision_paths,
+    get_git_sync_paths,
+    get_git_tracked_changed_paths,
 )
 from ..runtime.manifest import Manifest, compute_file_hash
 from ..storage.delta import (
@@ -380,8 +382,37 @@ def refresh_saved_graph(
     deleted = list(dict.fromkeys(deleted_paths or ()))
 
     if sync_git:
-        git_changed, git_deleted = get_git_worktree_paths(directory)
         manifest = Manifest.load(manifest_path_for_graph(output_path))
+        git_changed, git_deleted, provenance_compatible = get_git_sync_paths(
+            manifest.source_revision,
+            directory,
+        )
+        if not provenance_compatible:
+            return _full_rescan_fallback(
+                directory=directory,
+                output_path=output_path,
+                max_nodes=max_nodes,
+                depth=depth or str(current_graph.metadata.get("scan_depth") or "symbols"),
+                frontend=frontend or str(current_graph.metadata.get("frontend") or "auto"),
+                docs=docs if docs is not None else current_graph.metadata.get("docs") == "true",
+                history=(
+                    history
+                    if history is not None
+                    else current_graph.metadata.get("history") == "true"
+                ),
+            )
+        current_revision = manifest.source_revision
+        committed_changed: tuple[str, ...] = ()
+        from ..retrieval.git_utils import get_git_head_revision
+
+        head_revision = get_git_head_revision(directory)
+        if head_revision is not None and current_revision != head_revision:
+            revision_paths = get_git_revision_paths(current_revision, directory)
+            if revision_paths is not None:
+                committed_changed = revision_paths[0]
+        tracked_candidates = set(get_git_tracked_changed_paths(directory)) | set(
+            committed_changed
+        )
         default_excluded = {
             rel_path for rel_path in manifest.files if not _worktree_sync_candidate(rel_path)
         }
@@ -393,7 +424,11 @@ def refresh_saved_graph(
         deleted.extend(get_git_ignored_paths(tuple(manifest.files), directory))
         deleted.extend(path for path in manifest.files if path_ignored_by_rules(directory, path))
         ignored_candidates = set(get_git_ignored_paths(git_changed, directory))
-        ignored_candidates.update(path for path in git_changed if path_ignored_by_rules(directory, path))
+        ignored_candidates.update(
+            path
+            for path in git_changed
+            if path not in tracked_candidates and path_ignored_by_rules(directory, path)
+        )
         for rel_path in git_changed:
             if rel_path in ignored_candidates or not _worktree_sync_candidate(rel_path):
                 continue

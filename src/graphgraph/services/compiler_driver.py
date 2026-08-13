@@ -173,19 +173,9 @@ def _compile_project_context(
     requested_anchor_paths = tuple(
         dict.fromkeys((*changed_paths, *status.changed_paths))
     )
-    repository_freshness = (
-        {
-            "fresh": True,
-            "changed_count": 0,
-            "deleted_count": 0,
-            "changed_paths": [],
-            "deleted_paths": [],
-        }
-        if sync_git
-        else inspect_saved_graph_freshness(
-            directory=directory,
-            output_path=status.path,
-        )
+    repository_freshness = inspect_saved_graph_freshness(
+        directory=directory,
+        output_path=status.path,
     )
     workflow_metadata = {
         "workflow": {

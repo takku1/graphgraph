@@ -1125,9 +1125,9 @@ class CliMcpTest(unittest.TestCase):
             save_graph(sample_graph(), graph_path)
             with (
                 patch(
-                    "graphgraph.services.freshness.get_git_worktree_paths",
-                    return_value=([], []),
-                ) as worktree_paths,
+                    "graphgraph.services.freshness.get_git_sync_paths",
+                    return_value=([], [], True),
+                ) as sync_paths,
                 patch(
                     "graphgraph.services.lifecycle.get_git_ignored_paths",
                     return_value=[],
@@ -1161,7 +1161,7 @@ class CliMcpTest(unittest.TestCase):
         assert response is not None
         self.assertNotIn("error", response)
         self.assertTrue(freshness["fresh"])
-        self.assertEqual(worktree_paths.call_args.args[0], project_root)
+        self.assertEqual(sync_paths.call_args.args[1], project_root)
         self.assertEqual(planner.call_args.args[0], project_root)
 
     def test_mcp_query_context_honors_hops_override(self) -> None:
@@ -1418,8 +1418,8 @@ class CliMcpTest(unittest.TestCase):
                 "show_anchors": True,
             }
             with patch(
-                "graphgraph.services.lifecycle.get_git_worktree_paths",
-                return_value=(("worker.py",), ()),
+                "graphgraph.services.lifecycle.get_git_sync_paths",
+                return_value=(("worker.py",), (), True),
             ):
                 first = dispatch(
                     {
@@ -1473,8 +1473,8 @@ class CliMcpTest(unittest.TestCase):
 
             with (
                 patch(
-                    "graphgraph.services.lifecycle.get_git_worktree_paths",
-                    return_value=((".gitignore",), ()),
+                    "graphgraph.services.lifecycle.get_git_sync_paths",
+                    return_value=((".gitignore",), (), True),
                 ),
                 patch(
                     "graphgraph.services.lifecycle.get_git_ignored_paths",
