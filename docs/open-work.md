@@ -20,7 +20,7 @@
 | OW-AC-06 | Machine-response token surface | done (2026-08-15: clamp wrapper to packet when >1.15×; NEED_CHECKER) | Response ≤1.15× evidence-packet tokens |
 | OW-AC-07 | Token estimator calibration | done | MAE ≤5%, p95 ≤10% |
 | OW-AC-08 | Latency & scale invariance | active | Packed exact relation 57.08 → 3.81 ms p50 in-process (2026-08-08); add graph-size strata and remaining phase gates |
-| OW-AC-09 | Contract & telemetry consistency | ready | Machine-readable capability identity |
+| OW-AC-09 | Contract & telemetry consistency | active (2026-08-15: `capability_identity()` + `project_status.capability.contract_id`, MCP only; CLI parity per ADR-AI-002 still open; NEED_CHECKER) | Machine-readable capability identity |
 | OW-AC-10 | Rotating held-out repository panel | active | ≥5 language/runtime strata |
 
 Receipts: [consolidated agent-cycle measurement](evaluation/graybox-cycles/README.md#instrument-and-representation-measurements).
