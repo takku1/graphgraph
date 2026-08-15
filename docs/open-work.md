@@ -17,7 +17,7 @@
 | OW-AC-03 | Conceptual / lexically disjoint retrieval | active | ≥80% full recall on conceptual tasks. 0.00 (2026-08-04) → 0.357 (doc capture) → 0.500 (T-B07 preflight fix) → **0.643 (2026-08-06, T-B08 facet-reservation seating)**; cross-repo held-out recall 0.841 → 0.886. Remaining gap is downstream ranking, not the veto |
 | OW-AC-04 | Abstention & confidence calibration | active | Red controls: unanswerable, conf ≤0.2, ≤50 real tokens. **5 of 7 conceptual misses emitted 546–1,609 tokens instead of abstaining** |
 | OW-AC-05 | Cross-language call-graph topology | active | Per-language volume + independent precision ≥98% |
-| OW-AC-06 | Machine-response token surface | ready | Response ≤1.15× evidence-packet tokens |
+| OW-AC-06 | Machine-response token surface | done (2026-08-15: clamp wrapper to packet when >1.15×; NEED_CHECKER) | Response ≤1.15× evidence-packet tokens |
 | OW-AC-07 | Token estimator calibration | done | MAE ≤5%, p95 ≤10% |
 | OW-AC-08 | Latency & scale invariance | active | Packed exact relation 57.08 → 3.81 ms p50 in-process (2026-08-08); add graph-size strata and remaining phase gates |
 | OW-AC-09 | Contract & telemetry consistency | ready | Machine-readable capability identity |

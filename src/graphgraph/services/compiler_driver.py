@@ -30,6 +30,7 @@ from .freshness import (
     source_root_for_saved_graph,
 )
 from .lifecycle import GraphBuildStatus, ensure_native_graph, refresh_saved_graph
+from .response_surface import clamp_response_to_packet_surface
 
 QUERY_RESPONSE_CACHE_VERSION = "request_v19_affected_test_witness_attribution"
 
@@ -536,6 +537,7 @@ def _compile_response(
     else:
         response = f"{partial_message}\n\n{graph_packet}" if partial_message else graph_packet
 
+    response = clamp_response_to_packet_surface(response, graph_packet)
     if not include_snippets:
         cache.set(
             resolved_graph_path,
