@@ -519,6 +519,14 @@ def _compile_response(
                 "namespace": cache_namespace,
             }
         response = json.dumps(payload, indent=2)
+        json_fallback = json.dumps(
+            {
+                "packet": graph_packet,
+                "packet_format": compiled.receipt.packet,
+                "workflow": {},
+            },
+            separators=(",", ":"),
+        )
     elif show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         out_lines = [
@@ -534,10 +542,12 @@ def _compile_response(
             out_lines.append(f"- {node.id} {node.label} [{node.kind}] {location} score={match.score:g}")
         out_lines.extend(["\nGRAPH:", graph_packet])
         response = "\n".join(out_lines)
+        json_fallback = None
     else:
         response = f"{partial_message}\n\n{graph_packet}" if partial_message else graph_packet
+        json_fallback = None
 
-    response = clamp_response_to_packet_surface(response, graph_packet)
+    response = clamp_response_to_packet_surface(response, graph_packet, fallback=json_fallback)
     if not include_snippets:
         cache.set(
             resolved_graph_path,
