@@ -6,6 +6,7 @@ import unittest
 from graphgraph.mcp import dispatch
 from graphgraph.mcp.machine_contract import (
     MACHINE_CONTRACT_CHAR_CEILING,
+    capability_identity,
     tool_contract_size_receipt,
     tool_schema_snapshot,
 )
@@ -270,6 +271,32 @@ class McpMachineContractTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "query_class.*blast_radius"):
             handle_tools_call({"name": "plan_context", "arguments": {"query": "impact"}})
+
+    def test_project_status_reports_capability_identity(self) -> None:
+        statused = dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "project_status", "arguments": {}},
+            }
+        )
+        assert statused is not None
+        payload = json.loads(statused["result"]["content"][0]["text"])
+        self.assertEqual(payload["capability"]["transport"], "mcp")
+        self.assertRegex(payload["capability"]["contract_id"], r"^[0-9a-f]{16}$")
+        self.assertEqual(payload["capability"]["contract_id"], capability_identity(TOOLS))
+
+    def test_capability_identity_is_stable_and_contract_sensitive(self) -> None:
+        # OW-AC-09: a client can tell which contract it is talking to.
+        first = capability_identity(TOOLS)
+        second = capability_identity(TOOLS)
+        self.assertEqual(first, second)
+        self.assertRegex(first, r"^[0-9a-f]{16}$")
+
+        mutated = [dict(tool) for tool in TOOLS]
+        mutated[0] = {**mutated[0], "name": mutated[0]["name"] + "_renamed"}
+        self.assertNotEqual(capability_identity(mutated), first)
 
 
 if __name__ == "__main__":

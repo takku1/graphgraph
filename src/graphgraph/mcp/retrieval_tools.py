@@ -53,7 +53,7 @@ from .graph_management import (
 from .graph_management import (
     handle_update_graph_files as handle_update_graph_files,
 )
-from .machine_contract import compact_json, compact_tool_contracts
+from .machine_contract import capability_identity, compact_json, compact_tool_contracts
 from .platform_tools import (
     PLATFORM_TOOL_NAMES,
     PLATFORM_TOOLS,
@@ -756,6 +756,11 @@ def handle_project_status(args: dict[str, Any]) -> str:
         graph_path=graph_path,
         run_probes=bool(args.get("probe")),
     )
+    report["capability"] = {
+        "contract_id": capability_identity(TOOLS),
+        "tool_count": len(TOOLS),
+        "transport": "mcp",
+    }
     return _json(report)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from typing import Any, Iterable
@@ -81,6 +82,18 @@ def tool_contract_size_receipt(tools: Iterable[dict[str, Any]]) -> dict[str, Any
         "proxy_tokens": (aggregate_chars + 3) // 4,
         "per_tool_chars": {tool["name"]: len(serialize_tool_contract(tool)) for tool in materialized},
     }
+
+
+def capability_identity(tools: Iterable[dict[str, Any]]) -> str:
+    """Stable identity for the machine tool contract a client is talking to.
+
+    A client holding a cached tool list (an installed skill, a prior
+    `tools/list`) compares this against a fresh one to tell whether the
+    contract it thinks it's talking to still matches (OW-AC-09).
+    """
+
+    digest = hashlib.sha256(serialize_tool_contract(list(tools)).encode("utf-8"))
+    return digest.hexdigest()[:16]
 
 
 def tool_schema_snapshot(tools: Iterable[dict[str, Any]]) -> dict[str, Any]:
