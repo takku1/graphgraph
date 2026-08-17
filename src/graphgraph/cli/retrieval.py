@@ -413,6 +413,8 @@ def cmd_relations(args: argparse.Namespace) -> None:
     if result.get("status") == "ok" and isinstance(payload.get("r"), dict):
         payload["r"]["ms"] = result["milliseconds"]
     emit_json(payload, args.pretty)
+    if result.get("status") in {"not_found", "ambiguous"}:
+        raise SystemExit(1)
 
 
 def cmd_context(args: argparse.Namespace) -> None:

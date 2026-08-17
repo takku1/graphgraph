@@ -1,93 +1,68 @@
 # Query Planning (L1)
 
-> **Package:** `planning/`  
-> **Narrative:** [../system-architecture.md](../system-architecture.md) § Query Classes  
-> **Confidence detail:** [../information-retrieval/confidence-and-routing.md](../information-retrieval/confidence-and-routing.md)
+<!-- recurspec-contract: 1.0 -->
 
-## 1. Intent
+## 1. System Intent & Responsibility
 
-Map natural-language or typed requests to a **query class**, expansion budget, **context-packet** encoding choice, and policy set. Deterministic routing is default; fitted models only after held-out utility gains (OW-Q03-A).
+Map a natural-language or typed request to a query class, expansion budget, and packet choice; does not retrieve nodes or render packets.
 
-## 2. Query classes
+## 2. Sub-System Decomposition
 
-| Query class | Purpose |
-|-------------|---------|
-| `direct_lookup` | Definition / focused symbol |
-| `reverse_lookup` | Callers, references, dependents |
-| `affected_tests` | Test impact attribution |
-| `multi_hop_path` | Dependence / call / data-flow path |
-| `blast_radius` | **Change-impact neighborhood** |
-| `subsystem_summary` | Architectural slice summary |
-| `doc_summary` | Document-grounded sections |
-| `negative_query` | Absence / isolation evidence |
-| `recent_changes` | History-qualified evidence |
-| `spreading_activation` | Explicit multi-step activation |
+**Atomic leaf (atomic build).** Deterministic router and budget model.
 
-Typical encoding heuristics (not hard law): direct/reverse → 1-hop compact packet; path/blast → 2-hop; zero-edge → semantic arrow; summary → structural or `doc_summary`.
+## 3. Interface Contracts
 
-## 3. Decomposition
-
-| Concern | Module map |
-|---------|------------|
-| Query compiler (NL → typed) | `query_compiler.py` |
-| Routing | `routing.py` |
-| Budgets / shape | `budgets.py`, `shape.py` |
-| Packet choice | `packet.py` |
-| Policies | `policies.py` |
-| Token cost model | `token_cost.py` |
+- **Inputs:** `query_text`
+- **Outputs:** `query_plan`
 
 ## 4. Invariants (EARS + Epistemic Stage)
 
-- **[Ubiquitous]** Semantic invariants remain hard gates; continuous scores SHALL NOT blur valid/invalid.
-  - `EvidenceStage: Observed`.
-- **[Conditional]** IF routing is automatic THEN an explicit class override SHALL still win.
-  - `EvidenceStage: Sampled` — `tests/test_planning.py`.
-- **[Ubiquitous]** Read-only query facades SHALL NOT imply mutation or silent full reindex.
-  - `EvidenceStage: Observed`.
+- **[Conditional]** IF routing is automatic THEN an explicit class override SHALL still win, as checked by `tests/test_planning.py`.
+  - `EvidenceStage:` Sampled
+- **[Ubiquitous]** Read-only query facades SHALL NOT imply mutation or a silent full reindex.
+  - `EvidenceStage:` Observed
 - **[Ubiquitous]** Route confidence SHALL NOT be reported as retrieval confidence.
-  - `EvidenceStage: Observed` — route confidence is text-only class certainty and is near-constant; anchor-evidence confidence is a separate signal surfaced as `answerability.confidence`. See [confidence-and-routing.md](../information-retrieval/confidence-and-routing.md).
-- **[Conditional]** IF a fitted routing model is proposed THEN it SHALL show held-out utility gains before replacing deterministic routing (OW-Q03-A).
-  - `EvidenceStage: Unknown` — not yet attempted.
+  - `EvidenceStage:` Observed
+- **[State-driven]** WHILE no held-out utility gain exists THE SYSTEM SHALL keep deterministic routing, as checked by `tests/test_planning.py`.
+  - `EvidenceStage:` Sampled
 
-## 5. ADRs
+## 5. Architectural Decisions (ADRs)
 
-- **ADR-QP-001:** Routing is deterministic by default. A model that routes correctly 95% of the time fails unpredictably in the remaining 5%, and the packet budget makes those failures expensive; determinism is preferred until a held-out gain is demonstrated.
-- **ADR-QP-002:** Encoding heuristics per query class are defaults, not law — packet choice is ultimately a measured token-cost decision (see [context-packets](../context-packets/SYSTEM.md)).
+- **ADR-QP-001:** Routing stays deterministic while no held-out utility gain exists (OW-Q03). A fitted model is a later replacement, not the current leaf.
+- **ADR-QP-002:** Per-class encoding heuristics are defaults, not law; packet choice is a measured token-cost decision.
 
-## 6. Leaf execution & test seam
+## 6. Leaf Execution & Test Seam
 
-| | |
-|--|--|
-| **Implementation** | `planning/` (11 modules): `query_compiler.py`, `routing.py`, `budgets.py`, `shape.py`, `packet.py`, `policies.py`, `token_cost.py` |
-| **Test surface** | `tests/test_planning.py` |
-| **Downstream contract** | `tests/test_public_contracts.py` — keeps the advertised query-class and packet tables aligned with the registries |
+- **Implementation Files:** `src/graphgraph/planning/__init__.py`, `src/graphgraph/planning/budgets.py`, `src/graphgraph/planning/context.py`, `src/graphgraph/planning/packet.py`, `src/graphgraph/planning/policies.py`, `src/graphgraph/planning/query_compiler.py`, `src/graphgraph/planning/routing.py`, `src/graphgraph/planning/shape.py`, `src/graphgraph/planning/stats.py`, `src/graphgraph/planning/token_cost.py`, `src/graphgraph/planning/types.py`
+- **Test Surface Seam:** `tests/test_planning.py`, `tests/test_query_compiler.py`, `tests/test_public_contracts.py`.
 
-## 7. Measurement seams
+## 7. Measurement Seams
 
-| | |
-|--|--|
-| **Primary metric** | Routing accuracy against a held-out labelled set (`direction: higher`) |
-| **Budget metric** | Planned-versus-actual packet tokens (`direction: lower` on absolute error) |
-| **Known bias** | The dynamic budget estimator is pessimistic about dense subgraphs and can over-prune — see [metric-validity-gaps.md](../../evaluation/metric-validity-gaps.md) |
-| **Recorded results** | [empirical-evaluation.md](../../evaluation/empirical-evaluation.md) § Automatic Query Routing, § Dynamic Budget, § Adaptive Packet Choices |
+- **Primary Metric:** `routing_accuracy` (held-out labelled set, `direction: higher`)
+- **Evaluation Gate Path:** `components/query-planning/measure.sh`
+- **Correctness Backpressure:** `components/query-planning/checks.sh`
+- **Telemetry Surface:** chosen class, budget, packet target, and route-confidence vs answerability-confidence.
+- **Branching Policy:** isolated candidate; explicit override and public-contract parity must stay green.
 
-## 8. Technology resolution
+## 8. Technology Resolution
 
-- **Decision class:** **BUILD**
-- **Selected:** in-repo deterministic router and budget model
+- **Decision class:** BUILD
+- **Justification:** Genuinely trivial and stable — a deterministic mapping over a closed class set whose failures are inspectable.
+- **Selected:** in-repo deterministic router on Python 3.10
 - **Standard / protocol:** none
 - **Alternatives considered:**
 
   | Option | Why not |
-  |--------|---------|
-  | LLM classifier for routing | A model call on the hot path, priced and latent per query, to pick among ten known classes — and nondeterministic, so a routing regression is not reproducible |
-  | Learned ranker / fitted router | Not rejected — gated. It needs held-out utility gains first (OW-Q03-A), and the labelled task set that would prove it is itself open work |
-  | Fixed single strategy (always 2-hop) | Measured worse: expansion depth that helps a path query wastes the budget on a direct lookup |
+  |---|---|
+  | LLM classifier | A model call on the hot path; nondeterministic routing regressions. |
+  | Learned ranker | Gated on held-out utility (OW-Q03); not rejected, not default. |
+  | Fixed single strategy | Measured worse: path depth wastes budget on direct lookup. |
 
-- **Fit gap:** query classes are a closed vocabulary; a request that fits none routes to a default rather than inventing a class.
-- **BUILD justification:** genuinely trivial and stable relative to its alternatives — a deterministic mapping over ten classes is a small amount of code whose failure modes are inspectable.
-- **Seam:** `planning/routing.py`
-- **Exit cost:** **LOW** — routing is a decision function; swapping it does not change the retrieval or packet contracts.
+- **Fit gap:** a request that fits no class routes to a default rather than inventing a class.
+- **Seam:** `src/graphgraph/planning/routing.py`
+- **Exit cost:** LOW — swapping the router does not change retrieval or packet contracts.
+- **Cost model:** in-process; no service spend.
+- **Liability transferred:** none
 - **Operational owner:** us
-- **Failure mode:** an unroutable query falls back to a default class and budget rather than erroring.
-- **Open questions:** OW-Q03-A/B/C, OW-P1-03 — [open-work.md](../../open-work.md)
+- **Failure mode:** an unroutable query falls back to a default class and budget.
+- **Open questions:** OW-Q03, OW-Q06

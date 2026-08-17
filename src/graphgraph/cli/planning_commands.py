@@ -43,10 +43,14 @@ def cmd_select(args: argparse.Namespace) -> None:
             },
             getattr(args, "pretty", False),
         )
+        if args.mode == "exists" and not result.exists:
+            raise SystemExit(1)
         return
 
     if args.mode == "exists":
         print("yes" if result.exists else "no")
+        if not result.exists:
+            raise SystemExit(1)
     elif args.mode == "count":
         print(result.total)
     else:

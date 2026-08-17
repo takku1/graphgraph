@@ -1,90 +1,69 @@
 # Evaluation Analysis (L1)
 
-> **Package:** `analysis/` (excluding `navigation.py`, which belongs to [project-atlas](../project-atlas/SYSTEM.md))
-> **Related:** [../acceptance/SYSTEM.md](../acceptance/SYSTEM.md), [../../evaluation/README.md](../../evaluation/README.md)
+<!-- recurspec-contract: 1.0 -->
 
-## 1. Intent
+## 1. System Intent & Responsibility
 
-Turn raw evaluation runs into **defensible statements**: calibrate the tool's
-own confidence against ground truth, rank document authority deterministically,
-run versioned and stratified evaluation suites, and compute the metrics other
-subsystems are gated on.
+Turn raw evaluation runs into defensible statements — calibration, stratified reports, and the metrics other subsystems are gated on; does not own the acceptance verdict or the retrieval behavior measured.
 
-Where [acceptance](../acceptance/SYSTEM.md) decides *whether a build qualifies*,
-this subsystem decides *whether a measurement means what it claims*.
+## 2. Sub-System Decomposition
 
-**Does not own:** the acceptance verdict, or the retrieval behavior measured.
+**Atomic leaf (atomic build).** One protocol and one metric Module.
 
-## 2. Decomposition
+## 3. Interface Contracts
 
-| Concern | Module |
-|---------|--------|
-| Confidence calibration against ground truth | `calibration.py` |
-| Deterministic document-authority signal | `document_authority.py` |
-| Versioned suites, stratified reports, paired comparisons | `eval_protocol.py` |
-| Evaluation driver | `eval.py` |
-| Metric computation | `metrics.py` |
-
-## 3. Interface contracts
-
-| | |
-|--|--|
-| **Inputs** | Evaluation task sets, retrieval results, ground-truth labels |
-| **Outputs** | Calibration curves, stratified reports, paired deltas, metric values |
-| **Consumers** | Acceptance gates, the agent-cycle scorecard, research promotion decisions |
-| **Non-goals** | Producing the retrieval results it scores |
+- **Inputs:** `task_subgraph`, `context_packet`
+- **Outputs:** `evaluation_metrics`
 
 ## 4. Invariants (EARS + Epistemic Stage)
 
-- **[Ubiquitous]** Comparisons SHALL be paired positionally, never keyed on query text.
-  - `EvidenceStage: Measured` — duplicate query strings across task files silently paired rows against the wrong task and made an arm differ from itself; the red test is that a baseline compared to itself reads exactly zero.
-- **[Ubiquitous]** Expectations SHALL be resolved through the harness's own resolver rather than matched literally.
-  - `EvidenceStage: Measured` — expectations are written as labels, not node IDs; literal matching scored every arm at zero.
-- **[Ubiquitous]** Reported confidence SHALL be calibrated against outcomes, not asserted.
-  - `EvidenceStage: Sampled` — `tests/test_calibration.py`.
+- **[Ubiquitous]** Comparisons SHALL be paired positionally, never keyed on query text, as checked by `tests/test_eval_protocol.py`.
+  - `EvidenceStage:` Measured
+- **[Ubiquitous]** Expectations SHALL be resolved through the harness resolver rather than matched literally, as checked by `tests/test_eval_harness.py`.
+  - `EvidenceStage:` Measured
+- **[Ubiquitous]** Reported confidence SHALL be calibrated against outcomes, as checked by `tests/test_calibration.py`.
+  - `EvidenceStage:` Sampled
 - **[Conditional]** IF a suite is versioned THEN results from different versions SHALL NOT be compared directly.
-  - `EvidenceStage: Observed` — `eval_protocol.py`.
-- **[Ubiquitous]** Document authority SHALL be deterministic, so ranking does not drift between identical runs.
-  - `EvidenceStage: Sampled` — `tests/test_document_authority.py`.
+  - `EvidenceStage:` Observed
+- **[Ubiquitous]** Document authority SHALL be deterministic between identical runs, as checked by `tests/test_document_authority.py`.
+  - `EvidenceStage:` Sampled
 
-## 5. ADRs
+## 5. Architectural Decisions (ADRs)
 
-- **ADR-EA-001:** Instrument red tests come first. Two bugs here — literal expectation matching and text-keyed pairing — each produced plausible, wrong tables. A comparison is trusted only as far as its self-comparison reads zero.
-- **ADR-EA-002:** Stratified reporting over aggregate scores: a single mean hides the language or query-class where the system fails, which is the number that matters.
+- **ADR-EA-001:** Instrument red tests come first. A comparison is trusted only as far as its self-comparison reads zero.
+- **ADR-EA-002:** Stratified reporting over aggregate scores.
 
-## 6. Leaf execution & test seam
+## 6. Leaf Execution & Test Seam
 
-| | |
-|--|--|
-| **Implementation** | `analysis/calibration.py`, `document_authority.py`, `eval_protocol.py`, `eval.py`, `metrics.py` |
-| **Test surface** | `tests/test_calibration.py`, `tests/test_document_authority.py`, `tests/test_eval_protocol.py`, `tests/test_eval_harness.py` |
-| **Component gate** | `components/evaluation-analysis/checks.sh` |
-| **Note** | `test_calibration.py` and `test_eval_harness.py` require the active `.graphgraph/graph.gg`; they fail in a bare checkout by design, since they score against a real graph |
+- **Implementation Files:** `src/graphgraph/analysis/__init__.py`, `src/graphgraph/analysis/calibration.py`, `src/graphgraph/analysis/document_authority.py`, `src/graphgraph/analysis/eval.py`, `src/graphgraph/analysis/eval_protocol.py`, `src/graphgraph/analysis/metrics.py`
+- **Test Surface Seam:** `tests/test_benchmark.py`, `tests/test_calibration.py`, `tests/test_distribution_artifacts.py`, `tests/test_docs_contract.py`, `tests/test_document_authority.py`, `tests/test_eval_harness.py`, `tests/test_eval_protocol.py`, `tests/test_locus_findings.py`
 
-## 7. Measurement seams
+## 7. Measurement Seams
 
-| | |
-|--|--|
-| **Primary metric** | Calibration error between reported confidence and observed correctness (`direction: lower`) |
-| **Harness path** | `components/evaluation-analysis/measure.sh` — **not yet implemented** (T-B03) |
-| **Correctness backpressure** | The four suites above |
-| **Caution** | This subsystem measures other subsystems, so its own regressions are silent: nothing downstream fails, the numbers just quietly stop meaning what they say |
+- **Primary Metric:** `expected_calibration_error` (target `<0.10`, `direction: lower`)
+- **Evaluation Gate Path:** `components/evaluation-analysis/measure.sh`
+- **Correctness Backpressure:** `components/evaluation-analysis/checks.sh`
+- **Telemetry Surface:** ECE, stratified deltas, unresolved-expectation counts.
+- **Branching Policy:** isolated candidate; a broken instrument is a revert, not a pass.
 
-## 8. Technology resolution
+## 8. Technology Resolution
 
-- **Decision class:** **BUILD**
-- **Selected:** in-repo; stdlib plus `tiktoken` (`benchmark` extra) for token-denominated metrics
+- **Decision class:** BUILD
+- **Justification:** Differentiator — the evidence standard is a product claim, and its instruments must be inspectable. scikit-learn would add a heavy dependency for a few dozen lines.
+- **Selected:** in-repo analysis on Python 3.10; tiktoken 0.13.0 for token-denominated metrics
+- **Standard / protocol:** none
 - **Alternatives considered:**
 
   | Option | Why not |
-  |--------|---------|
-  | scikit-learn / scipy for calibration | A heavy numerical dependency for reliability curves and paired deltas that are a few dozen lines; the project ships stdlib-only at runtime |
-  | An MLOps experiment tracker | Solves storage and dashboards, not the correctness of the comparison; the failures here were logic bugs a tracker would have faithfully recorded |
+  |---|---|
+  | scikit-learn / scipy | Heavy numerical dependency for reliability curves the project can compute in stdlib. |
+  | MLOps experiment tracker | Stores numbers; does not catch pairing or resolver bugs. |
 
-- **Fit gap:** no significance testing on paired comparisons yet — deltas are reported without confidence intervals.
-- **BUILD justification:** differentiator — the evidence standard is the project's product claim, and its instruments must be inspectable.
-- **Seam:** `analysis/eval_protocol.py`
-- **Exit cost:** **MEDIUM**
+- **Fit gap:** paired deltas are reported without confidence intervals.
+- **Seam:** `src/graphgraph/analysis/eval_protocol.py`
+- **Exit cost:** MEDIUM
+- **Cost model:** local CPU; no service spend.
+- **Liability transferred:** none
 - **Operational owner:** us
-- **Failure mode:** an unresolvable expectation is reported as unresolved rather than scored zero.
-- **Open questions:** OW-P0-01, T-B03 — [open-work.md](../../open-work.md)
+- **Failure mode:** an unresolvable expectation is reported unresolved rather than scored zero.
+- **Open questions:** OW-P0-01

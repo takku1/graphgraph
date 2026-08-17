@@ -1,0 +1,25 @@
+{
+  "kernel": {
+    "metric": "resident_kernel_exact_p95_ms",
+    "value": 0.0961,
+    "unit": "ms",
+    "direction": "lower",
+    "samples": 80,
+    "min": 0.0079,
+    "max": 0.9012,
+    "median": 0.0208
+  },
+  "session": {
+    "metric": "resident_exact_query_p95_ms",
+    "value": 92.58,
+    "unit": "ms",
+    "direction": "lower",
+    "target": 250.0,
+    "status": "success",
+    "samples": 20,
+    "min": 82.2389,
+    "max": 99.4779,
+    "median": 86.3957,
+    "query": "MCP tools/call query_relations callers on a known node id after initialize+tools/list"
+  }
+}

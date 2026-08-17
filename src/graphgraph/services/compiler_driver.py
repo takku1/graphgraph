@@ -30,7 +30,11 @@ from .freshness import (
     source_root_for_saved_graph,
 )
 from .lifecycle import GraphBuildStatus, ensure_native_graph, refresh_saved_graph
-from .response_surface import clamp_response_to_packet_surface
+from .response_surface import (
+    clamp_response_to_packet_surface,
+    compact_json,
+    json_envelope_for_surface,
+)
 
 QUERY_RESPONSE_CACHE_VERSION = "request_v19_affected_test_witness_attribution"
 
@@ -294,7 +298,7 @@ def _compile_project_context(
                     ),
                 },
             }
-        packet_text = json.dumps(payload, indent=2, ensure_ascii=False)
+        packet_text = compact_json(payload)
     return packet_text, status
 
 
@@ -437,7 +441,7 @@ def _compile_response(
             }
             if response_metadata:
                 payload.update(response_metadata)
-            return json.dumps(payload)
+            return compact_json(payload)
         return message
 
     graph_packet = compiled.packet
@@ -518,15 +522,8 @@ def _compile_response(
                 "state": "miss",
                 "namespace": cache_namespace,
             }
-        response = json.dumps(payload, indent=2)
-        json_fallback = json.dumps(
-            {
-                "packet": graph_packet,
-                "packet_format": compiled.receipt.packet,
-                "workflow": {},
-            },
-            separators=(",", ":"),
-        )
+        response = json_envelope_for_surface(payload, graph_packet)
+        json_fallback = response
     elif show_anchors:
         limit = anchor_limit if anchor_limit is not None else len(result.starts)
         out_lines = [
@@ -616,7 +613,7 @@ def _with_cache_receipt(
             "state": state,
             "namespace": namespace,
         }
-    return json.dumps(payload, indent=2)
+    return compact_json(payload)
 
 
 def _compiled_control_receipt(

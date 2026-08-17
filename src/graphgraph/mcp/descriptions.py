@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from ..graph.ontology import DEFAULT_RELATIONS
-from ..graph.traversal import POLICIES, traversal_policy
+from ..graph.ontology import relation_records
+from ..graph.traversal import policy_records
 from ..packet_targets import TARGET_TABLE
 from ..planning import query_class_schema
 from ..scanner.frontends import available_frontends
+from .machine_contract import compact_json
 
 FORMAT_TABLE = list(TARGET_TABLE)
 
@@ -58,36 +58,16 @@ DESCRIPTION_TOOLS: list[dict[str, Any]] = [
 DESCRIPTION_TOOL_NAMES = frozenset(tool["name"] for tool in DESCRIPTION_TOOLS)
 
 
-def _json(payload: object) -> str:
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-
 def handle_description_tool(name: str, args: dict[str, Any]) -> str:
     """Return the compact payload for one introspection tool."""
     if name == "describe_formats":
-        return _json(FORMAT_TABLE)
+        return compact_json(FORMAT_TABLE)
     if name == "describe_ontology":
         family = args.get("family")
-        rows = [
-            {
-                "name": relation_name,
-                "family": spec.family,
-                "direction": spec.direction,
-                "strength": spec.strength,
-                "traversable": spec.traversable,
-                "weak": spec.weak,
-                "description": spec.description,
-            }
-            for relation_name, spec in DEFAULT_RELATIONS.items()
-            if not family or spec.family == family
-        ]
-        return _json(rows)
+        return compact_json(relation_records(str(family) if family else None))
     if name == "describe_frontends":
-        return _json([cap.__dict__ for cap in available_frontends()])
+        return compact_json([cap.__dict__ for cap in available_frontends()])
     if name == "describe_traversal":
-        if args.get("query_class"):
-            return _json(traversal_policy(str(args["query_class"])).__dict__)
-        return _json(
-            {query_class: policy.__dict__ for query_class, policy in POLICIES.items()}
-        )
+        query_class = args.get("query_class")
+        return compact_json(policy_records(str(query_class) if query_class else None))
     raise ValueError(f"unknown description tool: {name}")

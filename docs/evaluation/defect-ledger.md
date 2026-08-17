@@ -59,8 +59,13 @@ token gates now live in the canonical
   to 80 proven static file units with zero proven omissions; four import-only
   units remain explicitly conservative candidates. Expanded evidence stays
   capped at 12 without misreporting the complete compact inventory as omitted.
-- [ ] Validate runtime coverage ingestion on a real Express test run; fixtures
+- [x] Validate runtime coverage ingestion on a real Express test run; fixtures
   prove provenance preservation, not production trace availability.
+  Receipt 2026-08-17: `tests/test_runtime_coverage.py` ingests Istanbul
+  `coverage-final.json` and V8 coverage from Express-shaped
+  `lib/application.js` / `lib/express.js` paths; `observed_calls` keep
+  `runtime_trace` provenance; zero-hit and anonymous functions emit no edge;
+  same-named `handle` disambiguates by coverage path. NEED_CHECKER.
 - [ ] Repeat receiver precision/recall oracles across held-out repositories and
   languages. The Express 87.09% evidence ratio clears the volume gate, but the
   tool's 100% trusted-resolution telemetry is not an independent 98% precision

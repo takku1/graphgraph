@@ -87,6 +87,82 @@ class CliMcpTest(unittest.TestCase):
             self.assertEqual(payload["r"]["freshness"], "fresh")
             self.assertNotIn("sync_if_completeness_required", payload.get("a", ()))
 
+    def test_callers_cli_needs_no_direction_flag(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.cli.retrieval import cmd_relations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(
+                Graph(
+                    nodes={
+                        "TARGET": Node("TARGET", "work", "function", "src/core.py"),
+                        "CALLER": Node("CALLER", "run", "function", "src/app.py"),
+                    },
+                    edges=[Edge("CALLER", "TARGET", "calls")],
+                    metadata={
+                        "member_calls_global_resolved": "1",
+                        "member_calls_global_unknown_receiver": "0",
+                        "member_calls_global_ambiguous": "0",
+                    },
+                ),
+                graph_path,
+            )
+            args = build_parser().parse_args(["callers", "work", "--graph", str(graph_path)])
+            self.assertEqual(args.direction, "callers")
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                cmd_relations(args)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["d"], "<-calls")
+            self.assertEqual(payload["n"][0][0], "run")
+
+    def test_relations_missing_target_exits_one(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.cli.retrieval import cmd_relations
+
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(
+                Graph(nodes={"TARGET": Node("TARGET", "work", "function", "src/core.py")}),
+                graph_path,
+            )
+            args = build_parser().parse_args(
+                ["callers", "does_not_exist", "--graph", str(graph_path)]
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+                cmd_relations(args)
+            self.assertEqual(raised.exception.code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["s"], "not_found")
+
+    def test_select_exists_false_exits_one(self) -> None:
+        from graphgraph.cli.parser import build_parser
+        from graphgraph.cli.planning_commands import cmd_select
+
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            save_graph(
+                Graph(nodes={"TARGET": Node("TARGET", "work", "function", "src/core.py")}),
+                graph_path,
+            )
+            args = build_parser().parse_args(
+                [
+                    "select",
+                    "label contains not_a_symbol",
+                    "--mode",
+                    "exists",
+                    "--graph",
+                    str(graph_path),
+                ]
+            )
+            stdout = StringIO()
+            with redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+                cmd_select(args)
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn("no", stdout.getvalue())
+
     def test_relations_cli_default_path_flags_drift_without_explicit_sync(self) -> None:
         from graphgraph.cli.parser import build_parser
         from graphgraph.cli.retrieval import cmd_relations
@@ -360,6 +436,43 @@ class CliMcpTest(unittest.TestCase):
         data = json.loads(response["result"]["content"][0]["text"])
         self.assertEqual(data["query_class"], "blast_radius")
         self.assertIn("calls", data["preferred_relations"])
+
+    def test_mcp_describe_ontology_unknown_family_is_empty(self) -> None:
+        from graphgraph.graph.ontology import relation_records
+
+        response = dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 34,
+                "method": "tools/call",
+                "params": {"name": "describe_ontology", "arguments": {"family": "not-a-family"}},
+            }
+        )
+        assert response is not None
+        data = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(data, [])
+        self.assertEqual(relation_records("not-a-family"), [])
+        self.assertGreater(len(relation_records()), 0)
+        self.assertGreater(len(relation_records(None)), 0)
+
+    def test_mcp_describe_traversal_unknown_class_uses_default_policy(self) -> None:
+        from graphgraph.graph.traversal import DEFAULT_POLICY, policy_records
+
+        response = dispatch(
+            {
+                "jsonrpc": "2.0",
+                "id": 35,
+                "method": "tools/call",
+                "params": {"name": "describe_traversal", "arguments": {"query_class": "not-a-class"}},
+            }
+        )
+        assert response is not None
+        data = json.loads(response["result"]["content"][0]["text"])
+        fallback = policy_records("not-a-class")
+        self.assertEqual(data["query_class"], DEFAULT_POLICY.query_class)
+        self.assertEqual(data["query_class"], fallback["query_class"])
+        self.assertEqual(data["preferred_relations"], list(fallback["preferred_relations"]))
+        self.assertIn("blast_radius", policy_records())
 
     def test_mcp_validate_packet(self) -> None:
         graph = sample_graph()

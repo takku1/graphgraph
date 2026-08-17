@@ -74,6 +74,21 @@ _BENCHMARK_QUERY_TERMS = frozenset({
     "benchmark", "benchmarks", "performance", "latency", "throughput", "evaluation", "eval",
 })
 _DOCUMENT_NODE_KINDS = frozenset({"section", "paragraph", "markdown", "concept", "rst", "html", "file", "text"})
+_CODE_KINDS = frozenset({
+    "function", "method", "class", "struct", "trait", "enum", "interface", "type",
+})
+_FILE_NODE_KINDS = frozenset({
+    "file", "python", "typescript", "javascript", "rust", "go", "java", "markdown", "rst", "html", "text",
+})
+# Words that appear in many queries and many labels without naming the idea.
+# Two of these in a label must not outrank two distinctive terms in a summary.
+_GENERIC_QUERY_TERMS = frozenset({
+    "call", "client", "code", "cold", "data", "file", "function", "get",
+    "item", "list", "machine", "make", "map", "method", "module", "name",
+    "new", "object", "one", "packet", "per", "process", "put", "run", "set",
+    "shot", "system", "tell", "tells", "two", "type", "used", "using", "value",
+    "via", "context",
+})
 
 # Bounded natural-language -> code-vocabulary bridges. These are deliberately
 # directional: a user asking how results are "printed" commonly needs code
@@ -251,6 +266,7 @@ class SearchIndexRow:
     path_name_sequence: tuple[str, ...]
     path_name_exact_sequence: tuple[str, ...]
     path_stem: str
+    container_summary: str
     # Every token this row is findable under, unioned once when the row is
     # built. Candidate selection is then a set intersection per query instead
     # of re-deriving these tokens, which is what made the inverted index worth
@@ -335,6 +351,11 @@ def search_nodes(
     # Keep a stopword-preserving variant of the query around just for that
     # exact-sequence comparison.
     terms_with_stopwords = tokenize(query, keep_stopwords=True)
+    distinctive_terms = frozenset(
+        term
+        for term in terms
+        if "-" in term or (len(term) >= 6 and term not in _GENERIC_QUERY_TERMS)
+    )
     query_terms = set(terms)
     test_terms = query_terms & TEST_QUERY_TERMS
     # Mentioning tests as one desired evidence type in a broad implementation
@@ -447,6 +468,7 @@ def search_nodes(
             expanded_label_terms = label_terms
             expanded_path_terms = path_name_terms
             expanded_haystack_terms = haystack_terms
+        summary_blob = " ".join(part for part in (node.summary, row.container_summary) if part).lower()
         for term in terms:
             alias_forms = set() if document_node else code_query_alias_forms(term)
             term_forms = (
@@ -508,7 +530,13 @@ def search_nodes(
                 score += 2.0
                 reasons.append(f"kind:{term}")
                 matched_terms.add(term)
-            if node.summary and term in node.summary.lower():
+            if summary_blob and (
+                term in summary_blob
+                or any(
+                    len(form) >= 5 and form in summary_blob
+                    for form in lexical_forms(term)
+                )
+            ):
                 score += 1.5
                 reasons.append(f"summary:{term}")
                 matched_terms.add(term)
@@ -534,6 +562,25 @@ def search_nodes(
                 matched_terms.add(term)
 
         if score > 0.0:
+            if (
+                node.kind in _CODE_KINDS
+                and summary_blob
+                and len(distinctive_terms) >= 2
+            ):
+                summary_terms = set(tokenize(summary_blob))
+                summary_hits = {
+                    term
+                    for term in distinctive_terms
+                    if (lexical_forms(term) | {term}) & summary_terms
+                    or any(
+                        len(form) >= 5 and form in summary_blob
+                        for form in lexical_forms(term) | {term}
+                    )
+                }
+                if len(summary_hits) >= 2:
+                    score += 16.0
+                    reasons.append("summary_multi_terms")
+                    matched_terms.update(summary_hits)
             if (
                 len(terms) == 1
                 and terms[0] == row.path_stem
@@ -583,7 +630,7 @@ def search_nodes(
                 elif query_terms <= path_name_terms:
                     score += 16.0
                     reasons.append("basename_all_terms")
-            if not any(reason.startswith(("id:", "label", "path")) or reason in {"label_exact_terms", "label_all_terms", "label_multi_terms", "basename_exact_terms", "basename_all_terms"} for reason in reasons):
+            if not any(reason.startswith(("id:", "label", "path")) or reason in {"label_exact_terms", "label_all_terms", "label_multi_terms", "basename_exact_terms", "basename_all_terms", "summary_multi_terms"} for reason in reasons):
                 score *= 0.35
                 reasons.append("weak_text_only")
             coverage = len(matched_terms) / len(terms)
@@ -670,6 +717,12 @@ def search_nodes(
             # additive signals. Tests remain available through graph traversal.
             if _is_test_material(node) and not test_query:
                 score *= 0.30
+                label_overlap = len(set(tokenize(node.label)) & query_terms)
+                if label_overlap >= 4:
+                    # A test named after the whole question is a lexical
+                    # restatement, not the production flow.
+                    score *= 0.15
+                    reasons.append("test_query_restatement_penalty")
 
             matches.append(Match(node=node, score=score, reasons=tuple(dict.fromkeys(reasons))))
 
@@ -797,6 +850,11 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
     # volume, 0% reuse), so a global cache would retain megabytes to serve no
     # hits, and this dict cannot outlive the build or pin nodes.
     path_cache: dict[str, tuple] = {}
+    file_summaries = {
+        node.path: node.summary
+        for node in graph.nodes.values()
+        if node.active and node.kind in _FILE_NODE_KINDS and node.path and node.summary
+    }
     for node in graph.nodes.values():
         if not node.active:
             # Consistent with pagerank/expand/degree elsewhere in the graph:
@@ -837,7 +895,12 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
             path_name_exact_sequence,
             path_lower,
         ) = derived
-        full_haystack = " ".join(filter(None, [haystack, path_dir_segments]))
+        container_summary = (
+            file_summaries.get(node.path, "")
+            if node.kind in _CODE_KINDS and node.path
+            else ""
+        )
+        full_haystack = " ".join(filter(None, [haystack, path_dir_segments, container_summary.lower()]))
         label_term_sequence = tuple(tokenize(node.label, keep_stopwords=True))
         haystack_terms = frozenset(tokenize(full_haystack, keep_stopwords=True))
         node_id_lower = node.id.lower()
@@ -858,6 +921,7 @@ def _search_index(graph: Graph) -> tuple[SearchIndexRow, ...]:
                 path_name_sequence=path_name_sequence,
                 path_name_exact_sequence=path_name_exact_sequence,
                 path_stem=path_stem,
+                container_summary=container_summary,
                 search_tokens=_search_tokens_for(
                     node.kind,
                     haystack_terms | label_terms | path_name_terms | {node_id_lower, label_lower, path_lower},

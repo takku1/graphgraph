@@ -62,6 +62,8 @@ class AbstentionRedControlTest(unittest.TestCase):
         self.assertTrue(answerability["abstained"])
         self.assertLessEqual(answerability["confidence"], 0.2)
         self.assertEqual(result.nodes, set())
+        self.assertFalse(answerability.get("minimum_evidence"))
+        self.assertFalse(answerability.get("neighborhood_complete"))
 
         with tempfile.TemporaryDirectory() as tmp:
             graph_path = Path(tmp) / "graph.gg"
@@ -131,6 +133,148 @@ class AbstentionRedControlTest(unittest.TestCase):
         )
         self.assertTrue(result.metadata["answerability"]["abstained"])
         self.assertEqual(result.nodes, set())
+
+    def test_ungrounded_paraphrase_collision_abstains_and_stays_cheap(self) -> None:
+        # Tokens collide with generic hubs (context/packet/field) but no node
+        # carries a distinctive summary. That is a dirty miss: previously it
+        # shipped an ~1800-token "answerable" packet.
+        graph = _requiredness_graph()
+        # A plateau of generic hubs: production dirty misses have low
+        # top-mass, not a single 30-point collision.
+        for index in range(6):
+            graph.nodes[f"HUB{index}"] = Node(
+                f"HUB{index}",
+                f"context_packet_{index}",
+                "function",
+                f"src/packet_{index}.py",
+                summary="L1 pack a context packet for the machine client.",
+            )
+        query = (
+            "How is a one-hop caller list encoded for a machine "
+            "without a context packet?"
+        )
+        result = retrieve_context(graph, query, "subsystem_summary", 2)
+        answerability = result.metadata["answerability"]
+        self.assertEqual(answerability["status"], "unanswerable")
+        self.assertTrue(answerability["abstained"])
+        self.assertLessEqual(answerability["confidence"], 0.2)
+        self.assertEqual(result.nodes, set())
+        self.assertEqual(result.starts, ())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.gg"
+            save_graph(graph, graph_path)
+            packet, _status = CompilerDriver().compile(DriverRequest(
+                query=query,
+                query_class="subsystem_summary",
+                graph_path=graph_path,
+            ))
+        self.assertLessEqual(estimate_tokens(packet), 50)
+
+    def test_distinctive_summary_paraphrase_does_not_abstain(self) -> None:
+        # The OW-AC-03 increment: two distinctive summary terms, one of them
+        # a hyphenated compound, is grounded evidence. Emptying that packet
+        # would undo the local conceptual hit.
+        graph = _requiredness_graph()
+        graph.nodes["TARGET"] = Node(
+            "TARGET",
+            "emit_capability",
+            "function",
+            "src/cap.py",
+            summary=(
+                "L10 tells a machine client which instruction-set "
+                "contract is implemented"
+            ),
+        )
+        query = (
+            "Where does a cold one-shot process tell a machine client "
+            "which instruction-set contract it implements?"
+        )
+        result = retrieve_context(graph, query, "subsystem_summary", 2)
+        answerability = result.metadata["answerability"]
+        self.assertEqual(answerability["status"], "answerable")
+        self.assertFalse(answerability["abstained"])
+        self.assertIn("TARGET", result.nodes)
+
+    def test_scoped_doc_summary_keeps_the_document_hit(self) -> None:
+        # Explicit document scope is an operator-directed read, not a dirty
+        # lexical collision. Ungrounded-packet emptying must not drop the
+        # only paragraph in that scope.
+        path = "docs/roadmap/gaps.md"
+        graph = Graph(
+            nodes={
+                "ABSENT": Node(
+                    "ABSENT",
+                    "Symbolic PAC learning",
+                    "paragraph",
+                    path,
+                    facts=("* `[ ]` **Symbolic PAC learning:** Not implemented.",),
+                ),
+            }
+        )
+        result = retrieve_context(
+            graph,
+            "Identify one capability currently marked absent.",
+            "doc_summary",
+            2,
+            scopes=(path,),
+        )
+        self.assertIn("ABSENT", result.starts)
+        self.assertNotEqual(result.metadata["answerability"]["status"], "unanswerable")
+
+    def test_distinctive_flow_path_terms_keep_production_code(self) -> None:
+        # A long how-does-X-flow question names frontends/engine/expression.
+        # Identity grounding diluted by query length must not empty the
+        # production path those words actually sit on.
+        graph = Graph(
+            nodes={
+                "PARSE": Node(
+                    "PARSE",
+                    "parse_expr",
+                    "function",
+                    "frontends/parse.py",
+                    summary="frontend parsing into the engine expr",
+                ),
+                "LIFT": Node(
+                    "LIFT",
+                    "lift",
+                    "function",
+                    "engine/expr.py",
+                    summary="engine expression representation",
+                ),
+            }
+        )
+        result = retrieve_context(
+            graph,
+            "How does expression parsing flow from frontends into the engine expression representation?",
+            "subsystem_summary",
+            2,
+        )
+        self.assertTrue(result.nodes, result.metadata)
+        self.assertNotEqual(result.metadata["answerability"]["status"], "unanswerable")
+
+
+class GroundingScoreTest(unittest.TestCase):
+    """OW-AC-04 uses a continuous grounding score, not a reason checklist."""
+
+    def test_term_specificity_is_monotonic_in_length_and_saturates_on_hyphens(self) -> None:
+        from graphgraph.retrieval.anchors import term_specificity
+
+        self.assertEqual(term_specificity("instruction-set"), 1.0)
+        self.assertLess(term_specificity("packet"), term_specificity("settlement"))
+        self.assertLess(term_specificity("field"), term_specificity("packet"))
+        self.assertGreater(term_specificity("settlement"), 0.8)
+        from graphgraph.retrieval.anchors import peaked_specificity
+
+        self.assertLess(peaked_specificity("packet"), 0.1)
+        self.assertGreater(peaked_specificity("instruction-set"), 0.9)
+
+    def test_noisy_or_lets_one_strong_channel_dominate(self) -> None:
+        from graphgraph.retrieval.grounding import noisy_or
+
+        self.assertAlmostEqual(noisy_or((1.0, 0.1, 0.1)), 1.0)
+        self.assertLess(noisy_or((0.2, 0.2)), 0.4)
+        self.assertGreater(noisy_or((0.5, 0.5)), 0.5)
 
 
 if __name__ == "__main__":

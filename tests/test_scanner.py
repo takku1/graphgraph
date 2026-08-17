@@ -300,3 +300,38 @@ class ScannerTest(unittest.TestCase):
 
         sig = inspect.signature(scan_directory)
         self.assertNotIn("communities", sig.parameters)
+
+    def test_docstring_below_walks_multiline_return_types(self) -> None:
+        from graphgraph.scanner.frontends.syntax import _docstring_below
+
+        source = '''
+def promote(
+    files: list[str],
+) -> tuple[
+    set[str],
+    dict,
+]:
+    """Promote unchanged consumers selected by the project fact delta."""
+    return set(), {}
+'''
+        lines = source.splitlines()
+        def_line = next(index for index, line in enumerate(lines, 1) if line.startswith("def promote"))
+        self.assertIn("unchanged consumers", _docstring_below(lines, def_line))
+
+    def test_wrapped_signature_still_captures_the_docstring(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "mod.py").write_text(
+                '"""Module prose about one-hop caller encoding."""\n'
+                "def emit_capability(\n"
+                "    transport: str,\n"
+                ") -> dict:\n"
+                '    """Capability receipt over the live instruction-set catalog."""\n'
+                "    return {}\n",
+                encoding="utf-8",
+            )
+            graph = scan_directory(root, depth="symbols")
+            fn = next(node for node in graph.nodes.values() if node.label == "emit_capability")
+            self.assertIn("instruction-set", fn.summary)
+            file_node = next(node for node in graph.nodes.values() if node.path == "mod.py" and node.kind == "python")
+            self.assertIn("one-hop", file_node.summary)

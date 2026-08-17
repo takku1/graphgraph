@@ -6,6 +6,8 @@ import unittest
 from graphgraph.mcp import dispatch
 from graphgraph.mcp.machine_contract import (
     MACHINE_CONTRACT_CHAR_CEILING,
+    advertised_capability,
+    capability_envelope,
     capability_identity,
     tool_contract_size_receipt,
     tool_schema_snapshot,
@@ -286,6 +288,70 @@ class McpMachineContractTest(unittest.TestCase):
         self.assertEqual(payload["capability"]["transport"], "mcp")
         self.assertRegex(payload["capability"]["contract_id"], r"^[0-9a-f]{16}$")
         self.assertEqual(payload["capability"]["contract_id"], capability_identity(TOOLS))
+
+    def test_cli_status_reports_capability_identity(self) -> None:
+        from argparse import Namespace
+        from io import StringIO
+        from unittest.mock import patch
+
+        from graphgraph.cli.diagnostics import cmd_status
+
+        args = Namespace(directory=".", graph=None, probe=False, json=True)
+        buffer = StringIO()
+        with patch("sys.stdout", buffer):
+            cmd_status(args)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["capability"]["transport"], "cli")
+        self.assertEqual(payload["capability"]["contract_id"], capability_identity(TOOLS))
+        self.assertEqual(payload["capability"]["tool_count"], len(TOOLS))
+        self.assertEqual(payload["capability"], advertised_capability("cli"))
+
+    def test_cli_status_reports_capability_without_a_graph(self) -> None:
+        from argparse import Namespace
+        from io import StringIO
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+
+        from graphgraph.cli.diagnostics import cmd_status
+
+        with TemporaryDirectory() as tmp:
+            args = Namespace(directory=tmp, graph=None, probe=False, json=True)
+            buffer = StringIO()
+            with patch("sys.stdout", buffer):
+                cmd_status(args)
+            payload = json.loads(buffer.getvalue())
+        self.assertIn(payload.get("status"), {"no_graph", "ambiguous_graph"})
+        self.assertEqual(payload["capability"]["transport"], "cli")
+        self.assertEqual(payload["capability"]["contract_id"], capability_identity(TOOLS))
+
+        args = Namespace(directory=".", graph=None, probe=False, json=False)
+        text_buffer = StringIO()
+        with patch("sys.stdout", text_buffer):
+            cmd_status(args)
+        text = text_buffer.getvalue()
+        self.assertIn("Capability: transport=cli", text)
+        self.assertIn(capability_identity(TOOLS), text)
+
+    def test_capability_envelope_rejects_unknown_transport(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown capability transport"):
+            capability_envelope(TOOLS, transport="http")
+
+    def test_capability_envelope_hashes_empty_catalog(self) -> None:
+        empty = capability_envelope([], transport="cli")
+        self.assertEqual(empty["tool_count"], 0)
+        self.assertEqual(empty["transport"], "cli")
+        self.assertRegex(empty["contract_id"], r"^[0-9a-f]{16}$")
+        self.assertEqual(empty["contract_id"], capability_identity([]))
+        self.assertNotEqual(empty["contract_id"], capability_identity(TOOLS))
+
+    def test_advertised_capability_is_transport_only_delta(self) -> None:
+        cli = advertised_capability("cli")
+        mcp = advertised_capability("mcp")
+        self.assertEqual(cli["contract_id"], mcp["contract_id"])
+        self.assertEqual(cli["tool_count"], mcp["tool_count"])
+        self.assertEqual(cli["transport"], "cli")
+        self.assertEqual(mcp["transport"], "mcp")
 
     def test_capability_identity_is_stable_and_contract_sensitive(self) -> None:
         # OW-AC-09: a client can tell which contract it is talking to.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import ast as py_ast
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from .python import (
@@ -24,11 +24,16 @@ from .type_facts import Evidence, TypeFact
 FactKey = tuple[str, str, str]
 
 
+ParentEdge = tuple[str, str, str]
+
+
 @dataclass(frozen=True)
 class PythonProjectTypeFacts:
     fields: Mapping[tuple[str, str], TypeFact]
     globals: Mapping[tuple[str, str], TypeFact]
     returns: Mapping[tuple[str, str], TypeFact]
+    parents: tuple[ParentEdge, ...] = ()
+    field_languages: Mapping[tuple[str, str], str] = field(default_factory=dict)
 
     def keyed(self) -> dict[FactKey, TypeFact]:
         result = {("field", owner, field): fact for (owner, field), fact in self.fields.items()}
@@ -90,6 +95,37 @@ def _snapshot_obligations(snapshot: Mapping[str, Any]) -> frozenset[FactKey]:
     return frozenset(tuple(str(part) for part in row) for row in raw_rows if isinstance(row, list) and len(row) == 3)
 
 
+def _snapshot_parents(snapshot: Mapping[str, Any]) -> frozenset[ParentEdge]:
+    raw_rows = snapshot.get("parents", [])
+    if not isinstance(raw_rows, list):
+        return frozenset()
+    return frozenset(
+        (str(row[0]), str(row[1]), str(row[2]))
+        for row in raw_rows
+        if isinstance(row, list) and len(row) == 3 and all(row)
+    )
+
+
+def _python_parent_edges(module: py_ast.Module) -> tuple[ParentEdge, ...]:
+    edges: list[ParentEdge] = []
+    for node in module.body:
+        if not isinstance(node, py_ast.ClassDef):
+            continue
+        for base in node.bases:
+            name = _ast_type_name(base)
+            if name:
+                edges.append(("python", node.name, name))
+    return tuple(sorted(set(edges)))
+
+
+def _ast_type_name(node: py_ast.AST) -> str:
+    if isinstance(node, py_ast.Name):
+        return node.id
+    if isinstance(node, py_ast.Attribute):
+        return node.attr
+    return ""
+
+
 def _snapshot_reexports(
     snapshot: Mapping[str, Any],
 ) -> frozenset[tuple[FactKey, FactKey]]:
@@ -131,6 +167,8 @@ class PersistentPythonTypeIndex:
         self.contributions = {key: dict(by_file) for key, by_file in (contributions or {}).items()}
         self.obligations = {key: set(files) for key, files in (obligations or {}).items()}
         self.reexports = {edge: set(files) for edge, files in (reexports or {}).items()}
+        self.parents: dict[ParentEdge, set[str]] = {}
+        self.field_languages: dict[tuple[str, str], str] = {}
         self.project = dict(project or {})
         self.reexport_outgoing: dict[FactKey, set[FactKey]] = defaultdict(set)
         self.reexport_incoming: dict[FactKey, set[FactKey]] = defaultdict(set)
@@ -183,12 +221,23 @@ class PersistentPythonTypeIndex:
             for row in data.get("project", [])
             if isinstance(row, list) and len(row) == 4
         }
-        return cls(
+        index = cls(
             contributions=contributions,
             obligations=obligations,
             reexports=reexports,
             project=project,
         )
+        for row in data.get("parents", []):
+            if not isinstance(row, list) or len(row) != 4 or not isinstance(row[3], list):
+                continue
+            index.parents[(str(row[0]), str(row[1]), str(row[2]))] = {
+                str(rel) for rel in row[3]
+            }
+        for row in data.get("field_languages", []):
+            if not isinstance(row, list) or len(row) != 3:
+                continue
+            index.field_languages[(str(row[0]), str(row[1]))] = str(row[2])
+        return index
 
     def to_data(self) -> dict[str, Any]:
         return {
@@ -204,13 +253,20 @@ class PersistentPythonTypeIndex:
                 [*source, *target, sorted(files)] for (source, target), files in sorted(self.reexports.items())
             ],
             "project": [[*key, _fact_to_data(fact)] for key, fact in sorted(self.project.items())],
+            "parents": [[*edge, sorted(files)] for edge, files in sorted(self.parents.items())],
+            "field_languages": [
+                [owner, name, language]
+                for (owner, name), language in sorted(self.field_languages.items())
+            ],
         }
 
     def _add_file(self, rel: str, snapshot: Mapping[str, Any]) -> None:
+        language = str(snapshot.get("language") or "python")
         for key, fact in _snapshot_contributions(snapshot).items():
             self.contributions.setdefault(key, {})[rel] = fact
             if key[0] == "field":
                 self.field_keys_by_name[key[2]].add(key)
+                self.field_languages[(key[1], key[2])] = language
         for key in _snapshot_obligations(snapshot):
             self.obligations.setdefault(key, set()).add(rel)
         for edge in _snapshot_reexports(snapshot):
@@ -220,37 +276,45 @@ class PersistentPythonTypeIndex:
                 self.reexport_outgoing[source].add(target)
                 self.reexport_incoming[target].add(source)
             owners.add(rel)
+        for edge in _snapshot_parents(snapshot):
+            self.parents.setdefault(edge, set()).add(rel)
+
+    def _drop_owned(self, table: dict, key: object, rel: str) -> bool:
+        owners = table.get(key)
+        if owners is None:
+            return False
+        owners.discard(rel) if isinstance(owners, set) else owners.pop(rel, None)
+        if owners:
+            return False
+        table.pop(key, None)
+        return True
+
+    def _forget_field_key(self, key: FactKey) -> None:
+        self.field_keys_by_name[key[2]].discard(key)
+        if not self.field_keys_by_name[key[2]]:
+            self.field_keys_by_name.pop(key[2], None)
+        self.field_languages.pop((key[1], key[2]), None)
+
+    def _forget_reexport(self, edge: tuple[FactKey, FactKey]) -> None:
+        source, target = edge
+        self.reexport_outgoing[source].discard(target)
+        self.reexport_incoming[target].discard(source)
+        if not self.reexport_outgoing[source]:
+            self.reexport_outgoing.pop(source, None)
+        if not self.reexport_incoming[target]:
+            self.reexport_incoming.pop(target, None)
 
     def _remove_file(self, rel: str, snapshot: Mapping[str, Any]) -> None:
         for key in _snapshot_contributions(snapshot):
-            owners = self.contributions.get(key)
-            if owners is not None:
-                owners.pop(rel, None)
-                if not owners:
-                    self.contributions.pop(key, None)
-                    if key[0] == "field":
-                        self.field_keys_by_name[key[2]].discard(key)
-                        if not self.field_keys_by_name[key[2]]:
-                            self.field_keys_by_name.pop(key[2], None)
+            if self._drop_owned(self.contributions, key, rel) and key[0] == "field":
+                self._forget_field_key(key)
         for key in _snapshot_obligations(snapshot):
-            consumers = self.obligations.get(key)
-            if consumers is not None:
-                consumers.discard(rel)
-                if not consumers:
-                    self.obligations.pop(key, None)
+            self._drop_owned(self.obligations, key, rel)
         for edge in _snapshot_reexports(snapshot):
-            owners = self.reexports.get(edge)
-            if owners is not None:
-                owners.discard(rel)
-                if not owners:
-                    self.reexports.pop(edge, None)
-                    source, target = edge
-                    self.reexport_outgoing[source].discard(target)
-                    self.reexport_incoming[target].discard(source)
-                    if not self.reexport_outgoing[source]:
-                        self.reexport_outgoing.pop(source, None)
-                    if not self.reexport_incoming[target]:
-                        self.reexport_incoming.pop(target, None)
+            if self._drop_owned(self.reexports, edge, rel):
+                self._forget_reexport(edge)
+        for edge in _snapshot_parents(snapshot):
+            self._drop_owned(self.parents, edge, rel)
 
     def _direct_fact(self, key: FactKey) -> TypeFact:
         result = TypeFact()
@@ -376,48 +440,18 @@ class PersistentPythonTypeIndex:
                 continue
             target = fields if kind == "field" else globals_ if kind == "global" else returns
             target[(left, right)] = fact
-        return PythonProjectTypeFacts(fields, globals_, returns)
-
-
-def _parse_module(source: str) -> py_ast.Module | None:
-    try:
-        return py_ast.parse(source)
-    except (IndentationError, SyntaxError, ValueError, RecursionError):
-        return None
-
-
-def python_file_type_snapshot(source: str, rel: str) -> dict[str, Any]:
-    """Return one compact, JSON-safe file contribution."""
-    if not rel.casefold().endswith(".py"):
-        return {}
-    module = _parse_module(source)
-    if module is None:
-        return {
-            "fields": [],
-            "globals": [],
-            "returns": [],
-            "reexports": [],
-            "obligations": [],
-        }
-
-    field_rows = []
-    for (owner, field), type_name in sorted(_python_class_field_types(source).items()):
-        fact = TypeFact.from_evidence(
-            type_name,
-            Evidence("field_type", f"{rel}:{owner}.{field}"),
+        return PythonProjectTypeFacts(
+            fields,
+            globals_,
+            returns,
+            parents=tuple(sorted(self.parents)),
+            field_languages=dict(self.field_languages),
         )
-        field_rows.append([owner, field, _fact_to_data(fact)])
 
-    module_name = rel.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    global_rows = [
-        [module_name, name, _fact_to_data(fact)]
-        for name, fact in sorted(_python_module_global_facts(source, rel).items())
-    ]
-    return_rows = [
-        [module_name, name, _fact_to_data(fact)]
-        for name, fact in sorted(_python_module_return_facts(source, rel).items())
-    ]
 
+def _python_import_relations(
+    module: py_ast.Module, rel: str
+) -> tuple[set[tuple[str, str, str, str]], set[FactKey]]:
     reexports: set[tuple[str, str, str, str]] = set()
     obligations: set[FactKey] = set()
     is_package = rel.rsplit("/", 1)[-1] == "__init__.py"
@@ -440,14 +474,53 @@ def python_file_type_snapshot(source: str, rel: str) -> dict[str, Any]:
                         alias.asname or alias.name,
                     )
                 )
-
-    # Owner types are local data-flow results, so the persistent dependency is
-    # conservatively keyed by field name.  A changed ``X.value`` fact only
-    # wakes files that actually contain a ``.value`` obligation; it does not
-    # wake every Python file.
     for node in py_ast.walk(module):
         if isinstance(node, py_ast.Attribute):
             obligations.add(("field", "", node.attr))
+    return reexports, obligations
+
+
+def _parse_module(source: str) -> py_ast.Module | None:
+    try:
+        return py_ast.parse(source)
+    except (IndentationError, SyntaxError, ValueError, RecursionError):
+        return None
+
+
+def python_file_type_snapshot(source: str, rel: str) -> dict[str, Any]:
+    """Return one compact, JSON-safe file contribution."""
+    if not rel.casefold().endswith(".py"):
+        return {}
+    module = _parse_module(source)
+    if module is None:
+        return {
+            "fields": [],
+            "globals": [],
+            "returns": [],
+            "reexports": [],
+            "obligations": [],
+            "parents": [],
+        }
+
+    field_rows = []
+    for (owner, field), type_name in sorted(_python_class_field_types(source).items()):
+        fact = TypeFact.from_evidence(
+            type_name,
+            Evidence("field_type", f"{rel}:{owner}.{field}"),
+        )
+        field_rows.append([owner, field, _fact_to_data(fact)])
+
+    module_name = rel.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    global_rows = [
+        [module_name, name, _fact_to_data(fact)]
+        for name, fact in sorted(_python_module_global_facts(source, rel).items())
+    ]
+    return_rows = [
+        [module_name, name, _fact_to_data(fact)]
+        for name, fact in sorted(_python_module_return_facts(source, rel).items())
+    ]
+
+    reexports, obligations = _python_import_relations(module, rel)
 
     return {
         "fields": field_rows,
@@ -455,7 +528,25 @@ def python_file_type_snapshot(source: str, rel: str) -> dict[str, Any]:
         "returns": return_rows,
         "reexports": [list(row) for row in sorted(reexports)],
         "obligations": [list(row) for row in sorted(obligations)],
+        "parents": [list(row) for row in _python_parent_edges(module)],
+        "language": "python",
     }
+
+
+def _field_languages(
+    snapshots: Mapping[str, Mapping[str, Any]],
+) -> dict[tuple[str, str], str]:
+    result: dict[tuple[str, str], str] = {}
+    for snapshot in snapshots.values():
+        language = str(snapshot.get("language") or "python")
+        rows = snapshot.get("fields", [])
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, list) or len(row) != 3:
+                continue
+            result[(str(row[0]), str(row[1]))] = language
+    return result
 
 
 def _joined_rows(
@@ -515,8 +606,115 @@ def join_python_project_type_facts(
 ) -> PythonProjectTypeFacts:
     """Join all active file contributions into one deterministic environment."""
     reexports = _reexport_rows(snapshots)
+    parents: set[ParentEdge] = set()
+    for snapshot in snapshots.values():
+        parents.update(_snapshot_parents(snapshot))
     return PythonProjectTypeFacts(
         fields=_joined_rows(snapshots, "fields"),
         globals=_join_reexports(_joined_rows(snapshots, "globals"), reexports),
         returns=_join_reexports(_joined_rows(snapshots, "returns"), reexports),
+        parents=tuple(sorted(parents)),
+        field_languages=_field_languages(snapshots),
     )
+
+
+def frontend_file_type_snapshot(source: str, rel: str) -> dict[str, Any]:
+    """Language-neutral per-file fact contribution for incremental re-join.
+
+    Python stays on the AST snapshot. Other languages parse once with the
+    same tree-sitter frontends the extractor uses, then emit field and parent
+    rows. Parser failures produce an empty contribution rather than aborting
+    the scan.
+    """
+
+    if rel.casefold().endswith(".py"):
+        return python_file_type_snapshot(source, rel)
+
+    from pathlib import Path
+
+    from ..source_ir import SourceIR
+    from .edges import _file_field_types
+    from .languages import _SUFFIX_LANGUAGE, _parser_for_suffix
+    from .syntax import _collect_defs
+
+    path = Path(rel)
+    suffix = path.suffix.lower()
+    parser = _parser_for_suffix(suffix)
+    if parser is None or not source.strip():
+        return {}
+    language = _SUFFIX_LANGUAGE.get(suffix, suffix.lstrip(".") or "unknown")
+    posix = rel.replace("\\", "/")
+    ir = SourceIR(path, posix, posix, source)
+    try:
+        tree = parser.parse(ir.text_bytes)
+    except Exception:
+        return {}
+    root = tree.root_node
+    defs = _collect_defs(ir, root, ir.text_bytes)
+    field_rows = []
+    for (owner, field_name), type_name in sorted(_file_field_types(ir, defs, root).items()):
+        if not type_name:
+            continue
+        fact = TypeFact.from_evidence(
+            type_name,
+            Evidence("field_type", f"{posix}:{owner}.{field_name}"),
+        )
+        field_rows.append([owner, field_name, _fact_to_data(fact)])
+    parents = [
+        [language, definition.name, base]
+        for definition in defs
+        if definition.kind in {"class", "interface", "struct", "trait", "type"}
+        for base in definition.extra
+        if base
+    ]
+    return {
+        "fields": field_rows,
+        "globals": [],
+        "returns": [],
+        "reexports": [],
+        "obligations": [list(row) for row in sorted(_member_field_obligations(root, ir.text_bytes))],
+        "parents": parents,
+        "language": language,
+    }
+
+
+_MEMBER_NODE_TYPES = frozenset(
+    {
+        "attribute",
+        "member_expression",
+        "member_access_expression",
+        "field_expression",
+        "field_access",
+        "selector_expression",
+        "navigation_expression",
+        "qualified_identifier",
+    }
+)
+
+
+def _member_field_obligations(root: Any, text: bytes) -> frozenset[FactKey]:
+    """Field names read at member-access sites, used to wake consumers.
+
+    Keyed like Python's ``("field", "", attr)`` so a changed ``X.store`` fact
+    promotes any file that reads ``.store``, in any language.
+    """
+
+    names: set[str] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        children = list(getattr(node, "named_children", ()))
+        stack.extend(children)
+        if getattr(node, "type", "") not in _MEMBER_NODE_TYPES:
+            continue
+        field_name = ""
+        for child in reversed(children):
+            child_type = getattr(child, "type", "")
+            if child_type in {"identifier", "property_identifier", "field_identifier", "type_identifier"}:
+                field_name = text[int(child.start_byte) : int(child.end_byte)].decode(
+                    "utf-8", errors="replace"
+                )
+                break
+        if field_name and field_name.isidentifier():
+            names.add(field_name)
+    return frozenset(("field", "", name) for name in names)

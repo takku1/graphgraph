@@ -20,7 +20,7 @@ holds only `__init__.py` (the curated public API), `__main__.py`, and
   `document_status.py`, `test_recommendations.py`, `anchors.py`, and
   `quality.py`. Also holds activation, budget shaping, connected selection
   (`selection.py`), and node-suggestion diagnostics (`findnodes.py`).
-  `tree_knapsack.py` remains a compatibility import for older integrations.
+  Connected selection lives in `selection.py`; the old `tree_knapsack.py` compatibility import is gone.
 - `planning/`: query plans, packet choices, budgets, graph-shape budgets, and
   policy selection.
 - `packets/`: packet renderers and packet/graph validation.

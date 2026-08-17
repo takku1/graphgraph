@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from ..graph.core import Node
 
-TOKEN = re.compile(r"[A-Za-z0-9_]+")
+TOKEN = re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*")
 CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 QUERY_STOPWORDS = {
     "a",
@@ -61,7 +61,7 @@ def identifier_terms(token: str) -> tuple[str, ...]:
         return ()
 
     parts: list[str] = [lowered]
-    for piece in raw.split("_"):
+    for piece in raw.replace("-", "_").split("_"):
         if not piece:
             continue
         piece_lowered = piece.lower()

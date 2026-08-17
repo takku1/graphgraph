@@ -1,88 +1,68 @@
 # Intermediate Representation (L1)
 
-> **Packages:** `graph/`, `concepts/`  
-> **Children:** [relation-ontology.md](./relation-ontology.md), [schema-alignment.md](./schema-alignment.md), [interpretation-layer.md](./interpretation-layer.md)  
-> **Narrative:** [../system-architecture.md](../system-architecture.md) § Shared IR
+<!-- recurspec-contract: 1.0 -->
 
-## 1. Intent
+## 1. System Intent & Responsibility
 
-Canonical **logical IR** shared by extraction, storage, retrieval, and packet encoding.
+Hold the canonical in-memory graph IR shared by extraction, storage, retrieval, and packet encoding; does not own prompt-facing encodings or a query language.
 
-| Element | Fields (core) |
-|---------|----------------|
-| **Node** | `id`, `label`, `kind`, `path`, `summary`, `facts` |
-| **Edge** | `source`, `target`, `type`, `weight` |
-| **Policy** | `id`, `kind`, `priority`, `applies_to`, `task_tags`, `compact`, `content` |
+## 2. Sub-System Decomposition
 
-Loose schema binding exists for **interop ingest**; native persistence is `.graphgraph/graph.gg`.
+**Atomic leaf (atomic build).** Three record types plus traversal and ontology policy.
 
-## 2. Decomposition
+## 3. Interface Contracts
 
-| Child | Role |
-|-------|------|
-| [relation-ontology.md](./relation-ontology.md) | Edge vocabulary, traversal strength |
-| [schema-alignment.md](./schema-alignment.md) | External tool schemas → IR |
-| [interpretation-layer.md](./interpretation-layer.md) | Typed interpretation / concepts |
-| Graph operations / traversal | `graph/operations.py`, `traversal.py`, `coupling.py` (research coupling separate) |
-
-## 3. Interfaces
-
-| | |
-|--|--|
-| **Inputs** | Frontend emissions, ingest mappings, optional inferred edges |
-| **Outputs** | In-memory `Graph` for retrieval; serializable store payload |
-| **Non-goals** | Prompt-facing encoding (that is context-packets) |
+- **Inputs:** `extracted_nodes`, `extracted_edges`
+- **Outputs:** `graph_ir`
 
 ## 4. Invariants (EARS + Epistemic Stage)
 
-- **[Ubiquitous]** Consumers needing complete materialization SHALL use the in-memory IR; the binary store is a persistence optimization.
-  - `EvidenceStage: Observed`.
-- **[Conditional]** IF an ontology relation has zero traversal strength THEN expansion SHALL hard-block it.
-  - `EvidenceStage: Sampled` — `tests/test_graph_core.py`.
+- **[Ubiquitous]** Consumers that need complete materialization SHALL use the in-memory IR; the binary store is a persistence optimization.
+  - `EvidenceStage:` Observed
+- **[Conditional]** IF an ontology relation has zero traversal strength THEN expansion SHALL hard-block it, as checked by `tests/test_packets.py`.
+  - `EvidenceStage:` Sampled
 - **[Ubiquitous]** Optional `infer_edges` SHALL be off by default and budget-capped.
-  - `EvidenceStage: Observed` — distinct from the *unimplemented* scanner `cpg` mode; see [platform](../platform/SYSTEM.md).
-- **[Ubiquitous]** Inferred edges SHALL carry provenance distinguishing them from extracted edges.
-  - `EvidenceStage: Observed` — same rule as runtime `observed_calls` in [static-analysis](../static-analysis/SYSTEM.md).
+  - `EvidenceStage:` Observed
+- **[Ubiquitous]** Inferred edges SHALL carry provenance that distinguishes them from extracted edges.
+  - `EvidenceStage:` Observed
 
-## 5. ADRs
+## 5. Architectural Decisions (ADRs)
 
-- **ADR-IR-001:** The IR is the logical model; the store is a serialization of it. Any consumer that needs the whole graph reads the IR, so the store's layout stays free to change for performance.
-- **ADR-IR-002:** External schemas bind loosely and only on ingest. Interop is an import concern; making the native IR conform to a foreign schema would put an external project's vocabulary on the hot path.
+- **ADR-GIR-001:** The IR is the logical model; the store is a serialization of it.
+- **ADR-GIR-002:** External schemas bind loosely and only on ingest.
 
-## 6. Leaf execution & test seam
+## 6. Leaf Execution & Test Seam
 
-| | |
-|--|--|
-| **Implementation** | `graph/` (6 modules): `operations.py`, `traversal.py`, `coupling.py`; `concepts/` (5 modules) |
-| **Test surface** | `tests/test_graph_core.py`, `tests/test_graph_coupling.py`, `tests/test_concepts.py`, `tests/test_scope_graph.py` |
-| **Snapshot seam** | `tests/test_graph_snapshot.py` plus `scripts/graph_snapshot.py` — the canonical dump used as the determinism gate |
+- **Implementation Files:** `src/graphgraph/concepts/__init__.py`, `src/graphgraph/concepts/doccode.py`, `src/graphgraph/concepts/health.py`, `src/graphgraph/concepts/registry.py`, `src/graphgraph/concepts/terms.py`, `src/graphgraph/graph/__init__.py`, `src/graphgraph/graph/core.py`, `src/graphgraph/graph/coupling.py`, `src/graphgraph/graph/ontology.py`, `src/graphgraph/graph/operations.py`, `src/graphgraph/graph/traversal.py`
+- **Test Surface Seam:** `tests/test_concepts.py`, `tests/test_graph_core.py`, `tests/test_graph_coupling.py`, `tests/test_graph_snapshot.py`
 
-## 7. Measurement seams
+## 7. Measurement Seams
 
-| | |
-|--|--|
-| **Primary metric** | Traversal cost per expansion hop (`direction: lower`) |
-| **Structural gate** | Byte-identical canonical dump across a refactor — the gate that made the scan and retrieval optimizations safe |
-| **Ontology metric** | Edge-type contribution to retrieval quality, ranked under OW-Q04-* |
-| **Caution** | `graph/coupling.py` is production graph coupling; the research coupling line (influence field) is separate and [did not survive production measurement](../../evaluation/graybox-cycles/README.md#influence-field-experiment) |
+- **Primary Metric:** `traversal_cost_per_hop` (observation, `direction: lower`)
+- **Evaluation Gate Path:** `components/intermediate-representation/measure.sh`
+- **Correctness Backpressure:** `components/intermediate-representation/checks.sh`
+- **Telemetry Surface:** node/edge/policy counts and canonical snapshot hash.
+- **Branching Policy:** isolated candidate; byte-identical canonical dump is the refactor gate.
 
-## 8. Technology resolution
+## 8. Technology Resolution
 
-- **Decision class:** **BUILD**
-- **Selected:** in-repo `Graph` (nodes, edges, policies) — plain Python data structures, stdlib only
+- **Decision class:** BUILD
+- **Justification:** Genuinely trivial and stable — three record types. The value is vocabulary discipline, not the data structure. NetworkX would still need the domain fields layered on top.
+- **Selected:** in-repo `Graph` on Python 3.10, stdlib only
 - **Standard / protocol:** none native; JSON-shaped schemas accepted on ingest
 - **Alternatives considered:**
 
   | Option | Why not |
-  |--------|---------|
-  | NetworkX | A large dependency for traversals this project implements narrowly, and its generic node/edge model would still need the domain fields layered on top |
-  | RDF / property-graph standards | Real interop value, but the vocabulary is far wider than the ontology here and would push toward a triple store; kept as an ingest mapping instead |
-  | Adopting an external tool's schema natively | Would couple the IR to another project's release cycle; see [schema-alignment.md](./schema-alignment.md) for the ingest-side treatment |
+  |---|---|
+  | NetworkX 3.x | Large dependency for narrow traversals; domain fields still required. |
+  | RDF / property-graph standards | Vocabulary far wider than this ontology; would push toward a triple store. |
+  | Adopting an external tool schema natively | Couples the IR to another project's release cycle. |
 
-- **Fit gap:** the IR carries no query language. Expression of intent lives in [query-planning](../query-planning/SYSTEM.md).
-- **BUILD justification:** genuinely trivial and stable — the IR is three record types; its value is the vocabulary discipline in [relation-ontology.md](./relation-ontology.md), not the data structure.
-- **Seam:** `graph/operations.py`
-- **Exit cost:** **HIGH** — every subsystem reads the IR; it is the widest internal contract in the system.
+- **Fit gap:** the IR carries no query language; intent lives in Query Planning.
+- **Seam:** `src/graphgraph/graph/operations.py`
+- **Exit cost:** HIGH — every subsystem reads the IR.
+- **Cost model:** in-process memory; no service spend.
+- **Liability transferred:** none
 - **Operational owner:** us
-- **Failure mode:** an unknown edge type is retained but carries no traversal strength, so it cannot silently widen expansion.
-- **Open questions:** ontology ranking under OW-Q04-* — [open-work.md](../../open-work.md)
+- **Failure mode:** an unknown edge type is retained but carries no traversal strength.
+- **Open questions:** OW-Q04

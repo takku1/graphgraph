@@ -28,7 +28,7 @@ from .external_summaries import (
     javascript_external_type_bindings,
     javascript_property_copy_helpers,
 )
-from .go import go_return_type_name
+from .go import go_embedded_types, go_return_type_name
 from .grammars import profile_for_suffix
 from .languages import _SUFFIX_LANGUAGE
 from .model import _CallSite, _MemberCallStats, _TsDef
@@ -373,6 +373,13 @@ def _project_field_indexes(
                         type_scope(language, definition.name),
                         type_scope(language, base),
                     )
+        if language == "go":
+            for owner, embeds in go_embedded_types(source.text).items():
+                for base in embeds:
+                    scope_graph.add_parent(
+                        type_scope(language, owner),
+                        type_scope(language, base),
+                    )
         for (owner, field), field_type in _file_field_types(source, defs, root).items():
             if not field_type:
                 continue
@@ -491,11 +498,14 @@ def _add_tree_sitter_calls(
         for key, fact in python_project_facts.fields.items():
             project_field_types[key] = project_field_types.get(key, TypeFact()).join(fact)
             owner, field = key
-            scope_graph.add_binding(type_scope("python", owner), field, fact)
+            language = python_project_facts.field_languages.get(key, "python")
+            scope_graph.add_binding(type_scope(language, owner), field, fact)
         for key, fact in python_project_facts.globals.items():
             project_python_globals[key] = project_python_globals.get(key, TypeFact()).join(fact)
         for key, fact in python_project_facts.returns.items():
             project_python_returns[key] = project_python_returns.get(key, TypeFact()).join(fact)
+        for language, child, parent in python_project_facts.parents:
+            scope_graph.add_parent(type_scope(language, child), type_scope(language, parent))
 
     js_structural_owners_by_source: dict[str, frozenset[str]] = {}
     for source, defs, _root in defs_by_file:

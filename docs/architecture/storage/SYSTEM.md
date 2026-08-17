@@ -1,92 +1,70 @@
 # Persistent Storage (L1)
 
-> **Packages:** `storage/`, `runtime/`, `io/`  
-> **Children:** [native-graph-store.md](./native-graph-store.md), [incremental-update-protocol.md](./incremental-update-protocol.md)  
-> **Narrative:** [../system-architecture.md](../system-architecture.md) § Native Storage Contract
+<!-- recurspec-contract: 1.0 -->
 
-## 1. Intent
+## 1. System Intent & Responsibility
 
-**Native graph store** for project-local persistence: full-fidelity sectioned `.gg` (GGB4 family) with identity/detail/edge/relation sections and checksums. Legacy formats are migration inputs via `load_any` / ingest—not auto-selected active stores.
+Persist and incrementally update the native sectioned `.gg` store; does not auto-select legacy interchange formats or host a database server.
 
-```text
-source → Graph IR → binary graph.gg → selected subgraph → context packet
-                                              ↘ JSON control receipt
-```
+## 2. Sub-System Decomposition
 
-## 2. Decomposition
+**Atomic leaf (atomic build).** One embedded store and one incremental splice protocol.
 
-| Child | Role |
-|-------|------|
-| [native-graph-store.md](./native-graph-store.md) | Sectioned store architecture (v4 proposal lineage) |
-| [incremental-update-protocol.md](./incremental-update-protocol.md) | Delta / refresh protocol |
-| Atomic state & locks | `runtime/state.py` (OS advisory locks; age alone does not revoke live owners) |
-| Manifest / cache | `runtime/manifest.py`, `runtime/cache.py`, `io/cache.py` |
-| Discovery | Active graph path resolution (`io/discovery.py`) |
+## 3. Interface Contracts
 
-## 3. Interfaces
-
-| | |
-|--|--|
-| **Inputs** | Full or delta IR, output path overrides |
-| **Outputs** | `.graphgraph/graph.gg`, fingerprints for process memoization |
-| **Invariants** | Auto-discover `.graphgraph/graph.gg` unless overridden |
+- **Inputs:** `graph_ir`
+- **Outputs:** `native_store`
 
 ## 4. Invariants (EARS + Epistemic Stage)
 
 - **[Ubiquitous]** Active store discovery SHALL prefer native `.gg` over legacy interchange.
-  - `EvidenceStage: Observed` — `io/discovery.py`.
-- **[Event-driven]** WHEN the source delta is empty THE SYSTEM SHOULD avoid a full rebuild (OW-Q07-A).
-  - `EvidenceStage: Sampled` — `tests/test_storage_delta.py`; the no-op incremental gate is still open.
-- **[Ubiquitous]** Packet `#gg` text SHALL NOT be confused with the binary store encoding.
-  - `EvidenceStage: Observed` — distinct code paths (`packets/` vs `storage/backends.py`).
-- **[Ubiquitous]** A cache key SHALL NOT be derived from artifacts the tool itself writes under `.graphgraph/`.
-  - `EvidenceStage: Measured` — a key that fingerprinted the tool's own `kv_cache.json` self-invalidated on every run (0% hit rate on external repositories); excluding it restored the hit path. See [the consolidated cache measurement](../../evaluation/graybox-cycles/README.md#instrument-and-representation-measurements).
+  - `EvidenceStage:` Observed
+- **[Event-driven]** WHEN the source delta is empty THE SYSTEM SHALL avoid a full rebuild, as checked by `tests/test_storage_delta.py`.
+  - `EvidenceStage:` Sampled
+- **[Ubiquitous]** Packet `#gg` text SHALL NOT be used as the binary store encoding.
+  - `EvidenceStage:` Observed
 - **[Conditional]** IF a state-file lock is held by a live owner THEN age alone SHALL NOT revoke it.
-  - `EvidenceStage: Observed` — defect 1 in the [defect ledger](../../evaluation/defect-ledger.md), fixed.
+  - `EvidenceStage:` Observed
 
-## 5. ADRs
+## 5. Architectural Decisions (ADRs)
 
-- **ADR-ST-001:** The native `.gg` store is embedded and file-based — no database server, no daemon. Cold-start CLI latency is a measured budget in this project, and a server hop would sit inside it.
-- **ADR-ST-002:** Legacy formats (`ggb2`, `ggb3`, JSON) load but are never auto-selected as the active store; they are migration inputs only, which keeps one write path and many read paths.
-- **ADR-ST-003:** `platform/evidence_store.py` may use SQLite — it is stdlib and embedded, so it does not violate ADR-ST-001. This is the optional evidence layer, not the graph store.
+- **ADR-ST-001:** Embedded custom `.gg` store. A general database is farther from the LLM compilation target: the access pattern is whole-section materialization into graph IR, then into a model-facing packet, not ad-hoc query from a person. No database server inside the cold-start budget.
+- **ADR-ST-002:** Legacy `ggb2` / `ggb3` / JSON load but are never auto-selected as the active store.
+- **ADR-ST-003:** SQLite may be used only by the optional evidence layer, not as the graph store.
 
-## 6. Leaf execution & test seam
+## 6. Leaf Execution & Test Seam
 
-| | |
-|--|--|
-| **Implementation** | `storage/backends.py` (GGB2/3/4 read, v4 write), `storage/sectioned.py`, `runtime/state.py`, `runtime/manifest.py`, `io/cache.py`, `io/discovery.py` |
-| **Test surface** | `tests/test_sectioned_storage.py`, `tests/test_storage_delta.py`, `tests/test_context_compiler.py` |
-| **Determinism gate** | A canonical, timestamp-free graph dump — byte-identity across a change is what makes a storage or scan optimization safe to land |
+- **Implementation Files:** `src/graphgraph/io/__init__.py`, `src/graphgraph/io/cache.py`, `src/graphgraph/io/core.py`, `src/graphgraph/io/discovery.py`, `src/graphgraph/runtime/__init__.py`, `src/graphgraph/runtime/cache.py`, `src/graphgraph/runtime/manifest.py`, `src/graphgraph/runtime/state.py`, `src/graphgraph/storage/__init__.py`, `src/graphgraph/storage/backends.py`, `src/graphgraph/storage/delta.py`, `src/graphgraph/storage/sectioned.py`
+- **Test Surface Seam:** `tests/test_sectioned_storage.py`, `tests/test_storage_delta.py`, `tests/test_io.py`.
 
-## 7. Measurement seams
+## 7. Measurement Seams
 
-| | |
-|--|--|
-| **Primary metric** | Store load time on the cold CLI path (`direction: lower`) |
-| **Secondary metric** | On-disk size at equal fidelity (`direction: lower`) |
-| **Harness** | `benchmarks/context_graph/storage_backend_bakeoff.py`, `benchmarks/context_graph/bitpack_benchmark.py` |
-| **Recorded results** | [empirical-evaluation.md](../../evaluation/empirical-evaluation.md) § Storage Backend Bake-Off, § Native Exact-Lookup Staging |
-| **Design notes** | `benchmarks/context_graph/storage_design_research.md` |
-| **Correctness backpressure** | The storage test surface above plus the determinism gate |
+- **Primary Metric:** `store_load_ms` (target measured on the cold CLI path, `direction: lower`)
+- **Evaluation Gate Path:** `components/storage/measure.sh`
+- **Correctness Backpressure:** `components/storage/checks.sh`
+- **Telemetry Surface:** section checksums, manifest hash, incremental file counts.
+- **Branching Policy:** isolated candidate; determinism dump plus storage checks must pass.
 
-## 8. Technology resolution
+## 8. Technology Resolution
 
-- **Decision class:** **BUILD** (native sectioned store)
-- **Selected:** in-repo GGB4 sectioned format — identity / detail / edge / relation sections with checksums
-- **Standard / protocol:** none for the store; JSON remains the interchange/import path
+- **Decision class:** BUILD
+- **Justification:** Cost inversion at this scale — whole-section mmap reads are narrower than a general graph engine; a server hop sits inside a millisecond budget.
+- **Selected:** in-repo GGB4 sectioned format on Python 3.10
+- **Standard / protocol:** none for the store; JSON remains interchange
 - **Alternatives considered:**
 
   | Option | Why not |
-  |--------|---------|
-  | Neo4j / a graph database | Requires a server daemon and a query-compiler hop inside a latency budget measured in milliseconds; full analysis in [comparisons/neo4j.md](../../research/comparisons/neo4j.md) |
-  | SQLite as the graph store | Embedded and viable, but a row-store shape penalizes the whole-section reads this access pattern is built around; retained for the *evidence* store where the access pattern is genuinely relational |
-  | Pickle / JSON | JSON is kept as interchange; as the active store it is large and parse-bound. Pickle is not a safe format to load from a repository |
-  | Embedded analytics engines (DuckDB, Kùzu) | Another dependency and file format to own for a workload that is a sectioned array read; revisit only if a measured load-time win appears |
+  |---|---|
+  | Neo4j | Server daemon and query-compiler hop inside a millisecond budget. |
+  | SQLite as the graph store | Row-store shape penalizes whole-section reads; retained only for evidence. |
+  | Pickle / JSON as the active store | JSON is interchange only; Pickle is unsafe to load from a repository. |
+  | DuckDB or Kùzu | Extra engine and file format for a sectioned array read. |
 
-- **Fit gap:** the store is deliberately single-project and single-writer. Cross-repository federation is a retrieval-layer concern, not a storage feature.
-- **BUILD justification:** cost inversion at this scale — the access pattern (load a whole section, mmap-friendly, no query language) is narrow enough that a general engine's overhead dominates its benefit.
-- **Seam:** `storage/backends.py` (`save_graph_binary` / `load_graph_binary`, `is_binary_gg`)
-- **Exit cost:** **HIGH** — the format is the project's persistence contract; `load_any` limits the blast radius on the read side only.
+- **Fit gap:** single-project, single-writer. Federation is a retrieval concern.
+- **Seam:** `src/graphgraph/storage/backends.py`
+- **Exit cost:** HIGH — native persistence contract; `load_any` limits read-side blast radius.
+- **Cost model:** local disk; no service spend.
+- **Liability transferred:** none
 - **Operational owner:** us
-- **Failure mode:** a truncated or checksum-failing store fails the load rather than returning a partial graph; discovery then reports no active graph and the CLI directs the user to re-scan.
-- **Open questions:** OW-AC-02, OW-Q07-* — [open-work.md](../../open-work.md)
+- **Failure mode:** checksum failure refuses the load; discovery reports no active graph.
+- **Open questions:** OW-AC-02, OW-Q07

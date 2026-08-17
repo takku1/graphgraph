@@ -114,11 +114,12 @@ def validate_svo(packet: str) -> ValidationResult:
             if ":" not in line:
                 errors.append(f"bad entity row: {line}")
                 continue
-            _node_id, label = line.split(":", 1)
-            if not _node_id.strip() or not label.strip():
+            _node_id, rest = line.split(":", 1)
+            label = rest.split(" @", 1)[0].strip()
+            if not _node_id.strip() or not label:
                 errors.append(f"bad entity row: {line}")
                 continue
-            labels.add(label.strip())
+            labels.add(label)
             node_count += 1
         elif section == "triples":
             match = re.match(r"^(.*?)\s+-([^\s]+)->\s+(.*?)(?:\s+\(([^)]+)\))?$", line)

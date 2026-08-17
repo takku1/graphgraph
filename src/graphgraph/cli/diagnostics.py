@@ -399,6 +399,9 @@ def cmd_status(args: argparse.Namespace) -> None:
         graph_path=Path(args.graph) if args.graph else None,
         run_probes=bool(args.probe),
     )
+    from ..mcp.machine_contract import advertised_capability
+
+    report["capability"] = advertised_capability("cli")
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return
@@ -407,6 +410,11 @@ def cmd_status(args: argparse.Namespace) -> None:
         print("GraphGraph Status")
         print("=================")
         print(report["message"])
+        capability = report["capability"]
+        print(
+            f"Capability: transport={capability['transport']} "
+            f"contract_id={capability['contract_id']} tools={capability['tool_count']}"
+        )
         return
 
     graph = report["graph"]  # type: ignore[index]
@@ -416,6 +424,11 @@ def cmd_status(args: argparse.Namespace) -> None:
     print("GraphGraph Status")
     print("=================")
     print(f"Graph: {graph['path']}")
+    capability = report["capability"]
+    print(
+        f"Capability: transport={capability['transport']} "
+        f"contract_id={capability['contract_id']} tools={capability['tool_count']}"
+    )
     print(
         f"Structural validation: {'PASS' if validation['ok'] else 'FAIL'} "
         f"{validation['format']} nodes={validation['nodes']} edges={validation['edges']}"

@@ -1,94 +1,71 @@
-# Platform & Evidence Services (L1)
+# Platform and Evidence (L1)
 
-> **Package:** `platform/`  
-> **Do not conflate** optional platform evidence with unimplemented scanner modes.
+<!-- recurspec-contract: 1.0 -->
 
-## 1. Intent
+## 1. System Intent & Responsibility
 
-Cross-cutting and optional capabilities: CPG-style evidence providers, bounded Horn-style edge inference, temporal/memory stores, embeddings hooks, federation, repair, benchmarking helpers.
+Supply optional CPG, inference, and compiler-pass evidence into the same graph IR; does not become default behavior without a measured promotion, and is not the unimplemented scanner `cpg` mode.
 
-## 2. Decomposition (conceptual)
+## 2. Sub-System Decomposition
 
-| Capability | Academic framing | Notes |
-|------------|------------------|-------|
-| CPG evidence provider | Control/data/type evidence when pass requested | Implemented path when requested |
-| Scanner `cpg` frontend | Selectable scan mode | **Not** the same; may be planned only |
-| `infer_edges` | Bounded optional inference | Off by default, budget-capped |
-| Compiler artifacts | Revisioned component fingerprints and precise pass reuse | `artifacts.py`, `compiler.py` |
-| Temporal / memory | Bi-temporal / session memory experiments | Research-sensitive; evidence standards apply |
-| Semantic / embeddings | Optional semantic indexes | Must version with graph topology |
-| Server façade | Local server, hooks, change | `server.py`, git hooks path via `git rev-parse` |
+**Atomic leaf (atomic build).** Optional providers behind one pass catalog.
 
-## 3. Invariants (EARS + Epistemic Stage)
+## 3. Interface Contracts
+
+- **Inputs:** `graph_ir`, `source_corpus`
+- **Outputs:** `optional_evidence`
+
+## 4. Invariants (EARS + Epistemic Stage)
 
 - **[Ubiquitous]** Optional passes SHALL NOT be advertised as default behavior without measurement.
-  - `EvidenceStage: Observed`.
-- **[Conditional]** IF a semantic sidecar mismatches active graph topology THEN THE SYSTEM SHALL reject it as stale.
-  - `EvidenceStage: Sampled` — `tests/test_platform.py`.
+  - `EvidenceStage:` Observed
+- **[Conditional]** IF a semantic sidecar mismatches active graph topology THEN THE SYSTEM SHALL reject it as stale, as checked by `tests/test_cycle5_regressions.py`.
+  - `EvidenceStage:` Sampled
 - **[Ubiquitous]** The working `CpgEvidenceProvider` SHALL NOT be described as the scanner `cpg` frontend.
-  - `EvidenceStage: Observed` — the provider emits control/data/type evidence when its pass is requested; the scanner `cpg` *mode* is advertised as planned and is not selectable. Conflating them is the specific documentation error this node exists to prevent.
-- **[Conditional]** IF scanner extraction already compiled an unchanged `SourceIR` revision THEN `CpgEvidenceProvider` SHALL reuse its `SyntaxIR` and report that reuse.
-  - `EvidenceStage: Proved` — `tests/test_platform.py` patches the CPG parser to fail if it is called after scanner extraction.
-- **[Ubiquitous]** Every research claim in the registry SHALL resolve to a source path that exists.
-  - `EvidenceStage: Proved` — mechanically enforced by `tests/test_research_registry.py`, which fails on any dangling source.
-- **[Ubiquitous]** Every compiler pass SHALL declare version, requirements,
-  products, preserved graph components, capabilities, determinism, cache scope,
-  request parameters, and cost model in one `CompilerPassSpec`.
-  - `EvidenceStage: Proved` — public-contract parity checks the serialized catalog.
-- **[Event-driven]** WHEN a required artifact revision or content digest changes
-  THEN a cached analysis SHALL be invalidated; a changed preserved artifact
-  SHALL be rebased without recomputing that analysis.
-  - `EvidenceStage: Proved` — `tests/test_platform.py::PlatformTest::test_compiler_cache_invalidates_only_required_artifacts`.
+  - `EvidenceStage:` Observed
+- **[Conditional]** IF scanner extraction already compiled an unchanged `SourceIR` revision THEN `CpgEvidenceProvider` SHALL reuse its `SyntaxIR`, as checked by `tests/test_platform.py`.
+  - `EvidenceStage:` Sampled
+- **[Event-driven]** WHEN a required artifact revision or content digest changes THEN a cached analysis SHALL be invalidated, as checked by `tests/test_platform.py`.
+  - `EvidenceStage:` Sampled
 
-## 4. ADRs
+## 5. Architectural Decisions (ADRs)
 
-- **ADR-PL-001:** Inference is a bounded, Horn-style, budget-capped **optional** compiler pass — off by default. An earlier claim that "no inference exists" is superseded; the correct statement is that none runs unless requested.
-- **ADR-PL-002:** SQLite is acceptable here because the evidence store's access pattern is genuinely relational and SQLite is embedded stdlib — no daemon, so [ADR-ST-001](../storage/SYSTEM.md) still holds.
-- **ADR-PL-003:** Platform capabilities are research-sensitive by default: they carry the [evidence standards](../../guides/evidence-standards.md) bar before promotion into the default path.
-- **ADR-PL-004:** Deterministic compiler analyses use a bounded compiler-local
-  cache keyed by pass/version/request parameters and required-artifact
-  revision-plus-content fingerprints. Cached graphs are private snapshots;
-  public result mutation cannot poison reuse.
-- **ADR-PL-005:** Preservation has LLVM-style meaning: an analysis may be reused
-  across changes to a component it explicitly preserves, and that current
-  component is rebased into the cached product. Undeclared graph output is a
-  catalog construction error.
+- **ADR-PL-001:** Inference is a bounded, Horn-style, budget-capped optional pass — off by default.
+- **ADR-PL-002:** SQLite is acceptable for the evidence store because it is embedded stdlib.
+- **ADR-PL-003:** Platform capabilities are research-sensitive until they pass the promotion gate.
 
-## 5. Leaf execution & test seam
+## 6. Leaf Execution & Test Seam
 
-| | |
-|--|--|
-| **Implementation** | `platform/`: `compiler.py`, `artifacts.py`, `server.py`, `evidence_store.py`, `embeddings.py`, `contracts.py`, `source_planner.py`, `cpg.py`; shared source artifacts live in `scanner/source_ir.py` |
-| **Test surface** | `tests/test_platform.py`, `tests/test_research_registry.py` |
-| **Claim ledger** | `eval/context-system-research.json` — executable provenance for research claims |
+- **Implementation Files:** `src/graphgraph/platform/__init__.py`, `src/graphgraph/platform/artifacts.py`, `src/graphgraph/platform/benchmarking.py`, `src/graphgraph/platform/change.py`, `src/graphgraph/platform/compiler.py`, `src/graphgraph/platform/contracts.py`, `src/graphgraph/platform/cpg.py`, `src/graphgraph/platform/evaluation.py`, `src/graphgraph/platform/evidence_store.py`, `src/graphgraph/platform/federation.py`, `src/graphgraph/platform/inference.py`, `src/graphgraph/platform/intelligence.py`, `src/graphgraph/platform/interop.py`, `src/graphgraph/platform/memory.py`, `src/graphgraph/platform/persistence.py`, `src/graphgraph/platform/repair.py`, `src/graphgraph/platform/server.py`, `src/graphgraph/platform/temporal.py`, `src/graphgraph/platform/tracing.py`
+- **Test Surface Seam:** `tests/test_platform.py`, `tests/test_research_registry.py`, `tests/test_runtime_coverage.py`.
 
-## 6. Measurement seams
+## 7. Measurement Seams
 
-| | |
-|--|--|
-| **Primary metric** | Marginal retrieval quality per optional pass (`direction: higher`), measured against the pass being off |
-| **Cost metric** | Added latency and tokens when the pass is requested (`direction: lower`) |
-| **Promotion gate** | An optional pass moves to default only on measured gain — [empirical-evaluation.md](../../evaluation/empirical-evaluation.md) § Promotion Gate |
-| **Registry gate** | `tests/test_research_registry.py` — referential completeness of every claim's source |
+- **Primary Metric:** `optional_pass_marginal_recall` (`direction: higher` vs the pass being off)
+- **Correctness Backpressure:** `components/platform/checks.sh`
+- **Telemetry Surface:** artifacts compiled vs reused, pass catalog, invalidation receipts.
+- **Branching Policy:** isolated candidate; an optional pass becomes default only on measured gain.
 
-## 7. Technology resolution
+## 8. Technology Resolution
 
-- **Decision class:** **BUILD** (evidence providers, inference) / **ADOPT** (`sqlite3` stdlib; `fastembed` optional)
-- **Selected:** in-repo providers; `sqlite3` for the evidence store; `fastembed>=0.3.0` (`semantic` extra) for real embeddings
-- **Standard / protocol:** SQL for the evidence store; ONNX runtime for the optional model
+- **Decision class:** BUILD
+- **Justification:** Fatal fit gap — off-the-shelf CPG engines and reasoners bring a daemon or unbounded solver into a cold-start local process.
+- **Selected:** in-repo providers; Python 3.10 `sqlite3` for the evidence store
+- **Standard / protocol:** SQL for the evidence store
 - **Alternatives considered:**
 
   | Option | Why not |
-  |--------|---------|
-  | A full CPG engine (e.g. Joern) | Heavyweight and JVM-hosted; this subsystem needs evidence *when asked*, not a second permanent analysis platform |
-  | A general reasoner / Datalog engine | The inference is deliberately bounded and Horn-style; an unbounded solver is the opposite of the budget cap that makes it safe to offer |
-  | Hosted embedding APIs | A network call and a per-token bill inside a local-first tool; the local ONNX path keeps it offline |
-  | A temporal graph database (e.g. Graphiti) | Useful model, but it requires a database plus LLM/embedding services; temporal validity is kept as optional graph facts instead — see [external-tool-interoperability-audit.md](../../evaluation/external-tool-interoperability-audit.md) |
+  |---|---|
+  | Joern | JVM-hosted second analysis platform. |
+  | General Datalog engine | Unbounded; opposite of the budget cap. |
+  | Hosted embedding APIs | Network and per-token cost inside a local-first tool. |
+  | Graphiti / temporal graph DB | Database plus LLM/embedding services. |
 
-- **Fit gap:** these capabilities are optional by construction. None of them may become load-bearing for the default path without passing the promotion gate.
-- **BUILD justification:** the fit gap is fatal for off-the-shelf options — every alternative brings a daemon or a service into a tool whose defining constraint is a cold-start local process.
-- **Seam:** `platform/server.py` (local transport façade), `platform/contracts.py`
-- **Exit cost:** **LOW** — optional by design; removing a provider degrades an opt-in capability, not the core pipeline.
+- **Fit gap:** none of these passes may become load-bearing without the promotion gate. FastEmbed lives under Semantic Retrieval, not here.
+- **Seam:** `src/graphgraph/platform/compiler.py`
+- **Exit cost:** LOW — optional by design.
+- **Cost model:** local CPU and a stdlib SQLite file; no service spend.
+- **Liability transferred:** none
 - **Operational owner:** us
-- **Failure mode:** a provider that cannot run reports unavailable; the requesting query proceeds without that evidence rather than failing.
-- **Open questions:** OW-Q08-* — [open-work.md](../../open-work.md)
+- **Failure mode:** a provider that cannot run reports unavailable; the query proceeds without that evidence.
+- **Open questions:** OW-Q08

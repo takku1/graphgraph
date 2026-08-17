@@ -12,7 +12,7 @@ PY="${GRAPHGRAPH_PYTHON:-.venv/Scripts/python.exe}"
 # a gate keep reporting green while running fewer suites than it declares.
 # A declared-but-missing suite is drift, and drift is the thing this gate exists
 # to catch.
-TARGETS=(test_acceptance.py test_acceptance_exec.py test_acceptance_quality.py test_live_validation.py)
+TARGETS=(test_acceptance.py test_acceptance_exec.py test_acceptance_quality.py test_live_validation.py test_proof_lanes.py)
 MISSING=()
 for t in "${TARGETS[@]}"; do
   [ -f "tests/$t" ] || MISSING+=("$t")

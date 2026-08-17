@@ -138,7 +138,7 @@ every alternative.
 - **Token budgeting** — `retrieval/budgeting.py`, `planning/token_cost.py`,
   `planning/budgets.py`. Answers the transcript's closing question ("does your
   loader account for token length?") — yes, there's an explicit budget/knapsack
-  layer (`retrieval/tree_knapsack.py`).
+  layer (`retrieval/selection.py`).
 - **Prefix-cache-friendly output** — `final --stable-skeleton` (the correct,
   server-aware version of "manual KV management").
 - **Hot/cold + temporal awareness** — `platform/temporal.py`,

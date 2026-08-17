@@ -1,0 +1,11 @@
+{
+  "metric": "packed_exact_relation_p95_ms",
+  "direction": "lower",
+  "recorded_at": "2026-08-16",
+  "note": "In-process query_relations callers, synthetic call-chain strata. Cold CLI spawn is not included.",
+  "strata": {
+    "small": {"nodes": 100, "p50_ms": 0.0128, "p95_ms": 0.1456},
+    "medium": {"nodes": 1000, "p50_ms": 0.0133, "p95_ms": 0.023},
+    "large": {"nodes": 5000, "p50_ms": 0.0129, "p95_ms": 0.0338}
+  }
+}

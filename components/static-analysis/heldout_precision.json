@@ -1,0 +1,148 @@
+{
+  "metric": "receiver_resolution_precision",
+  "value": 1.0,
+  "recall": 1.0,
+  "direction": "higher",
+  "target": 0.98,
+  "by_language": {
+    "ts": {
+      "expected": 1,
+      "found": 1,
+      "false_owners": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "volume": {
+        "typescript": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        }
+      }
+    },
+    "cs": {
+      "expected": 1,
+      "found": 1,
+      "false_owners": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "volume": {
+        "csharp": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        }
+      }
+    },
+    "py": {
+      "expected": 1,
+      "found": 1,
+      "false_owners": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "volume": {
+        "python": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        }
+      }
+    },
+    "go": {
+      "expected": 1,
+      "found": 1,
+      "false_owners": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "volume": {
+        "go": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        }
+      }
+    },
+    "polyglot_fixture": {
+      "volume": {
+        "cpp": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "csharp": {
+          "resolved": 2,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "go": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "java": {
+          "resolved": 2,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "javascript": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "php": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 1,
+          "unmatched": 0
+        },
+        "python": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "rust": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "scala": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "swift": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 1,
+          "unmatched": 0
+        },
+        "tsx": {
+          "resolved": 1,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        },
+        "typescript": {
+          "resolved": 2,
+          "ambiguous": 0,
+          "unknown_receiver": 0,
+          "unmatched": 0
+        }
+      }
+    }
+  },
+  "hits": 4,
+  "expected": 4,
+  "false_owners": 0
+}

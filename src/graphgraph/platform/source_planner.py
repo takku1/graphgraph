@@ -160,9 +160,14 @@ class QuerySourcePlanner:
         federated_nodes = 0
         trace_edges = 0
         weak_lexical = False if exact_fast_path else _weak_lexical(base_matches, query)
+        # Exact identifier hits keep the cheap path. A paraphrase that merely
+        # overlaps generic lexical hubs is not exact, even when coverage looks
+        # strong, and must consult a current index without waiting for
+        # `_weak_lexical`.
+        want_semantic = mode == "all" or not _exact_identifier_hit(base_matches, query)
 
         semantic_path = self._sidecar_dir() / "semantic.json"
-        if mode == "all" or weak_lexical:
+        if want_semantic:
             try:
                 from .semantic import SemanticIndex
 
@@ -336,6 +341,9 @@ def source_state_signature(directory: Path, *, graph_dir: Path | None = None) ->
         *(directory / ".graphgraph" / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
         *(directory / name for name in ("semantic.json", "memory.json", "episodes.jsonl", "projects.json")),
         *[directory / name for name in ("runtime-trace.jsonl", "traces.jsonl", "trace.jsonl")],
+        directory / "coverage-final.json",
+        directory / "coverage" / "coverage-final.json",
+        directory / ".nyc_output" / "out.json",
     ]
     seen: set[Path] = set()
     paths = [p for p in paths if not (p in seen or seen.add(p))]
@@ -401,6 +409,29 @@ def _balanced_semantic_seeds(scored, graph, limit: int) -> list[str]:
         remainder = [n for n in code + prose if n not in set(chosen)]
         chosen.extend(remainder[: limit - len(chosen)])
     return chosen[:limit]
+
+
+def _exact_identifier_hit(matches, query: str = "") -> bool:
+    """Whether the top lexical hit named a node by id, label, or path.
+
+    A multi-term paraphrase that happens to share one word with a short label
+    is not an identifier lookup. Those queries must still consult a current
+    semantic index.
+    """
+    if not matches:
+        return False
+    reasons = matches[0].reasons
+    if "exact_fast_path" in reasons or "label_exact_terms" in reasons:
+        return True
+    from ..retrieval.text import tokenize
+
+    if query and len(tokenize(query)) > 1:
+        return False
+    return any(
+        reason.startswith(("label_exact:", "path_exact:", "id:", "id_exact", "qualified"))
+        or reason == "basename_stem_exact"
+        for reason in reasons
+    )
 
 
 def _weak_lexical(matches, query: str = "") -> bool:
@@ -643,8 +674,15 @@ def _named_registry_projects(registry: ProjectRegistry, query: str) -> tuple[str
 
 
 def _trace_path(directory: Path) -> Path | None:
-    for name in ("runtime-trace.jsonl", "traces.jsonl", "trace.jsonl"):
-        path = directory / name
+    candidates = (
+        directory / "runtime-trace.jsonl",
+        directory / "traces.jsonl",
+        directory / "trace.jsonl",
+        directory / "coverage-final.json",
+        directory / "coverage" / "coverage-final.json",
+        directory / ".nyc_output" / "out.json",
+    )
+    for path in candidates:
         if path.exists():
             return path
     return None

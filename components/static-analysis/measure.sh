@@ -8,30 +8,28 @@ PY="${GRAPHGRAPH_PYTHON:-.venv/Scripts/python.exe}"
 [ -x "$PY" ] || PY="python"
 
 "$PY" - <<'PYEOF'
-import json, time, datetime
-from pathlib import Path
-from graphgraph.scanner import scan_directory
+import datetime, json
+from graphgraph.scanner.resolution_report import heldout_precision_table
 
-TARGET = Path("src/graphgraph/concepts")
-if not TARGET.is_dir():
-    print(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                      "event_type": "measurement", "component": "static-analysis",
-                      "metric": "scan_fixture_ms", "value": None, "status": "unavailable",
-                      "reason": f"missing corpus {TARGET}"}))
-    raise SystemExit(0)
-
-scan_directory(TARGET, depth="symbols")           # warm caches
-runs = []
-for _ in range(3):
-    t0 = time.perf_counter()
-    graph = scan_directory(TARGET, depth="symbols")
-    runs.append((time.perf_counter() - t0) * 1000.0)
-runs.sort()
+report = heldout_precision_table()
+status = "success" if report["value"] >= report["target"] else "fail"
 print(json.dumps({
     "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "event_type": "measurement", "component": "static-analysis",
-    "metric": "scan_fixture_ms", "value": round(runs[len(runs)//2], 2), "unit": "ms",
-    "direction": "lower", "evidence_stage": "Measured", "status": "success",
-    "corpus": str(TARGET), "nodes": len(graph.nodes), "samples": len(runs),
+    "event_type": "measurement",
+    "component": "static-analysis",
+    "metric": report["metric"],
+    "value": report["value"],
+    "unit": "ratio",
+    "direction": report["direction"],
+    "evidence_stage": "Measured",
+    "status": status,
+    "target": report["target"],
+    "recall": report["recall"],
+    "by_language": report["by_language"],
+    "hits": report["hits"],
+    "expected": report["expected"],
+    "false_owners": report["false_owners"],
 }))
+if status != "success":
+    raise SystemExit(1)
 PYEOF

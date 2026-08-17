@@ -78,6 +78,30 @@ def _lazy_cmd(module: str, name: str):
     return _run
 
 
+def _add_relation_lookup(sub, name: str, *, help_text: str, direction: str | None) -> None:
+    """Shared exact-lookup flags. `callers`/`callees` pin direction so PowerShell needs no extra flag."""
+
+    command = sub.add_parser(name, help=help_text)
+    command.add_argument("target", help="Exact node id, symbol label, or path::symbol.")
+    if direction is None:
+        command.add_argument("--direction", required=True, choices=["callers", "callees"])
+    else:
+        command.set_defaults(direction=direction)
+    command.add_argument("--graph", help="Graph path. Auto-detected if omitted.")
+    command.add_argument("--limit", type=int, default=20)
+    command.add_argument("--include-tests", action="store_true")
+    command.add_argument("--include-external", action="store_true")
+    command.add_argument(
+        "--sync",
+        choices=["none", "git"],
+        default="none",
+        help="Optionally refresh stale Git worktree paths before lookup; default keeps the lowest-latency unchecked path.",
+    )
+    command.add_argument("--detailed", action="store_true", help="Emit explicit object rows and edge evidence.")
+    command.add_argument("--pretty", action="store_true", help="Indent JSON for human inspection.")
+    command.set_defaults(func=_lazy_cmd("retrieval", "cmd_relations"))
+
+
 def _add_plan_command(sub) -> None:
     plan = sub.add_parser("plan")
     plan.add_argument("--query-class", required=True, choices=QUERY_CLASS_NAMES)
@@ -205,25 +229,24 @@ def _add_retrieval_commands(sub) -> None:
     )
     query.set_defaults(func=_lazy_cmd("retrieval", "cmd_query"))
 
-    relations = sub.add_parser(
+    _add_relation_lookup(
+        sub,
         "relations",
-        help="Fast exact one-hop callers/callees as low-token tuple IR.",
+        help_text="Fast exact one-hop callers/callees as low-token tuple IR.",
+        direction=None,
     )
-    relations.add_argument("target", help="Exact node id, symbol label, or path::symbol.")
-    relations.add_argument("--direction", required=True, choices=["callers", "callees"])
-    relations.add_argument("--graph", help="Graph path. Auto-detected if omitted.")
-    relations.add_argument("--limit", type=int, default=20)
-    relations.add_argument("--include-tests", action="store_true")
-    relations.add_argument("--include-external", action="store_true")
-    relations.add_argument(
-        "--sync",
-        choices=["none", "git"],
-        default="none",
-        help="Optionally refresh stale Git worktree paths before lookup; default keeps the lowest-latency unchecked path.",
+    _add_relation_lookup(
+        sub,
+        "callers",
+        help_text="Exact callers of a symbol. Same IR as `relations --direction callers`.",
+        direction="callers",
     )
-    relations.add_argument("--detailed", action="store_true", help="Emit explicit object rows and edge evidence.")
-    relations.add_argument("--pretty", action="store_true", help="Indent JSON for human inspection.")
-    relations.set_defaults(func=_lazy_cmd("retrieval", "cmd_relations"))
+    _add_relation_lookup(
+        sub,
+        "callees",
+        help_text="Exact callees of a symbol. Same IR as `relations --direction callees`.",
+        direction="callees",
+    )
 
     context = sub.add_parser(
         "context", help="One-step native workflow: ensure a graph exists, then render query context."

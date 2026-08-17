@@ -76,6 +76,9 @@ class ExactOverloadReceiptTest(unittest.TestCase):
         self.assertTrue(truncation.get("truncated"))
         self.assertEqual(truncation.get("known_direct_neighbors"), 12)
         self.assertGreater(truncation.get("omitted_direct_neighbors", 0), 0)
+        answerability = result.metadata["answerability"]
+        self.assertTrue(answerability["minimum_evidence"])
+        self.assertFalse(answerability["neighborhood_complete"])
 
     def test_reverse_lookup_with_zero_call_edges_cannot_be_answerable(self) -> None:
         # Lexical and containment evidence can locate the requested method but
@@ -1659,6 +1662,10 @@ class RetrievalTest(unittest.TestCase):
                 "api",
             ),
         )
+        self.assertEqual(
+            tokenize("instruction-set contract"),
+            ("instruction-set", "instruction", "set", "contract"),
+        )
         matches = search_nodes(graph, "what calls compile_rules_slice", limit=3)
         self.assertEqual(matches[0].node.id, "F")
         result = retrieve_context(graph, "what calls compile_rules_slice", "reverse_lookup", hops=1, max_nodes=5)
@@ -2961,3 +2968,72 @@ class FacetReservationSeatingTest(unittest.TestCase):
         )
         self.assertEqual(pruned, ())
         self.assertIn("EVIDENCE", starts)
+
+
+class DistinctiveSummaryRecallTest(unittest.TestCase):
+    """A paraphrase can rank a code node from its summary, not its symbol name."""
+
+    def test_two_distinctive_summary_terms_outrank_generic_label_words(self) -> None:
+        graph = Graph(
+            nodes={
+                "hub": Node(
+                    "hub",
+                    "process_client",
+                    "function",
+                    "src/hub.py",
+                    summary="L1 def process_client():",
+                ),
+                "target": Node(
+                    "target",
+                    "emit_capability",
+                    "function",
+                    "src/cap.py",
+                    summary=(
+                        "L10 tells a machine client which instruction-set "
+                        "contract is implemented"
+                    ),
+                ),
+            },
+            edges=[],
+        )
+        query = (
+            "Where does a cold one-shot process tell a machine client "
+            "which instruction-set contract it implements?"
+        )
+        matches = search_nodes(graph, query, limit=2, personalize=False)
+        self.assertTrue(matches)
+        self.assertEqual(matches[0].node.id, "target")
+        self.assertIn("summary_multi_terms", matches[0].reasons)
+
+    def test_file_module_docstring_grounds_contained_symbols(self) -> None:
+        graph = Graph(
+            nodes={
+                "FILE": Node(
+                    "FILE",
+                    "relations.py",
+                    "python",
+                    "src/relations.py",
+                    summary="Demand-driven one-hop relation queries for latency-sensitive agents.",
+                ),
+                "hub": Node(
+                    "hub",
+                    "compact_source_context",
+                    "function",
+                    "src/packet.py",
+                    summary="L1 pack a context packet for the machine client.",
+                ),
+                "target": Node(
+                    "target",
+                    "emit_micro",
+                    "function",
+                    "src/relations.py",
+                    summary="L10 def emit_micro(): Encode a relation result as a tuple-oriented IR.",
+                ),
+            },
+            edges=[],
+        )
+        query = "How is a one-hop caller list encoded for a machine without a context packet?"
+        matches = search_nodes(graph, query, limit=2, personalize=False)
+        self.assertTrue(matches)
+        self.assertEqual(matches[0].node.id, "target")
+        self.assertIn("summary_multi_terms", matches[0].reasons)

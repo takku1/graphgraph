@@ -23,9 +23,9 @@ Publish and query graph-bound dense vector generations with bounded cold cost, e
   - `EvidenceStage:` Inferred
 - **[Conditional]** IF a legacy dense JSON artifact is encountered THEN THE SYSTEM SHALL classify it as actionable non-current state and SHALL NOT decode it on a default cold query.
   - `EvidenceStage:` Refuted
-- **[State-driven]** WHILE a dense generation is current THE SYSTEM SHALL memory-map its vectors and SHALL preserve graph node IDs and true vector dimensionality.
+- **[State-driven]** WHILE a dense generation is current THE SYSTEM SHALL memory-map its vectors and SHALL preserve graph node IDs and true vector dimensionality, as checked by `modules/semantic-store/measure.sh`.
   - `EvidenceStage:` Measured
-- **[Conditional]** IF state is missing, stale, or backend-incompatible THEN THE SYSTEM SHALL avoid implicit build and return an actionable state.
+- **[Conditional]** IF state is missing, stale, or backend-incompatible THEN THE SYSTEM SHALL avoid implicit build and return an actionable state, as checked by `tests/test_cycle5_regressions.py`.
   - `EvidenceStage:` Sampled
 
 ## 5. Architectural Decisions (ADRs)
@@ -36,8 +36,8 @@ Publish and query graph-bound dense vector generations with bounded cold cost, e
 
 ## 6. Leaf Execution & Test Seam
 
-- **Implementation File(s):** `src/graphgraph/platform/semantic.py`, integration in `src/graphgraph/platform/source_planner.py`.
-- **Test Surface Seam:** `tests/test_semantic_store.py`, `tests/test_planning.py`, `tests/test_cli_mcp.py`, and `tests/test_cycle5_regressions.py`.
+- **Implementation Files:** `src/graphgraph/platform/semantic.py`, integration in `src/graphgraph/platform/source_planner.py`.
+- **Test Surface Seam:** `tests/test_cycle5_regressions.py`, `tests/test_planning.py`, `tests/test_platform.py`.
 
 ## 7. Measurement Seams
 

@@ -135,6 +135,53 @@ def cyclic_reexport_chain() -> Case:
     return Case("cyclic_reexport_chain", _g(nodes, edges), "connect", "core_connect")
 
 
+def qualified_owner_method() -> Case:
+    # Two `save` methods; the query names the owner. Path-less Type::method
+    # wording must not collapse to whichever save the graph listed first.
+    g = _g([
+        Node("store_save", "save", "method", "src/store.py", parent="Store",
+             summary="persist the store snapshot"),
+        Node("user_save", "save", "method", "src/user.py", parent="User",
+             summary="persist the user record"),
+    ])
+    return Case("qualified_owner_method", g, "Store::save", "store_save")
+
+
+def file_local_import_shadow() -> Case:
+    # A local binding named `send` must beat a same-named imported helper
+    # when the query names the local module path.
+    g = _g([
+        Node("local_send", "send", "function", "lib/response.js",
+             summary="write the local response body"),
+        Node("imported_send", "send", "function", "node_modules/send/index.js",
+             summary="stream a static file"),
+    ])
+    return Case("file_local_import_shadow", g, "response send", "local_send")
+
+
+def scoped_document_absent_row() -> Case:
+    # "absent" as a roadmap checkbox must beat a same-worded helper function
+    # when the query is a document-status ask.
+    g = _g([
+        Node(
+            "ABSENT",
+            "Symbolic PAC learning",
+            "paragraph",
+            "docs/roadmap/gaps.md",
+            facts=("* `[ ]` **Symbolic PAC learning:** Not implemented.",),
+        ),
+        Node("absent_helper", "absent", "function", "src/absent.py",
+             summary="return true when a cache key is absent"),
+    ])
+    return Case(
+        "scoped_document_absent_row",
+        g,
+        "capability currently marked absent",
+        "ABSENT",
+        doc_intensity=1.0,
+    )
+
+
 def overload_by_signature() -> Case:
     # Two same-named methods separated only by what their bodies mention; the
     # query names a parameter that disambiguates them.
@@ -162,6 +209,9 @@ def build_cases() -> list[Case]:
         many_file_collision_with_scope(),
         cyclic_reexport_chain(),
         overload_by_signature(),
+        qualified_owner_method(),
+        file_local_import_shadow(),
+        scoped_document_absent_row(),
     ]
 
 

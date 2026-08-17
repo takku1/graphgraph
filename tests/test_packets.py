@@ -519,6 +519,24 @@ N1,N2,1,0.9
         packet = render_svo(g, set(g.nodes.keys()), g.edges)
         self.assertIn("(0.75)", packet)
 
+    def test_render_svo_carries_path_line_provenance(self) -> None:
+        graph = Graph(
+            nodes={
+                "F": Node(
+                    "F",
+                    "find_this_function",
+                    "function",
+                    "app.py",
+                    summary="L5 def find_this_function():",
+                ),
+            },
+            edges=[],
+        )
+        packet = render_svo(graph, {"F"}, [])
+        self.assertIn("app.py:5", packet)
+        result = validate_packet(packet)
+        self.assertTrue(result.ok, result.errors)
+
     def test_render_svo_empty_edges(self) -> None:
         g = sample_graph()
         packet = render_svo(g, set(g.nodes.keys()), [])

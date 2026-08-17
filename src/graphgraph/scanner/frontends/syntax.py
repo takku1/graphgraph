@@ -99,6 +99,44 @@ def _doc_comment_above(lines: list[str], line: int) -> str:
     return re.sub(r"\s+", " ", " ".join(collected)).strip()
 
 
+def _opening_docstring(stripped: str) -> str:
+    for quote in ('"""', "'''"):
+        if stripped.startswith(quote):
+            body = stripped[len(quote):]
+            closing = body.find(quote)
+            if closing != -1:
+                return body[:closing].strip()
+            return body.strip()
+    return ""
+
+
+def _collect_opening_docstring(lines: list[str], index: int) -> str:
+    stripped = lines[index].strip()
+    for quote in ('"""', "'''"):
+        if not stripped.startswith(quote):
+            continue
+        parts = [stripped[len(quote):]]
+        if quote in parts[0]:
+            return parts[0][: parts[0].find(quote)].strip()
+        index += 1
+        while index < len(lines):
+            row = lines[index]
+            if quote in row:
+                parts.append(row[: row.find(quote)])
+                break
+            parts.append(row.strip())
+            index += 1
+        return re.sub(r"\s+", " ", " ".join(parts)).strip()
+    return ""
+
+
+def _signature_continues(stripped: str) -> bool:
+    """True while we are still inside a wrapped signature, not the body."""
+    if stripped.startswith((")", "->", "]", "}")):
+        return True
+    return stripped.endswith((",", "\\", "(", "[", "{", "]:", "):"))
+
+
 def _docstring_below(lines: list[str], line: int) -> str:
     """Recover a docstring that follows a signature (Python, and PEP-257 style).
 
@@ -107,24 +145,50 @@ def _docstring_below(lines: list[str], line: int) -> str:
     bare identifier plus a signature -- the exact deficit that made conceptual
     retrieval return documentation paragraphs instead of implementations.
 
-    Reads only the first line of the docstring: PEP 257 makes that a complete
-    one-line summary, and taking the whole body would let a long docstring
-    dominate a packet.
+    Walks past wrapped parameter lists so ``def foo(\\n    x,\\n) -> T:`` still
+    sees the docstring on the next line. Reads only the first docstring line.
     """
     index = line  # zero-based line after the definition
-    # A signature can wrap across lines; walk to the first body line.
-    while index < len(lines) and not lines[index].strip():
-        index += 1
-    if index >= len(lines):
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped:
+            index += 1
+            continue
+        if stripped.startswith(('"""', "'''")):
+            found = _collect_opening_docstring(lines, index)
+            return found.split(". ", 1)[0].strip() if found else ""
+        if _signature_continues(stripped):
+            index += 1
+            continue
         return ""
-    stripped = lines[index].strip()
-    for quote in ('"""', "'''"):
-        if stripped.startswith(quote):
-            body = stripped[len(quote):]
-            closing = body.find(quote)
-            if closing != -1:
-                return body[:closing].strip()
-            return body.strip()
+    return ""
+
+
+_MODULE_DOC_BUDGET = 400
+
+
+def module_docstring(text: str) -> str:
+    """Return the file's opening module docstring, if any.
+
+    Skips shebang, comments, blanks, and ``from __future__`` so a PEP 257
+    module docstring still attaches when it is the first real statement.
+    Keeps more than the one-line title so later sentences remain searchable.
+    """
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or stripped.startswith("from __future__")
+        ):
+            index += 1
+            continue
+        if stripped.startswith(('"""', "'''")):
+            found = _collect_opening_docstring(lines, index)
+            return found[:_MODULE_DOC_BUDGET] if found else ""
+        return ""
     return ""
 
 
@@ -382,18 +446,25 @@ def _base_class_names(node: Any, text: bytes) -> tuple[str, ...]:
         break
     if container is None:
         # tree-sitter-c-sharp exposes `: Base, IFace` as an unfielded
-        # `base_list` named child. It is still exact CST evidence; omitting the
-        # unfielded shape made every C# class appear to have no ancestors.
+        # `base_list` named child. TypeScript/JavaScript use `class_heritage`
+        # / `extends_clause`. These are still exact CST evidence.
         container = next(
             (
                 child
                 for child in getattr(node, "named_children", ())
-                if child.type == "base_list"
+                if child.type
+                in {"base_list", "class_heritage", "extends_clause", "heritage_clause"}
             ),
             None,
         )
     if container is not None:
-        for child in getattr(container, "named_children", ()):
+        stack = list(getattr(container, "named_children", ()))
+        while stack:
+            child = stack.pop()
+            child_type = getattr(child, "type", "")
+            if child_type in {"extends_clause", "class_heritage", "heritage_clause", "base_list"}:
+                stack.extend(getattr(child, "named_children", ()))
+                continue
             base = _node_text(child, text).strip()
             # Keep plain names; generics and keyword args (metaclass=...) are
             # not a nameable owner here.

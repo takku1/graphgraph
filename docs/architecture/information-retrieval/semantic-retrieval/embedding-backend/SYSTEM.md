@@ -17,11 +17,11 @@ Convert query and corpus text into deterministic local embedding vectors with ex
 
 ## 4. Invariants (EARS + Epistemic Stage)
 
-- **[Ubiquitous]** The Embedding Backend SHALL report the model identity and true vector dimension used to produce every dense generation.
+- **[Ubiquitous]** The Embedding Backend SHALL report the model identity and true vector dimension used to produce every dense generation, as checked by `tests/test_platform.py`.
   - `EvidenceStage:` Sampled
-- **[Conditional]** IF the optional runtime or model is unavailable THEN THE SYSTEM SHALL report that state without downloading or building during retrieval.
+- **[Conditional]** IF the optional runtime or model is unavailable THEN THE SYSTEM SHALL report that state without downloading or building during retrieval, as checked by `tests/test_platform.py`.
   - `EvidenceStage:` Sampled
-- **[Event-driven]** WHEN an exact structural query bypasses semantic retrieval THE SYSTEM SHALL avoid initializing the embedding backend.
+- **[Event-driven]** WHEN an exact structural query bypasses semantic retrieval THE SYSTEM SHALL avoid initializing the embedding backend, as checked by `tests/test_planning.py`.
   - `EvidenceStage:` Sampled
 
 ## 5. Architectural Decisions (ADRs)
@@ -30,8 +30,8 @@ Convert query and corpus text into deterministic local embedding vectors with ex
 
 ## 6. Leaf Execution & Test Seam
 
-- **Implementation File(s):** `src/graphgraph/platform/embeddings.py`.
-- **Test Surface Seam:** `tests/test_semantic_retrieval.py`, `tests/test_semantic_store.py`, and planner coverage in `tests/test_planning.py`.
+- **Implementation Files:** `src/graphgraph/platform/embeddings.py`.
+- **Test Surface Seam:** `tests/test_platform.py`, `tests/test_planning.py`.
 
 ## 7. Measurement Seams
 

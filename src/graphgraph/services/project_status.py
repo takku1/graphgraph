@@ -83,12 +83,28 @@ def _symbol_extraction_status(
     }
 
 
+def classify_active_build(validation_ok: bool, freshness: dict[str, object] | None) -> str:
+    """Collapse validation + freshness into one discovery label."""
+
+    if not validation_ok:
+        return "invalid"
+    if not freshness:
+        return "unchecked"
+    flag = freshness.get("fresh")
+    if flag is True:
+        return "validated"
+    if flag is False:
+        return "stale"
+    return "unchecked"
+
+
 def _absent_graph_status(
     directory: Path, status: str, message: str
 ) -> dict[str, object]:
     """Return an actionable status for cold or ambiguous repositories."""
     return {
         "status": status,
+        "active_build": "absent",
         "directory": str(directory),
         "message": message,
         "next_action": "build_graph" if status == "no_graph" else "specify_graph_path",
@@ -145,6 +161,52 @@ def _member_calls_by_language(raw: str) -> dict[str, dict[str, object]]:
     return result
 
 
+def _member_call_trust(
+    counts: dict[str, int],
+    version: str,
+    topology_total: int,
+    typed_total: int,
+) -> tuple[str, str, str]:
+    if version != "2":
+        trust = "legacy_unclassified" if topology_total else "not_applicable"
+        coverage = "unknown" if topology_total else "not_applicable"
+        warning = (
+            "member-call telemetry predates receiver-evidence classification; "
+            "run a full symbol scan"
+            if topology_total
+            else ""
+        )
+        return trust, coverage, warning
+    if typed_total == 0:
+        trust = "not_applicable"
+    elif counts["ambiguous"] == 0:
+        trust = "high"
+    elif counts["resolved"] == 0:
+        trust = "low"
+    else:
+        trust = "mixed"
+    if topology_total == 0:
+        coverage = "not_applicable"
+    elif counts["unknown_receiver"] == 0:
+        coverage = "complete"
+    elif typed_total:
+        coverage = "partial"
+    else:
+        coverage = "unresolved"
+    warnings: list[str] = []
+    if counts["unknown_receiver"]:
+        warnings.append(
+            f"{counts['unknown_receiver']} member-call sites lack receiver "
+            "evidence and are excluded from topology"
+        )
+    if counts["ambiguous"]:
+        warnings.append(
+            f"{counts['ambiguous']} typed member-call sites have multiple "
+            "internal targets"
+        )
+    return trust, coverage, "; ".join(warnings)
+
+
 def _member_call_snapshot(metadata: dict[str, str], scope: str) -> dict[str, object]:
     prefix = f"member_calls_{scope}_"
     counts = {
@@ -170,45 +232,7 @@ def _member_call_snapshot(metadata: dict[str, str], scope: str) -> dict[str, obj
     trusted_resolution_ratio = counts["resolved"] / max(1, typed_total)
     receiver_evidence_ratio = typed_total / max(1, topology_total)
 
-    if version != "2":
-        trust = "legacy_unclassified" if topology_total else "not_applicable"
-        coverage = "unknown" if topology_total else "not_applicable"
-        warning = (
-            "member-call telemetry predates receiver-evidence classification; "
-            "run a full symbol scan"
-            if topology_total
-            else ""
-        )
-    else:
-        if typed_total == 0:
-            trust = "not_applicable"
-        elif counts["ambiguous"] == 0:
-            trust = "high"
-        elif counts["resolved"] == 0:
-            trust = "low"
-        else:
-            trust = "mixed"
-
-        if topology_total == 0:
-            coverage = "not_applicable"
-        elif counts["unknown_receiver"] == 0:
-            coverage = "complete"
-        elif typed_total:
-            coverage = "partial"
-        else:
-            coverage = "unresolved"
-        warnings: list[str] = []
-        if counts["unknown_receiver"]:
-            warnings.append(
-                f"{counts['unknown_receiver']} member-call sites lack receiver "
-                "evidence and are excluded from topology"
-            )
-        if counts["ambiguous"]:
-            warnings.append(
-                f"{counts['ambiguous']} typed member-call sites have multiple "
-                "internal targets"
-            )
-        warning = "; ".join(warnings)
+    trust, coverage, warning = _member_call_trust(counts, version, topology_total, typed_total)
 
     split_total = counts["external_resolved"] + counts["unmatched"]
     split_available = split_total > 0 or counts["unresolved"] == 0
@@ -273,8 +297,28 @@ def build_project_status(
         except RuntimeError as exc:
             return _absent_graph_status(directory, "ambiguous_graph", str(exc))
 
-    validation = validate_graph_file(resolved_graph_path)
-    graph = load_any(resolved_graph_path)
+    try:
+        validation = validate_graph_file(resolved_graph_path)
+        graph = load_any(resolved_graph_path)
+    except (OSError, ValueError, KeyError) as exc:
+        return {
+            "status": "invalid_graph",
+            "active_build": "invalid",
+            "directory": str(directory),
+            "message": f"Native graph at {resolved_graph_path} is not a validated build: {exc}",
+            "next_action": "build_graph",
+        }
+    if not validation.ok:
+        return {
+            "status": "invalid_graph",
+            "active_build": "invalid",
+            "directory": str(directory),
+            "message": (
+                f"Native graph at {resolved_graph_path} failed validation: "
+                + "; ".join(str(item) for item in validation.errors[:5])
+            ),
+            "next_action": "build_graph",
+        }
     shape = graph_shape(graph)
     kind_counts: dict[str, int] = {}
     for node in graph.nodes.values():
@@ -421,11 +465,16 @@ def build_project_status(
         "timeouts": int(graph.metadata.get("frontend_timeout_count", "0")),
         "parse_errors": int(graph.metadata.get("frontend_parse_error_count", "0")),
     }
+    freshness = graph_report.get("freshness")
     return {
         "graph": graph_report,
         "package": package,
         "runtime_probes": probes,
         "runtime_notes": runtime_notes,
+        "active_build": classify_active_build(
+            bool(validation.ok),
+            freshness if isinstance(freshness, dict) else None,
+        ),
     }
 
 

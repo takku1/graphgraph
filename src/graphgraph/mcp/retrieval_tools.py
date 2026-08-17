@@ -53,23 +53,12 @@ from .graph_management import (
 from .graph_management import (
     handle_update_graph_files as handle_update_graph_files,
 )
-from .machine_contract import capability_identity, compact_json, compact_tool_contracts
+from .machine_contract import advertised_capability, compact_json, compact_tool_contracts
 from .platform_tools import (
     PLATFORM_TOOL_NAMES,
     PLATFORM_TOOLS,
     handle_platform_tool,
 )
-
-
-def _json(payload: object) -> str:
-    """Serialize an MCP response compactly.
-
-    Every byte here is read by a model, never a person, and indentation is
-    a quarter of the envelope: pretty-printing one `select_symbols` response
-    cost 1221 of 4261 tokens (29%). Compact separators change nothing a
-    parser can observe.
-    """
-    return compact_json(payload)
 
 
 SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
@@ -543,7 +532,7 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
     _validate_required_args(str(name), args)
     if name == "plan_context":
         plan = plan_context(str(args["query_class"]), str(args.get("query", "")))
-        return content(_json(plan.__dict__))
+        return content(compact_json(plan.__dict__))
     if name == "final_packet":
         return content(build_final_packet(args))
     if name == "full_graph":
@@ -567,7 +556,7 @@ def handle_tools_call(params: dict[str, Any]) -> dict[str, Any]:
                 "validate_packet requires a non-empty 'packet' or an explicit 'graph_path'."
             )
         return content(
-            _json(
+            compact_json(
                 {
                     "ok": result.ok,
                     "format": result.format,
@@ -680,7 +669,7 @@ def build_query_context(args: dict[str, Any]) -> str:
         # envelopes by roughly 45% (9.6k -> 6.6k characters on the critical
         # C# fixture) without adding one bit of proof. Preserve the complete
         # detailed schema while using the transport's canonical compact JSON.
-        return _json(json.loads(rendered))
+        return compact_json(json.loads(rendered))
     payload = json.loads(rendered)
     actionable = payload.get("actionable", {}) or {}
     workflow = payload.get("workflow", {}) or {}
@@ -699,7 +688,7 @@ def build_query_context(args: dict[str, Any]) -> str:
         proof["subsystem_map"] = actionable["subsystem_map"]
     if payload.get("source_snippets"):
         proof["source_snippets"] = payload["source_snippets"]
-    return _json(
+    return compact_json(
         {
             "packet": payload.get("packet", ""),
             "control": payload.get("control", ""),
@@ -743,7 +732,7 @@ def handle_project_atlas(args: dict[str, Any]) -> str:
         max_couplings=int(args["max_couplings"]) if args.get("max_couplings") is not None else None,
         evidence_budget_chars=int(args.get("evidence_budget_chars") or 8000),
     )
-    return _json(report)
+    return compact_json(report)
 
 
 def handle_project_status(args: dict[str, Any]) -> str:
@@ -756,12 +745,8 @@ def handle_project_status(args: dict[str, Any]) -> str:
         graph_path=graph_path,
         run_probes=bool(args.get("probe")),
     )
-    report["capability"] = {
-        "contract_id": capability_identity(TOOLS),
-        "tool_count": len(TOOLS),
-        "transport": "mcp",
-    }
-    return _json(report)
+    report["capability"] = advertised_capability("mcp")
+    return compact_json(report)
 
 
 def handle_unified_query(args: dict[str, Any]) -> str:
@@ -785,7 +770,7 @@ def handle_unified_query(args: dict[str, Any]) -> str:
         scope_mode=str(args.get("scope_mode") or "strict"),
         source_mode=str(args.get("source_mode") or "auto"),
     )
-    return _json(response)
+    return compact_json(response)
 
 
 def handle_select_symbols(args: dict[str, Any]) -> str:
@@ -800,7 +785,7 @@ def handle_select_symbols(args: dict[str, Any]) -> str:
     try:
         criteria = parse_criteria(str(args["predicate"]), limit=limit)
     except ValueError as exc:
-        return _json({"error": str(exc)})
+        return compact_json({"error": str(exc)})
 
     result = select_symbols(graph, criteria, mode=mode)  # type: ignore[arg-type]
     payload: dict[str, Any] = {
@@ -815,7 +800,7 @@ def handle_select_symbols(args: dict[str, Any]) -> str:
     if mode == "select":
         payload["truncated"] = result.truncated
         payload["symbols"] = result.symbols
-    return _json(payload)
+    return compact_json(payload)
 
 
 def handle_query_relations(args: dict[str, Any]) -> str:
@@ -872,7 +857,7 @@ def handle_query_relations(args: dict[str, Any]) -> str:
     payload = encode_relation_micro(result) if str(args.get("format") or "micro") == "micro" else result
     if result.get("status") == "ok" and isinstance(payload.get("r"), dict):
         payload["r"]["ms"] = result["milliseconds"]
-    return _json(payload)
+    return compact_json(payload)
 
 
 def handle_search_nodes(args: dict[str, Any]) -> str:
@@ -901,7 +886,7 @@ def handle_search_nodes(args: dict[str, Any]) -> str:
         else:
             ambiguous = False  # runner-up scored zero -- top match isn't contested
 
-    return _json(
+    return compact_json(
         {
             "matches": [
                 {

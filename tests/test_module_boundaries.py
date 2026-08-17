@@ -27,6 +27,13 @@ class ServiceDomainBoundaryTest(unittest.TestCase):
         services = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "services"
         self.assertFalse((services / "native.py").exists())
 
+    def test_tree_knapsack_compatibility_shim_is_removed(self) -> None:
+        from pathlib import Path
+
+        retrieval = Path(__file__).resolve().parents[1] / "src" / "graphgraph" / "retrieval"
+        self.assertFalse((retrieval / "tree_knapsack.py").exists())
+        self.assertTrue((retrieval / "selection.py").exists())
+
     def test_cli_and_mcp_depend_on_domain_seams_not_native_monolith(self) -> None:
         from pathlib import Path
 

@@ -43,6 +43,39 @@ _GO_CALL_ASSIGNMENT = re.compile(
 # methods, so binding it would manufacture a wrong edge.
 _GO_NOMINAL_TYPE = re.compile(r"^\*?(?:[a-z]\w*\.)?([A-Z]\w*)$")
 
+_GO_STRUCT = re.compile(r"\btype\s+([A-Z]\w*)\s+struct\s*\{([^}]*)\}", re.S)
+_GO_STRUCT_FIELD = re.compile(
+    r"^[ \t]*([A-Z]\w*)[ \t]+\*?(?:[a-z]\w*\.)?([A-Z]\w*)\b",
+    re.M,
+)
+# Embedded field: a lone type name. The field name is the type, and methods
+# of that type are promoted onto the outer struct. Tabs/spaces only -- `\s`
+# would let `Store\nName` look like a named field.
+_GO_EMBEDDED_FIELD = re.compile(r"^[ \t]+\*?(?:[a-z]\w*\.)?([A-Z]\w*)[ \t]*$", re.M)
+
+
+def go_struct_field_types(source: str) -> dict[tuple[str, str], str]:
+    """``(owner, field) -> type`` for exported struct fields with a nominal type."""
+
+    fields: dict[tuple[str, str], str] = {}
+    for owner, body in _GO_STRUCT.findall(source):
+        for field_name, type_name in _GO_STRUCT_FIELD.findall(body):
+            fields[(owner, field_name)] = type_name
+        for type_name in _GO_EMBEDDED_FIELD.findall(body):
+            fields.setdefault((owner, type_name), type_name)
+    return fields
+
+
+def go_embedded_types(source: str) -> dict[str, tuple[str, ...]]:
+    """Outer struct -> embedded types whose methods are promoted."""
+
+    result: dict[str, tuple[str, ...]] = {}
+    for owner, body in _GO_STRUCT.findall(source):
+        names = tuple(dict.fromkeys(_GO_EMBEDDED_FIELD.findall(body)))
+        if names:
+            result[owner] = names
+    return result
+
 
 def go_return_type_name(result_text: str) -> str:
     """The nominal type a Go signature's result names, or "" when it names none.

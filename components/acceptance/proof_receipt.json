@@ -1,0 +1,27 @@
+{
+  "recorded_at": "2026-08-16",
+  "exact_self_eval": {
+    "suite": "eval/graphgraph-self.json",
+    "green_recalls": [1.0, 1.0, 1.0, 1.0],
+    "green_min": 1.0,
+    "red_recall": 0.0,
+    "red_tokens": 21,
+    "red_eval_subgraph_tokens": 0
+  },
+  "local_conceptual": {
+    "suite": "eval/graphgraph-local-conceptual.json",
+    "recalls": [1.0, 1.0, 1.0],
+    "mean": 1.0,
+    "ow_ac_03_gate": 0.8,
+    "meets_gate": true,
+    "claim_boundary": "This-repository conceptual recall, not the held-out OW-AC-03 panel. Held-out corpora were not on disk."
+  },
+  "vs_lexical_search": {
+    "target": "select_symbols",
+    "graph_callers": ["cmd_select", "handle_select_symbols", "execute_query"],
+    "lexical_mention_files": 7,
+    "definition_file_is_mention_not_caller": true,
+    "expected_callers_present": true,
+    "claim_boundary": "Licenses 'better than rg for caller questions', not 'better than every graph tool'."
+  }
+}

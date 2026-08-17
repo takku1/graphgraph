@@ -537,6 +537,38 @@ class McpProjectStatusTest(unittest.TestCase):
             self.assertTrue(after["snapshot_may_be_stale"])
             self.assertIn("--no-incremental", after["staleness_note"])
 
+    def test_empty_delta_scan_is_a_noop_and_stays_validated(self) -> None:
+        from graphgraph.services.lifecycle import scan_validated_graph
+        from graphgraph.services.project_status import build_project_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("def ready():\n    return 1\n", encoding="utf-8")
+            graph_path = root / ".graphgraph" / "graph.gg"
+            first = scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+            self.assertTrue(first.built)
+            before = graph_path.stat().st_mtime_ns
+            second = scan_validated_graph(directory=root, output_path=graph_path, depth="symbols")
+            self.assertFalse(second.built)
+            self.assertEqual(second.graph.metadata.get("incremental_noop"), "true")
+            self.assertEqual(graph_path.stat().st_mtime_ns, before)
+            status = build_project_status(directory=root, graph_path=graph_path)
+            self.assertEqual(status["active_build"], "validated")
+            self.assertTrue(status["graph"]["freshness"]["fresh"])
+
+    def test_absent_and_invalid_graphs_are_not_validated_builds(self) -> None:
+        from graphgraph.services.project_status import build_project_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            absent = build_project_status(directory=root)
+            self.assertEqual(absent["active_build"], "absent")
+            bogus = root / ".graphgraph" / "graph.gg"
+            bogus.parent.mkdir()
+            bogus.write_text("not-a-graph", encoding="utf-8")
+            invalid = build_project_status(directory=root, graph_path=bogus)
+            self.assertEqual(invalid["active_build"], "invalid")
+
 
 if __name__ == "__main__":
     unittest.main()

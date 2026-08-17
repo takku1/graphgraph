@@ -96,6 +96,39 @@ def capability_identity(tools: Iterable[dict[str, Any]]) -> str:
     return digest.hexdigest()[:16]
 
 
+KNOWN_CAPABILITY_TRANSPORTS = frozenset({"cli", "mcp"})
+
+
+def capability_envelope(
+    tools: Iterable[dict[str, Any]],
+    *,
+    transport: str,
+) -> dict[str, Any]:
+    """Shared CLI/MCP capability receipt over one instruction-set catalog."""
+
+    if transport not in KNOWN_CAPABILITY_TRANSPORTS:
+        raise ValueError(f"unknown capability transport: {transport!r}")
+    materialized = list(tools)
+    return {
+        "contract_id": capability_identity(materialized),
+        "tool_count": len(materialized),
+        "transport": transport,
+    }
+
+
+def advertised_capability(transport: str) -> dict[str, Any]:
+    """Capability receipt over the live instruction-set catalog.
+
+    Imports the catalog lazily so ``machine_contract`` stays import-light.
+    ``cmd_status`` and MCP ``project_status`` both go through this helper
+    so they cannot disagree on which catalog is hashed.
+    """
+
+    from .retrieval_tools import TOOLS
+
+    return capability_envelope(TOOLS, transport=transport)
+
+
 def tool_schema_snapshot(tools: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Extract routing-independent schema semantics for regression tests."""
 

@@ -143,6 +143,18 @@ def scan_validated_graph(
         progress=progress,
         manifest_sink=manifest_sink,
     )
+    if graph.metadata.get("incremental_noop") == "true" and output_path.exists():
+        validation = validate_graph_file(output_path)
+        remember_graph(output_path, graph)
+        if progress is not None:
+            progress("noop", "empty source delta; store unchanged")
+        return GraphBuildStatus(
+            output_path,
+            graph,
+            built=False,
+            repaired=False,
+            validation=validation,
+        )
     try:
         if progress is not None:
             progress("validate", f"path={output_path}")

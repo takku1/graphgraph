@@ -20,9 +20,9 @@ Supply meaning-based code and documentation evidence to the existing structural 
 
 - **[Conditional]** IF a compatible current semantic generation exists and the query is non-exact THEN THE SYSTEM SHALL make meaning-based evidence available without requiring lexical weakness or a warm process.
   - `EvidenceStage:` Refuted
-- **[Conditional]** IF semantic state is missing, stale, legacy, or incompatible THEN THE SYSTEM SHALL avoid an implicit build and report an actionable state.
+- **[Conditional]** IF semantic state is missing, stale, legacy, or incompatible THEN THE SYSTEM SHALL avoid an implicit build and report an actionable state, as checked by `tests/test_planning.py`.
   - `EvidenceStage:` Sampled
-- **[Event-driven]** WHEN semantic candidates are returned THE SYSTEM SHALL preserve graph node identity and expose enough provenance to attribute latency and evidence category.
+- **[Event-driven]** WHEN semantic candidates are returned THE SYSTEM SHALL preserve graph node identity and expose enough provenance to attribute latency and evidence category, as checked by `tests/test_platform.py`.
   - `EvidenceStage:` Sampled
 
 ## 5. Architectural Decisions (ADRs)

@@ -760,6 +760,51 @@ class WeakLexicalTest(unittest.TestCase):
         self.assertTrue(_weak_lexical([], "anything at all"))
 
 
+class ExactIdentifierHitTest(unittest.TestCase):
+    """Semantic consult is skipped only for an exact identifier hit."""
+
+    def _matches(self, graph, query):
+        return search_nodes(graph, query, limit=12, personalize=False)
+
+    def test_exact_symbol_is_an_identifier_hit(self) -> None:
+        from graphgraph.platform.source_planner import _exact_identifier_hit
+
+        graph = Graph(
+            nodes={"p": Node("p", "JSONProvider", "class", "src/app/provider.py")},
+            edges=[],
+        )
+        self.assertTrue(
+            _exact_identifier_hit(self._matches(graph, "JSONProvider"), "JSONProvider")
+        )
+
+    def test_paraphrase_is_not_an_identifier_hit(self) -> None:
+        from graphgraph.platform.source_planner import _exact_identifier_hit
+
+        graph = Graph(
+            nodes={
+                "hub": Node("hub", "process_client", "function", "src/hub.py"),
+                "target": Node(
+                    "target",
+                    "emit_capability",
+                    "function",
+                    "src/cap.py",
+                    summary="instruction-set contract implemented for a machine client",
+                ),
+            },
+            edges=[],
+        )
+        query = (
+            "Where does a cold one-shot process tell a machine client "
+            "which instruction-set contract it implements?"
+        )
+        self.assertFalse(_exact_identifier_hit(self._matches(graph, query), query))
+
+    def test_empty_matches_are_not_an_identifier_hit(self) -> None:
+        from graphgraph.platform.source_planner import _exact_identifier_hit
+
+        self.assertFalse(_exact_identifier_hit((), "anything at all"))
+
+
 class SemanticPlannerWarmupBoundaryTest(unittest.TestCase):
     """Interactive auto mode consumes semantic state but never builds it."""
 
@@ -895,6 +940,61 @@ class SemanticPlannerWarmupBoundaryTest(unittest.TestCase):
         self.assertEqual(plan.receipt.semantic_index_state, "rebuilt")
         self.assertTrue(plan.receipt.semantic_rebuilt)
         self.assertGreater(plan.receipt.semantic_seeds, 0)
+
+    def test_non_exact_auto_query_consults_a_current_warm_index(self) -> None:
+        from unittest.mock import MagicMock
+
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        fake = MagicMock()
+        fake.downgraded_reason.return_value = ""
+        fake.query.return_value = [("handler", 0.9)]
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(SemanticIndex, "state_for_graph", return_value="current"),
+                patch(
+                    "graphgraph.platform.source_planner.active_backend_is_warm",
+                    return_value=True,
+                ),
+                patch.object(SemanticIndex, "load", return_value=fake) as load,
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    self._graph(),
+                    "how are expired credentials revoked safely",
+                )
+
+        load.assert_called_once()
+        fake.query.assert_called()
+        self.assertIn("semantic", plan.receipt.sources)
+        self.assertGreater(plan.receipt.semantic_seeds, 0)
+        self.assertEqual(plan.receipt.semantic_index_state, "current")
+
+    def test_exact_identifier_does_not_consult_a_current_warm_index(self) -> None:
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(SemanticIndex, "state_for_graph", return_value="current"),
+                patch(
+                    "graphgraph.platform.source_planner.active_backend_is_warm",
+                    return_value=True,
+                ),
+                patch.object(
+                    SemanticIndex,
+                    "load",
+                    side_effect=AssertionError("exact identifier consulted semantic"),
+                ),
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    self._graph(),
+                    "CredentialRevocationHandler",
+                )
+
+        self.assertTrue(plan.receipt.exact_fast_path, plan.receipt)
+        self.assertEqual(plan.receipt.semantic_seeds, 0)
+        self.assertNotIn("semantic", plan.receipt.sources)
 
 
 class SemanticSeedBalanceTest(unittest.TestCase):

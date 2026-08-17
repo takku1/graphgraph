@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Local conceptual probes on THIS repository. Not the OW-AC-03 held-out panel.",
+    "Queries are lexically disjoint from their target symbol names.",
+    "A score below 0.80 is a complete finding, not a harness failure.",
+    "Run: graphgraph eval --graph .graphgraph/graph.gg --tasks eval/graphgraph-local-conceptual.json"
+  ],
+  "tasks": [
+    {
+      "query": "Where does a cold one-shot process tell a machine client which instruction-set contract it implements?",
+      "query_class": "subsystem_summary",
+      "expected": ["advertised_capability"],
+      "strata": ["conceptual", "lexical_disjoint"]
+    },
+    {
+      "query": "Which function reopens unchanged consumer files after a typed field changes?",
+      "query_class": "subsystem_summary",
+      "expected": ["affected_files"],
+      "strata": ["conceptual", "lexical_disjoint"]
+    },
+    {
+      "query": "How is a one-hop caller list encoded for a machine without a context packet?",
+      "query_class": "subsystem_summary",
+      "expected": ["encode_relation_micro"],
+      "strata": ["conceptual", "lexical_disjoint"]
+    }
+  ]
+}

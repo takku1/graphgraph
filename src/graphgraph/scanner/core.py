@@ -6,6 +6,7 @@ import os
 import subprocess
 import time
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -27,6 +28,7 @@ from .files import (
     node_id,
 )
 from .frontends import select_extractor
+from .frontends.syntax import module_docstring
 from .frontends.persistent_facts import (
     AffectedTypeFactFiles,
     PersistentPythonTypeIndex,
@@ -135,6 +137,19 @@ def _python_snapshot_worker(item: tuple[str, str]) -> tuple[str, dict, tuple]:
         _python_module_global_facts(text, rel),
     )
     return rel, snapshot, analyses
+
+
+def _type_fact_snapshots(pending: list[tuple[str, str]]) -> dict[str, dict]:
+    """Snapshot every dirty source file; Python stays on the AST fast path."""
+
+    from .frontends.persistent_facts import frontend_file_type_snapshot
+
+    python_pending = [(rel, text) for rel, text in pending if rel.casefold().endswith(".py")]
+    other_pending = [(rel, text) for rel, text in pending if not rel.casefold().endswith(".py")]
+    snapshots = _python_snapshots(python_pending)
+    for rel, text in other_pending:
+        snapshots[rel] = frontend_file_type_snapshot(text, rel)
+    return snapshots
 
 
 def _python_snapshots(pending: list[tuple[str, str]]) -> dict[str, dict]:
@@ -328,6 +343,16 @@ def scan_directory(
         enabled=depth == "symbols",
     )
     _emit_progress(progress, "hash", f"dirty={len(dirty_files)} restored={len(skipped_files)}")
+
+    removed_rels = set()
+    if manifest is not None:
+        removed_rels = set(manifest.files.keys()) - active_rels
+    if previous_graph is not None and not dirty_files and not removed_rels:
+        metadata = dict(previous_graph.metadata)
+        metadata["incremental_noop"] = "true"
+        metadata["incremental_dirty_files"] = "0"
+        _emit_progress(progress, "noop", "empty source delta")
+        return Graph(previous_graph.nodes, previous_graph.edges, metadata)
 
     # Git status is gathered before collection for priority ordering, but only
     # paths admitted by the same scan/ignore policy may enter graph metadata.
@@ -540,15 +565,12 @@ def _promote_type_fact_dependents(
     new_snapshots: dict[str, dict] = {}
     pending_snapshots: list[tuple[str, str]] = []
     for path, rel, _file_hash in dirty_files:
-        if path.suffix.casefold() != ".py":
-            new_snapshots.pop(rel, None)
-            continue
         try:
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             source = ""
         pending_snapshots.append((rel, source))
-    new_snapshots.update(_python_snapshots(pending_snapshots))
+    new_snapshots.update(_type_fact_snapshots(pending_snapshots))
 
     index_data = getattr(manifest, "type_index", {}) if manifest is not None else {}
     index = PersistentPythonTypeIndex.from_data(index_data)
@@ -1447,9 +1469,9 @@ def _build_graph_from_split(
             except Exception:
                 continue
             source_files.append(SourceIR(f, rel, file_nid, text))
-            if suffix == ".py" and rel not in python_fact_snapshots:
+            if rel not in python_fact_snapshots:
                 pending_snapshots.append((rel, text))
-        python_fact_snapshots.update(_python_snapshots(pending_snapshots))
+        python_fact_snapshots.update(_type_fact_snapshots(pending_snapshots))
 
         if source_files:
             # Raised from *5 (10,000 symbols at the old max_nodes=2000 default)
@@ -1478,6 +1500,12 @@ def _build_graph_from_split(
                 )
             )
             nodes.update(extraction.nodes)
+            for source in source_files:
+                file_node = nodes.get(source.file_node_id)
+                doc = module_docstring(source.text)
+                if file_node is None or not doc:
+                    continue
+                nodes[source.file_node_id] = replace(file_node, summary=doc)
             _merge_new_edges(edges, extraction.edges)
             _emit_progress(
                 progress,

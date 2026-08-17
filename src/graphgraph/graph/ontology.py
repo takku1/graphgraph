@@ -105,6 +105,24 @@ def relation_spec(relation: str) -> RelationSpec:
     )
 
 
+def relation_records(family: str | None = None) -> list[dict[str, object]]:
+    """Machine-facing ontology rows used by CLI and MCP describe commands."""
+
+    return [
+        {
+            "name": spec.name,
+            "family": spec.family,
+            "direction": spec.direction,
+            "strength": spec.strength,
+            "traversable": spec.traversable,
+            "weak": spec.weak,
+            "description": spec.description,
+        }
+        for spec in DEFAULT_RELATIONS.values()
+        if not family or spec.family == family
+    ]
+
+
 def traversal_strength(relation: str) -> float:
     spec = relation_spec(relation)
     return spec.strength if spec.traversable else 0.0

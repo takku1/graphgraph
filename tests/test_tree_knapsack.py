@@ -11,7 +11,7 @@ from graphgraph import (
 
 class TreeKnapsackTest(unittest.TestCase):
     def test_connected_greedy_respects_budget_and_parent_connectivity(self) -> None:
-        from graphgraph.retrieval.tree_knapsack import connected_greedy_context_partition, packet_node_costs
+        from graphgraph.retrieval.selection import connected_greedy_context_partition, packet_node_costs
 
         graph = Graph(
             nodes={name: Node(name, name) for name in ("A", "B", "C", "D")},
@@ -44,7 +44,7 @@ class TreeKnapsackTest(unittest.TestCase):
         self.assertLessEqual(len(selected), 3)
 
     def test_tree_knapsack_context_partition(self) -> None:
-        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+        from graphgraph.retrieval.selection import tree_knapsack_context_partition
 
         g = Graph(
             nodes={
@@ -74,7 +74,7 @@ class TreeKnapsackTest(unittest.TestCase):
         self.assertIn("B", selected)
 
     def test_tree_knapsack_charges_dense_nodes_for_packet_edges(self) -> None:
-        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+        from graphgraph.retrieval.selection import tree_knapsack_context_partition
 
         graph = Graph(
             nodes={"A": Node("A", "A"), "B": Node("B", "B"), "C": Node("C", "C")}
@@ -103,7 +103,7 @@ class TreeKnapsackTest(unittest.TestCase):
         # (e.g. an anchor that graph.expand() dropped for being inactive or
         # out of scope) with a neighbor that IS a candidate raised KeyError
         # on `tree[curr].append(...)`.
-        from graphgraph.retrieval.tree_knapsack import build_bfs_tree
+        from graphgraph.retrieval.selection import build_bfs_tree
 
         graph = Graph(
             nodes={"S": Node("S", "S"), "C1": Node("C1", "C1")},
@@ -118,7 +118,7 @@ class TreeKnapsackTest(unittest.TestCase):
         # to record them as roots ran, so `[nid for nid in candidates if nid
         # not in visited_dfs]` was always empty. Each orphan's DP table was
         # computed but it could never be selected at the top level.
-        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+        from graphgraph.retrieval.selection import tree_knapsack_context_partition
 
         graph = Graph(
             nodes={
@@ -144,7 +144,7 @@ class TreeKnapsackTest(unittest.TestCase):
         # RecursionError. Confirmed this exact input crashes the old
         # recursive implementation; both were converted to explicit-stack
         # iteration.
-        from graphgraph.retrieval.tree_knapsack import tree_knapsack_context_partition
+        from graphgraph.retrieval.selection import tree_knapsack_context_partition
 
         n = 1500
         nodes = {f"n{i}": Node(f"n{i}", f"n{i}", "function") for i in range(n)}

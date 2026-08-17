@@ -173,6 +173,14 @@ def traversal_policy(query_class: str) -> TraversalPolicy:
     return POLICIES.get(query_class, DEFAULT_POLICY)
 
 
+def policy_records(query_class: str | None = None) -> dict[str, object] | dict[str, dict[str, object]]:
+    """Machine-facing traversal rows used by CLI and MCP describe commands."""
+
+    if query_class:
+        return dict(traversal_policy(query_class).__dict__)
+    return {name: dict(policy.__dict__) for name, policy in POLICIES.items()}
+
+
 def relation_rank(relation: str, policy: TraversalPolicy) -> tuple[int, int, str]:
     spec = relation_spec(relation)
     relation_pos = policy._relation_positions.get(relation, UNPREFERRED_RANK)

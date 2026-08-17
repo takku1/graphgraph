@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 from ..packets import estimate_tokens
 
 DEFAULT_RESPONSE_PACKET_RATIO = 1.15
+
+# JSON envelope keys a machine client may dispatch on. Pretty-print waste and
+# advisory provenance may be dropped; these may not.
+REQUIRED_JSON_ENVELOPE_KEYS = (
+    "packet",
+    "packet_format",
+    "control",
+    "anchors",
+    "query_class",
+    "routing",
+    "retrieval",
+    "workflow",
+    "actionable",
+    "source_snippets",
+    "metrics",
+)
+ADVISORY_JSON_ENVELOPE_KEYS = ("message",)
 
 
 def within_response_surface(
@@ -41,3 +61,45 @@ def clamp_response_to_packet_surface(
     if within_response_surface(response, packet, ratio=ratio):
         return response
     return packet if fallback is None else fallback
+
+
+def compact_json(value: object) -> str:
+    """Serialize a machine JSON envelope without presentation whitespace."""
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def json_envelope_for_surface(
+    payload: dict[str, Any],
+    packet: str,
+    *,
+    ratio: float = DEFAULT_RESPONSE_PACKET_RATIO,
+) -> str:
+    """Compact JSON that keeps routing keys even when the 1.15× gate fires.
+
+    Indentation is not evidence. Advisory fields may be dropped to meet the
+    packet ratio. ``control``, ``anchors``, ``query_class``, and ``workflow``
+    stay: a fallback that is valid JSON but missing those keys is a surface
+    defect (OW-D-04).
+    """
+
+    candidate = dict(payload)
+    dumped = compact_json(candidate)
+    if within_response_surface(dumped, packet, ratio=ratio):
+        return dumped
+
+    dropped: list[str] = []
+    for key in ADVISORY_JSON_ENVELOPE_KEYS:
+        if key not in candidate:
+            continue
+        candidate.pop(key)
+        dropped.append(key)
+        dumped = compact_json(candidate)
+        if within_response_surface(dumped, packet, ratio=ratio):
+            break
+    if dropped:
+        workflow = candidate.setdefault("workflow", {})
+        if isinstance(workflow, dict):
+            workflow["surface"] = {"clamped": True, "dropped": dropped}
+        dumped = compact_json(candidate)
+    return dumped

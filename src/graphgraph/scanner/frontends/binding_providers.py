@@ -15,7 +15,7 @@ from typing import Any, Callable, Mapping
 from ..source_ir import SourceIR
 from .cpp import cpp_class_field_types, cpp_local_types
 from .csharp import csharp_class_field_types, csharp_local_types
-from .go import go_local_call_return_types, go_local_types
+from .go import go_local_call_return_types, go_local_types, go_struct_field_types
 from .model import _TsDef
 from .python import _python_class_field_types, _python_local_types, _python_parameter_names
 from .rust import (
@@ -302,7 +302,7 @@ FIELD_BINDING_PROVIDERS: Mapping[str, FieldBindingProvider] = {
     "c": _empty_field_bindings,
     "cpp": _cpp_field_bindings,
     "csharp": _csharp_field_bindings,
-    "go": _empty_field_bindings,
+    "go": lambda context: dict(go_struct_field_types(context.source.text)),
     "java": _csharp_field_bindings,
     "javascript": _typescript_field_bindings,
     "kotlin": _empty_field_bindings,

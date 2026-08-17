@@ -342,6 +342,33 @@ def dispatch():
         self.assertEqual(go_return_type_name("int"), "")
         self.assertEqual(go_return_type_name(""), "")
 
+    def test_go_embedded_struct_promotes_methods(self) -> None:
+        from graphgraph.scanner.frontends.go import go_embedded_types, go_struct_field_types
+
+        source = (
+            "type Store struct{}\n"
+            "type Account struct {\n"
+            "\tStore\n"
+            "\tName string\n"
+            "}\n"
+        )
+        self.assertEqual(go_embedded_types(source), {"Account": ("Store",)})
+        self.assertEqual(go_struct_field_types(source)[("Account", "Store")], "Store")
+
+        result = self._extract(
+            {
+                "store.go": "package p\ntype Store struct{}\nfunc (s Store) Save() int { return 1 }\n",
+                "user.go": "package p\ntype Account struct { Store }\n",
+                "app.go": "package p\nfunc Persist(account Account) int { return account.Save() }\n",
+            }
+        )
+        calls = {
+            (edge.source.rsplit("__", 1)[-1], edge.target.rsplit("__", 1)[-1])
+            for edge in result.edges
+            if edge.type == "calls"
+        }
+        self.assertIn(("Persist", "Save"), calls)
+
     def test_two_hop_receiver_expression_resolves_a_call_edge(self) -> None:
         result = self._extract(
             {

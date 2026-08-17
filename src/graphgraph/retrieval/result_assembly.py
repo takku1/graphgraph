@@ -540,5 +540,89 @@ def _assemble_retrieval_result(
     _apply_document_receipts(metadata, graph, selection, nodes, starts)
     if subsystems.wants_subsystem_map(query, query_class):
         metadata["subsystem_map"] = subsystems.build_subsystem_map(graph)
+    selected_matches, nodes, edges, starts = _apply_ungrounded_packet_abstention(
+        metadata, selection, selected_matches, nodes, edges, starts
+    )
+    _record_evidence_and_completeness(metadata, starts, nodes)
 
     return RetrievalResult(starts=starts, matches=selected_matches, nodes=nodes, edges=edges, metadata=metadata)
+
+
+def _record_evidence_and_completeness(metadata, starts, nodes) -> None:
+    """Split minimum-evidence success from full-neighborhood completeness."""
+
+    answerability = metadata.get("answerability")
+    if not isinstance(answerability, dict):
+        return
+    status = str(answerability.get("status", "unknown"))
+    abstained = bool(answerability.get("abstained"))
+    truncation = metadata.get("truncation") if isinstance(metadata.get("truncation"), dict) else {}
+    omitted = int(truncation.get("omitted_direct_neighbors") or 0)
+    has_subgraph = bool(starts or nodes)
+    minimum_evidence = status != "unanswerable" and has_subgraph
+    complete = (
+        minimum_evidence
+        and status == "answerable"
+        and not abstained
+        and omitted == 0
+    )
+    answerability["minimum_evidence"] = minimum_evidence
+    answerability["neighborhood_complete"] = complete
+
+
+def _apply_ungrounded_packet_abstention(
+    metadata: dict[str, object],
+    selection: _AnchorSelection,
+    selected_matches,
+    nodes,
+    edges,
+    starts,
+):
+    """Empty a packet whose effective confidence is below policy.
+
+    Effective confidence is shape confidence times a noisy-OR grounding
+    score (exact hit, pinned seed, paraphrase specificity, identity
+    coverage). Incomplete receipts keep their taxonomy; already-empty
+    receipts are unchanged.
+    """
+    if not starts and not nodes:
+        return selected_matches, nodes, edges, starts
+    request = selection.request
+    # doc_summary has its own document-status taxonomy. Emptying a scoped
+    # document hit treats an operator-directed read as a dirty lexical miss.
+    if request.query_class == "doc_summary":
+        return selected_matches, nodes, edges, starts
+    current = metadata.get("answerability") if isinstance(metadata.get("answerability"), dict) else {}
+    incomplete = isinstance(current, dict) and current.get("status") == "incomplete"
+    # Conceptual role recovery fills required facets on a connected subgraph.
+    # That is not a dirty lexical miss, even when no identifier/summary
+    # channel fires. Isolated generic-hub collisions have no facet receipt.
+    facet = metadata.get("facet_coverage") if isinstance(metadata.get("facet_coverage"), dict) else {}
+    facet_grounded = bool(facet.get("fulfilled")) and not facet.get("unfulfilled_required")
+    if incomplete or facet_grounded:
+        return selected_matches, nodes, edges, starts
+    injected = any(set(match.reasons) & quality.INJECTED_ANCHOR_REASONS for match in selected_matches)
+    effective = anchors.effective_answer_confidence(
+        selected_matches,
+        request.query,
+        injected=injected,
+        pinned_paths=bool(request.anchor_paths),
+    )
+    if effective >= anchors.ABSTAIN_POLICY or incomplete:
+        return selected_matches, nodes, edges, starts
+    raw = 0.2
+    if isinstance(current, dict) and current.get("confidence") is not None:
+        try:
+            raw = float(current["confidence"])
+        except (TypeError, ValueError):
+            raw = 0.2
+    metadata["answerability"] = {
+        "status": "unanswerable",
+        "abstained": True,
+        "reason": (
+            "effective answer confidence "
+            f"{effective:.3f} is below policy {anchors.ABSTAIN_POLICY:.2f}"
+        ),
+        "confidence": round(min(raw, effective, anchors.ABSTAIN_POLICY), 4),
+    }
+    return (), set(), [], ()

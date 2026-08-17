@@ -21,7 +21,7 @@ if [ ! -f "$GRAPH" ]; then
 fi
 
 "$PY" - "$GRAPH" <<'PYEOF'
-import json, sys, time, datetime, statistics, subprocess, random
+import json, sys, time, datetime, statistics, subprocess
 from pathlib import Path
 
 graph_path = Path(sys.argv[1])
@@ -40,48 +40,38 @@ if cold_runs:
     cold_runs.sort()
     print(f"[secondary] cli_cold_start_ms median={cold_runs[len(cold_runs)//2]:.2f}", file=sys.stderr)
 
+from graphgraph.benchmark.relation_latency import measure_relation_latency_strata
+from graphgraph.benchmark.resident_query import (
+    measure_kernel_exact_p95,
+    measure_session_exact_p95,
+)
 from graphgraph.io.core import load_any
-from graphgraph.retrieval import query_relations
 
-graph = load_any(graph_path)
-candidates = [
-    node_id for node_id, node in graph.nodes.items()
-    if node.active and node.kind in ("function", "method") and node.label
-]
-if not candidates:
-    print(json.dumps({
-        "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "event_type": "measurement", "component": "agent-interfaces",
-        "metric": "resident_exact_query_p95_ms", "value": None, "unit": "ms",
-        "direction": "lower", "status": "unavailable",
-        "reason": "no function/method nodes in active graph",
-    }))
-    raise SystemExit(0)
-
-random.seed(7)
-sample = random.sample(candidates, min(300, len(candidates)))
-
-# Warm the process the way a resident MCP server already is by the time it
-# serves its first real query: import paths and lexical/token-index caches
-# built once, reused across every call after.
-for node_id in sample[:10]:
-    query_relations(graph, node_id, direction="callers", limit=20)
-
-runs = []
-for node_id in sample:
-    t0 = time.perf_counter()
-    query_relations(graph, node_id, direction="callers", limit=20)
-    runs.append((time.perf_counter() - t0) * 1000.0)
-runs.sort()
-p95 = runs[min(len(runs) - 1, int(len(runs) * 0.95))]
-print(json.dumps({
+kernel = measure_kernel_exact_p95(load_any(graph_path))
+session = measure_session_exact_p95(graph_path)
+relation_latency = measure_relation_latency_strata(samples=20)
+payload = {
     "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "event_type": "measurement", "component": "agent-interfaces",
-    "metric": "resident_exact_query_p95_ms", "value": round(p95, 4), "unit": "ms",
-    "direction": "lower", "evidence_stage": "Measured", "status": "success",
-    "samples": len(runs), "min": round(runs[0], 4), "max": round(runs[-1], 4),
-    "median": round(runs[len(runs) // 2], 4),
-    "stdev": round(statistics.pstdev(runs), 4),
-    "query": "query_relations(direction=callers) on a known exact node id, sampled uniformly across active function/method nodes",
-}))
+    "event_type": "measurement",
+    "component": "agent-interfaces",
+    "metric": "resident_exact_query_p95_ms",
+    "value": session.get("value"),
+    "unit": "ms",
+    "direction": "lower",
+    "evidence_stage": "Measured",
+    "status": session.get("status", "unavailable"),
+    "target": session.get("target"),
+    "samples": session.get("samples"),
+    "min": session.get("min"),
+    "max": session.get("max"),
+    "median": session.get("median"),
+    "query": session.get("query"),
+    "kernel": kernel,
+    "relation_latency": relation_latency,
+}
+if session.get("reason"):
+    payload["reason"] = session["reason"]
+print(json.dumps(payload))
+if payload["status"] == "fail":
+    raise SystemExit(1)
 PYEOF

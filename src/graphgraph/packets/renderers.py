@@ -296,7 +296,12 @@ def render_svo(graph: Graph, nodes: set[str], edges: list[Edge]) -> str:
     edges = _existing_edges(nodes, edges)
     node_labels = {nid: graph.nodes[nid].label for nid in nodes}
     lines = ["#svo", "@entities"]
-    lines.extend(f"{node_id}: {node_labels[node_id]}" for node_id in sorted(nodes))
+    for node_id in sorted(nodes):
+        context = _compact_source_context(graph.nodes[node_id])
+        if context:
+            lines.append(f"{node_id}: {node_labels[node_id]} {context}")
+        else:
+            lines.append(f"{node_id}: {node_labels[node_id]}")
     lines.append("@triples")
     for edge in edges:
         src = node_labels.get(edge.source, edge.source)

@@ -54,6 +54,13 @@ Superseded pre-redesign documents were retired; their history is in git.
 | [architecture/research/](architecture/research/SYSTEM.md) | Unpromoted research candidates |
 | [architecture/representation/](architecture/representation/SYSTEM.md) | Project representation (flat vs hybrid) |
 | [architecture/runtime-context-model.md](architecture/runtime-context-model.md) | Runtime context model |
+| [architecture/intermediate-representation/interpretation-layer.md](architecture/intermediate-representation/interpretation-layer.md) | Interpretation-layer notes |
+| [architecture/intermediate-representation/relation-ontology.md](architecture/intermediate-representation/relation-ontology.md) | Relation ontology notes |
+| [architecture/intermediate-representation/schema-alignment.md](architecture/intermediate-representation/schema-alignment.md) | Schema alignment notes |
+| [architecture/project-atlas/orientation-engine.md](architecture/project-atlas/orientation-engine.md) | Orientation engine notes |
+| [architecture/project-atlas/navigation-benchmark.md](architecture/project-atlas/navigation-benchmark.md) | Navigation benchmark notes |
+| [architecture/static-analysis/language-frontend-ir.md](architecture/static-analysis/language-frontend-ir.md) | Language-frontend IR notes |
+| [architecture/storage/incremental-update-protocol.md](architecture/storage/incremental-update-protocol.md) | Incremental update protocol notes |
 
 **Terminology:** *scan* → corpus extraction; *packet* → context packet; *blast radius* → change-impact neighborhood; *anchors* → retrieval anchors. Full map: [guides/terminology.md](guides/terminology.md).
 

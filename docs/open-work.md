@@ -12,15 +12,15 @@
 
 | ID | Workstream | Status | Exit gate (summary) |
 |----|------------|--------|---------------------|
-| OW-AC-01 | Resident process transport (MCP vs cold CLI) | active | Resident exact-query p95; tools exposed in agent session |
+| OW-AC-01 | Resident process transport (MCP vs cold CLI) | ready | Warm MCP exact-relation p95 **92.6 ms** (SLO 250 ms). Session handshake lists 24 tools including query_relations/query_context/search_nodes/project_status. Kernel in-process p95 0.10 ms. NEED_CHECKER |
 | OW-AC-02 | Active graph publication & freshness | active | Discovery selects validated build; empty delta ⇒ fresh |
-| OW-AC-03 | Conceptual / lexically disjoint retrieval | active | ≥80% full recall on conceptual tasks. 0.00 (2026-08-04) → 0.357 (doc capture) → 0.500 (T-B07 preflight fix) → **0.643 (2026-08-06, T-B08 facet-reservation seating)**; cross-repo held-out recall 0.841 → 0.886. Remaining gap is downstream ranking, not the veto |
-| OW-AC-04 | Abstention & confidence calibration | active | Red controls: unanswerable, conf ≤0.2, ≤50 real tokens. **5 of 7 conceptual misses emitted 546–1,609 tokens instead of abstaining** |
-| OW-AC-05 | Cross-language call-graph topology | active | Per-language volume + independent precision ≥98% |
+| OW-AC-03 | Conceptual / lexically disjoint retrieval | ready | Local this-repo probes 2026-08-16: mean **1.0** (3/3). Held-out corpora not on disk; historical 0.643 trail is not a current measurement. NEED_CHECKER |
+| OW-AC-04 | Abstention & confidence calibration | ready | This-repo RED compiled packet 21 tokens, conf 0.15; two local conceptual misses abstain. Held-out 5-of-7 trail not re-run (corpora absent). NEED_CHECKER |
+| OW-AC-05 | Cross-language call-graph topology | ready | Held-out TS/C#/Python/Go precision 1.0 (4/4 labeled inherited calls). Polyglot volume table in `components/static-analysis/heldout_precision.json`. Large third-party corpora not run. NEED_CHECKER |
 | OW-AC-06 | Machine-response token surface | done (2026-08-15: clamp wrapper to packet when >1.15×; NEED_CHECKER) | Response ≤1.15× evidence-packet tokens |
 | OW-AC-07 | Token estimator calibration | done | MAE ≤5%, p95 ≤10% |
 | OW-AC-08 | Latency & scale invariance | active | Packed exact relation 57.08 → 3.81 ms p50 in-process (2026-08-08); add graph-size strata and remaining phase gates |
-| OW-AC-09 | Contract & telemetry consistency | active (2026-08-15: `capability_identity()` + `project_status.capability.contract_id`, MCP only; CLI parity per ADR-AI-002 still open; NEED_CHECKER) | Machine-readable capability identity |
+| OW-AC-09 | Contract & telemetry consistency | ready (2026-08-16: CLI and MCP share `advertised_capability()`; NEED_CHECKER) | Machine-readable capability identity |
 | OW-AC-10 | Rotating held-out repository panel | active | ≥5 language/runtime strata |
 
 Receipts: [consolidated agent-cycle measurement](evaluation/graybox-cycles/README.md#instrument-and-representation-measurements).
@@ -42,7 +42,7 @@ in the same map rather than duplicated here.
 
 | ID | Item | Status |
 |----|------|--------|
-| OW-D-01 | Runtime coverage on real Express test run | ready |
+| OW-D-01 | Runtime coverage on real Express test run | ready | Istanbul/V8 Express fixtures; NEED_CHECKER |
 | OW-D-02 | Held-out receiver precision/recall oracles | active |
 | OW-D-03 | Stale external client skill installs | deferred |
 
@@ -209,7 +209,7 @@ Ruff, `git diff --check`, and full pytest pass.
 |----|------|--------|
 | OW-P0-01 | Multi-model live factual scoring | research |
 | OW-P0-02 | Cross-document section ranking + embedding fallback | ready |
-| OW-P0-03 | Adversarial ambiguity suite expansion | ready |
+| OW-P0-03 | Adversarial ambiguity suite expansion | ready | +3 collision cases; NEED_CHECKER |
 | OW-P0-04 | Completeness ≠ minimum-evidence (report separately) | ready |
 | OW-P1-01…08 | Ranking fit, token surfaces, RRF, PPR Pareto, Rust THIR tier | mixed — see [research/optimization-research-agenda.md](research/optimization-research-agenda.md) |
 
