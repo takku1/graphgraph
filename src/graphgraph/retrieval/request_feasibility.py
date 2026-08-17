@@ -177,7 +177,7 @@ def _request_feasibility(
             provably_absent = {
                 label
                 for label, terms in facets
-                if label in missing_required and facet_stage.facet_terms_absent_from_corpus(graph, terms)
+                if label in missing_required and facet_stage.facet_is_provably_absent(graph, terms)
             }
             if provably_absent or mention_fulfilled:
                 return _semantic_novelty_result(
@@ -195,7 +195,7 @@ def _request_feasibility(
                     mention_fulfilled=mention_fulfilled,
                 )
         provably_absent = any(
-            facet_stage.facet_terms_absent_from_corpus(graph, terms)
+            facet_stage.facet_is_provably_absent(graph, terms)
             for label, terms in facets
             if label in set(global_coverage.get("unfulfilled_required", ()))
         )

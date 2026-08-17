@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "In-repo held-out-style conceptual tasks. Queries share no identifier",
+    "tokens with the expected labels. The fixture lives under",
+    "tests/corpus/conceptual-disjoint/. This is not conceptual-v1 and may",
+    "not be used to retire that suite."
+  ],
+  "tasks": [
+    {
+      "id": "FIX-C01",
+      "query": "How does the tool record how sure it is that a conclusion holds?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["ConfidenceLadder"]
+    },
+    {
+      "id": "FIX-C02",
+      "query": "What keeps a speed claim from being silently tied to one machine?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["PortabilityQualifier"]
+    },
+    {
+      "id": "FIX-C03",
+      "query": "Which contract lets a new lens of inspection be registered and applied uniformly?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["UniformExaminer"]
+    },
+    {
+      "id": "FIX-C05",
+      "query": "Which routine assembles a way to multiply matrices using fewer scalar products than the obvious triple loop?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["assemble_thrifty_product"]
+    },
+    {
+      "id": "FIX-C06",
+      "query": "What single structure wires the discovery stages together in order?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["StageWire"]
+    },
+    {
+      "id": "FIX-R01",
+      "query": "Which module implements the GraphQL subscription transport?",
+      "query_class": "direct_lookup",
+      "strata": ["red_control", "negative", "conceptual"],
+      "expected_answerable": false
+    }
+  ]
+}

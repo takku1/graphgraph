@@ -223,6 +223,10 @@ def _base_result_metadata(graph: Graph, selection: _AnchorSelection, nodes, edge
             for match in selected_matches
             if anchors._is_high_confidence_exact_anchor(match) or set(match.reasons) & quality.INJECTED_ANCHOR_REASONS
         }
+        # The ranker's top hit is the answer it chose. Isolation pruning exists
+        # to drop tail padding, not to evict the node search_nodes put first.
+        if selected_matches:
+            protected_anchors.add(selected_matches[0].node.id)
         # Edges are not the only way an anchor earns its place: a node whose
         # text covers a required facet is real evidence even when it is
         # structurally isolated, and dropping it degrades the answerability

@@ -668,6 +668,22 @@ def facet_terms_absent_from_corpus(graph: Graph, terms: tuple[str, ...]) -> tupl
     )
 
 
+def facet_is_provably_absent(graph: Graph, terms: tuple[str, ...]) -> bool:
+    """True only when the facet's identifying terms occur nowhere.
+
+    A missing generic word (``tool``, ``record``) is not absence of the
+    concept. A missing distinctive term (``graphql``, ``subscription``) is.
+    """
+    absent = set(facet_terms_absent_from_corpus(graph, terms))
+    if not absent:
+        return False
+    distinctive = tuple(term for term in terms if "-" in term or len(term) >= 8)
+    if distinctive:
+        return any(term in absent for term in distinctive)
+    content = tuple(term for term in terms if len(term) >= 5 and term not in _DEFINITION_TERMS)
+    return bool(content) and all(term in absent for term in content)
+
+
 def facet_coverage(
     graph: Graph,
     nodes: set[str],
