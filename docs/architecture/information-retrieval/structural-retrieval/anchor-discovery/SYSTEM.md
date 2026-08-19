@@ -25,12 +25,23 @@ Produce grounded retrieval starts and ranked candidates with receipts; does not 
   - `EvidenceStage:` Sampled
 - **[Ubiquitous]** Personalized PageRank topology derived from active edges and damping SHALL be cached per graph mutation revision rather than rebuilt per call.
   - `EvidenceStage:` Measured
+- **[Conditional]** IF the query does not already name a second document THEN THE SYSTEM SHALL issue one follow-up retrieval seeded by the names hop one introduces, as checked by `benchmarks/external/hotpotqa.py`.
+  - `EvidenceStage:` Measured
+- **[Conditional]** IF the query already names a document beyond the top-ranked one THEN THE SYSTEM SHALL NOT force a second-hop anchor, because ranking already reaches both and a forced anchor evicts a correct one.
+  - `EvidenceStage:` Measured
 
 ## 5. Architectural Decisions (ADRs)
 
 - **ADR-AD-001:** Personalized PageRank reorders the tail; it is not the primary exact-lookup path.
 - **ADR-AD-002:** Several searches per query are intentional, not accidental duplication. The calls carry different query texts, limits, and exact flags; a per-call memoization cache measured a 0% hit rate on a real trace. Reducing them is a pipeline restructure, not a caching fix.
 - **ADR-AD-003:** Working-tree modification state personalizes ranking, so any A/B of this phase must hold git state constant across both arms. Comparing a stashed arm against a dirty arm measures the stash, not the change.
+- **ADR-AD-004 (2026-08-19):** A second hop is a second *query*, not a ranking correction. Ranking is complete before expansion runs, so a document reachable only by traversal can enter the packet but never rank (ADR-SRT-008). Four attempts to fix that inside the ranked pool — boolean connectivity promotion, selectivity-gated promotion, a connectivity term blended into the score, and a reserved slot for the most specifically bridged document — were each measured against a 0.57 exact-match baseline on HotpotQA and each scored worse (0.42, 0.54–0.56, 0.41, 0.49).
+
+  Instrumenting the third says why the whole class fails: the ranked pool arrives with its top candidates **tied at 59.7 while the correct second-hop document scores about 15**. No bounded corroborating signal reaches across that gap, and an unbounded one destroys the queries that already work.
+
+  What does work is issuing one follow-up retrieval seeded by the proper names hop one introduces — the answering paragraph normally cites the second entity outright, so finding it is an ordinary high-scoring lookup with no gap to cross. It is gated off when the query already names a second document, because in that case ranking finds both entities unaided and a forced anchor evicts a correct one; ungated the mechanism won 6 questions and lost 11, and every loss had that shape.
+
+  Measured on 1,000 held-out HotpotQA questions: exact match **0.5400 → 0.5800**, bridge questions **0.4404 → 0.4961**, comparison questions 0.8772 → 0.8640, McNemar exact two-sided **p = 0.00002**. The comparison cost is real and is not tuned away, because fitting the gate further against this sample would be overfitting rather than repair.
 
 ## 6. Leaf Execution & Test Seam
 
