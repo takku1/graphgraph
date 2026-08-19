@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# measure.sh -- corpus extraction cost over a fixed in-repo subtree.
-# A bounded, repeatable scan: the whole-repo number is dominated by corpus size
-# rather than by frontend cost, so it cannot gate a frontend change.
+# measure.sh -- held-out member-call resolution precision.
+# The header previously described "corpus extraction cost over a fixed in-repo
+# subtree", which this script has never measured; it emits the resolution
+# precision ratio below. Extraction throughput is a separate concern and is
+# reported by tests/test_benchmark.py under GRAPHGRAPH_TIMING_GATES=1, because
+# wall-clock belongs in a deliberate measurement run rather than in a
+# correctness suite that must be deterministic.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 PY="${GRAPHGRAPH_PYTHON:-.venv/Scripts/python.exe}"
