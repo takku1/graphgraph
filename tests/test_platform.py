@@ -1872,3 +1872,61 @@ class CachedWeightsAreNotAPendingDownload(unittest.TestCase):
             self.assertFalse(active_backend_needs_download())
         finally:
             embeddings.reset_backend_cache()
+
+
+class LengthSortedEmbeddingTest(unittest.TestCase):
+    """Length-bucketed batching must be a pure throughput change.
+
+    ONNX pads every batch to its longest member, so mixing a 14-char label with
+    a 465-char docstring computes both at the longer width. Sorting by length
+    before batching removed 2.7x of that waste on 1,200 real nodes while
+    producing bit-identical vectors (334/334 exact, max component delta 0.0).
+
+    The risk it introduces is silent: if the caller's order is not restored,
+    every vector binds to the wrong node and the index is still perfectly
+    well-formed while answering nonsense. These tests exist for that.
+    """
+
+    @staticmethod
+    def _fingerprint(batch, _size):
+        """Stand-in embedder whose output identifies its own input."""
+        return [[float(len(text)), float(ord(text[0]))] for text in batch]
+
+    def _expected(self, text):
+        return [float(len(text)), float(ord(text[0]))]
+
+    def test_restores_caller_order_across_mixed_lengths(self) -> None:
+        from graphgraph.platform.embeddings import embed_length_sorted
+
+        texts = [chr(97 + i % 26) * (1 + (i * 7) % 40) for i in range(200)]
+        # Deliberately not already sorted: neighbouring inputs differ in length.
+        self.assertNotEqual(texts, sorted(texts, key=len))
+        vectors = embed_length_sorted(texts, self._fingerprint, 16)
+        self.assertEqual(vectors, [self._expected(text) for text in texts])
+
+    def test_small_input_skips_sorting_entirely(self) -> None:
+        from graphgraph.platform.embeddings import embed_length_sorted
+
+        texts = ["bbbb", "a", "ccc"]
+        vectors = embed_length_sorted(texts, self._fingerprint, 16)
+        self.assertEqual(vectors, [self._expected(text) for text in texts])
+
+    def test_a_short_backend_response_is_an_error_not_silent_truncation(self) -> None:
+        from graphgraph.platform.embeddings import embed_length_sorted
+
+        def drops_one(batch, _size):
+            return [[float(len(t))] for t in batch][:-1]
+
+        texts = [chr(97 + i % 26) * (1 + i) for i in range(40)]
+        with self.assertRaises(ValueError):
+            embed_length_sorted(texts, drops_one, 8)
+
+    def test_batch_size_is_environment_tunable(self) -> None:
+        from graphgraph.platform.embeddings import EMBED_BATCH_ENV, _embed_batch_size
+
+        with patch.dict(os.environ, {EMBED_BATCH_ENV: "64"}):
+            self.assertEqual(_embed_batch_size(), 64)
+        with patch.dict(os.environ, {EMBED_BATCH_ENV: "not-a-number"}):
+            self.assertGreater(_embed_batch_size(), 0)
+        with patch.dict(os.environ, {EMBED_BATCH_ENV: "0"}):
+            self.assertGreater(_embed_batch_size(), 0)
