@@ -73,6 +73,18 @@ Q-series rows that are still open. Completed Q09 A–F stay in `docs/open-work.m
 | OW-P0-04 | Report completeness separately from minimum-evidence | ready | [Information Retrieval](docs/architecture/information-retrieval/SYSTEM.md) — `answerability.minimum_evidence` vs `neighborhood_complete`; NEED_CHECKER |
 | OW-P1 | Ranking fit, token surfaces, RRF, PPR Pareto, Rust THIR tier | research | [Research Laboratory](docs/architecture/research/SYSTEM.md) |
 
+## Corpus coverage and index freshness (2026-08-19)
+
+Dogfooding this repository found two silent-truncation defects. Both are fixed;
+both are recorded here because "the packet looked complete" was true in each case.
+
+| Defect | Before | After |
+|---|---|---|
+| `target*` prefix pruning dropped source directories | `docs/architecture/context-packets/target-catalog/` absent from the graph | exact match only; `--include target` now reachable |
+| 12-paragraph section cap | **40.6%** of repo documents truncated, incl. every terminal contract's §8 tail | **0.6%** (1 of 175) at a cap of 48 |
+| Graph size / paragraphs | 14,547 nodes / 7,480 paragraphs | **17,144 nodes / 8,002 paragraphs** |
+| Semantic index build | timed out past 10 min, index stale | **188 s (91 nodes/s)**, state `current` |
+
 ## Measured claim boundaries (2026-08-16)
 
 These numbers were produced by `tests/test_proof_lanes.py` and
