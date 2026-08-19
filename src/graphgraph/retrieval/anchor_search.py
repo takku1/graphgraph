@@ -41,6 +41,147 @@ class _AnchorSelection:
     facet_roots: tuple[str, ...]
 
 
+#: Distinctive terms carried from hop one into the follow-up query. Bounded so
+#: the second query stays a focused lookup rather than a paraphrase of the
+#: whole paragraph.
+_SECOND_HOP_TERM_LIMIT = 6
+
+#: Capitalized multi-word names are what a bridging sentence actually cites
+#: ("translated ... The Boy in the Striped Pyjamas by John Boyne"), and they
+#: are the terms most likely to name a *different* document.
+_PROPER_NAME = re.compile(r"([A-Z][A-Za-z0-9']+(?:\s+(?:of|the|in|and|de|van)?\s*[A-Z][A-Za-z0-9']+){1,5})")
+
+
+def _second_hop_query(graph: Graph, match: Match, query: str) -> str:
+    """Names cited by hop one that the original query did not already contain.
+
+    A bridging document answers by *naming* the thing the question is really
+    about, so the follow-up query is built from the proper names hop one
+    introduces. Terms already present in the user's query are dropped: repeating
+    them would re-retrieve hop one.
+
+    The text is gathered from hop one's whole *document*, not from the matched
+    node. The node that ranks first is typically a `section`, which carries a
+    heading and a line number and no prose at all -- reading it alone produced
+    an empty follow-up query and a silent no-op.
+    """
+    document = match.node.path or ""
+    if not document:
+        return ""
+    parts: list[str] = []
+    for node in graph.nodes.values():
+        if not node.active or (node.path or "") != document:
+            continue
+        parts.append(node.label or "")
+        parts.extend(node.facts or ())
+    text = " ".join(parts)
+    if not text.strip():
+        return ""
+    seen_in_query = {word.casefold() for word in re.findall(r"[A-Za-z0-9']+", query)}
+    candidates: list[str] = []
+    for name in _PROPER_NAME.findall(text):
+        cleaned = name.strip()
+        words = [word for word in re.findall(r"[A-Za-z0-9']+", cleaned)]
+        if len(words) < 2:
+            continue
+        if all(word.casefold() in seen_in_query for word in words):
+            continue
+        if cleaned not in candidates:
+            candidates.append(cleaned)
+        if len(candidates) >= _SECOND_HOP_TERM_LIMIT:
+            break
+    return " ".join(candidates)
+
+
+def _query_already_names_a_second_document(
+    graph: Graph,
+    matches: tuple[Match, ...],
+    query: str,
+) -> bool:
+    """Whether the query itself names a document beyond the top-ranked one.
+
+    A follow-up query is for a hop the *question does not state*. When the
+    question already names both entities -- "Are Ainslee's Magazine and The
+    Australian Women's Weekly both published in ..." -- ordinary ranking finds
+    both, and forcing a second-hop anchor into the selection evicts one that
+    was already correct. Measured on HotpotQA: ungated, this mechanism won 6
+    questions and lost 11, and the losses were this shape almost without
+    exception. It matches the benchmark's own split, where questions naming
+    both entities already score 0.926 and only inferred second hops sit at
+    0.444.
+    """
+    if not matches:
+        return False
+    head_document = matches[0].node.path or ""
+    query_terms = {word.casefold() for word in re.findall(r"[A-Za-z0-9']{3,}", query)}
+    if not query_terms:
+        return False
+    named: set[str] = set()
+    for node in graph.nodes.values():
+        document = node.path or ""
+        if not node.active or not document or document == head_document or node.kind != "section":
+            continue
+        title_terms = {word.casefold() for word in re.findall(r"[A-Za-z0-9']{3,}", node.label or "")}
+        # Require the whole title to be present: a shared common word is not a
+        # citation of that document.
+        if title_terms and title_terms <= query_terms:
+            named.add(document)
+    return bool(named)
+
+
+def _admit_second_hop(
+    matches: tuple[Match, ...],
+    graph: Graph,
+    query: str,
+    *,
+    scopes: tuple[str, ...] = (),
+) -> tuple[Match, ...]:
+    """Run one follow-up retrieval seeded by what hop one says, and admit its best hit.
+
+    Ranking completes before expansion runs, so a document reachable only by
+    traversal can enter the packet but never rank (ADR-SRT-008). Four attempts
+    to correct that *within* the ranked pool were measured and refuted -- the
+    pool's top candidates are tied at 59.7 while the correct second hop scores
+    about 15, so no bounded signal reaches it and an unbounded one destroys the
+    queries that already work.
+
+    This does not touch the ranking. It treats the second hop as what it is: a
+    second *question*. Hop one is found reliably -- 94% of the misses retrieve
+    exactly one of the two gold paragraphs -- and the paragraph it returns
+    normally names the answer outright. Searching for those names is an ordinary
+    high-scoring lookup, so nothing has to overcome a score gap.
+
+    At most one anchor is admitted, only when hop one introduces a name the
+    original query did not contain, and only when the hit lands in a document
+    the head does not already cover.
+    """
+    if not matches:
+        return matches
+    if _query_already_names_a_second_document(graph, matches, query):
+        return matches
+    head = matches[0]
+    head_document = head.node.path or ""
+    follow_up = _second_hop_query(graph, head, query)
+    if not follow_up:
+        return matches
+    hits = search.search_nodes(graph, follow_up, limit=4, scopes=scopes)
+    represented = {match.node.path for match in matches[:_SECOND_HOP_HEAD_WINDOW] if match.node.path}
+    for hit in hits:
+        document = hit.node.path or ""
+        if not document or document == head_document or document in represented:
+            continue
+        if any(existing.node.id == hit.node.id for existing in matches[:_SECOND_HOP_HEAD_WINDOW]):
+            continue
+        remaining = tuple(match for match in matches if match.node.id != hit.node.id)
+        return (head, hit, *remaining[1:])
+    return matches
+
+
+#: How much of the ranked head counts as "already covered" -- a second hop that
+#: is about to be selected anyway needs no help.
+_SECOND_HOP_HEAD_WINDOW = 6
+
+
 def _rank_initial_candidates(graph: Graph, request: _FeasibleRequest, max_nodes: int | None):
     query = request.query
     query_class = request.query_class
@@ -568,6 +709,7 @@ def _execute_anchor_search(
         exact_anchor_fast_path,
         plan,
     )
+    matches = _admit_second_hop(matches, graph, query, scopes=scopes)
     selected_matches = _select_anchor_roots(
         graph,
         request,
