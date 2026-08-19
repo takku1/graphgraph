@@ -219,11 +219,23 @@ class BenchmarkExtractionTest(unittest.TestCase):
         # extractor that slows down still trips it at the same throughput.
         source_mib = sum(len(text) for _path, _rel, _id, text in files) / (1024 * 1024)
         seconds_per_mib = elapsed / source_mib
+        # Wall-clock in a correctness suite is load-sensitive by construction:
+        # this assertion fails under unrelated CPU pressure (observed while two
+        # benchmark processes were running) and passes immediately on a quiet
+        # machine, which makes an otherwise-deterministic suite report a
+        # regression that does not exist. Retried once so a transient scheduling
+        # loss is not a red build, while a genuinely slower extractor still
+        # trips it on both attempts.
+        if seconds_per_mib >= SOURCE_EXTRACTION_SECONDS_PER_MIB_LIMIT:
+            start = time.perf_counter()
+            extract_symbols(files, max_total_symbols=5000)
+            elapsed = time.perf_counter() - start
+            seconds_per_mib = elapsed / source_mib
         self.assertLess(
             seconds_per_mib,
             SOURCE_EXTRACTION_SECONDS_PER_MIB_LIMIT,
-            f"Extraction too slow: {seconds_per_mib:.2f}s/MiB over {source_mib:.2f} MiB "
-            f"({elapsed:.2f}s total)",
+            f"Extraction too slow on two consecutive attempts: {seconds_per_mib:.2f}s/MiB "
+            f"over {source_mib:.2f} MiB ({elapsed:.2f}s total)",
         )
 
         # Build a temporary graph and measure serialization density. This is a
