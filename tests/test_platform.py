@@ -1802,10 +1802,41 @@ class CachedWeightsAreNotAPendingDownload(unittest.TestCase):
     """
 
     @staticmethod
-    def _plant_model(root: Path, repo: str) -> None:
+    def _plant_model(root: Path, repo: str, *, complete: bool = True) -> None:
         snapshot = root / f"models--{repo}" / "snapshots" / "deadbeef"
         snapshot.mkdir(parents=True)
-        (snapshot / "model_optimized.onnx").write_bytes(b"\x00")
+        (snapshot / "model_optimized.onnx").write_bytes(b"\x00" * 8)
+        if complete:
+            (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
+            (snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+    def test_a_partial_download_is_not_a_usable_cache(self) -> None:
+        """Weights without a tokenizer let FastEmbed fall through to the network.
+
+        FastEmbed tries `local_files_only=True` and then fetches on failure, so
+        a probe that accepts an interrupted download re-opens the very hole this
+        predicate exists to close. Found by an independent checker.
+        """
+        from graphgraph.platform.embeddings import FASTEMBED_CACHE_ENV, local_model_is_cached
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._plant_model(root, "qdrant--bge-small-en-v1.5-onnx-q", complete=False)
+            with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: str(root)}):
+                self.assertFalse(local_model_is_cached("BAAI/bge-small-en-v1.5"))
+
+    def test_a_zero_byte_weight_file_is_not_a_usable_cache(self) -> None:
+        from graphgraph.platform.embeddings import FASTEMBED_CACHE_ENV, local_model_is_cached
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "models--qdrant--bge-small-en-v1.5-onnx-q" / "snapshots" / "abc"
+            snapshot.mkdir(parents=True)
+            (snapshot / "model.onnx").write_bytes(b"")
+            (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
+            (snapshot / "config.json").write_text("{}", encoding="utf-8")
+            with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: str(root)}):
+                self.assertFalse(local_model_is_cached("BAAI/bge-small-en-v1.5"))
 
     def test_detects_weights_already_on_disk(self) -> None:
         from graphgraph.platform.embeddings import FASTEMBED_CACHE_ENV, local_model_is_cached

@@ -40,6 +40,10 @@ EMBED_KEY_ENV = "GRAPHGRAPH_EMBED_API_KEY"
 #: FastEmbed's own cache location override, read (never written) so the
 #: auto-query path can tell "cached on disk" from "would download".
 FASTEMBED_CACHE_ENV = "FASTEMBED_CACHE_PATH"
+#: A cached model is only usable when its tokenizer and config sit beside the
+#: weights; FastEmbed loads all three and silently falls back to the network
+#: when any is missing.
+_REQUIRED_MODEL_FILES = ("tokenizer.json", "config.json")
 
 
 @runtime_checkable
@@ -157,10 +161,12 @@ def embed_length_sorted(
     """Embed with length-bucketed batches, returned in the caller's order.
 
     Grouping similar-length texts together minimizes the padding each batch is
-    computed at. Measured on 1,200 real nodes: 51 nodes/s at the library default
-    (unsorted, batch 256) against 140 nodes/s length-sorted at batch 16 -- 2.7x,
-    with **bit-identical** vectors (334/334 exact, max component delta 0.0), so
-    this buys build throughput without perturbing retrieval at all.
+    computed at. Throughput measured on a 1,200-node sample: 51 nodes/s at the
+    library default (unsorted, batch 256) against 140 nodes/s length-sorted at
+    batch 16, a 2.7x ratio on this machine. Bit-identity was verified separately
+    on the 334-node `retrieval` package: 334/334 exact, max component delta 0.0.
+    Two corpora, two claims -- the speedup is machine-specific, the identity is
+    not.
 
     Restoring the caller's order is the whole correctness burden: a permutation
     bug here would bind every vector to the wrong node and still produce a
@@ -325,8 +331,20 @@ def local_model_is_cached(model_name: str) -> bool:
         for entry in root.iterdir():
             if not entry.name.startswith("models--") or stem not in entry.name.lower():
                 continue
-            if any((entry / "snapshots").glob("*/*.onnx")):
-                return True
+            for snapshot in (entry / "snapshots").glob("*"):
+                if not snapshot.is_dir():
+                    continue
+                weights = [path for path in snapshot.glob("*.onnx") if path.stat().st_size > 0]
+                if not weights:
+                    continue
+                # Weights alone are not a usable model. FastEmbed also loads the
+                # tokenizer and config, and it tries `local_files_only=True`
+                # first and then *falls through to a network fetch*. So an
+                # interrupted download -- ONNX present, tokenizer missing --
+                # would pass a weights-only probe and then quietly download,
+                # which is the exact invariant this predicate exists to hold.
+                if all((snapshot / name).is_file() for name in _REQUIRED_MODEL_FILES):
+                    return True
     except OSError:
         return False
     return False

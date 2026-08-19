@@ -11,9 +11,16 @@ What this scores is *retrieval*, deliberately. Answer generation would measure
 whichever LLM was attached; supporting-fact retrieval measures this tool, and
 it is the axis a context graph actually claims to win on.
 
-The comparison arm is a BM25-style lexical ranker over the same 10 paragraphs.
-That is the honest baseline: if a graph cannot beat term-frequency scoring on
-multi-hop questions, its extra machinery is not buying retrieval quality.
+The comparison arm is a BM25-style lexical ranker over the same 10 paragraphs:
+if a graph cannot beat term-frequency scoring on multi-hop questions, its extra
+machinery is not buying retrieval quality.
+
+Two asymmetries to keep in view when reading the output. The BM25 arm indexes
+paragraph *bodies* only, while the graph arm also receives each title as an H1
+heading and in the path slug -- correcting that lifts BM25 from EM 0.2533 to
+0.2767. And `--source-mode` defaults to `all` here, which builds a per-question
+dense index; under the shipped `auto` default the two arms are roughly tied, so
+most of the reported margin is dense retrieval rather than graph structure.
 
 Usage:
     python benchmarks/external/hotpotqa.py --limit 100

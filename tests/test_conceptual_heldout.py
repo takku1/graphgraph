@@ -22,9 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "corpus" / "conceptual-disjoint"
 TASKS = ROOT / "eval" / "conceptual-fixture.json"
 GATE = 0.80
-# Honest measurement on genuinely lexically-disjoint paraphrases (2026-08-19, R-005).
-# Structural-only retrieval scores zero here; see RF-04.
-BASELINE = 0.0
+# Honest measurement on genuinely lexically-disjoint paraphrases (2026-08-19,
+# R-005). Structural-only retrieval scores 0.200 -- and that single point comes
+# from FIX-C06, which routes to `subsystem_summary` and returns 8 of the
+# fixture's 12 nodes, so it is a dragnet rather than conceptual retrieval. The
+# ratchet is set at the measured floor, not below it: an earlier value of 0.0
+# could not have caught a real regression.
+BASELINE = 0.2
 
 
 def _scan_fixture():
