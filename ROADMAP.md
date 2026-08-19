@@ -85,6 +85,40 @@ both are recorded here because "the packet looked complete" was true in each cas
 | Graph size / paragraphs | 14,547 nodes / 7,480 paragraphs | **17,144 nodes / 8,002 paragraphs** |
 | Semantic index build | timed out past 10 min, index stale | **188 s (91 nodes/s)**, state `current` |
 
+## External benchmark: HotpotQA (2026-08-19)
+
+First measurement on a public corpus this project did not build, choose, or
+oracle. 300 questions from the `distractor` validation split (all `hard`),
+scoring supporting-paragraph retrieval at k=2 against an Okapi BM25 arm over
+the same 10 paragraphs. Harness: `benchmarks/external/hotpotqa.py`.
+
+| Metric | GraphGraph | BM25 |
+|---|---|---|
+| Supporting EM | **0.5533** | 0.2533 |
+| Supporting F1 | **0.7633** | 0.5767 |
+| p50 / p95 latency | 865 / 1292 ms | — |
+
+Paired outcomes: 48 both correct, **118 GraphGraph-only**, 28 BM25-only, 106
+both wrong. McNemar exact two-sided **p = 2.4e-14**, so the difference is not
+sampling noise on this sample.
+
+Where it wins and where it does not:
+
+| Question type | n | GraphGraph EM | BM25 EM |
+|---|---:|---:|---:|
+| comparison (both entities named) | 68 | **0.926** | 0.250 |
+| bridge (second entity must be inferred) | 232 | **0.444** | 0.254 |
+
+The failure mode is one defect, not a spread: of the 134 questions that missed
+EM, **126 (94%) retrieved exactly one of the two gold paragraphs**. Only 8 of
+300 retrieved neither. That is the second hop failing, and it is the measured
+form of ADR-SRT-008 — expansion cannot influence ranking, so a document
+reachable only by traversal never becomes a top anchor.
+
+Does not license: an answer-quality claim (this scores retrieval, not
+generation), a latency claim (the BM25 arm is in-process and untimed), or any
+statement about the `fullwiki` setting.
+
 ## Measured claim boundaries (2026-08-16)
 
 These numbers were produced by `tests/test_proof_lanes.py` and
@@ -111,7 +145,7 @@ promotion gate lives here until it resolves.
 | RF-01 | Whether hybrid representation buys answer quality at its 2.6–3.7× token cost | research | [Project Representation](docs/architecture/representation/SYSTEM.md) |
 | RF-02 | Whether exact NumPy semantic scoring misses its SLO on large repositories | research | [Semantic Store](docs/architecture/information-retrieval/semantic-retrieval/semantic-store/SYSTEM.md) — **query** scoring is not the binding constraint; **index build** is. Measured 2026-08-19: this repo's own 14,547-node index build timed out past 10 min, which is why the dogfood index is stale, and a stale index silently costs the whole conceptual gate (0.800 → 0.000). Length-sorted batching (ADR-EB-003) took embedding 51 → 140 nodes/s (2.7x) with bit-identical vectors, so a full rebuild is now minutes rather than tens of minutes. Still open: whether that is enough at 100k+ nodes, and whether incremental per-node index updates should replace whole-graph rebuilds |
 | RF-03 | Whether a compiler-grade Rust THIR tier is justified over tree-sitter | research | [Language Frontends](docs/architecture/static-analysis/language-frontends/SYSTEM.md) |
-| RF-04 | Whether stating retrieval as Connected Budgeted Maximum Coverage / Group Steiner Tree and adopting an approximation algorithm beats three unguaranteed greedy stages | research | [Structural Retrieval](docs/architecture/information-retrieval/structural-retrieval/SYSTEM.md) ADR-SRT-007 — facets are groups, nodes are covering sets, tokens are costs, the dependence cone is the connectivity constraint. Both documented inter-stage defects were symptoms of having no single objective. Ranking-affecting, so gated on the eval harness |
+| RF-04 | Whether stating retrieval as Connected Budgeted Maximum Coverage / Group Steiner Tree and adopting an approximation algorithm beats three unguaranteed greedy stages | **ready** | [Structural Retrieval](docs/architecture/information-retrieval/structural-retrieval/SYSTEM.md) ADR-SRT-007 — facets are groups, nodes are covering sets, tokens are costs, the dependence cone is the connectivity constraint. Both documented inter-stage defects were symptoms of having no single objective. Ranking-affecting, so gated on the eval harness. **Now measured externally (2026-08-19):** HotpotQA bridge questions score 0.444 EM against 0.926 on comparison questions, and 94% of all misses retrieve exactly one of two gold paragraphs — the second hop, quantified. ADR-SRT-008 names the mechanism: `starts` is final before expansion runs, so connectivity cannot influence ranking |
 | RF-05 | Whether the calibration gate should move off binned ECE to a consistent measure | research | [Calibration and Derived Signals](docs/architecture/evaluation-analysis/calibration-scoring/SYSTEM.md) ADR-CS-004 — binned ECE is biased and bin-count-dependent, read here at ~2.6 samples/bin. smECE (arXiv:2309.12236, ICLR 2024) or jackknife-debiased ECE (Roelofs et al., AISTATS 2022). Adopting it re-denominates every recorded ECE reading |
 | RF-06 | Whether Forward-Push + Monte Carlo PPR with a stated error bound beats the current localized approximation | research | [Anchor Discovery](docs/architecture/information-retrieval/structural-retrieval/anchor-discovery/SYSTEM.md) — FORA (VLDB 2017) / TopPPR (SIGMOD 2018) give sublinear cost with controllable error; the shipped approximation states no error guarantee. Incremental PPR index maintenance (SIGMOD 2023) also fits the incremental-splice model |
 | RF-07 | Whether conformal prediction should replace fitted MAE/p95 as the token estimator's guarantee | research | [Token Estimation](docs/architecture/context-packets/token-estimation/SYSTEM.md) — split conformal wraps the existing estimator and yields distribution-free finite-sample coverage instead of a panel-fitted average, without changing the estimator |

@@ -1,0 +1,55 @@
+{
+  "benchmark": "hotpotqa-distractor-validation",
+  "date": "2026-08-19",
+  "n": 300,
+  "k": 2,
+  "source_mode": "all",
+  "seed": 20260819,
+  "paired": {
+    "both": 48,
+    "graphgraph_only": 118,
+    "bm25_only": 28,
+    "both_wrong": 106,
+    "mcnemar_exact_p": 2.402e-14
+  },
+  "by_type": {
+    "comparison": {
+      "n": 68,
+      "graphgraph_em": 0.926,
+      "bm25_em": 0.25
+    },
+    "bridge": {
+      "n": 232,
+      "graphgraph_em": 0.444,
+      "bm25_em": 0.254
+    }
+  },
+  "miss_shape": {
+    "non_em_tasks": 134,
+    "retrieved_exactly_one_gold": 126,
+    "retrieved_neither": 8
+  },
+  "summary": {
+    "tasks": 300,
+    "errors": 0,
+    "arms": {
+      "graphgraph": {
+        "supporting_em": 0.5533,
+        "supporting_f1": 0.7633,
+        "p50_ms": 865.0,
+        "p95_ms": 1291.5
+      },
+      "bm25": {
+        "supporting_em": 0.2533,
+        "supporting_f1": 0.5767
+      }
+    },
+    "by_level": {
+      "hard": {
+        "n": 300,
+        "graphgraph_em": 0.5533,
+        "bm25_em": 0.2533
+      }
+    }
+  }
+}
