@@ -6,7 +6,6 @@ from pathlib import Path
 
 from graphgraph import scan_directory
 
-
 HELDOUT = Path(__file__).resolve().parent / "corpus" / "heldout-receivers"
 
 

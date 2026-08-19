@@ -258,13 +258,13 @@ class GroundingScoreTest(unittest.TestCase):
     """OW-AC-04 uses a continuous grounding score, not a reason checklist."""
 
     def test_term_specificity_is_monotonic_in_length_and_saturates_on_hyphens(self) -> None:
-        from graphgraph.retrieval.anchors import term_specificity
+        from graphgraph.retrieval.grounding import term_specificity
 
         self.assertEqual(term_specificity("instruction-set"), 1.0)
         self.assertLess(term_specificity("packet"), term_specificity("settlement"))
         self.assertLess(term_specificity("field"), term_specificity("packet"))
         self.assertGreater(term_specificity("settlement"), 0.8)
-        from graphgraph.retrieval.anchors import peaked_specificity
+        from graphgraph.retrieval.grounding import peaked_specificity
 
         self.assertLess(peaked_specificity("packet"), 0.1)
         self.assertGreater(peaked_specificity("instruction-set"), 0.9)

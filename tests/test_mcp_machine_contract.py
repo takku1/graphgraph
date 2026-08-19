@@ -309,7 +309,6 @@ class McpMachineContractTest(unittest.TestCase):
     def test_cli_status_reports_capability_without_a_graph(self) -> None:
         from argparse import Namespace
         from io import StringIO
-        from pathlib import Path
         from tempfile import TemporaryDirectory
         from unittest.mock import patch
 
