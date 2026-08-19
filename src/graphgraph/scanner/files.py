@@ -108,7 +108,7 @@ def find_pruned_dirs(root: Path, skip: frozenset[str]) -> set[str]:
     for dirpath, dirnames, _filenames in os.walk(root):
         kept = []
         for d in dirnames:
-            if d in skip or d.startswith("target") or d.endswith(".egg-info"):
+            if d in skip or d.endswith(".egg-info"):
                 try:
                     if any(Path(dirpath, d).iterdir()):
                         pruned.add(d)
@@ -135,8 +135,10 @@ def collect_files(
       2. All other source files (code then docs then other)
 
     Files inside directories listed in *extra_skip* or the built-in SKIP_DIRS
-    are ignored.  A directory is also skipped when any path component matches
-    the pattern ``target*`` or ends with ``.egg-info``.
+    are ignored, as is any directory ending in ``.egg-info``.  Rust's build
+    directory is matched exactly as ``target`` via SKIP_DIRS: a ``target*``
+    prefix rule also swallowed ordinary source directories whose names merely
+    begin with those six letters, and silently defeated ``--include target``.
     """
     skip = (SKIP_DIRS | extra_skip) - include
     priority_files: list[Path] = []   # staged / git-modified
@@ -175,7 +177,7 @@ def collect_files(
         for dirname in sorted(dirnames):
             path = directory / dirname
             rel = path.relative_to(root).as_posix()
-            if dirname in skip or dirname.startswith("target") or dirname.endswith(".egg-info"):
+            if dirname in skip or dirname.endswith(".egg-info"):
                 default_pruned_dirs.add(rel)
             elif _ignored_by_specs(path, root, ignore_specs, is_dir=True):
                 # A directory excluded as a directory cannot have a child
