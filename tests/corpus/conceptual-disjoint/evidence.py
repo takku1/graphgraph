@@ -1,13 +1,13 @@
-"""How sure a conclusion is allowed to be.
+"""Ranking of how firmly a finding is backed.
 
-Sampled checks must never be presented as a proof. The variants are ordered
-by strength of claim; two of them are terminal qualifiers rather than rungs
-on the confidence ladder.
+Sampled checks must never be presented as formal proof. The variants below are
+ordered by strength of claim; two of them are terminal qualifiers rather than
+rungs.
 """
 
 
 class ConfidenceLadder:
-    """How well-supported a conclusion is."""
+    """Ranks how firmly a finding is backed, from direct sighting up to formal proof."""
 
     Observed = "observed"
     Inferred = "inferred"

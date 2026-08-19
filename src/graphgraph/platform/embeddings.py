@@ -22,7 +22,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import urllib.request
+from pathlib import Path
 from typing import Protocol, Sequence, runtime_checkable
 
 #: Sentinel backend name stored in an index built from the offline hash.
@@ -35,6 +37,9 @@ HASH_BACKEND_NAME = "hash"
 EMBED_URL_ENV = "GRAPHGRAPH_EMBED_URL"
 EMBED_MODEL_ENV = "GRAPHGRAPH_EMBED_MODEL"
 EMBED_KEY_ENV = "GRAPHGRAPH_EMBED_API_KEY"
+#: FastEmbed's own cache location override, read (never written) so the
+#: auto-query path can tell "cached on disk" from "would download".
+FASTEMBED_CACHE_ENV = "FASTEMBED_CACHE_PATH"
 
 
 @runtime_checkable
@@ -142,6 +147,10 @@ class FastEmbedBackend:
         self._model = None
         self.name = f"fastembed:{self._model_name}"
 
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
     def _ensure_model(self):
         if self._model is None:
             from fastembed import TextEmbedding  # lazy: optional dependency
@@ -233,6 +242,58 @@ def active_backend_is_warm() -> bool:
     """
     backend = resolve_backend()
     return not isinstance(backend, FastEmbedBackend) or backend.is_warm
+
+
+def _fastembed_cache_dir() -> Path:
+    """Where FastEmbed keeps downloaded weights, without importing FastEmbed."""
+    override = os.environ.get(FASTEMBED_CACHE_ENV, "").strip()
+    if override:
+        return Path(override)
+    return Path(tempfile.gettempdir()) / "fastembed_cache"
+
+
+def local_model_is_cached(model_name: str) -> bool:
+    """Whether this model's ONNX weights are already on disk.
+
+    Deliberately does not import fastembed: this runs on the auto-query path,
+    where the whole point is to decide *before* paying any import cost. The
+    layout is huggingface-hub's (``models--<org>--<repo>/snapshots/<sha>/*.onnx``)
+    and the repo name is matched on the model's trailing component, because
+    FastEmbed maps e.g. ``BAAI/bge-small-en-v1.5`` onto the ONNX mirror
+    ``qdrant/bge-small-en-v1.5-onnx-q``.
+    """
+    root = _fastembed_cache_dir()
+    if not root.is_dir():
+        return False
+    stem = model_name.rsplit("/", 1)[-1].strip().lower()
+    if not stem:
+        return False
+    try:
+        for entry in root.iterdir():
+            if not entry.name.startswith("models--") or stem not in entry.name.lower():
+                continue
+            if any((entry / "snapshots").glob("*/*.onnx")):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def active_backend_needs_download() -> bool:
+    """Whether warming the active backend would fetch model files over the network.
+
+    This is the fact auto queries actually care about, and it is narrower than
+    :func:`active_backend_is_warm`. That predicate answers "is the model already
+    constructed in this process", which every cold process answers `False` --
+    including one whose weights have been cached on disk for months. Treating
+    the two as the same fact made a cold CLI silently skip a current semantic
+    index forever, so paraphrase queries fell back to structural-only retrieval
+    with no download in prospect and nothing to warn about.
+    """
+    backend = resolve_backend()
+    if not isinstance(backend, FastEmbedBackend) or backend.is_warm:
+        return False
+    return not local_model_is_cached(backend.model_name)
 
 
 def normalize_dense(vector: Sequence[float]) -> dict[int, float]:

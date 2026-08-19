@@ -1788,3 +1788,87 @@ class FileLockTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CachedWeightsAreNotAPendingDownload(unittest.TestCase):
+    """Auto queries must skip a semantic index only when a *download* is pending.
+
+    `active_backend_is_warm` answers "is the model constructed in this process",
+    which every cold process answers False -- including one whose weights have
+    been on disk for months. Using it as the auto-query gate made a cold CLI
+    silently ignore a current semantic index forever, degrading paraphrase
+    queries to structural-only retrieval with no network access in prospect.
+    Measured on the conceptual fixture, that cost 4x recall (0.200 vs 0.800).
+    """
+
+    @staticmethod
+    def _plant_model(root: Path, repo: str) -> None:
+        snapshot = root / f"models--{repo}" / "snapshots" / "deadbeef"
+        snapshot.mkdir(parents=True)
+        (snapshot / "model_optimized.onnx").write_bytes(b"\x00")
+
+    def test_detects_weights_already_on_disk(self) -> None:
+        from graphgraph.platform.embeddings import FASTEMBED_CACHE_ENV, local_model_is_cached
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._plant_model(root, "qdrant--bge-small-en-v1.5-onnx-q")
+            with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: str(root)}):
+                # FastEmbed serves BAAI/... from the qdrant ONNX mirror, so the
+                # match is on the trailing repo component, not the full name.
+                self.assertTrue(local_model_is_cached("BAAI/bge-small-en-v1.5"))
+                self.assertFalse(local_model_is_cached("acme/never-fetched-model"))
+
+    def test_absent_cache_directory_reports_not_cached(self) -> None:
+        from graphgraph.platform.embeddings import FASTEMBED_CACHE_ENV, local_model_is_cached
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "no-such-cache"
+            with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: str(missing)}):
+                self.assertFalse(local_model_is_cached("BAAI/bge-small-en-v1.5"))
+
+    def test_a_directory_without_weights_still_needs_a_download(self) -> None:
+        """A model dir with metadata but no .onnx is a partial fetch, not a hit."""
+        from graphgraph.platform.embeddings import FASTEMBED_CACHE_ENV, local_model_is_cached
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "models--qdrant--bge-small-en-v1.5-onnx-q" / "snapshots" / "abc").mkdir(parents=True)
+            with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: str(root)}):
+                self.assertFalse(local_model_is_cached("BAAI/bge-small-en-v1.5"))
+
+    def test_cold_backend_with_cached_weights_is_not_a_pending_download(self) -> None:
+        from graphgraph.platform import embeddings
+        from graphgraph.platform.embeddings import (
+            FASTEMBED_CACHE_ENV,
+            FastEmbedBackend,
+            active_backend_is_warm,
+            active_backend_needs_download,
+        )
+
+        backend = FastEmbedBackend("BAAI/bge-small-en-v1.5")
+        self.assertFalse(backend.is_warm)
+        embeddings.set_backend(backend)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self._plant_model(root, "qdrant--bge-small-en-v1.5-onnx-q")
+                with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: str(root)}):
+                    # Cold either way, but nothing to fetch -> auto may proceed.
+                    self.assertFalse(active_backend_is_warm())
+                    self.assertFalse(active_backend_needs_download())
+            with tempfile.TemporaryDirectory() as empty:
+                with patch.dict(os.environ, {FASTEMBED_CACHE_ENV: empty}):
+                    self.assertTrue(active_backend_needs_download())
+        finally:
+            embeddings.reset_backend_cache()
+
+    def test_non_fastembed_backends_never_report_a_pending_download(self) -> None:
+        from graphgraph.platform import embeddings
+        from graphgraph.platform.embeddings import active_backend_needs_download
+
+        embeddings.set_backend(None)  # offline hash
+        try:
+            self.assertFalse(active_backend_needs_download())
+        finally:
+            embeddings.reset_backend_cache()

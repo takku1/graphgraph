@@ -8,8 +8,11 @@ or a stale project graph.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from graphgraph.analysis.eval import evaluate_graph, load_eval_tasks
 from graphgraph.io import save_graph
@@ -19,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "corpus" / "conceptual-disjoint"
 TASKS = ROOT / "eval" / "conceptual-fixture.json"
 GATE = 0.80
+# Honest measurement on genuinely lexically-disjoint paraphrases (2026-08-19, R-005).
+# Structural-only retrieval scores zero here; see RF-04.
+BASELINE = 0.0
 
 
 def _scan_fixture():
@@ -30,16 +36,66 @@ def _scan_fixture():
     )
 
 
-def test_fixture_queries_are_lexically_disjoint_from_expected_labels() -> None:
+_STOPWORDS = frozenset(
+    """a an and any are as at be been being by can code define defined does each for from
+    get has have how in into is it its like made make must new not of on one only or other
+    others out over so than that the their them then there these they this to two up use
+    used uses using was what when where which while who why with without you your""".split()
+)
+
+
+def _stem(word: str) -> str:
+    for suffix in ("ations", "ation", "ingly", "ing", "edly", "ed", "ies", "es", "s", "ly"):
+        if len(word) - len(suffix) >= 4 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    return word
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Stemmed, stopword-free content tokens; identifiers are split on case/underscore."""
+    words: list[str] = []
+    for raw in re.split(r"[^A-Za-z]+", text or ""):
+        if not raw:
+            continue
+        words.extend(_split_ident(raw) or [raw])
+    return {_stem(w.lower()) for w in words if len(w) > 2 and w.lower() not in _STOPWORDS}
+
+
+def test_fixture_queries_are_lexically_disjoint_from_target_text() -> None:
+    """A paraphrase query must not reuse the wording of the file that answers it.
+
+    The previous guard compared the query only against the expected *identifier*,
+    so a docstring restating the query verbatim passed unnoticed -- which is
+    exactly what an independent checker found (R-005): four of five queries were
+    near-copies of their own docstrings, making this a substring test rather than
+    a conceptual one. The surface checked here is the whole file containing the
+    answer: label, summary/docstring, and path. If the query's own words occur
+    anywhere in that file, plain lexical search reaches the answer and the task
+    cannot demonstrate conceptual retrieval.
+    """
     data = json.loads(TASKS.read_text(encoding="utf-8"))
+    graph = _scan_fixture()
+    nodes = list(graph.nodes.values())
     for task in data["tasks"]:
         if task.get("expected_answerable") is False:
             continue
-        query_tokens = {part.lower() for part in task["query"].replace("?", "").split() if part.isalpha()}
+        query_tokens = _content_tokens(task["query"])
+        assert query_tokens, f"{task['id']}: query has no content tokens to compare"
         for label in task.get("expected", []):
-            pieces = {part.lower() for part in _split_ident(label)}
-            overlap = query_tokens & pieces
-            assert not overlap, f"{task['id']}: query shares {overlap} with {label}"
+            targets = [n for n in nodes if n.label == label]
+            assert targets, f"{task['id']}: expected label {label} is not in the fixture graph"
+            answer_paths = {n.path for n in targets if n.path}
+            surface = " ".join(
+                f"{n.label} {n.summary} {n.path}"
+                for n in nodes
+                if n.label == label or (n.path and n.path in answer_paths)
+            )
+            overlap = query_tokens & _content_tokens(surface)
+            assert not overlap, (
+                f"{task['id']}: query shares {sorted(overlap)} with the text of {label} "
+                f"({sorted(answer_paths)}). A paraphrase task may not reuse the answering "
+                f"file's wording -- rewrite the query or the docstring."
+            )
 
 
 def _split_ident(label: str) -> list[str]:
@@ -60,7 +116,7 @@ def _split_ident(label: str) -> list[str]:
     return [part for part in parts if len(part) > 2]
 
 
-def test_conceptual_fixture_mean_recall_and_red_control_abstain() -> None:
+def _fixture_recall() -> tuple[float, dict[str, object]]:
     graph = _scan_fixture()
     with tempfile.TemporaryDirectory() as tmp:
         graph_path = Path(tmp) / "graph.json"
@@ -69,14 +125,43 @@ def test_conceptual_fixture_mean_recall_and_red_control_abstain() -> None:
     by_id = {row.task_id: row for row in results}
     positives = [row for row in results if "negative" not in row.strata]
     recalls = [row.node_recall if row.node_recall is not None else 0.0 for row in positives]
-    mean = sum(recalls) / len(recalls)
+    return sum(recalls) / len(recalls), by_id
+
+
+def test_red_control_abstains_on_the_conceptual_fixture() -> None:
+    """The red control must abstain whatever the positive tasks score."""
+    _, by_id = _fixture_recall()
     red = by_id["FIX-R01"]
     assert red.answerability_status in {"unanswerable", "incomplete"}
     assert red.returned_nodes == 0 or red.node_recall in {None, 0.0}
-    assert mean >= GATE, (
-        f"conceptual fixture mean recall {mean:.3f} < {GATE:.2f}; "
-        + ", ".join(f"{row.task_id}={row.node_recall}" for row in positives)
-    )
+
+
+def test_conceptual_fixture_recall_does_not_regress_below_baseline() -> None:
+    """Ratchet against the committed measurement, so a real gain must be recorded.
+
+    `BASELINE` is the honest measurement on genuinely disjoint paraphrases, not
+    an aspiration. It is deliberately separate from `GATE`: OW-AC-03 asks for
+    0.80 and the system does not reach it, which the xfail below states openly
+    rather than hiding behind a fixture that answered its own questions.
+    """
+    mean, by_id = _fixture_recall()
+    detail = ", ".join(f"{t}={by_id[t].node_recall}" for t in by_id if t != "FIX-R01")
+    assert mean >= BASELINE, f"conceptual recall regressed to {mean:.3f} < {BASELINE:.3f}; {detail}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "OW-AC-03 is unmet on genuine paraphrase queries. The fixture previously "
+        "reported 0.80 only because its docstrings restated the queries verbatim "
+        "(R-005). Structural retrieval alone cannot bridge a lexical gap; the "
+        "candidate fix is RF-04. When this passes, promote BASELINE and delete "
+        "this marker -- strict=True makes an unnoticed pass a failure."
+    ),
+)
+def test_conceptual_fixture_meets_ow_ac_03_gate() -> None:
+    mean, _ = _fixture_recall()
+    assert mean >= GATE
 
 
 def test_generic_missing_words_do_not_prove_a_facet_absent() -> None:

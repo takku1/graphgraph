@@ -27,6 +27,13 @@ def active_backend_is_warm() -> bool:
     return backend_is_warm()
 
 
+def active_backend_needs_download() -> bool:
+    """Lazy, patchable boundary: would warming the backend hit the network?"""
+    from .embeddings import active_backend_needs_download as backend_needs_download
+
+    return backend_needs_download()
+
+
 @dataclass(frozen=True)
 class SourcePlannerReceipt:
     mode: str
@@ -178,8 +185,16 @@ class QuerySourcePlanner:
                 semantic = None
                 if (
                     semantic_index_state == "current"
-                    and (mode == "all" or active_backend_is_warm())
+                    and (mode == "all" or not active_backend_needs_download())
                 ):
+                    # A *current* index plus weights already on disk is the
+                    # common case, and it costs a bounded local model load --
+                    # not a download. Gating this on "already constructed in
+                    # this process" instead made every cold CLI run skip a
+                    # perfectly good index forever, so paraphrase queries
+                    # silently degraded to structural-only retrieval with no
+                    # network access in prospect and nothing to warn about.
+                    # Only an actual fetch is worth refusing here.
                     semantic = SemanticIndex.load(semantic_path)
                 elif semantic_index_state == "current":
                     semantic_index_state = "cold_backend"

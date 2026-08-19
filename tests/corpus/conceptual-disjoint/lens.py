@@ -1,13 +1,12 @@
 """Pluggable inspection.
 
-Every analysis consumes the same objects and emits the same findings, which
-is what makes the system one pipeline rather than a bag of tools. A new
-lens of inspection is registered and applied uniformly.
+Every examination consumes the same objects and emits the same findings, which
+is what makes the system one chain rather than a bag of separate utilities.
 """
 
 
 class UniformExaminer:
-    """One registered analysis. Implementors are applied uniformly."""
+    """The shared contract every examination implements so findings stay interchangeable."""
 
     def name(self) -> str:
         return "examiner"
@@ -17,7 +16,7 @@ class UniformExaminer:
 
 
 class PortabilityQualifier:
-    """Keeps a speed claim from being silently tied to one machine."""
+    """Marks whether a timing figure generalises past the host it was gathered on."""
 
     Portable = "portable"
     CacheCpu = "cache_cpu"

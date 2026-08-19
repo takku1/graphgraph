@@ -1,12 +1,12 @@
-"""Discovery stages in order.
+"""Sequenced examination.
 
-A single structure wires the discovery stages together so each lens
-runs after ingestion and before emission.
+Holds the registered lenses and invokes each in a fixed succession, so ingestion
+precedes examination and examination precedes emission.
 """
 
 
 class StageWire:
-    """The orchestrator that sequences registered inspection lenses."""
+    """Sequences the registered lenses, invoking each in a fixed succession."""
 
     def run(self, objects: list[object]) -> list[object]:
         return objects

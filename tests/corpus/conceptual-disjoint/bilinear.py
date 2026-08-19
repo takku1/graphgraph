@@ -1,10 +1,9 @@
-"""Arithmetic recipes that beat the obvious triple loop.
+"""Arithmetic recipes below the cubic bound.
 
-Assembles a way to multiply matrices using fewer scalar products than
-the naive construction.
+Emits a subcubic schedule that trades scalar multiplications for additions.
 """
 
 
 def assemble_thrifty_product(left, right):
-    """Build a subcubic matrix product from the two operands."""
+    """Emit a subcubic matrix multiplication schedule using fewer scalar multiplications."""
     return left, right

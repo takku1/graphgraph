@@ -879,7 +879,18 @@ class SemanticPlannerWarmupBoundaryTest(unittest.TestCase):
         self.assertFalse(plan.receipt.semantic_rebuilt)
         self.assertIn("semantic:index_stale", plan.receipt.warnings)
 
-    def test_auto_mode_does_not_initialize_a_cold_fastembed_backend(self) -> None:
+    def test_auto_mode_does_not_download_model_weights(self) -> None:
+        """The original intent: an auto query never hides a model fetch.
+
+        This used to be gated on `active_backend_is_warm` -- "is the model
+        constructed in this process" -- which no auto query can ever make true,
+        because auto is exactly the path that declines to construct it. The
+        result was perverse: with `fastembed` absent the hash index was
+        consulted, and with `fastembed` installed the auto path consulted
+        nothing at all, in every process, forever. Installing the good backend
+        disabled semantic retrieval. The gate is now the narrower fact it was
+        always reaching for -- would this touch the network?
+        """
         from graphgraph.platform.semantic import SemanticIndex
         from graphgraph.platform.source_planner import QuerySourcePlanner
 
@@ -891,13 +902,13 @@ class SemanticPlannerWarmupBoundaryTest(unittest.TestCase):
                     return_value="current",
                 ),
                 patch(
-                    "graphgraph.platform.source_planner.active_backend_is_warm",
-                    return_value=False,
+                    "graphgraph.platform.source_planner.active_backend_needs_download",
+                    return_value=True,
                 ),
                 patch.object(
                     SemanticIndex,
                     "load",
-                    side_effect=AssertionError("auto query initialized FastEmbed"),
+                    side_effect=AssertionError("auto query triggered a model download"),
                 ),
             ):
                 plan = QuerySourcePlanner(Path(tmp)).plan(
@@ -909,6 +920,39 @@ class SemanticPlannerWarmupBoundaryTest(unittest.TestCase):
         self.assertFalse(plan.receipt.semantic_rebuilt)
         self.assertEqual(plan.receipt.semantic_seeds, 0)
         self.assertIn("semantic:index_cold_backend", plan.receipt.warnings)
+
+    def test_auto_mode_uses_a_current_index_when_weights_are_already_cached(self) -> None:
+        """Cold process, weights on disk: a bounded local load, so auto proceeds.
+
+        Measured on `eval/conceptual-fixture.json`, refusing this costs 4x
+        paraphrase recall (0.200 vs 0.800) to avoid ~0.6s of local model load,
+        with no download in prospect.
+        """
+        from unittest.mock import MagicMock
+
+        from graphgraph.platform.semantic import SemanticIndex
+        from graphgraph.platform.source_planner import QuerySourcePlanner
+
+        fake = MagicMock()
+        fake.downgraded_reason.return_value = ""
+        fake.query.return_value = [("handler", 0.9)]
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(SemanticIndex, "state_for_graph", return_value="current"),
+                patch(
+                    "graphgraph.platform.source_planner.active_backend_needs_download",
+                    return_value=False,
+                ),
+                patch.object(SemanticIndex, "load", return_value=fake) as load,
+            ):
+                plan = QuerySourcePlanner(Path(tmp)).plan(
+                    self._graph(),
+                    "how are expired credentials revoked safely",
+                )
+
+        load.assert_called_once()
+        self.assertEqual(plan.receipt.semantic_index_state, "current")
+        self.assertNotIn("semantic:index_cold_backend", plan.receipt.warnings)
 
     def test_all_mode_retains_explicit_rebuild_semantics(self) -> None:
         from graphgraph.platform.semantic import SemanticIndex
