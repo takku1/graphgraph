@@ -25,10 +25,8 @@ Produce grounded retrieval starts and ranked candidates with receipts; does not 
   - `EvidenceStage:` Sampled
 - **[Ubiquitous]** Personalized PageRank topology derived from active edges and damping SHALL be cached per graph mutation revision rather than rebuilt per call.
   - `EvidenceStage:` Measured
-- **[Conditional]** IF the query does not already name a second document THEN THE SYSTEM SHALL issue one follow-up retrieval seeded by the names hop one introduces, as checked by `benchmarks/external/hotpotqa.py`.
-  - `EvidenceStage:` Measured
-- **[Conditional]** IF the query already names a document beyond the top-ranked one THEN THE SYSTEM SHALL NOT force a second-hop anchor, because ranking already reaches both and a forced anchor evicts a correct one.
-  - `EvidenceStage:` Measured
+- **[Optional]** WHERE second-hop retrieval is included, a follow-up query SHALL be issued only when the request does not already name a second document, as measured by `benchmarks/external/hotpotqa.py`. Not currently included: reverted 2026-08-19 for code-corpus harm, see ADR-AD-004.
+  - `EvidenceStage:` Sampled
 
 ## 5. Architectural Decisions (ADRs)
 
@@ -39,9 +37,13 @@ Produce grounded retrieval starts and ranked candidates with receipts; does not 
 
   Instrumenting the third says why the whole class fails: the ranked pool arrives with its top candidates **tied at 59.7 while the correct second-hop document scores about 15**. No bounded corroborating signal reaches across that gap, and an unbounded one destroys the queries that already work.
 
-  What does work is issuing one follow-up retrieval seeded by the proper names hop one introduces — the answering paragraph normally cites the second entity outright, so finding it is an ordinary high-scoring lookup with no gap to cross. It is gated off when the query already names a second document, because in that case ranking finds both entities unaided and a forced anchor evicts a correct one; ungated the mechanism won 6 questions and lost 11, and every loss had that shape.
+  What moves the number on prose is issuing one follow-up retrieval seeded by the proper names hop one introduces — the answering paragraph normally cites the second entity outright, so finding it is an ordinary high-scoring lookup with no gap to cross. It is gated off when the query already names a second document, because in that case ranking finds both entities unaided and a forced anchor evicts a correct one; ungated the mechanism won 6 questions and lost 11, and every loss had that shape.
 
-  Measured on 1,000 held-out HotpotQA questions: exact match **0.5400 → 0.5800**, bridge questions **0.4404 → 0.4961**, comparison questions 0.8772 → 0.8640, McNemar exact two-sided **p = 0.00002**. The comparison cost is real and is not tuned away, because fitting the gate further against this sample would be overfitting rather than repair.
+  Measured on 1,000 held-out HotpotQA questions: exact match **0.5400 → 0.5800**, bridge questions **0.4404 → 0.4961**, McNemar exact two-sided **p = 0.00002**; independently replicated at n=600 (p = 0.0075), and the effect survives on 500 questions the gate was never tuned against (+0.0340, p = 0.024).
+
+  **It is nevertheless reverted, and the reason matters more than the gain.** That evidence is entirely prose: HotpotQA corpora are ten flat paragraphs with no headings, no CamelCase identifiers, and nine candidate documents. On this repository's own 17,144-node graph the mechanism rewrites anchors on 22% of ordinary queries, because the name extractor joins node labels before matching and so harvests heading boilerplate — three different queries produced the identical follow-up string once hop one landed in `docs/open-work.md`. Observed live: "how does `_impact` work" promoted `csharp.py::_nominal` and displaced `platform/change.py::_impact`, the literal answer. Latency cost was +32% on `subsystem_summary` and +30% on `reverse_lookup`, against +0.3% on the exact fast path.
+
+  Conditions for any future attempt: a score floor relative to the displaced candidate; per-node name extraction; `inferred_scope` and `requested_statuses` propagated to the follow-up search; unit tests including a code-repo negative case; and a **code-retrieval benchmark**, which this project does not have — the reason a change to a codebase tool was validated exclusively on prose.
 
 ## 6. Leaf Execution & Test Seam
 
