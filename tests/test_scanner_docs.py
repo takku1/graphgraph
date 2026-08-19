@@ -364,3 +364,41 @@ class DocsScannerTest(unittest.TestCase):
                 for node in graph.nodes.values()
             )
         )
+
+
+class SectionParagraphCoverageTest(unittest.TestCase):
+    """A section longer than a dozen paragraphs must still be captured whole.
+
+    The cap was 12, which truncated 40.6% of this repository's own documents --
+    every terminal contract node among them, because a full Section 8 carries 13
+    bullets, so `Failure mode` and `Open questions` fell off the end of each one.
+    Content coverage is a stated product axis, and a silently half-indexed spec
+    is indistinguishable from a complete one at query time.
+    """
+
+    def _doc(self, text: str):
+        from graphgraph.scanner.doc import DocumentInput
+
+        return DocumentInput(Path("spec.md"), "spec.md", "spec_md", text)
+
+    def test_captures_a_section_with_more_than_twelve_paragraphs(self) -> None:
+        from graphgraph.scanner.doc import extract_document_context
+
+        bullets = "\n\n".join(
+            f"- **Contract field {i}:** this clause is long enough to be indexed as prose."
+            for i in range(1, 21)
+        )
+        text = f"# Spec\n\n## 8. Technology Resolution\n\n{bullets}\n"
+        nodes, _edges = extract_document_context([self._doc(text)], {}, {})
+
+        paragraphs = [n for n in nodes.values() if n.kind == "paragraph"]
+        self.assertGreaterEqual(len(paragraphs), 20)
+        captured = " ".join(fact for n in paragraphs for fact in n.facts)
+        # The tail is the part that used to vanish.
+        self.assertIn("Contract field 20", captured)
+        self.assertIn("Contract field 13", captured)
+
+    def test_default_cap_is_the_named_constant(self) -> None:
+        from graphgraph.scanner.doc import MAX_PARAGRAPHS_PER_SECTION
+
+        self.assertGreaterEqual(MAX_PARAGRAPHS_PER_SECTION, 24)
