@@ -277,6 +277,17 @@ def main() -> int:
     parser.add_argument("--repo", help="restrict to one repository")
     parser.add_argument("--seed", type=int, default=20260819)
     parser.add_argument("--source-mode", default="auto", help="'auto' is the shipped default; 'all' forces semantic")
+    parser.add_argument(
+        "--no-abstain",
+        action="store_true",
+        help=(
+            "research arm: disable ungrounded-packet abstention so the ranking "
+            "underneath it can be measured. Not a supported mode -- it answers "
+            "the question 'what would have been returned if the gate had not "
+            "fired', which is the only way to tell a protective abstention from "
+            "a discarded correct answer."
+        ),
+    )
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
 
@@ -303,6 +314,15 @@ def main() -> int:
     candidates = [r for rs in eligible.values() for r in rs if (r["func_documentation_string"] or "").strip()]
     rng.shuffle(candidates)
     tasks = candidates[: args.limit]
+
+    if args.no_abstain:
+        from graphgraph.retrieval import result_assembly
+
+        def _keep_everything(metadata, selection, selected_matches, nodes, edges, starts):
+            return selected_matches, nodes, edges, starts
+
+        result_assembly._apply_ungrounded_packet_abstention = _keep_everything
+        print("research arm: ungrounded-packet abstention DISABLED", file=sys.stderr)
 
     print(
         f"scoring {len(tasks)} CodeSearchNet tasks over {len({t['repository_name'] for t in tasks})} "

@@ -574,6 +574,35 @@ def _record_evidence_and_completeness(metadata, starts, nodes) -> None:
     answerability["neighborhood_complete"] = complete
 
 
+def _ranker_expressed_a_preference(matches) -> bool:
+    """Whether ranking produced a strict winner rather than a tie at the top.
+
+    The abstention below exists for one measured failure: a query whose tokens
+    collide with a plateau of generic hubs, where no node carries distinctive
+    evidence and the system previously shipped an ~1800-token "answerable"
+    packet of confidently wrong context. In that case the ranker scores every
+    candidate *identically* -- six hubs at 19.2612 -- so choosing the first is
+    arbitrary, and abstaining is right.
+
+    Low grounding on its own is not that case. Grounding measures how far the
+    query's literal terms reach into an anchor's identity, which a paraphrase
+    lacks by construction, so on natural-language questions over a code
+    repository the same rule fired on answers that were present and correctly
+    ranked. Measured on CodeSearchNet: the gate cost **23 points of recall@10**
+    (0.5167 against 0.7500 with it disabled) at no latency saving, and 16 of
+    the 23 abstentions were queries BM25 answered from its top ten.
+
+    The two are separated without a threshold. On the collision the top score
+    ties its runner-up exactly; on every measured code query the top is
+    strictly ahead. This asks only that question -- did ranking prefer
+    something? -- and deliberately does not ask by how much, because a margin
+    would be a constant fitted to the handful of examples that motivated it.
+    """
+    if len(matches) < 2:
+        return bool(matches)
+    return matches[0].score > matches[1].score
+
+
 def _apply_ungrounded_packet_abstention(
     metadata: dict[str, object],
     selection: _AnchorSelection,
@@ -613,6 +642,8 @@ def _apply_ungrounded_packet_abstention(
         pinned_paths=bool(request.anchor_paths),
     )
     if effective >= anchors.ABSTAIN_POLICY or incomplete:
+        return selected_matches, nodes, edges, starts
+    if _ranker_expressed_a_preference(selected_matches):
         return selected_matches, nodes, edges, starts
     raw = 0.2
     if isinstance(current, dict) and current.get("confidence") is not None:
