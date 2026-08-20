@@ -579,8 +579,10 @@ def _ranker_expressed_a_preference(matches) -> bool:
 
     The abstention below exists for one measured failure: a query whose tokens
     collide with a plateau of generic hubs, where no node carries distinctive
-    evidence and the system previously shipped an ~1800-token "answerable"
-    packet of confidently wrong context. In that case the ranker scores every
+    evidence and the system shipped an "answerable" packet of confidently wrong
+    context. (The protecting test's comment says ~1800 tokens; an independent
+    measurement of the unguarded path found 34. The size is disputed; the
+    wrongness is not.) In that case the ranker scores every
     candidate *identically* -- six hubs at 19.2612 -- so choosing the first is
     arbitrary, and abstaining is right.
 
@@ -592,14 +594,28 @@ def _ranker_expressed_a_preference(matches) -> bool:
     (0.5167 against 0.7500 with it disabled) at no latency saving, and 16 of
     the 23 abstentions were queries BM25 answered from its top ten.
 
-    The two are separated without a threshold. On the collision the top score
-    ties its runner-up exactly; on every measured code query the top is
-    strictly ahead. This asks only that question -- did ranking prefer
-    something? -- and deliberately does not ask by how much, because a margin
-    would be a constant fitted to the handful of examples that motivated it.
+    The separation is empirically bimodal rather than threshold-free. Over 80
+    gate decisions the relative winning margin is either exactly 0 (ties) or at
+    least 1.4%; nothing lands between. So a constant anywhere in that two-order
+    gap behaves identically, which is why none is written here -- but strict
+    ``>`` is still a threshold at zero, and it is sensitive at the last bit: an
+    independent checker flipped the protected case by adding 1e-12 to one score.
+
+    Known limit, and it is the important one. This guards *exact* score
+    symmetry, which is a property of the synthetic collision fixture. A
+    realistic plateau -- six similarly generic helpers with differently worded
+    summaries -- produces a 14.5% "winner" that is cosmetic rather than
+    relevant, and sails through. The protection is therefore closer to nominal
+    than the recall gain is; see ROADMAP R-009, which asks for the missing
+    abstention-precision measurement.
     """
     if len(matches) < 2:
-        return bool(matches)
+        # A lone ungrounded candidate is the *most* degenerate case, not a
+        # preference: there was nothing to prefer it over. An earlier version
+        # returned True here, which silently widened the change beyond the
+        # strict-winner rule it documented and shipped a single unranked match
+        # on 6 of 80 gate decisions. Found by an independent checker.
+        return False
     return matches[0].score > matches[1].score
 
 

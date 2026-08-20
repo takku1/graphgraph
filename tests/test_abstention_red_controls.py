@@ -319,3 +319,47 @@ class DefinitionVerbInflectionTest(unittest.TestCase):
                 _facet_is_required(phrasing, kinds, token_index, len(graph.nodes)),
                 f"{phrasing[0]!r} should not force abstention on its own",
             )
+
+
+class RankerPreferenceGuardTest(unittest.TestCase):
+    """The abstention escape must require an actual ranking preference.
+
+    The gate is skipped when ranking produced a strict winner, because a query
+    whose candidates all score identically has no answer to return -- choosing
+    the first is arbitrary. A lone candidate is the same situation and was
+    initially treated as the opposite: an earlier version returned True for it,
+    which shipped a single ungrounded match on 6 of 80 measured gate decisions
+    while the docstring described only a strict-winner test. Found by an
+    independent checker; these pin every branch.
+    """
+
+    @staticmethod
+    def _match(score: float, node_id: str = "N"):
+        from graphgraph import Node
+        from graphgraph.retrieval.models import Match
+
+        return Match(node=Node(node_id, node_id, "function", "src/x.py"), score=score, reasons=())
+
+    def test_a_strict_winner_is_a_preference(self) -> None:
+        from graphgraph.retrieval.result_assembly import _ranker_expressed_a_preference
+
+        self.assertTrue(
+            _ranker_expressed_a_preference((self._match(10.0, "A"), self._match(9.0, "B")))
+        )
+
+    def test_an_exact_tie_is_not_a_preference(self) -> None:
+        from graphgraph.retrieval.result_assembly import _ranker_expressed_a_preference
+
+        self.assertFalse(
+            _ranker_expressed_a_preference((self._match(9.0, "A"), self._match(9.0, "B")))
+        )
+
+    def test_a_lone_candidate_is_not_a_preference(self) -> None:
+        from graphgraph.retrieval.result_assembly import _ranker_expressed_a_preference
+
+        self.assertFalse(_ranker_expressed_a_preference((self._match(42.0, "A"),)))
+
+    def test_no_candidates_is_not_a_preference(self) -> None:
+        from graphgraph.retrieval.result_assembly import _ranker_expressed_a_preference
+
+        self.assertFalse(_ranker_expressed_a_preference(()))
