@@ -32,8 +32,8 @@ Indexed from `docs/open-work.md` section A.
 |---|---|---|---|---|
 | OW-AC-01 | Resident exact-query p95 gated; tools visible in an agent session | ready | — | [MCP Transport](docs/architecture/agent-interfaces/mcp-transport/SYSTEM.md) — warm MCP `query_relations` p95 92.6 ms vs 250 ms SLO; initialize+tools/list exposes 24 tools; NEED_CHECKER |
 | OW-AC-02 | Discovery selects a validated build; empty delta means fresh | ready | — | [Application Services](docs/architecture/application-services/SYSTEM.md) — `active_build` is validated/stale/invalid/absent; empty-delta incremental scan is a no-op; NEED_CHECKER |
-| OW-AC-03 | ≥80% full recall on conceptual / lexically disjoint tasks with no exact-task regression | ready | — | [Structural Retrieval](docs/architecture/information-retrieval/structural-retrieval/SYSTEM.md) — **re-measured 2026-08-19 on a corrected fixture (R-005)**. Structural-only: **0.200 (1/5 — and that one, FIX-C06, is a `subsystem_summary` returning 8 of the fixture's 12 nodes, so it is a dragnet rather than conceptual retrieval)**. With a current semantic index: **0.800 (4/5)**, FIX-C01 the remaining miss, red control abstaining in both. The gate is met only where a semantic index exists and is current; this repo's own index is stale, and building one runs at ~42 nodes/s (>10 min for 14,547 nodes), so "current index" is not yet the default condition — see RF-02. Held-out locus panel not re-run against the corrected guard. NEED_CHECKER |
-| OW-AC-04 | Unanswerable queries abstain (conf ≤0.2, ≤50 real tokens) instead of emitting large empty packets | ready | — | [Information Retrieval](docs/architecture/information-retrieval/SYSTEM.md) — RED compiled packet 21 tokens, conf 0.15; local conceptual misses abstain; scoped `doc_summary` no longer emptied; NEED_CHECKER |
+| OW-AC-03 | ≥80% full recall on conceptual / lexically disjoint tasks with no exact-task regression | ready | — | [Structural Retrieval](docs/architecture/information-retrieval/structural-retrieval/SYSTEM.md) — **re-measured 2026-08-19 on a corrected fixture (R-005)**. Structural-only: **0.200 (1/5 — and that one, FIX-C06, is a `subsystem_summary` returning 8 of the fixture's 12 nodes, so it is a dragnet rather than conceptual retrieval)**. With a current semantic index: **0.800 (4/5)**, FIX-C01 the remaining miss, red control abstaining in both. The gate is met only where a semantic index exists and is current; this repo's own index is stale, and building one runs at ~42 nodes/s (>10 min for 14,547 nodes), so "current index" is not yet the default condition — see RF-02. Held-out locus panel not re-run against the corrected guard. Independently checked 2026-08-19: KEEP, with three corrections applied (fixture floor is 0.200 not 0.000; the 0.800 needs a current semantic index; source-mode disclosed) |
+| OW-AC-04 | Unanswerable queries abstain (conf ≤0.2, ≤50 real tokens) instead of emitting large empty packets | ready | — | [Request Feasibility](docs/architecture/information-retrieval/structural-retrieval/request-feasibility/SYSTEM.md) — RED compiled packet 21 tokens, conf 0.15; local conceptual misses abstain; scoped `doc_summary` no longer emptied. **Externally measured 2026-08-19 (CodeSearchNet, n=60/44 repos):** the gate was over-firing badly — 38% of natural-language code queries abstained, 16 of 23 falsely (BM25 answered them from its top ten). Narrowed to fire only on a degenerate ranking (commit 02b1eb6): recall@10 0.5167 → 0.7167, MRR 0.4278 → **0.5931, above BM25's 0.5696**, abstention 38% → 10%, p50 26 → 19.6 ms. All 12 red-control tests hold. Checked by an independent pass 2026-08-19 |
 | OW-AC-05 | Per-language resolved member-call precision ≥98% with volume tables | ready | — | [Name Resolution](docs/architecture/static-analysis/name-resolution/SYSTEM.md) — held-out TS/C#/Python/Go precision 1.0 (4/4); Go embedding promotes methods; polyglot volume table; NEED_CHECKER |
 | OW-AC-06 | Machine response ≤1.15× evidence-packet tokens | done | — | [Agent Interfaces](docs/architecture/agent-interfaces/SYSTEM.md) |
 | OW-AC-07 | Token estimator MAE ≤5%, p95 ≤10% | done | — | [Context-Packet Encoding](docs/architecture/context-packets/SYSTEM.md) |
@@ -87,6 +87,30 @@ both are recorded here because "the packet looked complete" was true in each cas
 | 12-paragraph section cap | **40.6%** of repo documents truncated, incl. every terminal contract's §8 tail | **0.6%** (1 of 175) at a cap of 48 |
 | Graph size / paragraphs | 14,547 nodes / 7,480 paragraphs | **17,144 nodes / 8,002 paragraphs** |
 | Semantic index build | timed out past 10 min, index stale | **188 s (91 nodes/s)**, state `current` |
+
+## Independent checking status (2026-08-19)
+
+`NEED_CHECKER` on a row means *that row* has not had an independent pass. Two
+ran this session, and they cover only what is listed here — every other
+`NEED_CHECKER` tag predates them and still stands.
+
+**Checked and KEEP**, with all raised corrections applied: full suite, ruff,
+contract tree, the conceptual fixture's honesty, the semantic auto-mode gate,
+length-sorted embedding bit-identity, scanner `target*` pruning, document
+truncation, and the HotpotQA harness and numbers.
+
+Three findings from those passes were real and are fixed: a partial-model-cache
+hole that could still trigger a download, a structural-recall floor stated as
+0.000 that is actually 0.200, and a HotpotQA headline that depends on
+`--source-mode all` rather than the shipped default.
+
+**Checked and REVERT:** the second-hop retrieval increment (commit 4e7fb68).
+Replicated on prose, harmful on code.
+
+**One checker finding was itself wrong** and is recorded in R-007: it reported
+that a commit shipped a broken import and that 1,285 tests stayed green. Both
+were false — it was reading an uncommitted working tree mid-edit. A checker
+report is evidence, not a verdict.
 
 ## External benchmark: HotpotQA (2026-08-19)
 
