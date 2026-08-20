@@ -31,6 +31,33 @@ is git-ignored) so a 27 MB corpus is never committed.
   python benchmarks/external/hotpotqa.py --limit 100
   ```
 
+## CodeSearchNet (natural-language code retrieval)
+
+- **Source:** `code-search-net/code_search_net`, `python` config, `test` split,
+  mirrored as parquet by HuggingFace. Upstream: <https://github.com/github/CodeSearchNet>.
+  MIT / permissive per-repository licences.
+- **Why this one:** it is the gap R-006 names. HotpotQA is Wikipedia prose, and
+  a retrieval change validated only there passed every gate and still rewrote
+  anchors on 22% of ordinary queries against a real code graph. This is a
+  *code* corpus: 22,176 held-out Python functions across 680 real repositories,
+  with real file paths and real module layout.
+- **What is scored:** a developer asks in English, and the target function
+  should be retrieved. Each task reconstructs a whole repository from its
+  functions, scans it, and looks for the target among the ranked anchors.
+  Metrics are recall@k and MRR against an Okapi BM25 arm over the same corpus.
+- **Docstrings are stripped from the corpus.** The query *is* the docstring, so
+  leaving it in would make every task a substring match -- the same defect this
+  project already shipped once in its own conceptual fixture (R-005).
+- **Abstention is reported separately from ranking.** They are different
+  defects with different fixes, and summing them into one recall number hides
+  which one is happening.
+- **Setup:**
+
+  ```
+  curl -L -o .scratch/benchmarks/data/csn_python_test.parquet     https://huggingface.co/api/datasets/code-search-net/code_search_net/parquet/python/test/0.parquet
+  python benchmarks/external/codesearchnet.py --limit 60
+  ```
+
 ## Reporting rule
 
 Report the axis where GraphGraph loses. A comparison that only shows wins is
