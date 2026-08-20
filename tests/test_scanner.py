@@ -335,3 +335,55 @@ def promote(
             self.assertIn("instruction-set", fn.summary)
             file_node = next(node for node in graph.nodes.values() if node.path == "mod.py" and node.kind == "python")
             self.assertIn("one-hop", file_node.summary)
+
+
+class TargetPrefixPruningTest(unittest.TestCase):
+    """A directory is not build output merely because its name starts with "target".
+
+    The skip rule was `d.startswith("target")`, intended for Rust's `target/`
+    build directory -- which SKIP_DIRS already matches exactly. The prefix added
+    only over-matching, and it silently swallowed real source: this repository's
+    own `docs/architecture/context-packets/target-catalog/` contract node was
+    dropped from its own graph. Silent corpus truncation is the worst failure
+    mode for a context tool, because the answer looks complete.
+
+    It also defeated `--include target`: `include` is subtracted from `skip`,
+    but the prefix test never consulted `skip` at all.
+    """
+
+    def test_directories_merely_prefixed_with_target_are_collected(self) -> None:
+        from graphgraph.scanner.files import collect_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("target-catalog", "targets", "targeting"):
+                (root / name).mkdir()
+                (root / name / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+            (root / "target").mkdir()
+            (root / "target" / "generated.py").write_text("X = 1\n", encoding="utf-8")
+
+            collected = {
+                p.relative_to(root).as_posix()
+                for p in collect_files(root, max_nodes=100).files
+            }
+
+        self.assertIn("target-catalog/mod.py", collected)
+        self.assertIn("targets/mod.py", collected)
+        self.assertIn("targeting/mod.py", collected)
+        # Rust's actual build directory is still excluded, by exact match.
+        self.assertNotIn("target/generated.py", collected)
+
+    def test_include_can_override_the_exact_target_skip(self) -> None:
+        from graphgraph.scanner.files import collect_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "target").mkdir()
+            (root / "target" / "generated.py").write_text("X = 1\n", encoding="utf-8")
+
+            collected = {
+                p.relative_to(root).as_posix()
+                for p in collect_files(root, max_nodes=100, include=frozenset({"target"})).files
+            }
+
+        self.assertIn("target/generated.py", collected)

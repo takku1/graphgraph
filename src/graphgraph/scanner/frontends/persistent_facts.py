@@ -503,12 +503,13 @@ def python_file_type_snapshot(source: str, rel: str) -> dict[str, Any]:
         }
 
     field_rows = []
-    for (owner, field), type_name in sorted(_python_class_field_types(source).items()):
+    # `field_name`, not `field`: the dataclasses `field` import is in scope here.
+    for (owner, field_name), type_name in sorted(_python_class_field_types(source).items()):
         fact = TypeFact.from_evidence(
             type_name,
-            Evidence("field_type", f"{rel}:{owner}.{field}"),
+            Evidence("field_type", f"{rel}:{owner}.{field_name}"),
         )
-        field_rows.append([owner, field, _fact_to_data(fact)])
+        field_rows.append([owner, field_name, _fact_to_data(fact)])
 
     module_name = rel.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     global_rows = [

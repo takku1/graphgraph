@@ -20,17 +20,37 @@ from .scoping import (
 # A facet term that is one of these (or that names a node kind the graph
 # actually contains) describes the shape of the wanted answer, not a content
 # entity, so its absence as literal node text must not trigger abstention.
+#: Words that name *what is being asked for* rather than content to find. A
+#: query term here is satisfied by an anchor of the right kind, not by a node
+#: whose text happens to contain the word.
+#:
+#: The inflections matter and were once incomplete: `definition` and `declared`
+#: were listed while `defined` was not, so "where is X declared" answered and
+#: "where is X **defined**" abstained on the *same* evidence -- the definition
+#: sitting at anchor rank 1, reported as an unfulfilled facet named "defined".
+#: Every verb below therefore carries its own inflections; a bare stem here is
+#: a latent version of that bug.
 _DEFINITION_TERMS = frozenset(
     {
         "definition",
         "definitions",
         "def",
+        "define",
+        "defines",
+        "defined",
+        "defining",
         "declaration",
         "declarations",
         "declare",
+        "declares",
         "declared",
+        "declaring",
         "implementation",
         "implementations",
+        "implement",
+        "implements",
+        "implemented",
+        "implementing",
         "body",
         "signature",
         "signatures",
@@ -666,6 +686,22 @@ def facet_terms_absent_from_corpus(graph: Graph, terms: tuple[str, ...]) -> tupl
         term for term in terms
         if not any(form in index for form in _facet_term_forms(term))
     )
+
+
+def facet_is_provably_absent(graph: Graph, terms: tuple[str, ...]) -> bool:
+    """True only when the facet's identifying terms occur nowhere.
+
+    A missing generic word (``tool``, ``record``) is not absence of the
+    concept. A missing distinctive term (``graphql``, ``subscription``) is.
+    """
+    absent = set(facet_terms_absent_from_corpus(graph, terms))
+    if not absent:
+        return False
+    distinctive = tuple(term for term in terms if "-" in term or len(term) >= 8)
+    if distinctive:
+        return any(term in absent for term in distinctive)
+    content = tuple(term for term in terms if len(term) >= 5 and term not in _DEFINITION_TERMS)
+    return bool(content) and all(term in absent for term in content)
 
 
 def facet_coverage(

@@ -74,7 +74,7 @@ def _worktree_sync_candidate(rel_path: str) -> bool:
     if path.suffix.lower() in SKIP_SUFFIXES:
         return False
     return not any(
-        part in SKIP_DIRS or part.startswith("target") or part.endswith(".egg-info")
+        part in SKIP_DIRS or part.endswith(".egg-info")
         for part in path.parts[:-1]
     )
 

@@ -28,7 +28,6 @@ from .files import (
     node_id,
 )
 from .frontends import select_extractor
-from .frontends.syntax import module_docstring
 from .frontends.persistent_facts import (
     AffectedTypeFactFiles,
     PersistentPythonTypeIndex,
@@ -40,6 +39,7 @@ from .frontends.python import (
     _python_module_global_facts,
     _python_module_return_facts,
 )
+from .frontends.syntax import module_docstring
 from .history import extract_commit_history, repository_history_start
 from .imports import add_file_edges
 from .rust_references import filter_rust_reference_edges

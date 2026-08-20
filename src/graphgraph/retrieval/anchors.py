@@ -14,16 +14,6 @@ from ..graph.core import Edge, Graph
 from ..planning import ContextPlan
 from ..planning.budgets import explicit_query_identifiers, plan_terms
 from ..planning.shape import profile_graph_shape, recommend_node_budget
-from .grounding import (
-    ABSTAIN_POLICY,
-    effective_confidence,
-    grounded_paraphrase_evidence,
-    identity_grounding,
-    packet_grounding as _packet_grounding,
-    paraphrase_grounding,
-    peaked_specificity,
-    term_specificity,
-)
 from .facets import (
     _affected_output_contract_facet,
     _facet_evidence_terms,
@@ -34,6 +24,15 @@ from .facets import (
     _facet_node_text,
     _symbol_identity_terms,
     query_facets,
+)
+from .grounding import (
+    ABSTAIN_POLICY as ABSTAIN_POLICY,  # re-exported: read as `anchors.ABSTAIN_POLICY`
+)
+from .grounding import (
+    effective_confidence,
+)
+from .grounding import (
+    packet_grounding as _packet_grounding,
 )
 from .models import Match
 from .scoping import (
@@ -866,22 +865,6 @@ def effective_answer_confidence(
         retrieval_confidence(matches),
         packet_grounding(matches, query, injected=injected, pinned_paths=pinned_paths),
     )
-
-
-def should_empty_ungrounded_packet(
-    matches: tuple[Match, ...],
-    *,
-    query: str = "",
-    injected: bool = False,
-    pinned_paths: bool = False,
-) -> bool:
-    """True when effective confidence is below the abstain policy."""
-    return effective_answer_confidence(
-        matches,
-        query,
-        injected=injected,
-        pinned_paths=pinned_paths,
-    ) < ABSTAIN_POLICY
 
 
 def _has_exact_symbol_evidence(matches: tuple[Match, ...]) -> bool:

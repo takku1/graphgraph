@@ -99,17 +99,6 @@ def _doc_comment_above(lines: list[str], line: int) -> str:
     return re.sub(r"\s+", " ", " ".join(collected)).strip()
 
 
-def _opening_docstring(stripped: str) -> str:
-    for quote in ('"""', "'''"):
-        if stripped.startswith(quote):
-            body = stripped[len(quote):]
-            closing = body.find(quote)
-            if closing != -1:
-                return body[:closing].strip()
-            return body.strip()
-    return ""
-
-
 def _collect_opening_docstring(lines: list[str], index: int) -> str:
     stripped = lines[index].strip()
     for quote in ('"""', "'''"):

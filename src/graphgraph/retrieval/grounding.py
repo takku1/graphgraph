@@ -151,5 +151,3 @@ def effective_confidence(shape_confidence: float, grounding: float) -> float:
     return shape_confidence * grounding
 
 
-def grounded_paraphrase_evidence(matches: tuple[Match, ...]) -> bool:
-    return paraphrase_grounding(matches) >= ABSTAIN_POLICY

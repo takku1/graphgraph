@@ -60,7 +60,6 @@ from .platform_tools import (
     handle_platform_tool,
 )
 
-
 SERVER_INFO = {"name": "graphgraph", "version": "0.1.0"}
 
 

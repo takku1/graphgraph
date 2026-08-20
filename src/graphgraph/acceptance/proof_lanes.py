@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..analysis.eval import evaluate_graph, load_eval_tasks
-from ..io import find_graph_path, load_any
+from ..io import load_any
 from ..retrieval.relations import query_relations
 
 SELF_SUITE = Path("eval/graphgraph-self.json")
@@ -75,29 +75,3 @@ def local_conceptual_receipt(graph_path: Path) -> dict[str, Any]:
     }
 
 
-def proof_receipt(*, repo: Path = Path(".")) -> dict[str, Any]:
-    graph_path = find_graph_path(repo)
-    mentions = lexical_mention_files(repo / "src", "select_symbols")
-    callers = caller_rows(graph_path, "select_symbols", include_tests=False)
-    caller_paths = {str(row.get("path") or "") for row in callers}
-    return {
-        "exact_self_eval": self_eval_receipt(graph_path),
-        "local_conceptual": local_conceptual_receipt(graph_path),
-        "vs_lexical_search": {
-            "target": "select_symbols",
-            "graph_callers": [row.get("label") for row in callers],
-            "lexical_mention_files": len(mentions),
-            "definition_file_is_mention_not_caller": any(
-                path.endswith("retrieval/predicates.py") for path in mentions
-            )
-            and not any(path.endswith("retrieval/predicates.py") for path in caller_paths),
-            "expected_callers_present": {"cmd_select", "handle_select_symbols"}
-            <= {str(row.get("label") or "") for row in callers},
-            "claim_boundary": (
-                "Lexical search finds mentions. Graph callers exclude the "
-                "definition and keep typed production callers. This licenses "
-                "'better than rg for caller questions', not 'better than every "
-                "graph tool'."
-            ),
-        },
-    }

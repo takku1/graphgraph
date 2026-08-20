@@ -73,7 +73,12 @@ graphgraph = ["assets/*.md", "assets/*.py", "assets/*.json", "schema/*.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["tmp", "benchmarks", ".venv", ".graphgraph", "graphify-out", "*.egg-info"]
-addopts = "-q"
+# Not `-q`: the documented invocation is `pytest tests/ -q`, and pytest sums
+# the flags, so `-q` here made that `-qq` -- which suppresses the summary line
+# entirely. "Green with no number" is indistinguishable from a run that
+# collected nothing, and this project has already been bitten once by a gate
+# that reported success while running fewer suites than it declared.
+addopts = "--tb=short"
 
 [tool.ruff]
 line-length = 120

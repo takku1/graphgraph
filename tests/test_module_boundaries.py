@@ -499,3 +499,48 @@ class ResearchBoundaryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrossModuleConstantReadsResolveTest(unittest.TestCase):
+    """Every `module.CONSTANT` read in the retrieval package must resolve.
+
+    A constant reached as a module attribute is invisible to `ruff --fix`:
+    F401 sees the import as unused and deletes it, and nothing fails until the
+    line runs. That happened -- `anchors.ABSTAIN_POLICY` was removed while
+    `result_assembly.py` still read it on the abstention path of every prose
+    query.
+
+    The wider suite *does* catch this: the real removal produced 43 failures.
+    What it does not do is say what broke. This resolves each read statically,
+    so the same defect surfaces in 0.1 s with one message naming the reader,
+    the symbol and the module that should export it, instead of 43 downstream
+    failures whose common cause has to be inferred.
+    """
+
+    def test_every_module_attribute_constant_resolves(self) -> None:
+        import importlib
+        import re as _re
+        from pathlib import Path
+
+        retrieval = Path(__file__).parents[1] / "src" / "graphgraph" / "retrieval"
+        pattern = _re.compile(r"\b([a-z_][a-z0-9_]*)\.([A-Z][A-Z0-9_]{3,})\b")
+        checked = 0
+        for source_file in sorted(retrieval.glob("*.py")):
+            text = source_file.read_text(encoding="utf-8")
+            imported = set(_re.findall(r"^import graphgraph\.retrieval\.(\w+) as (\w+)", text, _re.M))
+            aliases = {alias: module for module, alias in imported}
+            aliases.update(
+                {alias: alias for alias in _re.findall(r"^from \. import (\w+)", text, _re.M)}
+            )
+            for alias, constant in pattern.findall(text):
+                module_name = aliases.get(alias)
+                if module_name is None:
+                    continue
+                module = importlib.import_module(f"graphgraph.retrieval.{module_name}")
+                self.assertTrue(
+                    hasattr(module, constant),
+                    f"{source_file.name} reads {alias}.{constant}, but "
+                    f"graphgraph.retrieval.{module_name} does not define or re-export it",
+                )
+                checked += 1
+        self.assertGreater(checked, 0, "found no module-attribute constant reads to verify")

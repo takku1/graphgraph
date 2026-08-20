@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "In-repo held-out-style conceptual tasks. Every query is a genuine",
+    "paraphrase: it shares no content token with the target's identifier,",
+    "docstring, summary, or path, enforced by",
+    "test_fixture_queries_are_lexically_disjoint_from_target_text. Rewritten",
+    "2026-08-19 (R-005) after an independent checker found the previous",
+    "queries were near-verbatim copies of their own docstrings, which made",
+    "this a docstring-substring test rather than a paraphrase test.",
+    "This is not conceptual-v1 and may not be used to retire that suite."
+  ],
+  "tasks": [
+    {
+      "id": "FIX-C01",
+      "query": "Where does the code define the scale of certainty for a result?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["ConfidenceLadder"]
+    },
+    {
+      "id": "FIX-C02",
+      "query": "What prevents a performance number from being assumed valid on any computer?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["PortabilityQualifier"]
+    },
+    {
+      "id": "FIX-C03",
+      "query": "Which interface must a fresh audit satisfy so all of them can be driven identically?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["UniformExaminer"]
+    },
+    {
+      "id": "FIX-C05",
+      "query": "Where is the faster-than-naive routine for combining two numeric grids constructed?",
+      "query_class": "direct_lookup",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["assemble_thrifty_product"]
+    },
+    {
+      "id": "FIX-C06",
+      "query": "What chains the processing steps so they execute one after another?",
+      "query_class": "subsystem_summary",
+      "strata": ["conceptual", "lexical_disjoint"],
+      "expected": ["StageWire"]
+    },
+    {
+      "id": "FIX-R01",
+      "query": "Which module implements the GraphQL subscription transport?",
+      "query_class": "direct_lookup",
+      "strata": ["red_control", "negative", "conceptual"],
+      "expected_answerable": false
+    }
+  ]
+}

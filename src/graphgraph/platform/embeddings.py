@@ -22,8 +22,10 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import urllib.request
-from typing import Protocol, Sequence, runtime_checkable
+from pathlib import Path
+from typing import Any, Callable, Iterable, Protocol, Sequence, runtime_checkable
 
 #: Sentinel backend name stored in an index built from the offline hash.
 HASH_BACKEND_NAME = "hash"
@@ -35,6 +37,13 @@ HASH_BACKEND_NAME = "hash"
 EMBED_URL_ENV = "GRAPHGRAPH_EMBED_URL"
 EMBED_MODEL_ENV = "GRAPHGRAPH_EMBED_MODEL"
 EMBED_KEY_ENV = "GRAPHGRAPH_EMBED_API_KEY"
+#: FastEmbed's own cache location override, read (never written) so the
+#: auto-query path can tell "cached on disk" from "would download".
+FASTEMBED_CACHE_ENV = "FASTEMBED_CACHE_PATH"
+#: A cached model is only usable when its tokenizer and config sit beside the
+#: weights; FastEmbed loads all three and silently falls back to the network
+#: when any is missing.
+_REQUIRED_MODEL_FILES = ("tokenizer.json", "config.json")
 
 
 @runtime_checkable
@@ -128,6 +137,56 @@ LOCAL_MODEL_ENV = "GRAPHGRAPH_EMBED_LOCAL_MODEL"
 _DEFAULT_LOCAL_MODEL = "BAAI/bge-small-en-v1.5"
 
 
+#: Batch size for local ONNX inference. Deliberately far below the library
+#: default of 256, for two compounding reasons measured on 1,200 real nodes:
+#: ONNX pads every batch to its longest member, so one long docstring inflates
+#: the compute for everything batched with it; and a 256-row activation tensor
+#: falls out of CPU cache where a 16-row one does not.
+EMBED_BATCH_ENV = "GRAPHGRAPH_EMBED_BATCH"
+_DEFAULT_EMBED_BATCH = 16
+
+
+def _embed_batch_size() -> int:
+    raw = os.environ.get(EMBED_BATCH_ENV, "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return _DEFAULT_EMBED_BATCH
+
+
+def embed_length_sorted(
+    texts: list[str],
+    embed_batches: "Callable[[list[str], int], Iterable[Any]]",
+    batch_size: int,
+) -> list:
+    """Embed with length-bucketed batches, returned in the caller's order.
+
+    Grouping similar-length texts together minimizes the padding each batch is
+    computed at. Throughput measured on a 1,200-node sample: 51 nodes/s at the
+    library default (unsorted, batch 256) against 140 nodes/s length-sorted at
+    batch 16, a 2.7x ratio on this machine. Bit-identity was verified separately
+    on the 334-node `retrieval` package: 334/334 exact, max component delta 0.0.
+    Two corpora, two claims -- the speedup is machine-specific, the identity is
+    not.
+
+    Restoring the caller's order is the whole correctness burden: a permutation
+    bug here would bind every vector to the wrong node and still produce a
+    perfectly well-formed index that silently answers nonsense.
+    """
+    if len(texts) <= batch_size:
+        return list(embed_batches(texts, batch_size))
+    order = sorted(range(len(texts)), key=lambda index: len(texts[index]))
+    restored: list = [None] * len(texts)
+    produced = 0
+    for vector, index in zip(embed_batches([texts[i] for i in order], batch_size), order):
+        restored[index] = vector
+        produced += 1
+    if produced != len(texts):
+        raise ValueError(
+            f"embedding backend returned {produced} vectors for {len(texts)} inputs"
+        )
+    return restored
+
+
 class FastEmbedBackend:
     """Local ONNX embeddings via the optional ``fastembed`` dependency.
 
@@ -141,6 +200,10 @@ class FastEmbedBackend:
         self._model_name = model_name or _DEFAULT_LOCAL_MODEL
         self._model = None
         self.name = f"fastembed:{self._model_name}"
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
 
     def _ensure_model(self):
         if self._model is None:
@@ -156,7 +219,12 @@ class FastEmbedBackend:
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         model = self._ensure_model()
-        return [[float(component) for component in vector] for vector in model.embed(list(texts))]
+        vectors = embed_length_sorted(
+            list(texts),
+            lambda batch, size: model.embed(batch, batch_size=size),
+            _embed_batch_size(),
+        )
+        return [[float(component) for component in vector] for vector in vectors]
 
 
 def _local_backend_available() -> bool:
@@ -233,6 +301,70 @@ def active_backend_is_warm() -> bool:
     """
     backend = resolve_backend()
     return not isinstance(backend, FastEmbedBackend) or backend.is_warm
+
+
+def _fastembed_cache_dir() -> Path:
+    """Where FastEmbed keeps downloaded weights, without importing FastEmbed."""
+    override = os.environ.get(FASTEMBED_CACHE_ENV, "").strip()
+    if override:
+        return Path(override)
+    return Path(tempfile.gettempdir()) / "fastembed_cache"
+
+
+def local_model_is_cached(model_name: str) -> bool:
+    """Whether this model's ONNX weights are already on disk.
+
+    Deliberately does not import fastembed: this runs on the auto-query path,
+    where the whole point is to decide *before* paying any import cost. The
+    layout is huggingface-hub's (``models--<org>--<repo>/snapshots/<sha>/*.onnx``)
+    and the repo name is matched on the model's trailing component, because
+    FastEmbed maps e.g. ``BAAI/bge-small-en-v1.5`` onto the ONNX mirror
+    ``qdrant/bge-small-en-v1.5-onnx-q``.
+    """
+    root = _fastembed_cache_dir()
+    if not root.is_dir():
+        return False
+    stem = model_name.rsplit("/", 1)[-1].strip().lower()
+    if not stem:
+        return False
+    try:
+        for entry in root.iterdir():
+            if not entry.name.startswith("models--") or stem not in entry.name.lower():
+                continue
+            for snapshot in (entry / "snapshots").glob("*"):
+                if not snapshot.is_dir():
+                    continue
+                weights = [path for path in snapshot.glob("*.onnx") if path.stat().st_size > 0]
+                if not weights:
+                    continue
+                # Weights alone are not a usable model. FastEmbed also loads the
+                # tokenizer and config, and it tries `local_files_only=True`
+                # first and then *falls through to a network fetch*. So an
+                # interrupted download -- ONNX present, tokenizer missing --
+                # would pass a weights-only probe and then quietly download,
+                # which is the exact invariant this predicate exists to hold.
+                if all((snapshot / name).is_file() for name in _REQUIRED_MODEL_FILES):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def active_backend_needs_download() -> bool:
+    """Whether warming the active backend would fetch model files over the network.
+
+    This is the fact auto queries actually care about, and it is narrower than
+    :func:`active_backend_is_warm`. That predicate answers "is the model already
+    constructed in this process", which every cold process answers `False` --
+    including one whose weights have been cached on disk for months. Treating
+    the two as the same fact made a cold CLI silently skip a current semantic
+    index forever, so paraphrase queries fell back to structural-only retrieval
+    with no download in prospect and nothing to warn about.
+    """
+    backend = resolve_backend()
+    if not isinstance(backend, FastEmbedBackend) or backend.is_warm:
+        return False
+    return not local_model_is_cached(backend.model_name)
 
 
 def normalize_dense(vector: Sequence[float]) -> dict[int, float]:

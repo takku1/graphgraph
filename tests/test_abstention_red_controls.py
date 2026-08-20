@@ -258,13 +258,13 @@ class GroundingScoreTest(unittest.TestCase):
     """OW-AC-04 uses a continuous grounding score, not a reason checklist."""
 
     def test_term_specificity_is_monotonic_in_length_and_saturates_on_hyphens(self) -> None:
-        from graphgraph.retrieval.anchors import term_specificity
+        from graphgraph.retrieval.grounding import term_specificity
 
         self.assertEqual(term_specificity("instruction-set"), 1.0)
         self.assertLess(term_specificity("packet"), term_specificity("settlement"))
         self.assertLess(term_specificity("field"), term_specificity("packet"))
         self.assertGreater(term_specificity("settlement"), 0.8)
-        from graphgraph.retrieval.anchors import peaked_specificity
+        from graphgraph.retrieval.grounding import peaked_specificity
 
         self.assertLess(peaked_specificity("packet"), 0.1)
         self.assertGreater(peaked_specificity("instruction-set"), 0.9)
@@ -279,3 +279,43 @@ class GroundingScoreTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DefinitionVerbInflectionTest(unittest.TestCase):
+    """Asking for a definition must not itself become an unmet requirement.
+
+    `_DEFINITION_TERMS` listed `definition` and `declared` but not `defined`,
+    so "where is X declared" answered while "where is X **defined**" abstained
+    on identical evidence -- the definition sitting at anchor rank 1, while the
+    receipt reported an unfulfilled facet literally named "defined". A question
+    word states what is being asked for; it is not content the graph must
+    contain.
+    """
+
+    def test_definition_verbs_are_structural_in_every_inflection(self) -> None:
+        from graphgraph.retrieval.facets import _DEFINITION_TERMS
+
+        for verb in ("define", "declare", "implement"):
+            for form in (verb, verb + "s", verb[:-1] + "ed" if verb.endswith("e") else verb + "ed"):
+                self.assertIn(
+                    form,
+                    _DEFINITION_TERMS,
+                    f"{form!r} missing: a bare stem without its inflections is the original bug",
+                )
+
+    def test_phrasing_does_not_change_answerability(self) -> None:
+        from graphgraph import Graph, Node
+        from graphgraph.retrieval.facets import _facet_is_required, _graph_kind_terms
+
+        graph = Graph(
+            nodes={
+                "target": Node("target", "retrieve_context", "function", "src/retrieval.py"),
+            }
+        )
+        kinds = _graph_kind_terms(graph)
+        token_index: dict = {}
+        for phrasing in (("defined",), ("declared",), ("definition",), ("implemented",)):
+            self.assertFalse(
+                _facet_is_required(phrasing, kinds, token_index, len(graph.nodes)),
+                f"{phrasing[0]!r} should not force abstention on its own",
+            )

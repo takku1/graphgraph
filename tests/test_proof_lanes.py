@@ -39,6 +39,7 @@ class ProofLaneTest(unittest.TestCase):
     def test_local_conceptual_recall_is_measured_against_the_ow_ac_03_gate(self) -> None:
         receipt = local_conceptual_receipt(self.graph_path)
         self.assertEqual(len(receipt["recalls"]), 3)
-        self.assertGreaterEqual(min(receipt["recalls"]), 0.0)
+        self.assertGreaterEqual(receipt["mean"], 0.80, receipt)
+        self.assertTrue(receipt["meets_gate"], receipt)
         self.assertIn("held-out", receipt["claim_boundary"].lower())
         # This-repo probes can meet 0.80; that does not license the held-out panel.
