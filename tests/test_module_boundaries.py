@@ -506,14 +506,15 @@ class CrossModuleConstantReadsResolveTest(unittest.TestCase):
 
     A constant reached as a module attribute is invisible to `ruff --fix`:
     F401 sees the import as unused and deletes it, and nothing fails until the
-    line runs. That happened -- `anchors.ABSTAIN_POLICY` was removed as a dead
-    import while `result_assembly.py` still read it on the abstention path of
-    every prose query -- and the entire 1,285-test suite stayed green while the
-    external benchmark failed 100% of its tasks.
+    line runs. That happened -- `anchors.ABSTAIN_POLICY` was removed while
+    `result_assembly.py` still read it on the abstention path of every prose
+    query.
 
-    This test exists because "the suite is green" was true and worthless. It
-    resolves each read statically, so a deleted re-export fails here rather
-    than at the first real query.
+    The wider suite *does* catch this: the real removal produced 43 failures.
+    What it does not do is say what broke. This resolves each read statically,
+    so the same defect surfaces in 0.1 s with one message naming the reader,
+    the symbol and the module that should export it, instead of 43 downstream
+    failures whose common cause has to be inferred.
     """
 
     def test_every_module_attribute_constant_resolves(self) -> None:
