@@ -269,6 +269,124 @@ def summarize(results: list[TaskResult], k: int) -> dict:
     return out
 
 
+
+def _distinctive_terms(query: str) -> set[str]:
+    """Content words specific enough that their absence means something."""
+    stop = {
+        "the", "and", "for", "with", "from", "that", "this", "into", "returns",
+        "return", "given", "list", "value", "values", "object", "string", "name",
+        "data", "true", "false", "none", "type", "using", "used", "number",
+        "default", "specified", "otherwise", "should", "will", "must", "when",
+        "each", "all", "any", "not", "are", "its", "get", "set", "new", "one",
+    }
+    return {w for w in _tokens(query) if len(w) > 4 and w not in stop}
+
+
+def build_negative_tasks(
+    eligible: dict[str, list[dict]],
+    count: int,
+    rng: random.Random,
+) -> list[tuple[str, dict]]:
+    """Pair each query with a repository whose corpus cannot contain its answer.
+
+    An abstention-precision arm needs queries that are *provably* unanswerable,
+    not merely unlikely. A docstring from another repository is only a good
+    negative when its distinctive words appear nowhere in the target corpus --
+    "parse a JSON string" is foreign to nothing. So each candidate pairing is
+    admitted only when **every** distinctive term of the query is absent from
+    the target repository's own text, which is the same standard the product's
+    `facet_is_provably_absent` applies before it will claim absence.
+
+    Returns (target_repo, source_row) pairs. The correct behavior on every one
+    of them is abstention; any confident answer is a false answer.
+    """
+    corpus_terms: dict[str, set[str]] = {}
+    for repo, rows in eligible.items():
+        terms: set[str] = set()
+        for row in rows:
+            terms.update(_tokens(row["func_name"]))
+            terms.update(_tokens(row["func_path_in_repository"]))
+            terms.update(_tokens(row["func_code_string"] or ""))
+        corpus_terms[repo] = terms
+
+    repos = sorted(eligible)
+    pairs: list[tuple[str, dict]] = []
+    attempts = 0
+    while len(pairs) < count and attempts < count * 200:
+        attempts += 1
+        target, source = rng.sample(repos, 2)
+        row = rng.choice(eligible[source])
+        query = " ".join((row["func_documentation_string"] or "").split())[:220]
+        distinctive = _distinctive_terms(query)
+        if len(distinctive) < 3:
+            continue
+        if distinctive & corpus_terms[target]:
+            continue  # some of it *is* present; not a clean negative
+        pairs.append((target, row))
+    return pairs
+
+
+def run_negative(
+    eligible: dict[str, list[dict]],
+    pairs: list[tuple[str, dict]],
+    source_mode: str,
+) -> list[TaskResult]:
+    """Ask provably-foreign questions; every confident answer is a false answer."""
+    from graphgraph.io import save_graph
+    from graphgraph.platform.compiler import CompileRequest, ContextCompiler
+    from graphgraph.scanner import scan_directory
+
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for target, row in pairs:
+        grouped[target].append(row)
+
+    results: list[TaskResult] = []
+    for target, rows in grouped.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            _build_repo(root, eligible[target])
+            try:
+                graph = scan_directory(root, depth="symbols", frontend="tree_sitter", docs=True)
+                graph_path = Path(tmp) / "graph.json"
+                save_graph(graph, graph_path)
+                compiler = ContextCompiler.open(
+                    graph_path, graph=graph, enable_evidence=False,
+                    source_mode=source_mode, memory_scopes=(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                for row in rows:
+                    results.append(TaskResult(target, row["func_name"], "", "", error=str(exc)[:120]))
+                continue
+            for row in rows:
+                query = " ".join((row["func_documentation_string"] or "").split())[:220]
+                result = TaskResult(target, row["func_name"], row["func_path_in_repository"], query)
+                try:
+                    outcome = compiler.compile(CompileRequest(query=query))
+                    result.anchors = len(outcome.retrieval.starts)
+                    answerability = outcome.retrieval.metadata.get("answerability", {})
+                    result.status = str(answerability.get("status", ""))
+                except Exception as exc:  # noqa: BLE001
+                    result.error = f"{type(exc).__name__}: {exc}"[:160]
+                results.append(result)
+    return results
+
+
+def summarize_negative(results: list[TaskResult]) -> dict:
+    scored = [r for r in results if not r.error]
+    answered = [r for r in scored if r.anchors > 0 and r.status == "answerable"]
+    incomplete = [r for r in scored if r.anchors > 0 and r.status != "answerable"]
+    return {
+        "negative_tasks": len(scored),
+        "errors": sum(1 for r in results if r.error),
+        # The headline: a provably-foreign question answered confidently.
+        "false_answer_rate": round(len(answered) / max(1, len(scored)), 4),
+        "answered_confidently": len(answered),
+        "answered_but_flagged_incomplete": len(incomplete),
+        "abstained": len(scored) - len(answered) - len(incomplete),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
@@ -286,6 +404,15 @@ def main() -> int:
             "the question 'what would have been returned if the gate had not "
             "fired', which is the only way to tell a protective abstention from "
             "a discarded correct answer."
+        ),
+    )
+    parser.add_argument(
+        "--negative",
+        action="store_true",
+        help=(
+            "abstention-precision arm (R-009): ask each repository a question "
+            "whose distinctive terms appear nowhere in it. Every confident "
+            "answer is a false answer."
         ),
     )
     parser.add_argument("--json", type=Path)
@@ -323,6 +450,23 @@ def main() -> int:
 
         result_assembly._apply_ungrounded_packet_abstention = _keep_everything
         print("research arm: ungrounded-packet abstention DISABLED", file=sys.stderr)
+
+    if args.negative:
+        pairs = build_negative_tasks(eligible, args.limit, rng)
+        print(
+            f"abstention-precision arm: {len(pairs)} provably-foreign questions "
+            f"(source_mode={args.source_mode})",
+            file=sys.stderr,
+        )
+        negative_results = run_negative(eligible, pairs, args.source_mode)
+        negative_summary = summarize_negative(negative_results)
+        print(json.dumps(negative_summary, indent=2))
+        if args.json:
+            args.json.write_text(
+                json.dumps({"summary": negative_summary, "tasks": [vars(r) for r in negative_results]}, indent=2),
+                encoding="utf-8",
+            )
+        return 0
 
     print(
         f"scoring {len(tasks)} CodeSearchNet tasks over {len({t['repository_name'] for t in tasks})} "
